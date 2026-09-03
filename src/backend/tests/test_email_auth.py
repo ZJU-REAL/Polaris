@@ -54,6 +54,7 @@ async def test_capabilities_follows_smtp_config(client, email_on):
         "email": True,
         "password_reset": True,
         "register_email_code": True,
+        "local_session": False,  # server 档位无免登录（desktop 档见 test_desktop_local_session）
     }
 
 
