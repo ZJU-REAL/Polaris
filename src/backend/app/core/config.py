@@ -44,7 +44,9 @@ class Settings(BaseSettings):
 
     # ---- GitHub（用户反馈 → issue）----
     github_token: str = ""  # PAT（repo scope）；为空时禁用「建 issue」，仅出草稿
-    github_repo: str = "ZJU-REAL/Polaris"  # owner/name，issue 创建目标仓库
+    github_repo: str = "ZJU-REAL/Polaris"  # owner/name，issue 创建目标仓库。默认即本项目
+    # 真实上游仓库（同 .github/ 里的 remote，不是机构品牌文案）；自建部署想把反馈
+    # 发到别处，用 POLARIS_GITHUB_REPO 覆盖即可。
 
     # ---- Database / Cache ----
     # 默认回退 sqlite+aiosqlite，便于无 docker 的本地开发与测试；生产用 postgresql+asyncpg

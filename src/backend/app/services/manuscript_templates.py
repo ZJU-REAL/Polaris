@@ -439,15 +439,6 @@ async def delete_template(session: AsyncSession, template: ManuscriptTemplate) -
 # 每条：从 git 仓库或 zip URL 拉取 → 过滤 → 建 seeded 模板
 SEED_MANIFEST: list[dict[str, Any]] = [
     {
-        "key": "zjuthesis",
-        "name": "浙江大学学位论文",
-        "description": "浙江大学本硕博学位论文 LaTeX 模板（XeLaTeX，含中文字体需求）",
-        "git": "https://github.com/TheNetAdmin/zjuthesis.git",
-        "engine": "xelatex",
-        "sections": [],
-        "page_limit": None,
-    },
-    {
         "key": "acl-official",
         "name": "ACL Rolling Review",
         "description": "ACL 官方 acl.sty / acl_natbib.bst，附示例 acl_latex.tex",

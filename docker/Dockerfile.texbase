@@ -28,7 +28,7 @@ RUN mkdir -p /out \
          -o /tmp/tectonic.tar.gz \
          "${GITHUB_PROXY}https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40${TECTONIC_VERSION}/tectonic-${TECTONIC_VERSION}-${TECTONIC_TRIPLE}.tar.gz" \
     && tar -xzf /tmp/tectonic.tar.gz -C /out tectonic
-# 真·中文字体（FangSong/SimSun/SimHei/KaiTi + Times New Roman/Arial…），同 zjuthesis
+# 真·中文字体（FangSong/SimSun/SimHei/KaiTi + Times New Roman/Arial…），中文学位论文类模板需要
 # 官方 devcontainer 的做法（Haixing-Hu/latex-chinese-fonts）
 RUN curl -fSL --retry 8 --retry-all-errors --connect-timeout 20 \
       --speed-limit 10240 --speed-time 60 \
@@ -45,7 +45,7 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
     fi
 COPY --from=assets /out/tectonic /usr/local/bin/tectonic
 # TeX Live 分批安装：一次性解包整套峰值内存过大，会在小内存 VM 上被 OOM kill(137)；
-# 省略体积巨大且少用的 fonts-extra。覆盖常见会议模板宏包/字体 + 中文（zjuthesis 走 xelatex）。
+# 省略体积巨大且少用的 fonts-extra。覆盖常见会议模板宏包/字体 + 中文（学位论文类模板走 xelatex）。
 RUN apt-get update && apt-get install -y --no-install-recommends \
       latexmk biber texlive-latex-base texlive-latex-recommended \
     && apt-get clean && rm -rf /var/lib/apt/lists/*

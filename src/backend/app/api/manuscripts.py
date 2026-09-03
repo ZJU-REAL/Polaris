@@ -224,7 +224,7 @@ async def seed_templates(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_admin),
 ) -> list[TemplateSeedResult]:
-    """拉取并入库官方模板（zjuthesis/ACL/ICLR/NeurIPS/ICML），幂等。仅管理员。"""
+    """拉取并入库官方模板（ACL/ICLR/NeurIPS/ICML），幂等。仅管理员。"""
     results: list[TemplateSeedResult] = []
     for entry in templates_service.SEED_MANIFEST:
         try:

@@ -1,6 +1,8 @@
-appId: org.zju.polaris
+# appId 原先带机构域名，改为中性 id：bundle id 不该带机构痕迹。已装用户升级后
+# macOS 会视作新应用（权限/钥匙串重新授权一次），属一次性成本。
+appId: com.polaris.desktop
 productName: Polaris
-copyright: ZJU-REAL
+copyright: Polaris contributors
 
 directories:
   output: release

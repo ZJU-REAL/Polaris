@@ -6,7 +6,7 @@
 枚举接口。
 
 SMTP 连接方式由 POLARIS_SMTP_SECURITY 决定：
-  ssl       建连即 TLS（465 / 浙大 994）
+  ssl       建连即 TLS（465，个别邮箱服务商用 994）
   starttls  明文建连后 STARTTLS 升级（587 / 25）
   none      不加密，仅限内网调试
 """

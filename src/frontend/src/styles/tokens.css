@@ -1,6 +1,6 @@
 /* ============================================================
    Polaris — Design Tokens
-   浙大蓝（求是蓝）主题 · 冷灰蓝中性色 · 舒适留白
+   深蓝主题 · 冷灰蓝中性色 · 舒适留白
    All colors live here; components never hard-code colors.
    ============================================================ */
 
@@ -26,7 +26,7 @@
   --text-3: #8a94a8;
   --text-4: #adb6c6;
 
-  /* — Accent: 浙大求是蓝 ZJU Qiushi Blue — */
+  /* — Accent: 品牌深蓝 Deep Accent Blue — */
   --accent:        #003f88;
   --accent-hover:  #00306b;
   --accent-press:  #002554;
