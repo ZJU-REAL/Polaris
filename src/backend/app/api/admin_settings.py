@@ -19,8 +19,6 @@ from app.schemas.admin_settings import (
     EmbeddingSpaceItem,
     EmbeddingSpaceStatus,
     ExperimentEnvSettings,
-    LabLeaderboardSettingRead,
-    LabLeaderboardSettingUpdate,
     LiteratureProviderCredentialCreate,
     LiteratureProviderCredentialTestRequest,
     LiteratureProviderCredentialUpdate,
@@ -37,7 +35,6 @@ from app.services import daily_feed as daily_service
 from app.services import document_processing_settings as document_processing_settings_service
 from app.services import embedding as embedding_service
 from app.services import experiment_settings as experiment_settings_service
-from app.services import lab as lab_service
 from app.services import literature_settings as literature_settings_service
 from app.services import managed_command_watchdog as watchdog_service
 from app.services import tts as tts_service
@@ -131,24 +128,6 @@ async def adopt_embedding_space(
         },
     )
     return EmbeddingSpaceAdoptResult(active=EmbeddingSpaceItem(**current), previous=previous)
-
-
-@router.get("/lab-leaderboard", response_model=LabLeaderboardSettingRead)
-async def get_lab_leaderboard(
-    session: AsyncSession = Depends(get_session),
-) -> LabLeaderboardSettingRead:
-    """实验室概况页的用量排行榜是否对普通成员可见（默认开）。"""
-    return LabLeaderboardSettingRead(enabled=await lab_service.get_leaderboard_enabled(session))
-
-
-@router.put("/lab-leaderboard", response_model=LabLeaderboardSettingRead)
-async def set_lab_leaderboard(
-    payload: LabLeaderboardSettingUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> LabLeaderboardSettingRead:
-    return LabLeaderboardSettingRead(
-        enabled=await lab_service.set_leaderboard_enabled(session, payload.enabled)
-    )
 
 
 @router.get("/experiment-env", response_model=ExperimentEnvSettings)

@@ -10,18 +10,15 @@
 """
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embedding_space import active_space
-from app.models.base import utcnow
 from app.models.library_direction import DirectionLibrary, LibraryPaper
-from app.models.llm_config import LLMUsage
 from app.models.paper import Concept, Paper, PaperChunk
-from app.models.system_setting import SystemSetting
 from app.models.user import User
 from app.models.vectors import PaperChunkVector, PaperVector
 from app.models.voyage import VoyageRun, VoyageStep
@@ -32,8 +29,6 @@ from app.services.libraries import library_visible_to
 from app.services.papers import PAPER_STATUS_GROUPS
 
 # 排行榜是否对普通用户可见（管理员开关，默认开；管理员任何时候都能看）
-LEADERBOARD_SETTING_KEY = "lab_leaderboard_enabled"
-DEFAULT_LEADERBOARD_ENABLED = True
 
 
 class LibraryNotVisibleError(Exception):
@@ -266,63 +261,10 @@ async def lab_stats(session: AsyncSession, user: User) -> dict[str, Any]:
             "vector_search_supported": chunk_vector_search_supported(session),
         },
         "vectors": {"papers_with_embedding": papers_with_embedding, "papers_total": members},
-        "leaderboard_enabled": await get_leaderboard_enabled(session),
     }
 
 
 # ---- 用量排行榜 ----
-
-
-async def get_leaderboard_enabled(session: AsyncSession) -> bool:
-    row = await session.get(SystemSetting, LEADERBOARD_SETTING_KEY)
-    return bool(row.value) if row is not None else DEFAULT_LEADERBOARD_ENABLED
-
-
-async def set_leaderboard_enabled(session: AsyncSession, enabled: bool) -> bool:
-    row = await session.get(SystemSetting, LEADERBOARD_SETTING_KEY)
-    if row is None:
-        session.add(SystemSetting(key=LEADERBOARD_SETTING_KEY, value=enabled))
-    else:
-        row.value = enabled
-    await session.commit()
-    return enabled
-
-
-async def usage_leaderboard(
-    session: AsyncSession, *, days: int = 30, limit: int = 10
-) -> list[dict[str, Any]]:
-    """最近 N 天 token 消耗最多的前 limit 位成员（无记账记录的用户不出现）。"""
-    since = utcnow() - timedelta(days=days)
-    usage_sq = (
-        select(
-            LLMUsage.user_id.label("uid"),
-            func.sum(LLMUsage.prompt_tokens + LLMUsage.completion_tokens).label("tokens"),
-        )
-        .where(LLMUsage.created_at >= since, LLMUsage.user_id.is_not(None))
-        .group_by(LLMUsage.user_id)
-        .subquery()
-    )
-    stmt = (
-        select(User, usage_sq.c.tokens)
-        .join(usage_sq, usage_sq.c.uid == User.id)
-        .order_by(usage_sq.c.tokens.desc(), User.created_at)
-        .limit(limit)
-    )
-    rows = (await session.execute(stmt)).all()
-    return [
-        {
-            "user_id": u.id,
-            "display_name": u.display_name,
-            "username": u.username,
-            "has_avatar": u.has_avatar,
-            "role": u.role,
-            "tokens_used": int(tokens or 0),
-        }
-        for u, tokens in rows
-    ]
-
-
-# ---- 跨库图谱 ----
 
 
 async def lab_graph(

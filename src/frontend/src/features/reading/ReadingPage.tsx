@@ -23,7 +23,6 @@ import { PdfReader, type JumpTarget } from './PdfReader';
 import { ChatPanel } from './ChatPanel';
 import { InfoPanel } from './InfoPanel';
 import { READING_STATUS, readerBackLabel, type ReaderFrom } from './shared';
-import { trackView } from '../../lib/viewTracking';
 
 /* ============================================================
    /papers/:id/read — 论文阅读工作台：
@@ -44,11 +43,6 @@ const LS_COLLAPSED = 'polaris.reading.rightCollapsed';
 
 export function ReadingPage() {
   const { id = '' } = useParams<{ id: string }>();
-
-  // 浏览打点：尽力而为，失败咽掉（去重在后端，同一个人一小时内只算一次）
-  useEffect(() => {
-    trackView('paper', id);
-  }, [id]);
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();

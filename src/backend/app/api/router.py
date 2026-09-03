@@ -43,7 +43,6 @@ from app.api import (
     structured_content,
     tts,
     users_profile,
-    views,
     voyages,
     wiki,
 )
@@ -51,7 +50,6 @@ from app.integrations.deepseek_harness.api import router as deepseek_harness_rou
 
 api_router = APIRouter()
 api_router.include_router(health.router)
-api_router.include_router(views.router)
 api_router.include_router(chat_agent.router)
 api_router.include_router(auth.router)
 api_router.include_router(chat_bots.router)

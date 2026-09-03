@@ -1,7 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Avatar } from '../../components/ui/Avatar';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
@@ -9,7 +8,6 @@ import { StatCard } from '../../components/ui/StatCard';
 import { EmptyState } from '../../components/ui/EmptyState';
 import {
   api,
-  isAdmin,
   isLabScopedTask,
   type DailyIngestStatus,
   type DirectionLibrarySummary,
@@ -33,13 +31,12 @@ import {
   matchFilter,
   type Filter,
 } from '../voyages/VoyagesPage';
-import { HotLists } from './HotLists';
 
 /* ============================================================
    /lab — 实验室工作台
    两个标签：
    - 概况：实验室级数据面板 —— 索引与内容统计（/lab/stats，后端聚合、跨库去重、
-     按可见库收敛）、AI 用量与排行榜（/lab/usage 系列）、跨库概念图谱
+     按可见库收敛）、AI 用量（/lab/usage）、跨库概念图谱
      （/lab/graph）、文献库与每日新论文汇总
    - 任务：只有实验室自己的任务 —— 文献库任务（建库 / 增量更新）与每日新论文，
      按归属分组。课题任务归课题工作台的「任务」标签，这里不重复列
@@ -727,107 +724,6 @@ function UsageCard({ days, onDays }: { days: UsageWindow; onDays: (v: UsageWindo
   );
 }
 
-/** 成员用量排行榜：名次 + 头像 + 名称 + 用量条 + 数值。 */
-function LeaderboardCard({ days, adminView }: { days: UsageWindow; adminView: boolean }) {
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['lab-leaderboard', days],
-    queryFn: () => api.getLabLeaderboard({ days: Number(days), limit: 10 }),
-    retry: false,
-    staleTime: 60_000,
-  });
-  const items = data?.items ?? [];
-  const max = Math.max(1, ...items.map((x) => x.tokens_used));
-
-  return (
-    <PanelCard
-      icon="users"
-      title={tr('用量排行榜', 'Usage leaderboard')}
-      hint={tr(`最近 ${days} 天消耗最多的成员`, `Top consumers in the last ${days} days`)}
-      action={
-        adminView && data && !data.enabled ? (
-          <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)', flexShrink: 0 }}>
-            {tr('仅管理员可见', 'Admins only')}
-          </span>
-        ) : undefined
-      }
-      style={{ marginBottom: 0, flex: '1 1 340px', minWidth: 0 }}
-    >
-      {isLoading ? (
-        <div className="col gap10" style={{ padding: '16px 18px' }}>
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="skel" style={{ height: 26, width: `${95 - i * 8}%` }} />
-          ))}
-        </div>
-      ) : isError ? (
-        <EmptyState
-          icon="x"
-          title={tr('无法加载排行榜', 'Failed to load leaderboard')}
-          desc={tr('后端不可用，稍后重试。', 'Backend unavailable — try again later.')}
-          compact
-        />
-      ) : items.length === 0 ? (
-        <EmptyState
-          icon="users"
-          title={tr('这段时间还没有人用过 AI', 'Nobody used AI in this window')}
-          desc={tr('有人跑过任务之后，排名会出现在这里。', 'Rankings show up once someone runs a task.')}
-          compact
-        />
-      ) : (
-        <div className="col gap10" style={{ padding: '14px 18px' }}>
-          {items.map((u, i) => {
-            const name = u.display_name || u.username || tr('未命名', 'Unnamed');
-            const top = i === 0;
-            return (
-              <div key={u.user_id} className="row gap10">
-                <span
-                  className="mono"
-                  style={{
-                    width: 22,
-                    height: 22,
-                    flexShrink: 0,
-                    borderRadius: 6,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: top ? 'var(--accent-soft)' : 'var(--surface-3)',
-                    color: top ? 'var(--accent-text)' : 'var(--text-3)',
-                  }}
-                >
-                  {i + 1}
-                </span>
-                <Avatar userId={u.user_id} hasAvatar={u.has_avatar} name={name} size={24} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    title={name}
-                    style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                  >
-                    {name}
-                  </div>
-                  <div style={{ height: 5, borderRadius: 999, background: 'var(--surface-3)', overflow: 'hidden', marginTop: 5 }}>
-                    <div
-                      style={{
-                        width: `${Math.max(2, Math.round((u.tokens_used / max) * 100))}%`,
-                        height: '100%',
-                        borderRadius: 999,
-                        background: top ? 'var(--accent)' : 'var(--accent-soft)',
-                      }}
-                    />
-                  </div>
-                </div>
-                <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-2)', width: 78, textAlign: 'right', flexShrink: 0 }}>
-                  {u.tokens_used.toLocaleString()}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </PanelCard>
-  );
-}
-
 /* ---------- 跨库概念图谱 ---------- */
 
 /** 跨库图谱：默认「趋势」视图＝概念随时间的演化；可切到单个文献库。 */
@@ -882,7 +778,6 @@ function GraphCard({ libs }: { libs: DirectionLibrarySummary[] }) {
 
 function OverviewTab() {
   const { data: libs } = useLibraries();
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
   // 库/论文/概念的数字一律走后端聚合：前端把各库 paper_count 相加会把
   // 跨库的同一篇论文重复计数，也拿不到分段与向量口径
   const statsQuery = useQuery({
@@ -907,13 +802,9 @@ function OverviewTab() {
   const activeVoyages = (voyages ?? []).filter(
     (v) => isLabScopedTask(v) && (matchFilter(v, 'active') || matchFilter(v, 'paused')),
   ).length;
-  const admin = isAdmin(me);
-  // 开关关掉时排行榜只对管理员显示；加载中先不显示，免得闪一下又消失
-  const showLeaderboard = !!stats && (stats.leaderboard_enabled || admin);
 
   return (
     <>
-      <HotLists />
       <div className="row gap16 dash-stats" style={{ marginBottom: 20 }}>
         <StatCard
           icon="book"
@@ -950,7 +841,6 @@ function OverviewTab() {
 
       <div className="row gap16" style={{ marginBottom: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <UsageCard days={usageDays} onDays={setUsageDays} />
-        {showLeaderboard && <LeaderboardCard days={usageDays} adminView={admin} />}
       </div>
 
       <GraphCard libs={libList} />
