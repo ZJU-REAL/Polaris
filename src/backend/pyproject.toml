@@ -30,6 +30,9 @@ dependencies = [
     "pycrdt-websocket>=0.15",
     "python-pptx>=1.0",
     "tzdata>=2025.2",
+    # desktop 档位运行时依赖（POLARIS_PROFILE=desktop：SQLite + 进程内 redis 替身）
+    "aiosqlite>=0.20",
+    "fakeredis>=2.26",
 ]
 
 [project.optional-dependencies]
