@@ -10,23 +10,20 @@ import { DocumentProcessingSettingsPanel } from './DocumentProcessingSettings';
 import { FeedbackTab } from '../feedback/FeedbackTab';
 import { tr } from '../../lib/i18n';
 import { api, isAdmin } from '../../lib/api';
-import { DailyCategoriesTab, LlmTab, UsageTab, UsersTab } from './SettingsPage';
+import { DailyCategoriesTab, LlmTab, UsageTab } from './SettingsPage';
 
 /* ============================================================
-   /admin — 管理员设置：LLM 管理 / 每日论文 / 用户管理 / 反馈 / 用量总览
+   /admin — 管理员设置：LLM 管理 / 每日论文 / 反馈 / 用量总览
    各标签页组件仍住在 SettingsPage.tsx（与个人设置共用一批内部小组件），这里只负责壳层。
    ============================================================ */
 
-type AdminTab = 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | 'users' | 'feedback' | 'usage';
+type AdminTab = 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | 'feedback' | 'usage';
 
-const ADMIN_TABS: AdminTab[] = ['llm', 'literature', 'processing', 'experiment', 'daily', 'users', 'feedback', 'usage'];
+const ADMIN_TABS: AdminTab[] = ['llm', 'literature', 'processing', 'experiment', 'daily', 'feedback', 'usage'];
 
 export function AdminSettingsPage() {
   const { data: me, isLoading } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
   const admin = isAdmin(me);
-  // 只读账号（游客）看不到名册——那一屏是真实的人的邮箱、用户名和用量
-  // （READ_ONLY_NO_PERSONAL_DATA）。后端有守卫，这里只是别让入口摆在那里点了报错。
-  const guest = !!me?.read_only;
   // 支持 /admin?tab=llm 深链
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<AdminTab>(() => {
@@ -34,18 +31,12 @@ export function AdminSettingsPage() {
     return t !== null && ADMIN_TABS.includes(t as AdminTab) ? (t as AdminTab) : 'llm';
   });
 
-  // 深链 /admin?tab=users 进来的游客回落到第一个标签，而不是停在一片空白上
-  // （me 还没回来时初值已经定下了，所以这里按渲染时的实际权限再判一次）
-  const hiddenForGuest: AdminTab[] = ['users'];
-  const shownTab: AdminTab = guest && hiddenForGuest.includes(tab) ? 'llm' : tab;
-
   const items: { v: AdminTab; label: string }[] = [
     { v: 'llm', label: tr('LLM 管理', 'LLM admin') },
     { v: 'literature', label: tr('文献检索', 'Literature search') },
     { v: 'processing', label: tr('文档处理', 'Document processing') },
     { v: 'experiment', label: tr('实验设置', 'Experiments') },
     { v: 'daily', label: tr('每日论文', 'Daily papers') },
-    ...(guest ? [] : [{ v: 'users' as const, label: tr('用户管理', 'Users') }]),
     { v: 'feedback', label: tr('反馈', 'Feedback') },
     { v: 'usage', label: tr('用量总览', 'Usage overview') },
   ];
@@ -65,16 +56,15 @@ export function AdminSettingsPage() {
       ) : (
         <>
           <div className="row" style={{ gap: 12, marginBottom: 22, flexWrap: 'wrap', alignItems: 'center' }}>
-            <Segmented options={items} value={shownTab} onChange={setTab} />
+            <Segmented options={items} value={tab} onChange={setTab} />
           </div>
-          {shownTab === 'llm' && <LlmTab />}
-          {shownTab === 'literature' && <LiteratureSearchSettingsPanel />}
-          {shownTab === 'processing' && <DocumentProcessingSettingsPanel />}
-          {shownTab === 'experiment' && <ExperimentSettings />}
-          {shownTab === 'daily' && <DailyCategoriesTab />}
-          {shownTab === 'users' && !guest && <UsersTab />}
-          {shownTab === 'feedback' && <FeedbackTab />}
-          {shownTab === 'usage' && <UsageTab />}
+          {tab === 'llm' && <LlmTab />}
+          {tab === 'literature' && <LiteratureSearchSettingsPanel />}
+          {tab === 'processing' && <DocumentProcessingSettingsPanel />}
+          {tab === 'experiment' && <ExperimentSettings />}
+          {tab === 'daily' && <DailyCategoriesTab />}
+          {tab === 'feedback' && <FeedbackTab />}
+          {tab === 'usage' && <UsageTab />}
         </>
       )}
     </div>
