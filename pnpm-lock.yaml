@@ -61,6 +61,10 @@ importers:
         version: 3.2.7(@types/debug@4.1.13)(@types/node@22.20.1)
 
   src/desktop:
+    dependencies:
+      '@polaris/kernel':
+        specifier: workspace:*
+        version: link:../kernel
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

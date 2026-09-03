@@ -7,8 +7,9 @@
    单通道让 preload 写完就不再改——加方法只动本文件与 main 侧实现。
 
    方法命名：<域>.<对象>.<动词>。
-   host.*  = 外壳能力，桌面端恒可用。
-   local.* = 本地计算能力（第二期），届时只往 Methods 里加条目。
+   host.*   = 外壳能力，桌面端恒可用。
+   local.*  = 本地计算能力（第二期），届时只往 Methods 里加条目。
+   kernel.* = 内核（@polaris/kernel）状态，桌面端恒可用。
    ============================================================ */
 
 /** preload 同步注入到 window.__POLARIS__ 的静态事实（见 preload/index.ts 的说明）。 */
@@ -76,6 +77,16 @@ export interface UpdateInfo {
   installerUrl?: string;
 }
 
+/**
+ * 内核运行状态。plugins = cordis registry 里已注册的插件 runtime 数量
+ * （ctx.registry.size，公开口径）；一期只有探针插件，恒 ≥ 1 即为健康。
+ */
+export interface KernelStatus {
+  started: boolean;
+  name: string;
+  plugins: number;
+}
+
 /** 服务器连通性探测结果（打 GET {url}/api/health）。 */
 export type ServerProbe =
   | { ok: true; version: string }
@@ -98,6 +109,9 @@ export interface Methods {
   'host.update.check': { params: void; result: UpdateInfo };
   /** 下载并应用上一次检查到的更新；进度走 job.* 事件。 */
   'host.update.apply': { params: void; result: JobHandle };
+
+  /** 内核状态探针。前端不依赖它做分支，只用于诊断页与冒烟。 */
+  'kernel.status': { params: void; result: KernelStatus };
 
   /* ---- local.*：第二期的本地计算能力 ----
      现在全部声明但不实现（一律抛 ERR_CAPABILITY_UNAVAILABLE），目的是把

@@ -91,6 +91,12 @@ jobs:
         shell: bash
         run: pnpm install --frozen-lockfile
 
+      # See desktop-build.yml: the shell's typecheck/build needs the vendored
+      # runtime's declaration output, not its raw TypeScript sources.
+      - name: Build vendored type declarations
+        shell: bash
+        run: pnpm run vendor:types
+
       - name: Build renderer
         shell: bash
         run: pnpm --dir src/frontend run build

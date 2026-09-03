@@ -20,6 +20,9 @@
     "dist:win": "pnpm run build && electron-builder --win",
     "dist:linux": "pnpm run build && electron-builder --linux"
   },
+  "dependencies": {
+    "@polaris/kernel": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "electron": "^33.0.0",
