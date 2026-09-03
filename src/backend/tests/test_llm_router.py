@@ -121,7 +121,7 @@ def test_stage_catalog():
     assert "interview" not in STAGES
     assert "extract" in STAGES
     assert "librarian" in STAGES
-    assert "feedback_issue" in STAGES
+    assert "feedback_issue" not in STAGES  # 反馈改为直开 GitHub issue（#617），起草环节退役
     assert "forge_generate" in STAGES
     assert len(set(STAGES)) == len(STAGES)  # 无重复
 

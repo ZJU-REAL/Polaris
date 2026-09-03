@@ -27,7 +27,6 @@ export const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   experiment: { zh: '实验', en: 'Experiments' },
   writing: { zh: '论文撰写', en: 'Paper writing' },
   review: { zh: '论文评审', en: 'Paper review' },
-  feedback_issue: { zh: '反馈整理', en: 'Feedback triage' },
 };
 
 /** 取环节的显示名；未知 stage（如历史用量里的旧标识符）回退为标识符本身。 */

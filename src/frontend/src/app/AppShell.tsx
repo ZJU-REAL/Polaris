@@ -15,14 +15,13 @@ import { alreadyNudgedToday, markNudged } from '../features/assistant/nudge';
 import { PAPER_DND_MIME } from '../features/assistant/paperDrag';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
-import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
 import { api, getToken, isLabScopedTask, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
 import { tr, useLang } from '../lib/i18n';
 import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
 import { useIsMobile } from '../lib/useBreakpoint';
 import { notifyDesktop } from '../lib/desktop-notify';
-import { setBadgeCount } from '../lib/host';
+import { hasHost, hostAppVersion, openExternal, setBadgeCount } from '../lib/host';
 
 interface NavEntry {
   /** 非课题作用域页面的绝对路径（与 sub 二选一）。 */
@@ -377,6 +376,69 @@ function NavItem({ n }: { n: NavEntry }) {
       </span>
       <span className="nav-label" style={{ flex: 1 }}>{tr(n.zh, n.en)}</span>
     </NavLink>
+  );
+}
+
+/* ============================================================
+   反馈入口 —— 直接打开 GitHub new-issue 页（#617）。
+   应用内反馈管线（落库/截图上传/管理端 triage/LLM 起草）已退役：
+   反馈直接进 issue 列表，截图由用户在 GitHub 编辑框里粘贴。
+   仓库地址与 desktop/src/main/menu.ts 的同名常量保持一致——前端同样
+   写死，不为一个链接引入后端配置依赖。
+   ============================================================ */
+const REPO_URL = 'https://github.com/ZJU-REAL/Polaris';
+
+function FeedbackLink() {
+  const location = useLocation();
+  // 版本号取 /api/health（旧反馈组件的同款来源）；预取并缓存，点击时同步取用，
+  // 不在点击回调里 await——经过 await 再 window.open 会被浏览器当弹窗拦截。
+  const { data: health } = useQuery({
+    queryKey: ['health'],
+    queryFn: () => api.health(),
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  const openIssuePage = () => {
+    const desktop = hasHost();
+    const platform = desktop
+      ? `desktop ${hostAppVersion() ?? '?'} / ${navigator.userAgent}`
+      : `browser / ${navigator.userAgent}`;
+    const body = [
+      tr('## 问题描述', '## What happened'),
+      '',
+      tr(
+        '（描述问题或建议；截图可以直接粘贴到这里）',
+        '(Describe the problem or suggestion; screenshots can be pasted right here.)'
+      ),
+      '',
+      tr('## 复现步骤', '## Steps to reproduce'),
+      '',
+      '1. ',
+      '',
+      tr('## 期望结果', '## Expected behavior'),
+      '',
+      '',
+      '---',
+      `${tr('版本', 'Version')}: ${health?.version ?? 'unknown'}`,
+      `${tr('平台', 'Platform')}: ${platform}`,
+      `${tr('页面', 'Route')}: ${location.pathname}`,
+    ].join('\n');
+    const url = `${REPO_URL}/issues/new?body=${encodeURIComponent(body)}`;
+    // 桌面端交给系统浏览器（GitHub 登录态在那边）；web 端新标签页打开
+    if (desktop) void openExternal(url);
+    else window.open(url, '_blank', 'noopener');
+  };
+
+  return (
+    <button
+      className="icon-btn"
+      onClick={openIssuePage}
+      title={tr('反馈', 'Feedback')}
+      aria-label={tr('反馈', 'Feedback')}
+    >
+      <Icon name="chat" size={16} />
+    </button>
   );
 }
 
@@ -859,7 +921,7 @@ export function AppShell() {
                 <Icon name="settings" size={16} />
               </button>
               <LangToggle />
-              <FeedbackWidget />
+              <FeedbackLink />
               <UpdateBadge />
               <button className="icon-btn" onClick={() => openGates(null)} title={tr('审批中心', 'Approvals')}>
                 <Icon name="bell" size={16} />
@@ -909,7 +971,7 @@ export function AppShell() {
                     </button>
                     <div className="row gap6" style={{ padding: '2px 4px' }}>
                       <LangToggle />
-                      <FeedbackWidget />
+                      <FeedbackLink />
                       <UpdateBadge />
                     </div>
                   </div>

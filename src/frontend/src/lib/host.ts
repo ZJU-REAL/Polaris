@@ -52,6 +52,12 @@ export function hostPlatform(): 'darwin' | 'win32' | 'linux' | null {
   return info?.platform ?? null;
 }
 
+/** 桌面客户端版本号；web 端返回 null。 */
+export function hostAppVersion(): string | null {
+  const info = typeof window === 'undefined' ? undefined : window.__POLARIS__;
+  return info?.appVersion ?? null;
+}
+
 /** 是否有可用的桌面宿主桥（比 endpoint.isDesktop() 更严格：桥必须真的注入成功）。 */
 export function hasHost(): boolean {
   return bridge() != null;

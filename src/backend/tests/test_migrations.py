@@ -10,7 +10,8 @@ from alembic import command
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 HEAD_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
-HEAD_REVISION = "4f8d2c9b7a61"  # Drop user governance columns (P1 de-lab)
+HEAD_REVISION = "9b2e5d81c7a3"  # Drop in-app feedback tables (#617)
+GOVERNANCE_DROP_REVISION = "4f8d2c9b7a61"  # Drop user governance columns (P1 de-lab)
 CURATORS_DROP_REVISION = "e6c31f84a2d5"  # Drop library curators (P1 de-lab)
 SKILL_RATINGS_DROP_REVISION = "d4b8e26f1a93"  # Drop skill ratings (P1 de-lab)
 RANKINGS_DROP_REVISION = "c8f2a61d9e37"  # Drop view events (P1 de-lab)
@@ -101,7 +102,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "llm_providers",
                     "llm_call_logs",
                     "system_settings",
-                    "feedback",
+                    "feedback",  # head 已删（#617）；仅 downgrade 断言用
                     "feedback_images",
                     "user_library_entries",
                     "concepts",
@@ -334,17 +335,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "voyage_id",
     } <= columns["llm_call_logs"]
     assert {"key", "value"} <= columns["system_settings"]
-    # 本分支新增：反馈表
-    assert {"feedback", "feedback_images"} <= columns["_tables"]
-    assert {
-        "type",
-        "severity",
-        "status",
-        "module",
-        "issue_draft",
-        "github_issue_number",
-    } <= columns["feedback"]
-    assert {"feedback_id", "path", "seq"} <= columns["feedback_images"]
+    # 反馈改为直开 GitHub issue（#617）：两张反馈表在 head 已删
+    assert not {"feedback", "feedback_images"} & columns["_tables"]
     # 个人文献库表（上一版）
     assert "user_library_entries" in columns["_tables"]
     # 作者身份绑定 + 发表记录表 + paper_id 软链列 + per-user LLM 列（上一版）
@@ -518,7 +510,22 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "evidence_balance",
     } <= columns["interdisciplinary_research_profile_versions"]
 
-    # First undo the governance-columns drop: all five columns come back.
+    # First undo the feedback-tables drop: both tables come back.
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == GOVERNANCE_DROP_REVISION
+    assert {"feedback", "feedback_images"} <= columns["_tables"]
+    assert {
+        "type",
+        "severity",
+        "status",
+        "module",
+        "issue_draft",
+        "github_issue_number",
+    } <= columns["feedback"]
+    assert {"feedback_id", "path", "seq"} <= columns["feedback_images"]
+
+    # Then undo the governance-columns drop: all five columns come back.
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == CURATORS_DROP_REVISION
@@ -850,7 +857,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "models" in columns["llm_providers"]
     assert "owner_id" in columns["llm_providers"]
     assert "llm_self_managed" in columns["users"]
-    assert {"feedback", "feedback_images"} <= columns["_tables"]
+    assert not {"feedback", "feedback_images"} & columns["_tables"]  # head 已删（#617）
     # P9a 列在重新 upgrade 后回归
     assert "library_id" in columns["voyage_runs"]
     assert "library_id" in columns["activities"]

@@ -6,19 +6,18 @@ import { Segmented } from '../../components/ui/Segmented';
 import { ExperimentSettings } from './ExperimentSettings';
 import { LiteratureSearchSettingsPanel } from './LiteratureSearchSettings';
 import { DocumentProcessingSettingsPanel } from './DocumentProcessingSettings';
-import { FeedbackTab } from '../feedback/FeedbackTab';
 import { tr } from '../../lib/i18n';
 import { api } from '../../lib/api';
 import { DailyCategoriesTab, LlmTab, UsageTab } from './SettingsPage';
 
 /* ============================================================
-   /admin — 管理员设置：LLM 管理 / 每日论文 / 反馈 / 用量总览
+   /admin — 管理员设置：LLM 管理 / 每日论文 / 用量总览
    各标签页组件仍住在 SettingsPage.tsx（与个人设置共用一批内部小组件），这里只负责壳层。
    ============================================================ */
 
-type AdminTab = 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | 'feedback' | 'usage';
+type AdminTab = 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | 'usage';
 
-const ADMIN_TABS: AdminTab[] = ['llm', 'literature', 'processing', 'experiment', 'daily', 'feedback', 'usage'];
+const ADMIN_TABS: AdminTab[] = ['llm', 'literature', 'processing', 'experiment', 'daily', 'usage'];
 
 export function AdminSettingsPage() {
   // 管理页对所有登录用户开放（role 治理已随 #614 移除）；me 仅用于确认已登录
@@ -36,7 +35,6 @@ export function AdminSettingsPage() {
     { v: 'processing', label: tr('文档处理', 'Document processing') },
     { v: 'experiment', label: tr('实验设置', 'Experiments') },
     { v: 'daily', label: tr('每日论文', 'Daily papers') },
-    { v: 'feedback', label: tr('反馈', 'Feedback') },
     { v: 'usage', label: tr('用量总览', 'Usage overview') },
   ];
 
@@ -55,7 +53,6 @@ export function AdminSettingsPage() {
           {tab === 'processing' && <DocumentProcessingSettingsPanel />}
           {tab === 'experiment' && <ExperimentSettings />}
           {tab === 'daily' && <DailyCategoriesTab />}
-          {tab === 'feedback' && <FeedbackTab />}
           {tab === 'usage' && <UsageTab />}
         </>
       )}
