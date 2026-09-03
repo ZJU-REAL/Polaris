@@ -16,7 +16,7 @@ import { PAPER_DND_MIME } from '../features/assistant/paperDrag';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
 import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
-import { api, getToken, isAdmin, isLabScopedTask, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
+import { api, getToken, isLabScopedTask, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
 import { tr, useLang } from '../lib/i18n';
 import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
@@ -69,15 +69,6 @@ const NAV_PIPE: NavEntry[] = [
   { sub: 'writer', no: '04', icon: 'pen', zh: '论文撰写', en: 'Paper Writer' },
   { sub: 'paper-review', no: '05', icon: 'shield', zh: '论文评审', en: 'Paper Review' },
 ];
-
-// 阶段子路径 → 功能权限键（管理员在设置里可禁用；被禁用的阶段从导航隐藏）
-const FEATURE_BY_SUB: Record<string, string> = {
-  forge: 'forge',
-  review: 'review',
-  experiment: 'experiment',
-  writer: 'writer',
-  'paper-review': 'paper_review',
-};
 
 /** 面包屑一段；没有 to = 当前页（最后一段），不可点。 */
 interface Crumb {
@@ -706,10 +697,7 @@ export function AppShell() {
           {NAV_MAIN.map((n) => (
             <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
           ))}
-          {NAV_PIPE.filter((n) => {
-            const key = n.sub != null ? FEATURE_BY_SUB[n.sub] : undefined;
-            return key == null || me?.features?.[key] !== false;
-          }).map((n) => (
+          {NAV_PIPE.map((n) => (
             <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
           ))}
           {/* 任务 / 课题设置已并入「工作台」的标签页（概况/设置/任务），侧栏不再单列 */}
@@ -861,17 +849,15 @@ export function AppShell() {
               Buddy 拉开之后视口没变，变窄的是主区，按视口判会一直以为还很宽。 */}
           {topbarRoomy ? (
             <>
-              {isAdmin(me) && (
-                <button
-                  className="icon-btn"
-                  onClick={() => navigate('/admin')}
-                  title={tr('管理', 'Manage')}
-                  aria-label={tr('管理', 'Manage')}
-                  style={location.pathname === '/admin' ? { color: 'var(--accent)', background: 'var(--surface-2)' } : undefined}
-                >
-                  <Icon name="settings" size={16} />
-                </button>
-              )}
+              <button
+                className="icon-btn"
+                onClick={() => navigate('/admin')}
+                title={tr('管理', 'Manage')}
+                aria-label={tr('管理', 'Manage')}
+                style={location.pathname === '/admin' ? { color: 'var(--accent)', background: 'var(--surface-2)' } : undefined}
+              >
+                <Icon name="settings" size={16} />
+              </button>
               <LangToggle />
               <FeedbackWidget />
               <UpdateBadge />
@@ -914,11 +900,9 @@ export function AppShell() {
                     }}
                     onClick={() => setTopbarMoreOpen(false)}
                   >
-                    {isAdmin(me) && (
-                      <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => navigate('/admin')}>
-                        <Icon name="settings" size={14} /> {tr('管理', 'Manage')}
-                      </button>
-                    )}
+                    <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => navigate('/admin')}>
+                      <Icon name="settings" size={14} /> {tr('管理', 'Manage')}
+                    </button>
                     <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => openGates(null)}>
                       <Icon name="bell" size={14} /> {tr('审批中心', 'Approvals')}
                       {pending.length > 0 && <span className="badge" style={{ position: 'static', marginLeft: 'auto' }}>{pending.length}</span>}
@@ -934,19 +918,6 @@ export function AppShell() {
             </div>
           )}
         </div>
-        {/* 只读账号：说在前面，别让人填完一整张表才被拒。常驻不可关——它不是通知，
-            是这个会话的事实。 */}
-        {me?.read_only && (
-          <div className="readonly-strip" role="status">
-            <Icon name="shield" size={13} />
-            <span>
-              {tr(
-                '只读账号：可以查看全部内容，但不能修改任何东西，也不会调用大模型。',
-                'Read-only account: you can view everything, but nothing can be changed and no model is called.',
-              )}
-            </span>
-          </div>
-        )}
         <div className="content scroll">
           {/* 业务页按语言重挂载：这些页面的文案埋在深层子树里，而路由表给出的元素是稳定
               引用，父组件重渲染带不动它们——换 key 是这里唯一可靠的重新求值方式。

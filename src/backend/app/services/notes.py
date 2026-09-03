@@ -50,14 +50,12 @@ async def list_paper_notes(
 async def get_own_note(
     session: AsyncSession, *, note_id: uuid.UUID, user: User
 ) -> tuple[PaperNote, str] | None:
-    """取笔记（附作者展示名）；非作者（且非平台 admin）视为不存在。"""
+    """取笔记（附作者展示名）；非作者视为不存在（admin 旁路已随 role 移除，#614）。"""
     stmt = (
         select(PaperNote, User.display_name, User.email)
         .join(User, User.id == PaperNote.author_id)
-        .where(PaperNote.id == note_id)
+        .where(PaperNote.id == note_id, PaperNote.author_id == user.id)
     )
-    if user.role != "admin":
-        stmt = stmt.where(PaperNote.author_id == user.id)
     row = (await session.execute(stmt)).first()
     if row is None:
         return None

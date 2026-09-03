@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user, require_llm_task
+from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.paper import Paper
@@ -42,7 +42,7 @@ async def create_presentation(
     project_id: uuid.UUID,
     data: PresentationCreate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_task),
+    user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     if not await gates_service.can_access_project(session, project_id, user.id):

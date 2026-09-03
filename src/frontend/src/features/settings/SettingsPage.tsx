@@ -116,11 +116,6 @@ function PersonalTab() {
   if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
   if (isError || !me) return <div className="empty">{tr('无法加载用户信息（后端不可用）', 'Failed to load user info (backend unavailable)')}</div>;
 
-  const quotaPct =
-    usage?.token_quota != null && usage.token_quota > 0
-      ? Math.min(100, Math.round((usage.tokens_used / usage.token_quota) * 100))
-      : null;
-
   return (
     <>
       {/* —— 身份条：头像 + 是谁 + 角色/用量，横着铺满 —— */}
@@ -133,9 +128,6 @@ function PersonalTab() {
             </div>
             <div className="mono" style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>{me.email}</div>
             <div className="row gap8 wrap" style={{ marginTop: 9 }}>
-              <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-                {me.role === 'admin' ? tr('管理员', 'Admin') : tr('成员', 'Member')}
-              </span>
               {me.username && (
                 <span className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
                   @{me.username}
@@ -150,15 +142,8 @@ function PersonalTab() {
               <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{tr('AI 用量', 'AI usage')}</div>
               <div className="row gap6" style={{ alignItems: 'baseline', marginTop: 2 }}>
                 <span className="mono" style={{ fontSize: 19, fontWeight: 700 }}>{usage.tokens_used.toLocaleString()}</span>
-                <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-                  {usage.token_quota != null ? `/ ${usage.token_quota.toLocaleString()}` : tr('· 不限', '· unlimited')}
-                </span>
+                <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>tokens</span>
               </div>
-              {quotaPct != null && (
-                <div style={{ height: 5, borderRadius: 999, background: 'var(--surface-3)', overflow: 'hidden', marginTop: 7 }}>
-                  <div style={{ width: `${quotaPct}%`, height: '100%', borderRadius: 999, background: quotaPct >= 100 ? 'var(--danger-tx)' : 'var(--accent)' }} />
-                </div>
-              )}
             </div>
           )}
 
@@ -2642,8 +2627,6 @@ function MyUsageTab() {
   );
 
   const used = summary?.tokens_used ?? 0;
-  const quota = summary?.token_quota ?? null;
-  const pct = quota != null && quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : null;
 
   return (
     <>
@@ -2657,16 +2640,8 @@ function MyUsageTab() {
           </div>
           <div className="mono" style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{used.toLocaleString()}</div>
           <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>
-            {quota != null ? `tokens / ${tr('配额', 'quota')} ${quota.toLocaleString()}` : `tokens · ${tr('不限配额', 'unlimited')}`}
+            tokens
           </div>
-          {pct != null && (
-            <div style={{ marginTop: 9 }}>
-              <div style={{ height: 6, borderRadius: 999, background: 'var(--surface-3)', overflow: 'hidden' }}>
-                <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: pct >= 100 ? 'var(--danger-tx)' : 'var(--accent)' }} />
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>{tr(`已用 ${pct}%`, `${pct}% used`)}</div>
-            </div>
-          )}
         </div>
 
         {[

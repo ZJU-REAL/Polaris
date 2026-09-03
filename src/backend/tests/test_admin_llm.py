@@ -93,17 +93,18 @@ async def _admin_and_member(client):
     )
 
 
-async def test_admin_llm_requires_admin_role(client):
+async def test_admin_llm_requires_login(client):
+    """role 治理移除（#614）后管理端点对任何登录用户开放；未登录仍 401。"""
     admin, member = await _admin_and_member(client)
-    for method, url, body in [
-        ("GET", "/api/admin/llm/providers", None),
-        ("POST", "/api/admin/llm/providers", {"name": "x", "kind": "fake"}),
-        ("GET", "/api/admin/llm/routes", None),
-        ("PUT", "/api/admin/llm/routes", []),
-        ("GET", "/api/admin/llm/usage", None),
+    for method, url in [
+        ("GET", "/api/admin/llm/providers"),
+        ("GET", "/api/admin/llm/routes"),
+        ("GET", "/api/admin/llm/usage"),
     ]:
-        resp = await client.request(method, url, json=body, headers=member)
-        assert resp.status_code == 403, (method, url, resp.status_code)
+        resp = await client.request(method, url)
+        assert resp.status_code == 401, (method, url, resp.status_code)
+        resp = await client.request(method, url, headers=member)
+        assert resp.status_code == 200, (method, url, resp.status_code)
     resp = await client.get("/api/admin/llm/providers", headers=admin)
     assert resp.status_code == 200
 
@@ -302,12 +303,12 @@ async def _fake_provider_id(client, admin) -> str:
     return resp.json()["id"]
 
 
-async def test_test_model_requires_admin(client):
+async def test_test_model_open_to_any_user(client):
     admin, member = await _admin_and_member(client)
     provider_id = await _fake_provider_id(client, admin)
     body = {"provider_id": provider_id, "model": "fake-default", "capability": "chat"}
     resp = await client.post("/api/admin/llm/test-model", json=body, headers=member)
-    assert resp.status_code == 403
+    assert resp.status_code == 200
 
 
 async def test_test_model_provider_not_found(client):

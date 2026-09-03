@@ -5,7 +5,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
-import { api, isAdmin, type NoteRead } from '../../lib/api';
+import { api, type NoteRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
 /* ============================================================
@@ -168,7 +168,7 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
             <NoteCard
               key={n.id}
               note={n}
-              canEdit={!!me && (isAdmin(me) || me.id === n.author_id)}
+              canEdit={!!me && me.id === n.author_id}
               onSaved={onSaved}
             />
           ))

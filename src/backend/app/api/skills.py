@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user, require_llm_task
+from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.skill import Skill
@@ -269,7 +269,7 @@ async def test_skill(
     skill_id: uuid.UUID,
     data: SkillTestRequest | None = None,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_task),
+    user: User = Depends(current_active_user),
 ) -> SkillTestResult:
     """试运行：预览注入文本；guidance/rubric 真实调用一次 LLM（stage=default）。"""
     skill = await _get_visible_skill(session, skill_id, user)
@@ -285,7 +285,7 @@ async def run_workflow_skill(
     skill_id: uuid.UUID,
     data: SkillRunRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_task),
+    user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     """「运行此流程」：以 workflow 技能 steps 为计划创建 AI 任务并入队执行。"""

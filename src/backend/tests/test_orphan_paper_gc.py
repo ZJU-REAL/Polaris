@@ -21,7 +21,6 @@ from tests.test_scoped_paper_detail import (
     _create_active_standalone,
     _hdr,
     _new_paper,
-    _promote_admin,
 )
 
 
@@ -75,7 +74,6 @@ async def _hard_delete(client, lib_id, paper_id, headers):
 async def test_hard_delete_last_reference_removes_pool_paper_and_files(client):
     """只在一个库、无其他引用：彻底删除连内容池本体 + 落盘文件一并回收。"""
     admin = await _hdr(client, "gc-admin@example.com")
-    await _promote_admin("gc-admin@example.com")
     creator = await _hdr(client, "gc-owner@example.com")
     lib = await _create_active_standalone(client, creator, admin, name="唯一库")
 
@@ -97,7 +95,6 @@ async def test_hard_delete_last_reference_removes_pool_paper_and_files(client):
 async def test_hard_delete_keeps_pool_paper_when_in_another_library(client):
     """还在另一个库里：彻底删除只删本库成员行，内容池本体与另一库成员行保留。"""
     admin = await _hdr(client, "gc2-admin@example.com")
-    await _promote_admin("gc2-admin@example.com")
     creator = await _hdr(client, "gc2-owner@example.com")
     lib_a = await _create_active_standalone(client, creator, admin, name="删除库 A")
     lib_b = await _create_active_standalone(client, creator, admin, name="保留库 B")
@@ -117,7 +114,6 @@ async def test_hard_delete_keeps_pool_paper_when_in_another_library(client):
 async def test_hard_delete_keeps_pool_paper_when_in_daily_feed(client):
     """还在每日推送里：彻底删除保留内容池本体（推送引用算在用）。"""
     admin = await _hdr(client, "gc3-admin@example.com")
-    await _promote_admin("gc3-admin@example.com")
     creator = await _hdr(client, "gc3-owner@example.com")
     lib = await _create_active_standalone(client, creator, admin, name="库 + 推送")
 
@@ -133,7 +129,6 @@ async def test_hard_delete_keeps_pool_paper_when_in_daily_feed(client):
 async def test_daily_feed_expiry_gcs_orphan_but_keeps_referenced(client):
     """推送过期清理：只在推送里的孤儿被回收；被库引用的保留。"""
     admin = await _hdr(client, "gc4-admin@example.com")
-    await _promote_admin("gc4-admin@example.com")
     creator = await _hdr(client, "gc4-owner@example.com")
     lib = await _create_active_standalone(client, creator, admin, name="推送保留库")
 
@@ -162,7 +157,6 @@ async def test_hard_delete_ignores_browsing_history(client):
     回归：浏览过一次不该让被删论文续命（这正是 2310.17688 删不掉的原因）。
     """
     admin = await _hdr(client, "hist-admin@example.com")
-    await _promote_admin("hist-admin@example.com")
     creator = await _hdr(client, "hist-owner@example.com")
     lib = await _create_active_standalone(client, creator, admin, name="浏览过的库")
 
@@ -178,7 +172,6 @@ async def test_hard_delete_ignores_browsing_history(client):
 async def test_hard_delete_kept_when_saved_to_personal_library(client):
     """个人库里有 saved=True 收藏：算引用，彻底删除保留本体。"""
     admin = await _hdr(client, "saved-admin@example.com")
-    await _promote_admin("saved-admin@example.com")
     creator = await _hdr(client, "saved-owner@example.com")
     lib = await _create_active_standalone(client, creator, admin, name="收藏了的库")
 

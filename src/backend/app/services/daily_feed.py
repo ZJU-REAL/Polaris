@@ -542,7 +542,7 @@ async def create_daily_feed_voyage(
     """建一次「每日新论文抓取」任务（互斥检查），由调用方入队 run_voyage。
 
     这个任务既不属于课题也不属于库（全实验室共享的每日推送），两个作用域 id 都为空；
-    可见性口径与订阅分类管理/手动刷新一致——仅平台管理员（services/voyages.py）。
+    可见性口径与订阅分类管理/手动刷新一致——所有登录用户（services/voyages.py，#614）。
     只有最后一步「建立语义向量」可能花 token 且量很小，故不设 token 预算。
     """
     if await find_running_daily_feed_voyage(session) is not None:

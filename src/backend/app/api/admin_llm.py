@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import require_admin
+from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.models.llm_config import LLMCallLog, LLMProviderConfig
 from app.schemas.llm_admin import (
@@ -24,7 +24,9 @@ from app.schemas.llm_admin import (
 )
 from app.services import llm_admin as llm_admin_service
 
-router = APIRouter(prefix="/admin/llm", tags=["admin-llm"], dependencies=[Depends(require_admin)])
+router = APIRouter(
+    prefix="/admin/llm", tags=["admin-llm"], dependencies=[Depends(current_active_user)]
+)
 
 
 def _provider_read(provider: LLMProviderConfig) -> ProviderRead:

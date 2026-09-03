@@ -166,18 +166,13 @@
   "register": {
     "display_name": "Golden Probe",
     "email": "golden@example.com",
-    "features": null,
     "has_avatar": false,
     "id": "<uuid-1>",
     "is_active": true,
     "is_superuser": false,
     "is_verified": false,
-    "llm_access": "full",
     "llm_self_managed": false,
-    "read_only": false,
-    "role": "admin",
     "settings": null,
-    "token_quota": null,
     "username": "goldenprobe",
     "username_locked": false
   }

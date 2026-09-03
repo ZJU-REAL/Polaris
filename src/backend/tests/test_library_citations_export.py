@@ -7,24 +7,14 @@ attachment header 与文件名、非法 format→422。
 import json
 import uuid
 
-from sqlalchemy import select
-
 from app.core.db import get_sessionmaker
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
-from app.models.user import User
 from tests.conftest import register_and_login
 
 
 async def _hdr(client, email):
     return {"Authorization": f"Bearer {await register_and_login(client, email=email)}"}
-
-
-async def _promote_admin(email: str) -> None:
-    async with get_sessionmaker()() as session:
-        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
-        user.role = "admin"
-        await session.commit()
 
 
 async def _create_active_standalone(client, creator_headers, admin_headers):
@@ -71,7 +61,6 @@ async def _seed_member(lib_id, *, title, status, authors, year, venue=None, arxi
 
 async def _setup(client, prefix):
     admin = await _hdr(client, f"{prefix}-admin@example.com")
-    await _promote_admin(f"{prefix}-admin@example.com")
     creator = await _hdr(client, f"{prefix}-owner@example.com")
     lib_id = await _create_active_standalone(client, creator, admin)
     p_conf = await _seed_member(

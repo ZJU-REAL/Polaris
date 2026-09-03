@@ -129,8 +129,8 @@ async def test_upload_list_download_and_create(client):
     assert resp.status_code == 404
 
 
-async def test_upload_global_requires_admin(client):
-    # 第二个注册用户不是平台 admin（首个注册者才是）
+async def test_upload_global_open_to_any_user(client):
+    # 全平台模板不再要求管理员（#614）：单机档位登录即主人
     await _setup_project(client, email="first@example.com")
     _, headers2 = await _setup_project(client, email="second@example.com")
     zip_bytes = _make_zip(
@@ -142,8 +142,8 @@ async def test_upload_global_requires_admin(client):
         data={"name": "Global"},
         headers=headers2,
     )
-    assert resp.status_code == 403
-    assert resp.json()["detail"] == "ADMIN_REQUIRED_FOR_GLOBAL"
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["scope"] == "global"
 
 
 async def test_upload_rejects_zip_without_tex(client):

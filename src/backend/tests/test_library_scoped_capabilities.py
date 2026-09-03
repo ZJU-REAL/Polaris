@@ -10,12 +10,9 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from sqlalchemy import select
-
 from app.core.db import get_sessionmaker
 from app.models.library_direction import LibraryPaper
 from app.models.paper import PaperWiki, new_paper
-from app.models.user import User
 from tests.conftest import register_and_login
 
 
@@ -23,17 +20,9 @@ async def _hdr(client, email):
     return {"Authorization": f"Bearer {await register_and_login(client, email=email)}"}
 
 
-async def _promote_admin(email: str) -> None:
-    async with get_sessionmaker()() as session:
-        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
-        user.role = "admin"
-        await session.commit()
-
-
 async def _setup(client, *, prefix):
     """admin + 创建者 + 一个 active 独立库（project_id 为空）；返回 (creator, admin, lib_id)。"""
     admin = await _hdr(client, f"{prefix}-admin@example.com")
-    await _promote_admin(f"{prefix}-admin@example.com")
     creator = await _hdr(client, f"{prefix}-owner@example.com")
     resp = await client.post(
         "/api/libraries",

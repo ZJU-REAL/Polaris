@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { EmptyState } from '../../components/ui/EmptyState';
 import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
 import { ExperimentSettings } from './ExperimentSettings';
@@ -9,7 +8,7 @@ import { LiteratureSearchSettingsPanel } from './LiteratureSearchSettings';
 import { DocumentProcessingSettingsPanel } from './DocumentProcessingSettings';
 import { FeedbackTab } from '../feedback/FeedbackTab';
 import { tr } from '../../lib/i18n';
-import { api, isAdmin } from '../../lib/api';
+import { api } from '../../lib/api';
 import { DailyCategoriesTab, LlmTab, UsageTab } from './SettingsPage';
 
 /* ============================================================
@@ -22,8 +21,8 @@ type AdminTab = 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | '
 const ADMIN_TABS: AdminTab[] = ['llm', 'literature', 'processing', 'experiment', 'daily', 'feedback', 'usage'];
 
 export function AdminSettingsPage() {
-  const { data: me, isLoading } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
-  const admin = isAdmin(me);
+  // 管理页对所有登录用户开放（role 治理已随 #614 移除）；me 仅用于确认已登录
+  const { isLoading } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
   // 支持 /admin?tab=llm 深链
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<AdminTab>(() => {
@@ -46,13 +45,6 @@ export function AdminSettingsPage() {
       <PageHead eyebrow="Polaris · Manage" title={tr('管理', 'Manage')} />
       {isLoading ? (
         <div className="empty">{tr('加载中…', 'Loading…')}</div>
-      ) : !admin ? (
-        <EmptyState
-          icon="shield"
-          title={tr('无权访问', 'No access')}
-          desc={tr('这些设置只对管理员开放。', 'These settings are admin-only.')}
-          action={<Link className="btn btn-soft" to="/settings">{tr('去个人设置', 'Go to settings')}</Link>}
-        />
       ) : (
         <>
           <div className="row" style={{ gap: 12, marginBottom: 22, flexWrap: 'wrap', alignItems: 'center' }}>

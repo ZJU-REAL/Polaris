@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user, require_llm_chat
+from app.api.auth import current_active_user
 from app.api.chat_stream import chat_stream_response
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
@@ -215,7 +215,7 @@ async def chat_with_library(
     project_id: uuid.UUID,
     data: PaperChatRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_chat),
+    user: User = Depends(current_active_user),
 ) -> StreamingResponse:
     """文献库对话（docs/api-lit.md §8）：跨文献检索 + stage=reading 流式回答。
 
@@ -236,7 +236,7 @@ async def chat_with_shelf(
     project_id: uuid.UUID,
     data: PaperChatRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_chat),
+    user: User = Depends(current_active_user),
 ) -> StreamingResponse:
     """课题文献对话：语料 = 课题关联文献库并集 ∪ 相关研究书架（含手动补充）。
 
@@ -283,7 +283,7 @@ async def chat_with_shelf(
 async def chat_with_personal_library(
     data: PaperChatRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_chat),
+    user: User = Depends(current_active_user),
 ) -> StreamingResponse:
     """个人文献库对话：语料 = 本人收藏的论文集合（用户级，方向无关）。
 

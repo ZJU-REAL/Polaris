@@ -1,8 +1,7 @@
 """实验室数据面板（/lab）：索引统计 / 用量排行榜 / 跨库图谱。
 
 - 统计跨库去重：同一篇论文进两个库只算一次；
-- 统计按可见性收敛：普通用户看不到别人个人库的任何计数；
-- 排行榜的管理员开关：关掉后普通用户 403、管理员照常；
+- 统计按可见性收敛：任何用户都看不到别人个人库的计数（admin 旁路已随 #614 移除）；
 - 图谱：不传 library_id = 全部可见库的并集，传了只看那一个库。
 """
 
@@ -90,13 +89,6 @@ async def _add_concept(*, name, slug, paper_id=None) -> uuid.UUID:
         return concept.id
 
 
-async def _promote_admin(email: str) -> None:
-    async with get_sessionmaker()() as session:
-        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
-        user.role = "admin"
-        await session.commit()
-
-
 # ---- 统计 ----
 
 
@@ -153,10 +145,10 @@ async def test_lab_stats_excludes_other_users_personal_library(client):
     assert body["papers"]["library_members_deduped"] == 2
     assert body["concepts"]["total"] == 2
 
-    # 管理员：全部
+    # 首个注册用户不再有 admin 全局可见（#614）：口径与第三方相同，只见公共库
     body = (await client.get("/api/lab/stats", headers=owner)).json()
-    assert body["libraries"]["total"] == 2
-    assert body["papers"]["library_members_deduped"] == 2
+    assert body["libraries"] == {"total": 1, "public": 1, "personal": 0}
+    assert body["papers"]["library_members_deduped"] == 1
 
 
 # ---- 用量与排行榜 ----

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user, require_admin
+from app.api.auth import current_active_user
 from app.core import github
 from app.core.db import get_session
 from app.models.feedback import Feedback
@@ -82,7 +82,7 @@ async def upload_feedback_image(
     user: User = Depends(current_active_user),
 ) -> FeedbackImageRead:
     fb = await _load(session, feedback_id)
-    if fb.user_id != user.id and user.role != "admin":
+    if fb.user_id != user.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="NOT_OWNER")
     raw = await file.read()
     try:
@@ -111,7 +111,7 @@ async def get_feedback_image(
     user: User = Depends(current_active_user),
 ) -> FileResponse:
     fb = await _load(session, feedback_id)
-    if fb.user_id != user.id and user.role != "admin":
+    if fb.user_id != user.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="NOT_OWNER")
     images = await svc.images_for(session, feedback_id)
     match = next((i for i in images if i.seq == seq), None)
@@ -126,7 +126,7 @@ async def get_feedback_image(
 @router.get("/admin/feedback", response_model=list[FeedbackRead])
 async def admin_list_feedback(
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(current_active_user),
 ) -> list[FeedbackRead]:
     rows = await svc.list_feedback(session)
     with contextlib.suppress(Exception):  # 状态同步失败不影响列表
@@ -135,7 +135,7 @@ async def admin_list_feedback(
 
 
 @router.get("/admin/feedback/github-status")
-async def admin_github_status(_: User = Depends(require_admin)) -> dict[str, bool]:
+async def admin_github_status(_: User = Depends(current_active_user)) -> dict[str, bool]:
     return {"enabled": github.github_enabled()}
 
 
@@ -144,7 +144,7 @@ async def admin_update_feedback(
     feedback_id: uuid.UUID,
     data: AdminFeedbackUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(current_active_user),
 ) -> FeedbackRead:
     fb = await _load(session, feedback_id)
     fb = await svc.admin_update(session, fb, data.model_dump(exclude_unset=True))
@@ -155,7 +155,7 @@ async def admin_update_feedback(
 async def admin_generate_draft(
     feedback_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(current_active_user),
 ) -> IssueDraft:
     fb = await _load(session, feedback_id)
     draft = await svc.generate_issue_draft(session, fb)
@@ -167,7 +167,7 @@ async def admin_create_issue(
     feedback_id: uuid.UUID,
     draft: IssueDraft,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(current_active_user),
 ) -> IssueCreateResult:
     fb = await _load(session, feedback_id)
     if fb.github_issue_number is not None:

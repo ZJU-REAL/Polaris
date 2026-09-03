@@ -58,14 +58,12 @@ async def list_paper_highlights(
 async def get_own_highlight(
     session: AsyncSession, *, highlight_id: uuid.UUID, user: User
 ) -> tuple[PaperHighlight, str] | None:
-    """取划线（附作者展示名）；非作者（且非平台 admin）视为不存在。"""
+    """取划线（附作者展示名）；非作者视为不存在（admin 旁路已随 role 移除，#614）。"""
     stmt = (
         select(PaperHighlight, User.display_name, User.email)
         .join(User, User.id == PaperHighlight.author_id)
-        .where(PaperHighlight.id == highlight_id)
+        .where(PaperHighlight.id == highlight_id, PaperHighlight.author_id == user.id)
     )
-    if user.role != "admin":
-        stmt = stmt.where(PaperHighlight.author_id == user.id)
     row = (await session.execute(stmt)).first()
     if row is None:
         return None

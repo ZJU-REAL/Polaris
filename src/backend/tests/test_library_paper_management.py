@@ -12,7 +12,6 @@ from sqlalchemy import select
 from app.core.db import get_sessionmaker
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Concept, Paper, paper_concepts
-from app.models.user import User
 from tests.conftest import register_and_login
 
 BIBTEX_ENTRY = """@inproceedings{smith2025bench,
@@ -42,13 +41,6 @@ def _parse_sse(text: str) -> list[tuple[str, dict]]:
 
 async def _hdr(client, email):
     return {"Authorization": f"Bearer {await register_and_login(client, email=email)}"}
-
-
-async def _promote_admin(email: str) -> None:
-    async with get_sessionmaker()() as session:
-        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
-        user.role = "admin"
-        await session.commit()
 
 
 async def _create_active_standalone(client, creator_headers, admin_headers, name="独立库"):
@@ -108,7 +100,6 @@ async def _seed_paper(
 async def _setup(client, *, prefix="p9d"):
     """admin + 创建者 + 一个 active 独立库；返回 (creator_headers, admin_headers, lib_id)。"""
     admin = await _hdr(client, f"{prefix}-admin@example.com")
-    await _promote_admin(f"{prefix}-admin@example.com")
     creator = await _hdr(client, f"{prefix}-owner@example.com")
     lib_id = await _create_active_standalone(client, creator, admin)
     return creator, admin, lib_id

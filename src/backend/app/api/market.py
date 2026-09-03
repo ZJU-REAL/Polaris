@@ -118,9 +118,7 @@ async def delist_listing(
 ) -> SkillListingRead:
     listing = await _get_listing(session, listing_id)
     try:
-        listing = await market_service.delist(
-            session, listing, user_id=user.id, is_admin=user.role == "admin"
-        )
+        listing = await market_service.delist(session, listing, user_id=user.id)
     except market_service.NotOwnerError as e:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="NOT_LISTING_OWNER") from e
     listing = await _get_listing(session, listing.id)

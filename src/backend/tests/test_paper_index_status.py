@@ -476,24 +476,6 @@ async def test_index_endpoints_require_visibility(client, fake_redis):
     assert resp.status_code == 404
 
 
-async def test_rebuild_blocked_for_users_without_llm_access(client, fake_redis):
-    """大模型权限被锁的用户不能点重建（重建要花嵌入调用）。"""
-    from app.models.user import User
-
-    user_id, headers = await _user(client, "blocked-idx@example.com")
-    paper_id = await _seed_for_enrich(client, headers, name="blocked", email_key="blocked")
-    async with get_sessionmaker()() as session:
-        user = await session.get(User, user_id)
-        user.llm_access = "blocked"
-        await session.commit()
-
-    resp = await client.post(f"/api/papers/{paper_id}/index/rebuild", headers=headers)
-    assert resp.status_code == 403
-    # 只读的状态查询不受影响
-    resp = await client.get(f"/api/papers/{paper_id}/index-status", headers=headers)
-    assert resp.status_code == 200
-
-
 async def test_rebuild_rejects_empty_target(client, fake_redis):
     _, headers = await _user(client, "empty-target@example.com")
     paper_id = await _seed_for_enrich(client, headers, name="empty", email_key="empty")

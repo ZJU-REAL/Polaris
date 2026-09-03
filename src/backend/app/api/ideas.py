@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user, require_forge, require_review
+from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.core.events import EventBus, get_event_bus
 from app.core.queue import TaskQueue, get_task_queue
@@ -81,7 +81,7 @@ async def start_forge(
     project_id: uuid.UUID,
     data: ForgeRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_forge),
+    user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     project = await _member_project(session, project_id, user)
@@ -118,7 +118,7 @@ async def start_deep_idea(
     project_id: uuid.UUID,
     data: DeepIdeaRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_forge),
+    user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     project = await _member_project(session, project_id, user)
@@ -314,7 +314,7 @@ async def start_tournament(
     project_id: uuid.UUID,
     data: TournamentRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_review),
+    user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     project = await _member_project(session, project_id, user)
@@ -362,7 +362,7 @@ async def latest_tournament_summary(
 async def retry_failed_tournament_matches(
     project_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_review),
+    user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     project = await _member_project(session, project_id, user)

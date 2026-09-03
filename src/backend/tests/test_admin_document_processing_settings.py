@@ -37,8 +37,9 @@ async def test_document_processing_settings_roundtrip_and_permissions(client):
     assert payload["mineru_concurrency"] == 4
     assert payload["mineru_credentials"] == []
 
+    # 管理端点对任何登录用户开放（#614）
     response = await client.get("/api/admin/settings/document-processing", headers=member)
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
 async def test_document_processing_settings_reject_unsafe_policy_and_url(client):

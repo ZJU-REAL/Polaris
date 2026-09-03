@@ -50,7 +50,7 @@ async def mcp_endpoint(
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     profile = _apply_memory_gate(profile, principal)
-    allow_writes = "mcp:write" in principal.scopes and not principal.user.read_only
+    allow_writes = "mcp:write" in principal.scopes
     if profile.include_writes and not allow_writes:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="MCP_WRITE_SCOPE_REQUIRED")
 

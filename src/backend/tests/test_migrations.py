@@ -10,7 +10,8 @@ from alembic import command
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 HEAD_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
-HEAD_REVISION = "e6c31f84a2d5"  # Drop library curators (P1 de-lab)
+HEAD_REVISION = "4f8d2c9b7a61"  # Drop user governance columns (P1 de-lab)
+CURATORS_DROP_REVISION = "e6c31f84a2d5"  # Drop library curators (P1 de-lab)
 SKILL_RATINGS_DROP_REVISION = "d4b8e26f1a93"  # Drop skill ratings (P1 de-lab)
 RANKINGS_DROP_REVISION = "c8f2a61d9e37"  # Drop view events (P1 de-lab)
 INVITES_DROP_REVISION = "b7d4f92e6c15"  # Drop project invites (P1 de-lab)
@@ -164,7 +165,10 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
-    assert "read_only" in columns["users"]  # 只读账号（游客）
+    # 治理列已随个人化定位删除（#614）
+    assert not {"role", "read_only", "llm_access", "token_quota", "features"} & columns[
+        "users"
+    ]
     assert "effort" in columns["model_routes"]  # 推理档位可配（NULL = 用模型默认）
     # 对话搬到服务端：agent 一轮里可能调好几次工具，历史不能只活在浏览器 localStorage
     assert {"conversations", "conversation_messages"} <= columns["_tables"]
@@ -254,8 +258,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "skill_listings" in columns["_tables"]
     # 发表机构列（高级检索）
     assert "affiliations" in columns["papers"]
-    # 用户系统 U1：users 三新列 + project_invites 表
-    assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
+    # 用户系统 U1：治理列已在 head 删除，只剩头像列
+    assert "avatar_path" in columns["users"]
     # 可选全文索引：users.settings 个人设置 JSON 列
     assert "settings" in columns["users"]
     # 任务循环 v1：voyage_runs / voyage_steps 新列
@@ -514,7 +518,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "evidence_balance",
     } <= columns["interdisciplinary_research_profile_versions"]
 
-    # First undo the curators drop: both tables come back.
+    # First undo the governance-columns drop: all five columns come back.
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == CURATORS_DROP_REVISION
+    assert {"role", "read_only", "llm_access", "token_quota", "features"} <= columns["users"]
+
+    # Then undo the curators drop: both tables come back.
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == SKILL_RATINGS_DROP_REVISION

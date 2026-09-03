@@ -652,9 +652,7 @@ async def seed_idea_brief(session: AsyncSession, idea: Idea) -> dict[str, Any] |
 
 
 async def can_promote(session: AsyncSession, *, project_id: uuid.UUID, user: User) -> bool:
-    """promote 权限：项目 owner（成员角色 owner）或平台 admin。"""
-    if user.role == "admin":
-        return True
+    """promote 权限：项目 owner（成员角色 owner；admin 旁路已随 role 移除，#614）。"""
     member = await session.get(ProjectMember, (project_id, user.id))
     return member is not None and member.role == "owner"
 

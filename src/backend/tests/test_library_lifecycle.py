@@ -3,7 +3,7 @@
 - P9c：建课题只建 project（+ 按入参关联已有库），不再自动建起源库；
 - 删课题不级联删库：起源库（存量隐式库，project_id 回指）的 project_id 置 NULL，
   library_papers/concepts 全部保留，只有该课题自己的关联行随课题消失；
-- DELETE /libraries/{id}（admin）：有课题关联默认 409，force=true 才删；论文
+- DELETE /libraries/{id}（创建者，#614）：有课题关联默认 409，force=true 才删；论文
   内容池（papers 表）行永不受影响。
 """
 
@@ -158,17 +158,23 @@ async def test_delete_library_requires_force_when_topics_linked(client):
     assert resp.status_code == 404
 
 
-async def test_delete_library_non_admin_forbidden(client):
-    await _register(client, "p7-admin4@example.com")  # 首个注册者=平台 admin，占位
+async def test_delete_library_stranger_forbidden_creator_allowed(client):
+    """删库权限收敛为创建者本人（#614）：公共库创建者也能删；无关用户 403。"""
+    stranger = await _register(client, "p7-admin4@example.com")
     member = await _register(client, "p7-member4@example.com")
     _project_id, library_id = await make_project_with_library(client, member, name="P7 课题四")
 
-    resp = await client.delete(f"/api/libraries/{library_id}", headers=member)
+    resp = await client.delete(f"/api/libraries/{library_id}", headers=stranger)
     assert resp.status_code == 403
+    # 创建者本人：有课题关联 → 先 409，force 才删
+    resp = await client.delete(f"/api/libraries/{library_id}", headers=member)
+    assert resp.status_code == 409
+    resp = await client.delete(f"/api/libraries/{library_id}?force=true", headers=member)
+    assert resp.status_code == 204, resp.text
 
 
 async def test_delete_library_without_topics_needs_no_force(client):
-    """独立库（无课题关联）删除不受 force 影响。"""
+    """独立库（无课题关联）删除不受 force 影响；无主库（submitted_by 空）谁都能删（#614）。"""
     admin = await _register(client, "p7-admin5@example.com")
     async with get_sessionmaker()() as session:
         library = DirectionLibrary(name="孤儿库", created_by=None, project_id=None)

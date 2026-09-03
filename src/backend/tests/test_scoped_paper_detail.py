@@ -10,24 +10,14 @@
 
 import uuid
 
-from sqlalchemy import select
-
 from app.core.db import get_sessionmaker
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
-from app.models.user import User
 from tests.conftest import make_project_with_library, register_and_login
 
 
 async def _hdr(client, email):
     return {"Authorization": f"Bearer {await register_and_login(client, email=email)}"}
-
-
-async def _promote_admin(email: str) -> None:
-    async with get_sessionmaker()() as session:
-        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
-        user.role = "admin"
-        await session.commit()
 
 
 async def _create_active_standalone(client, creator_headers, admin_headers, name="独立库"):
@@ -79,7 +69,6 @@ async def _add_membership(lib_id, paper_id, *, status, relevance, wiki=None) -> 
 async def test_library_scoped_detail_does_not_cross_libraries(client):
     """同一论文在 A(excluded,0.18) / B(included,0.96)：各库详情读到各自那份，不串。"""
     admin = await _hdr(client, "scoped-admin@example.com")
-    await _promote_admin("scoped-admin@example.com")
     creator = await _hdr(client, "scoped-owner@example.com")
     lib_a = await _create_active_standalone(client, creator, admin, name="CUA 库")
     lib_b = await _create_active_standalone(client, creator, admin, name="Spatial Reasoning 库")
@@ -101,7 +90,6 @@ async def test_library_scoped_detail_does_not_cross_libraries(client):
 
 async def test_library_scoped_detail_404_when_not_member(client):
     admin = await _hdr(client, "scoped404-admin@example.com")
-    await _promote_admin("scoped404-admin@example.com")
     creator = await _hdr(client, "scoped404-owner@example.com")
     lib_a = await _create_active_standalone(client, creator, admin, name="A 库")
     lib_b = await _create_active_standalone(client, creator, admin, name="B 库")
@@ -121,7 +109,6 @@ async def test_library_scoped_detail_404_when_not_member(client):
 async def test_project_scoped_detail_reads_origin_library(client):
     """课题起源库(0.42) 与另一独立库(0.99) 各有一份：/projects/{pid}/papers 读起源库那份。"""
     admin = await _hdr(client, "scopedproj-admin@example.com")
-    await _promote_admin("scopedproj-admin@example.com")
     creator = await _hdr(client, "scopedproj-owner@example.com")
     pid, origin_lib = await make_project_with_library(client, creator, name="课题起源库")
     other_lib = await _create_active_standalone(client, creator, admin, name="别的库")
@@ -143,7 +130,6 @@ async def test_project_scoped_detail_reads_origin_library(client):
 async def test_scoped_delete_isolates_other_library(client):
     """删 A 库那份后：A 库论文库空、A 详情 excluded；B 库那份仍 included、列表/详情可见。"""
     admin = await _hdr(client, "scopeddel-admin@example.com")
-    await _promote_admin("scopeddel-admin@example.com")
     creator = await _hdr(client, "scopeddel-owner@example.com")
     lib_a = await _create_active_standalone(client, creator, admin, name="删除源库 A")
     lib_b = await _create_active_standalone(client, creator, admin, name="保留库 B")

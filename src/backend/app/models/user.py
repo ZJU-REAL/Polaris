@@ -1,16 +1,17 @@
-"""用户：fastapi-users UUID 用户表 + 展示名 / 角色 / 头像 / 配额与功能权限。"""
+"""用户：fastapi-users UUID 用户表 + 展示名 / 头像 / 个人设置。
+
+治理字段（role/read_only/llm_access/token_quota/features）已随个人化定位移除
+（#614）：单机档位只有一个用户，机器的主人不需要被自己治理。
+"""
 
 from typing import Any
 
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
-from sqlalchemy import BigInteger, Boolean, String
+from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.models.base import JSONVariant, TimestampMixin
-
-# 功能权限键（缺省/None = 允许；显式 false = 禁用对应阶段的发起入口）
-FEATURE_KEYS = ("forge", "review", "experiment", "writer", "paper_review")
 
 
 class User(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
@@ -20,25 +21,14 @@ class User(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
     # 用户名：小写字母/数字/下划线 3-32 位，全局唯一；可登录（邮箱或用户名二选一）。
     # 可空——老用户没有用户名（不强制回填），新注册必填。
     username: Mapped[str | None] = mapped_column(String(32), unique=True, index=True)
-    # 用户名只能在个人设置里改一次：改过一次后锁定（admin 预设即锁定）。
+    # 用户名只能在个人设置里改一次：改过一次后锁定。
     username_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    role: Mapped[str] = mapped_column(String(32), default="member", nullable=False)  # admin|member
-    # 只读账号（游客）：看得见的和 role 决定的一样多，写得动的一样也没有。
-    # 与 role 正交是有意的——游客要看管理端就给 role=admin，26 处 role 判断照旧生效，
-    # 不必为「能看但不能改」再发明一个角色、再逐处回头改判断。
-    read_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    # 大模型使用权限：full=不限 | chat_only=仅文献对话与 AI 伴读 | blocked=锁定
-    llm_access: Mapped[str] = mapped_column(String(16), default="full", nullable=False)
-    # LLM 配置归属：False=被管理员接管（用全局 provider/路由）| True=自管（用自己的）。
-    # 见 core/llm/router.py resolve()：self-managed 用 owner=user 的配置，admin 的对他失效。
+    # LLM 配置归属：False=用全局 provider/路由 | True=自管（用自己的）。
+    # 见 core/llm/router.py resolve()：self-managed 用 owner=user 的配置。
     llm_self_managed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # 头像文件（<data_dir>/avatars/<user_id>.<ext>），None = 未上传
     avatar_path: Mapped[str | None] = mapped_column(String(1024))
-    # LLM token 配额（prompt+completion 累计）；None = 不限
-    token_quota: Mapped[int | None] = mapped_column(BigInteger)
-    # 功能权限：{feature: bool}；None/缺键 = 允许
-    features: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
-    # 用户个人设置：{key: value}。与 features（admin 权限位）分开，None/缺键 = 未设置。
+    # 用户个人设置：{key: value}。None/缺键 = 未设置。
     # managed_command_unanswered_minutes 存远端命令等待用户答复的个人偏好；管理员全局
     # 上限仍优先。历史 chat_fulltext_index 已废除，存量值保留但不再读取。
     settings: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
@@ -51,8 +41,3 @@ class User(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
         if not self.settings:
             return default
         return self.settings.get(key, default)
-
-    def feature_enabled(self, feature: str) -> bool:
-        if not self.features:
-            return True
-        return bool(self.features.get(feature, True))
