@@ -10,7 +10,8 @@ from alembic import command
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 HEAD_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
-HEAD_REVISION = "b7d4f92e6c15"  # Drop project invites (P1 de-lab)
+HEAD_REVISION = "c8f2a61d9e37"  # Drop view events (P1 de-lab)
+INVITES_DROP_REVISION = "b7d4f92e6c15"  # Drop project invites (P1 de-lab)
 CODES_DROP_REVISION = "a3e9c17b5f42"  # Drop registration codes (P1 de-lab)
 TRANSLATIONS_REVISION = "f4a5b6c7d8e9"  # Versioned discovery-hit translations
 DISCOVERY_SCHEDULE_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
@@ -421,9 +422,6 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 任务对话流：用户与任务 agent 的双向消息
     assert "voyage_messages" in columns["_tables"]
 
-    # 浏览事件：文献库/论文的点击量
-    assert "view_events" in columns["_tables"]
-
     # 外部 agent 使用有 scope、可撤销、只存摘要的长期凭证。
     assert "integration_tokens" in columns["_tables"]
     assert {
@@ -516,7 +514,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "evidence_balance",
     } <= columns["interdisciplinary_research_profile_versions"]
 
-    # First undo the project-invites drop: the table comes back.
+    # First undo the view-events drop: the table comes back.
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == INVITES_DROP_REVISION
+    assert "view_events" in columns["_tables"]
+
+    # Then undo the project-invites drop: that table comes back too.
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == CODES_DROP_REVISION

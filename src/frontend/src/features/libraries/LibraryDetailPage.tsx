@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -8,7 +8,6 @@ import { api, isAdmin, type DirectionLibraryDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { WikiWorkbench } from '../wiki/WikiPage';
 import { LibraryBrowse } from './LibraryBrowse';
-import { trackView } from '../../lib/viewTracking';
 
 /* ============================================================
    /libraries/:id — 文献库详情（P5c + P6 治理 + P9b 生命周期）
@@ -21,11 +20,6 @@ import { trackView } from '../../lib/viewTracking';
 
 export function LibraryDetailPage() {
   const { id = '' } = useParams();
-
-  // 浏览打点：尽力而为，失败咽掉（去重在后端，同一个人一小时内只算一次）
-  useEffect(() => {
-    trackView('library', id);
-  }, [id]);
   const navigate = useNavigate();
 
   const { data: lib, isLoading, isError, refetch } = useQuery({

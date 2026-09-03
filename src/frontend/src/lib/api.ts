@@ -1860,27 +1860,6 @@ export interface LabStats {
     vector_search_supported: boolean;
   };
   vectors: { papers_with_embedding: number; papers_total: number };
-  /** 排行榜是否对普通成员可见（管理员开关） */
-  leaderboard_enabled: boolean;
-}
-
-export interface LabLeaderboardEntry {
-  user_id: string;
-  display_name: string | null;
-  username: string | null;
-  has_avatar: boolean;
-  role: string;
-  tokens_used: number;
-}
-
-export interface LabLeaderboardResponse {
-  enabled: boolean;
-  days: number;
-  items: LabLeaderboardEntry[];
-}
-
-export interface LabLeaderboardSetting {
-  enabled: boolean;
 }
 
 /** 实验的全局环境设置（所有实验共用一份）。空串 = 不配置该项。 */
@@ -4529,12 +4508,6 @@ export const api = {
   getLabUsage(days: number): Promise<LlmUsageRow[]> {
     return request<LlmUsageRow[]>(`/lab/usage?days=${days}`);
   },
-  /** 成员用量排行榜；开关关掉时普通用户 403。 */
-  getLabLeaderboard(opts: { days: number; limit?: number }): Promise<LabLeaderboardResponse> {
-    const params = new URLSearchParams({ days: String(opts.days) });
-    if (opts.limit) params.set('limit', String(opts.limit));
-    return request<LabLeaderboardResponse>(`/lab/usage/leaderboard?${params}`);
-  },
   /** 跨库图谱：不传 libraryId = 全部可见库的并集。 */
   getLabGraph(libraryId?: string): Promise<GraphData> {
     return request<GraphData>(`/lab/graph${libraryId ? `?library_id=${libraryId}` : ''}`);
@@ -5259,13 +5232,6 @@ export const api = {
       {},
     );
   },
-  /** 实验室概况页的用量排行榜是否对普通成员可见（admin，默认开）。 */
-  getLabLeaderboardEnabled(): Promise<LabLeaderboardSetting> {
-    return request<LabLeaderboardSetting>('/admin/settings/lab-leaderboard');
-  },
-  setLabLeaderboardEnabled(enabled: boolean): Promise<LabLeaderboardSetting> {
-    return requestJson<LabLeaderboardSetting>('/admin/settings/lab-leaderboard', 'PUT', { enabled });
-  },
   /** 实验的全局环境设置（admin）：模型/数据集位置、pip 镜像、HF 端点、代理。 */
   getExperimentEnv(): Promise<ExperimentEnvSettings> {
     return request<ExperimentEnvSettings>('/admin/settings/experiment-env');
@@ -5887,17 +5853,6 @@ export const api = {
   /** 全局助手：新建一场会话（后端开关关着时 404）。 */
   createAssistantConversation(scope: { scope_kind?: string; project_id?: string } = {}): Promise<{ id: string; title: string }> {
     return requestJson<{ id: string; title: string }>('/chat/conversations', 'POST', scope);
-  },
-  /** 记一次浏览（尽力而为：失败不影响页面，去重由后端做）。 */
-  recordView(kind: 'library' | 'paper', targetId: string): Promise<{ counted: boolean }> {
-    return request('/views', { method: 'POST', body: JSON.stringify({ kind, target_id: targetId }) });
-  },
-  /** 最近 N 天的文献库/论文热度（只出计数）。 */
-  getLabHot(days = 7, limit = 5): Promise<{
-    libraries: { id: string; name: string; views: number }[];
-    papers: { id: string; title: string; views: number }[];
-  }> {
-    return request(`/lab/hot?days=${days}&limit=${limit}`);
   },
   getDailySyncStatus(): Promise<DailySyncStatus> {
     return request<DailySyncStatus>('/daily/sync-status');

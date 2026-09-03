@@ -44,23 +44,6 @@ class LabStats(BaseModel):
     concepts: LabConceptStats
     chunks: LabChunkStats
     vectors: LabVectorStats
-    # 排行榜对普通用户是否可见（关着时普通用户不显示这一区）
-    leaderboard_enabled: bool
-
-
-class LabLeaderboardEntry(BaseModel):
-    user_id: uuid.UUID
-    display_name: str | None
-    username: str | None
-    has_avatar: bool
-    role: str
-    tokens_used: int
-
-
-class LabLeaderboardResponse(BaseModel):
-    enabled: bool
-    days: int
-    items: list[LabLeaderboardEntry]
 
 
 class DailyIngestStatusRow(BaseModel):

@@ -1,8 +1,4 @@
-"""实验室数据面板路由（/lab）：索引统计、token 用量与排行榜、跨库图谱。
-
-全部只读、全员可见（登录即可），数字按可见库集合收敛。排行榜额外受管理员开关
-``lab_leaderboard_enabled`` 控制：关掉后普通用户拿 403，管理员照常可看。
-"""
+"""数据面板路由（/lab）：索引统计、token 用量、跨库图谱。全部只读，数字按可见库集合收敛。"""
 
 import uuid
 
@@ -15,34 +11,13 @@ from app.models.user import User
 from app.schemas.graph import GraphResponse
 from app.schemas.lab import (
     DailyIngestStatusRow,
-    LabLeaderboardEntry,
-    LabLeaderboardResponse,
     LabStats,
 )
 from app.schemas.llm_admin import UsageRow
 from app.services import lab as lab_service
 from app.services import llm_admin as llm_admin_service
-from app.services import view_stats
 
 router = APIRouter(prefix="/lab", tags=["lab"])
-
-
-@router.get("/hot")
-async def lab_hot(
-    days: int = Query(default=7, ge=1, le=90),
-    limit: int = Query(default=5, ge=1, le=20),
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> dict[str, list[dict[str, object]]]:
-    """最近 N 天被打开得最多的文献库与论文。
-
-    只返回计数，不按人展开——实验室里「谁在读什么」是敏感信息，热度需要的只是总数。
-    库按可见性过滤：看不见的库不该出现在榜上，哪怕它很热。
-    """
-    return {
-        "libraries": await view_stats.hot_libraries(session, user=user, days=days, limit=limit),
-        "papers": await view_stats.hot_papers(session, user=user, days=days, limit=limit),
-    }
 
 
 @router.get("/stats", response_model=LabStats)
@@ -77,23 +52,6 @@ async def lab_usage(
     """全实验室最近 N 天的 token 用量（按 日期 × stage × model 聚合），全员可见。"""
     rows = await llm_admin_service.usage_report(session, days=days)
     return [UsageRow(**row) for row in rows]
-
-
-@router.get("/usage/leaderboard", response_model=LabLeaderboardResponse)
-async def lab_usage_leaderboard(
-    days: int = Query(default=30, ge=1, le=365),
-    limit: int = Query(default=10, ge=1, le=50),
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> LabLeaderboardResponse:
-    """成员 token 消耗排行榜。管理员关掉开关后，普通用户 403。"""
-    enabled = await lab_service.get_leaderboard_enabled(session)
-    if not enabled and user.role != "admin":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LEADERBOARD_DISABLED")
-    rows = await lab_service.usage_leaderboard(session, days=days, limit=limit)
-    return LabLeaderboardResponse(
-        enabled=enabled, days=days, items=[LabLeaderboardEntry(**row) for row in rows]
-    )
 
 
 @router.get("/graph", response_model=GraphResponse)

@@ -189,60 +189,6 @@ async def test_lab_usage_visible_to_all_members(client):
         assert rows[0]["prompt_tokens"] == 100 and rows[0]["completion_tokens"] == 20
 
 
-async def test_leaderboard_ranks_by_tokens(client):
-    admin = await _hdr(client, "lab-lb-admin@example.com")
-    await _hdr(client, "lab-lb-small@example.com")
-    await _hdr(client, "lab-lb-big@example.com")
-    await _add_usage(await _user_id("lab-lb-small@example.com"), prompt=10, completion=5)
-    await _add_usage(await _user_id("lab-lb-big@example.com"), prompt=900, completion=100)
-
-    resp = await client.get("/api/lab/usage/leaderboard?days=30&limit=10", headers=admin)
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["enabled"] is True and body["days"] == 30
-    # 用量多的在前；没有任何记账的用户不出现
-    assert [row["tokens_used"] for row in body["items"]] == [1000, 15]
-
-
-async def test_leaderboard_switch_admin_and_member(client):
-    """开关 × 角色 四种组合：关掉后只有管理员看得到。"""
-    admin = await _hdr(client, "lab-sw-admin@example.com")
-    member = await _hdr(client, "lab-sw-member@example.com")
-
-    # 默认开：两边都能看
-    assert (await client.get("/api/lab/usage/leaderboard", headers=admin)).status_code == 200
-    assert (await client.get("/api/lab/usage/leaderboard", headers=member)).status_code == 200
-
-    # 管理员关掉
-    resp = await client.put(
-        "/api/admin/settings/lab-leaderboard", json={"enabled": False}, headers=admin
-    )
-    assert resp.status_code == 200 and resp.json()["enabled"] is False
-    # 普通用户改不了这个开关
-    assert (
-        await client.put(
-            "/api/admin/settings/lab-leaderboard", json={"enabled": True}, headers=member
-        )
-    ).status_code == 403
-
-    # 关掉后：普通用户 403，管理员仍 200（带 enabled=false 提示当前是关的）
-    resp = await client.get("/api/lab/usage/leaderboard", headers=member)
-    assert resp.status_code == 403 and resp.json()["detail"] == "LEADERBOARD_DISABLED"
-    resp = await client.get("/api/lab/usage/leaderboard", headers=admin)
-    assert resp.status_code == 200 and resp.json()["enabled"] is False
-
-    # 概况页据此决定要不要显示这一区
-    stats = (await client.get("/api/lab/stats", headers=member)).json()
-    assert stats["leaderboard_enabled"] is False
-
-    # 再打开：普通用户恢复
-    await client.put("/api/admin/settings/lab-leaderboard", json={"enabled": True}, headers=admin)
-    assert (await client.get("/api/lab/usage/leaderboard", headers=member)).status_code == 200
-
-
-# ---- 跨库图谱 ----
-
-
 async def test_lab_graph_unions_visible_libraries(client):
     headers = await _hdr(client, "lab-graph@example.com")
     lib_a = await _make_library(name="图谱甲", is_public=True)
