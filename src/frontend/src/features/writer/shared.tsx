@@ -13,10 +13,10 @@ function cssColor(name: string, fallback: string): string {
   return v || fallback;
 }
 
-/** 协作者光标/头像颜色盘：主题语义色 + 两个补充色（与浙大蓝主题协调的中低饱和色）。 */
+/** 协作者光标/头像颜色盘：主题语义色 + 两个补充色（与深蓝主题协调的中低饱和色）。 */
 function peerColors(): string[] {
   return [
-    cssColor('--accent-text', '#0d4a94'), // 求是蓝
+    cssColor('--accent-text', '#0d4a94'), // 主题深蓝
     cssColor('--ok', '#3f8f5f'), // 绿
     cssColor('--warn', '#b4892f'), // 金
     cssColor('--violet', '#7263b0'), // 紫

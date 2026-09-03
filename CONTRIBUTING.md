@@ -60,5 +60,5 @@ a local `pnpm install`. See [`docs/development.md`](docs/development.md) for the
 
 ## Deployment
 
-Production (zju-54) deploys **only from `origin/main`** — never from a local
+Production deploys **only from `origin/main`** — never from a local
 branch.

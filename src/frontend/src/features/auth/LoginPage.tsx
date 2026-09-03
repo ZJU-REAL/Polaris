@@ -354,7 +354,7 @@ export function LoginPage() {
                   type="email"
                   required
                   autoComplete="email"
-                  placeholder="you@zju.edu.cn"
+                  placeholder="you@example.com"
                   value={forgotEmail}
                   onChange={(e) => setForgotEmail(e.target.value)}
                 />
@@ -485,7 +485,7 @@ export function LoginPage() {
                 type={isRegister ? 'email' : 'text'}
                 required
                 autoComplete={isRegister ? 'email' : 'username'}
-                placeholder={isRegister ? 'you@zju.edu.cn' : tr('邮箱或用户名', 'Email or username')}
+                placeholder={isRegister ? 'you@example.com' : tr('邮箱或用户名', 'Email or username')}
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
               />

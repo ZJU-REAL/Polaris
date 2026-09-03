@@ -162,7 +162,7 @@ export default withMermaid(
       },
       footer: {
         message: 'Released under the Apache-2.0 License.',
-        copyright: '© 2026 ZJU-REAL · Polaris',
+        copyright: '© 2026 Polaris',
       },
     },
 

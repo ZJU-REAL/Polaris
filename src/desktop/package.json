@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Polaris desktop shell (Electron)",
   "homepage": "https://github.com/ZJU-REAL/Polaris",
-  "author": "ZJU-REAL <syl@zju.edu.cn>",
+  "author": "Polaris contributors <polaris@users.noreply.github.com>",
   "main": "dist/main.cjs",
   "scripts": {
     "build:main": "esbuild src/main/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/main.cjs --external:electron",

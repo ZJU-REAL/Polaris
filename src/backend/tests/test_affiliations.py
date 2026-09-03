@@ -56,7 +56,7 @@ from tests.conftest import add_paper, membership_of, register_and_login
 FULL_TEXT = (
     "Great Paper Title\n"
     "Alice Zhang (Zhejiang University)  Bob Li (Google DeepMind)\n"
-    "alice@zju.edu.cn\n\nAbstract: something interesting.\n"
+    "alice@example.edu\n\nAbstract: something interesting.\n"
 )
 
 # fake LLM（core/llm/fake.py）对机构抽取的确定性映射输出

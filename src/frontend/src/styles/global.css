@@ -258,7 +258,7 @@ input {
   transition: background 0.12s, color 0.12s;
 }
 .nav-item:hover { background: var(--nav-hover); color: var(--text); }
-/* 选中态：浙大蓝浅底 + 蓝色图标文字（弃用白色胶囊） */
+/* 选中态：主题蓝浅底 + 蓝色图标文字（弃用白色胶囊） */
 .nav-item.active { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
 .nav-item.active .nav-ic { color: var(--accent); }
 /* 24px 图标框、图标居中：展开态 icon 中心 = 12(区 padding)+9(item)+12 = 33px；
