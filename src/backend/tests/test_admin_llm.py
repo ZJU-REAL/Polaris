@@ -436,7 +436,7 @@ async def test_test_model_anthropic_custom_user_agent(client):
     from app.core.llm.router import LLMRouter
 
     router = LLMRouter()
-    resolved = (await router._load_routes(None))["default"]
+    resolved = (await router._load_routes())["default"]
     assert resolved.user_agent == "claude-cli/test"
     llm = router._provider_for(resolved, "default")
     assert llm._headers()["user-agent"] == "claude-cli/test"  # type: ignore[attr-defined]
@@ -599,3 +599,65 @@ async def test_routes_effort_roundtrip_and_validation(client):
         headers=admin,
     )
     assert resp.status_code == 422
+
+
+async def test_legacy_self_managed_rows_stay_invisible(client):
+    """自管轨退役（#621）后，存量 owner=<user> 私有行不得混进平台配置。
+
+    #621 只删了入口和 users.llm_self_managed，没有清 llm_providers/model_routes
+    里的私有数据行——老部署上它们还躺着。这条钉住三件事：管理端列表看不到、
+    按 id 摸不到（防止改到别人的旧 key）、resolve 也绝不选中它们。
+    """
+    from app.core.llm.router import get_llm_router
+
+    token = await register_and_login(client)
+    h = {"Authorization": f"Bearer {token}"}
+    me_id = uuid.UUID((await client.get("/api/users/me", headers=h)).json()["id"])
+
+    resp = await client.post(
+        "/api/admin/llm/providers", json={"name": "g", "kind": "fake"}, headers=h
+    )
+    assert resp.status_code == 201, resp.text
+    gid = resp.json()["id"]
+    resp = await client.put(
+        "/api/admin/llm/routes",
+        json=[{"stage": "default", "provider_id": gid, "model": "g-model"}],
+        headers=h,
+    )
+    assert resp.status_code == 200, resp.text
+
+    # 直接塞一套自管轨时代的私有行（当年由 /me/llm 写入的形状）
+    async with get_sessionmaker()() as session:
+        legacy = llm_admin.LLMProviderConfig(owner_id=me_id, name="mine", kind="fake", enabled=True)
+        session.add(legacy)
+        await session.flush()
+        session.add(
+            llm_admin.ModelRoute(
+                owner_id=me_id, stage="default", provider_id=legacy.id, model="u-model"
+            )
+        )
+        await session.commit()
+        legacy_id = legacy.id
+    router = get_llm_router()
+    router.invalidate_cache()
+
+    # 列表只有平台的
+    names = [p["name"] for p in (await client.get("/api/admin/llm/providers", headers=h)).json()]
+    assert names == ["g"]
+    # 按 id 摸私有行 → 404
+    resp = await client.patch(
+        f"/api/admin/llm/providers/{legacy_id}", json={"enabled": False}, headers=h
+    )
+    assert resp.status_code == 404
+    # 平台路由表也拒绝引用私有 provider
+    resp = await client.put(
+        "/api/admin/llm/routes",
+        json=[{"stage": "default", "provider_id": str(legacy_id), "model": "x"}],
+        headers=h,
+    )
+    assert resp.status_code == 400
+    # resolve 带不带 user_id 都只认平台配置
+    _, route = await router.resolve("default", user_id=me_id)
+    assert route.model == "g-model"
+    _, route = await router.resolve("default", user_id=None)
+    assert route.model == "g-model"

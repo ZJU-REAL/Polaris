@@ -88,13 +88,6 @@ _ROUTE_CACHE_TTL = 60.0
 # （关键词检索/向量分兜底等既有路径）。
 _CAPABILITY_STAGES = frozenset({"embedding", "rerank"})
 
-# 只走全局配置的环节：忽略调用方传的 user_id，一律用 owner=NULL 的路由。
-# 嵌入在此——论文/分段/想法的向量是全平台共享的一份数据，每个自管用户各用各的
-# 模型建向量，池子里就会混进互不可比的坐标系；更要命的是查询向量也会跟着变，
-# 维度恰好相同时不报任何错，只是排序全乱。所以嵌入模型不给用户自选。
-# rerank 不在此列：它是逐条打分，不涉及跨调用可比性，各用各的没有问题。
-GLOBAL_ONLY_STAGES = frozenset({"embedding"})
-
 # 没显式配路由的环节一律回退 default——设置页就是这么写的（「未单独设置的环节自动
 # 跟随默认」），那一行还直接显示着 default 的模型名。
 #
@@ -225,11 +218,9 @@ class LLMRouter:
     """
 
     def __init__(self) -> None:
-        # 路由表按 owner 分别缓存：None=全局(admin)，<user>=该用户自管
-        self._routes_by_owner: dict[uuid.UUID | None, dict[str, ResolvedRoute]] = {}
-        self._routes_loaded_at: dict[uuid.UUID | None, float] = {}
-        # 用户 llm_self_managed 标志缓存（(flag, loaded_at)）
-        self._self_managed: dict[uuid.UUID, tuple[bool, float]] = {}
+        # 平台路由表缓存（自管轨已并入平台配置 #621：所有人共用同一份 owner=NULL 配置）
+        self._routes: dict[str, ResolvedRoute] = {}
+        self._routes_loaded_at: float = 0.0
         # 键含耐心档位（见 call_profile）：长/短两档各持一个客户端。键是实现细节，
         # 要在测试里替换 provider 请用 override_provider()，别直接往这个字典里塞。
         #
@@ -250,23 +241,23 @@ class LLMRouter:
         self._override = provider
 
     def invalidate_cache(self) -> None:
-        """管理端 / 用户改动 providers/routes/接管状态后调用（清所有 owner）。"""
-        self._routes_loaded_at.clear()
-        self._self_managed.clear()
+        """设置页改动 providers/routes 后调用。"""
+        self._routes_loaded_at = 0.0
 
-    async def _load_routes(self, owner_id: uuid.UUID | None) -> dict[str, ResolvedRoute]:
+    async def _load_routes(self) -> dict[str, ResolvedRoute]:
         from app.models.llm_config import LLMProviderConfig, ModelRoute
 
         routes: dict[str, ResolvedRoute] = {}
         async with get_sessionmaker()() as session:
+            # owner IS NULL 过滤必须保留：老部署的表里可能还躺着自管轨时代的
+            # owner=<user> 存量行（#621 只停用了那条轨，没有清数据），
+            # 不过滤就会把某个用户的私有配置混进全平台路由。
             stmt = (
                 select(ModelRoute, LLMProviderConfig)
                 .join(LLMProviderConfig, ModelRoute.provider_id == LLMProviderConfig.id)
                 .where(
                     LLMProviderConfig.enabled.is_(True),
-                    ModelRoute.owner_id == owner_id
-                    if owner_id is not None
-                    else ModelRoute.owner_id.is_(None),
+                    ModelRoute.owner_id.is_(None),
                 )
             )
             for route, provider in (await session.execute(stmt)).all():
@@ -286,36 +277,12 @@ class LLMRouter:
                 )
         return routes
 
-    async def _get_routes(self, owner_id: uuid.UUID | None) -> dict[str, ResolvedRoute]:
+    async def _get_routes(self) -> dict[str, ResolvedRoute]:
         now = time.monotonic()
-        if now - self._routes_loaded_at.get(owner_id, 0.0) > _ROUTE_CACHE_TTL:
-            self._routes_by_owner[owner_id] = await self._load_routes(owner_id)
-            self._routes_loaded_at[owner_id] = now
-        return self._routes_by_owner.get(owner_id, {})
-
-    async def _is_self_managed(self, user_id: uuid.UUID) -> bool:
-        now = time.monotonic()
-        cached = self._self_managed.get(user_id)
-        if cached is not None and now - cached[1] < _ROUTE_CACHE_TTL:
-            return cached[0]
-        from app.models.user import User
-
-        async with get_sessionmaker()() as session:
-            user = await session.get(User, user_id)
-            flag = bool(user and user.llm_self_managed)
-        self._self_managed[user_id] = (flag, now)
-        return flag
-
-    async def _effective_owner(
-        self, user_id: uuid.UUID | None, stage: str | None = None
-    ) -> uuid.UUID | None:
-        """自管用户 → 用自己的配置；否则（含无 user_id 的系统调用）→ 全局(admin)。
-
-        ``GLOBAL_ONLY_STAGES`` 里的环节例外：无条件用全局配置。
-        """
-        if user_id is None or stage in GLOBAL_ONLY_STAGES:
-            return None
-        return user_id if await self._is_self_managed(user_id) else None
+        if now - self._routes_loaded_at > _ROUTE_CACHE_TTL:
+            self._routes = await self._load_routes()
+            self._routes_loaded_at = now
+        return self._routes
 
     def _provider_for(self, route: ResolvedRoute, stage: str = "") -> LLMProvider:
         if self._override is not None:
@@ -355,15 +322,13 @@ class LLMRouter:
     async def resolve(
         self, stage: str, user_id: uuid.UUID | None = None
     ) -> tuple[LLMProvider, ResolvedRoute]:
-        """按有效 owner 查路由表（缓存 60s），无则回退 default 路由。
+        """查平台路由表（缓存 60s），无则回退 default 路由。
 
         没显式配的环节一律回退 ``default``，不存在「继承另一个环节」这回事——设置页
         就是这么告诉管理员的，界面显示跟随默认哪个模型，实际就得打那个模型。
 
-        owner 由 user 的接管状态决定：自管用户用自己的 owner=user 配置（admin 的
-        对他失效——即"配好前不可用"）；被接管用户及无 user_id 的系统调用用
-        全局(owner=NULL, admin)配置。``GLOBAL_ONLY_STAGES``（嵌入）不吃这一套，
-        无论谁调都用全局配置。
+        ``user_id`` 不再影响选路（自管轨已并入平台配置 #621，人人同一份表），
+        只用于用量记账/调用日志归属，所以签名保留。
 
         能力型环节（``_CAPABILITY_STAGES``）不回退 default：对话模型没有
         embedding/rerank 能力，回退只会产生无意义调用；未显式配置时抛
@@ -373,8 +338,7 @@ class LLMRouter:
         静默回退演示用 fake provider；仅当显式开启
         ``settings.llm_fake_fallback``（测试套件 / 无 key 演示）才回退 fake。
         """
-        owner_id = await self._effective_owner(user_id, stage)
-        routes = await self._get_routes(owner_id)
+        routes = await self._get_routes()
         route = routes.get(stage)
         if route is None:
             if stage in _CAPABILITY_STAGES:

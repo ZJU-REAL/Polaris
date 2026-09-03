@@ -8,7 +8,6 @@ import pytest
 
 from app.core.config import get_settings
 from app.core.llm.router import LLMNotConfiguredError, get_llm_router, reset_llm_router
-from tests.conftest import register_and_login
 
 
 @pytest.fixture
@@ -33,17 +32,3 @@ async def test_resolve_falls_back_to_fake_when_enabled(client):
     reset_llm_router()
     _, route = await get_llm_router().resolve("default")
     assert route.provider_kind == "fake"
-
-
-async def test_effective_test_reports_unconfigured(client, no_fake_fallback):
-    token = await register_and_login(client)
-    r = await client.post(
-        "/api/me/llm/test-effective",
-        json={"stage": "default"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["ok"] is False
-    assert body["error"] == "NO_REAL_MODEL"
-    assert body["is_fake"] is True

@@ -23,9 +23,6 @@ class User(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
     username: Mapped[str | None] = mapped_column(String(32), unique=True, index=True)
     # 用户名只能在个人设置里改一次：改过一次后锁定。
     username_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    # LLM 配置归属：False=用全局 provider/路由 | True=自管（用自己的）。
-    # 见 core/llm/router.py resolve()：self-managed 用 owner=user 的配置。
-    llm_self_managed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # 头像文件（<data_dir>/avatars/<user_id>.<ext>），None = 未上传
     avatar_path: Mapped[str | None] = mapped_column(String(1024))
     # 用户个人设置：{key: value}。None/缺键 = 未设置。

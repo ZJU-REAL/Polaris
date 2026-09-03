@@ -198,8 +198,6 @@ export interface UserRead {
   display_name?: string | null;
   username?: string | null;
   username_locked?: boolean;
-  /** true = 用户自管 LLM 配置；false = 用全局配置 */
-  llm_self_managed?: boolean;
   has_avatar?: boolean;
   /** 用户个人设置（后端可能暂未返回，可选） */
   settings?: Record<string, unknown> | null;
@@ -693,28 +691,6 @@ export interface LlmTestResult {
   ok: boolean;
   latency_ms: number;
   error?: string | null;
-}
-
-/** 用户 LLM 接管状态：self_managed=true 为自管，false 为管理员接管。 */
-export interface LlmManagedStatus {
-  self_managed: boolean;
-}
-
-/** 当前**生效**的 LLM 配置（key 已掩码，只读展示用）。 */
-export interface LlmSelfConfig {
-  self_managed: boolean;
-  providers: LlmProviderRead[];
-  routes: LlmRoute[];
-}
-
-/** 测试当前用户在某 stage 上**实际生效**的那条路由的结果。 */
-export interface EffectiveTestResult {
-  ok: boolean;
-  latency_ms: number;
-  error: string | null;
-  model: string;
-  provider_name: string;
-  is_fake: boolean;
 }
 
 export interface LlmUsageRow {
@@ -5094,44 +5070,6 @@ export const api = {
       sampleRate: Number.isFinite(sampleRate) && sampleRate >= 8_000 ? sampleRate : 24_000,
       playbackRate: Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1,
     };
-  },
-
-  // —— 我的 LLM（每个用户自管那一层，/me/llm） ——
-  myLlmStatus(): Promise<LlmManagedStatus> {
-    return request<LlmManagedStatus>('/me/llm/status');
-  },
-  llmSelfManage(): Promise<LlmManagedStatus> {
-    return request<LlmManagedStatus>('/me/llm/self-manage', { method: 'POST' });
-  },
-  llmManaged(): Promise<LlmManagedStatus> {
-    return request<LlmManagedStatus>('/me/llm/managed', { method: 'POST' });
-  },
-  myLlmEffective(): Promise<LlmSelfConfig> {
-    return request<LlmSelfConfig>('/me/llm/effective');
-  },
-  myLlmProviders(): Promise<LlmProviderRead[]> {
-    return request<LlmProviderRead[]>('/me/llm/providers');
-  },
-  createMyLlmProvider(input: LlmProviderInput): Promise<LlmProviderRead> {
-    return requestJson<LlmProviderRead>('/me/llm/providers', 'POST', input);
-  },
-  updateMyLlmProvider(id: string, input: Partial<LlmProviderInput>): Promise<LlmProviderRead> {
-    return requestJson<LlmProviderRead>(`/me/llm/providers/${id}`, 'PATCH', input);
-  },
-  deleteMyLlmProvider(id: string): Promise<void> {
-    return request<void>(`/me/llm/providers/${id}`, { method: 'DELETE' });
-  },
-  myLlmRoutes(): Promise<LlmRoute[]> {
-    return request<LlmRoute[]>('/me/llm/routes');
-  },
-  replaceMyLlmRoutes(items: LlmRoute[]): Promise<LlmRoute[]> {
-    return requestJson<LlmRoute[]>('/me/llm/routes', 'PUT', items);
-  },
-  testMyLlmModel(input: LlmTestModelInput): Promise<LlmTestResult> {
-    return requestJson<LlmTestResult>('/me/llm/test-model', 'POST', input);
-  },
-  testMyLlmEffective(input: { stage: string }): Promise<EffectiveTestResult> {
-    return requestJson<EffectiveTestResult>('/me/llm/test-effective', 'POST', input);
   },
 
   // —— MCP 只读工具目录 / 试运行 / 自检（docs/development.md「Testing the tools」） ——
