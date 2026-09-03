@@ -20,12 +20,12 @@ class DirectionLibrarySummary(BaseModel):
     statement: str | None
     # 过渡期隐式库回指的课题；未来共享库可为 None
     project_id: uuid.UUID | None
-    # 生命周期（P9b）：pending 待审批（=申请转公共）| active 可用 | rejected 已驳回
-    status: str
-    # 归属（P10）：个人库 false（仅创建者 + admin 可见）| 公共库 true（全实验室可见）
-    is_public: bool = False
-    # 驳回理由（转公共被驳回时有值）
+    # 审批流残留（#619 删列）：恒为 "active" / None。语义已死，但仍随响应下发——
+    # golden transcript 逐字节比对响应形状，纯移除改动不动 wire 形状。
+    status: str = "active"
     review_note: str | None = None
+    # 共享开关：false = 仅创建者可见的个人库 | true = 对本部署所有用户可见
+    is_public: bool = False
     # 库创建者（个人库仅创建者 + admin 可见）
     submitted_by: uuid.UUID | None = None
     # 创建者展示名（submitted_by 的 display_name，前端展示归属）
@@ -55,7 +55,7 @@ class DirectionLibraryDetail(DirectionLibrarySummary):
 
 
 class LibraryCreate(BaseModel):
-    """独立新建方向文献库（POST /libraries，任意登录用户；新库 status=pending 待审批）。
+    """独立新建方向文献库（POST /libraries，任意登录用户；新库即刻可用，无审批）。
 
     P9b：必填仅 name + statement；anchors 只填 arxiv-id 列表（抓取时解析元数据），
     keywords 可选。创建只是配置，不触发抓取、不花 token。
@@ -100,12 +100,6 @@ class SuggestedAnchor(BaseModel):
     reason: str | None = None
 
 
-class LibraryReject(BaseModel):
-    """驳回 pending 库（POST /libraries/{id}/reject，平台 admin）。"""
-
-    note: str | None = Field(default=None, max_length=2000)
-
-
 class SourceLibrariesUpdate(BaseModel):
     """课题关联库全量替换（PUT /projects/{id}/source-libraries）；空列表 = 清空关联。"""
 
@@ -132,6 +126,8 @@ class DirectionLibraryUpdate(BaseModel):
     in_scope: list[Any] | None = None
     out_of_scope: list[Any] | None = None
     questions: list[Any] | None = None
+    # 共享开关（#619）：审批流移除后创建者直接设置「公开给所有人」；None = 不改
+    is_public: bool | None = None
 
 
 class CuratorsUpdate(BaseModel):

@@ -33,7 +33,6 @@ async def _target(email: str, *, name: str = "batch library", papers: int = 1):
         ).scalar_one()
         library = DirectionLibrary(
             name=name,
-            status="active",
             is_public=False,
             submitted_by=owner.id,
             created_by=owner.id,

@@ -65,15 +65,9 @@ class DirectionLibrary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     ingest_state: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     cadence: Mapped[str | None] = mapped_column(String(32))  # 同步节奏：daily | weekly | ...
     monthly_budget: Mapped[int | None]  # 每月 ingest 预算（P6 治理用）
-    # 生命周期（P9b）：pending 待审批 | active 已激活（可抓取）| rejected 已驳回。
-    # server_default='active'——存量库与课题隐式起源库都视为已激活；用户经
-    # POST /libraries 独立建的库显式落 pending，管理员审批后转 active。
-    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="active")
-    review_note: Mapped[str | None] = mapped_column(Text)  # 驳回理由（status=rejected 时有值）
-    # 归属（P10）：个人库 is_public=false（仅创建者 + admin 可见/可管理），公共库
-    # is_public=true（全实验室可见，全体 admin + 创建者/策展人可管理）。个人库经
-    # POST /libraries/{id}/request-public 申请、admin 审批后转公共。存量 active 库
-    # 迁移回填为公共（保留原全员可读语义）。
+    # 共享开关（原 P10「个人/公共」归属）：false = 仅创建者可见的个人库；true = 对本
+    # 部署所有用户可见。审批流已随 #593/#596 移除、status/review_note 残留列随 #619
+    # 删除：创建者在库设置里直接切换，不再经任何审批。
     is_public: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )

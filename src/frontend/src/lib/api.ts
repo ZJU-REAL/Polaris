@@ -1327,14 +1327,12 @@ export interface DirectionLibrarySummary {
   is_mine: boolean;
   /** 是否可管理本库：成员 ∪ 文献库管理员 ∪ 创建者 ∪ 平台管理员（P6/P9b） */
   can_manage: boolean;
-  /** 归属模型：个人库 false（归属人=owner_name）| 公共库 true（实验室/全体 admin 所有） */
+  /** 共享开关：false = 仅创建者可见的个人库 | true = 对本部署所有用户可见 */
   is_public: boolean;
   /** 归属人名（个人库=创建者；公共库=原创建者/策展人；可能为空） */
   owner_name: string | null;
   /** 请求者是否本库归属人（submitted_by==我）：个人库删除入口据此判定 */
   is_owner: boolean;
-  /** 生命周期：新建库即 active；pending/rejected 为历史遗留值 */
-  status: 'pending' | 'active' | 'rejected';
   /** 库创建者 */
   submitted_by: string | null;
   paper_count: number;
@@ -4105,6 +4103,8 @@ export const api = {
       anchors?: AnchorPaper[] | null;
       keywords?: KeywordSpec | null;
       questions?: string[] | null;
+      /** 公开给所有人（创建者直接设置，无审批）；不传 = 不改 */
+      is_public?: boolean;
     },
   ): Promise<DirectionLibraryDetail> {
     return requestJson<DirectionLibraryDetail>(`/libraries/${id}`, 'PATCH', input);

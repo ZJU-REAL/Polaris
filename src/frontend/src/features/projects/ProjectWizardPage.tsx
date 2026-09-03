@@ -44,7 +44,7 @@ export function ProjectWizardPage() {
   const [validationConditions, setValidationConditions] = useState('');
 
   const librariesQuery = useLibraries();
-  const libraries = (librariesQuery.data ?? []).filter((library) => library.status === 'active');
+  const libraries = librariesQuery.data ?? [];
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<Set<string>>(new Set());
 
   function toggleLibrary(libraryId: string) {

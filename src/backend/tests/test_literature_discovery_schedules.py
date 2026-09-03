@@ -38,9 +38,6 @@ async def _library(client) -> tuple[DirectionLibrary, object]:
     async with get_sessionmaker()() as session:
         library = await session.get(DirectionLibrary, library_id)
         assert library is not None
-        library.status = "active"
-        await session.commit()
-        await session.refresh(library)
         actor_id = library.submitted_by
         session.expunge(library)
     return library, actor_id

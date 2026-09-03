@@ -37,7 +37,7 @@ async def _make_library(*, name, is_public, owner_email=None) -> uuid.UUID:
                 await session.execute(select(User).where(User.email == owner_email))
             ).scalar_one().id
         library = DirectionLibrary(
-            name=name, status="active", is_public=is_public, submitted_by=submitted_by
+            name=name, is_public=is_public, submitted_by=submitted_by
         )
         session.add(library)
         await session.commit()

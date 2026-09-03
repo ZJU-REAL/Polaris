@@ -264,8 +264,9 @@ async def claim_due_schedules(
                 schedule.last_error_code = "RUN_ALREADY_ACTIVE"
             continue
         library = await session.get(DirectionLibrary, schedule.library_id)
-        if library is None or library.status != "active":
-            schedule.last_error_code = "LIBRARY_NOT_ACTIVE"
+        if library is None:
+            # 库已被删而定时任务行还挂着（审批流移除后这是唯一的「库不可用」情形）
+            schedule.last_error_code = "LIBRARY_NOT_FOUND"
             continue
         try:
             async with session.begin_nested():
