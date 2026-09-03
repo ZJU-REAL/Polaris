@@ -43,8 +43,13 @@ async def _setup(client, *, prefix):
     assert resp.status_code == 201, resp.text
     assert resp.json()["project_id"] is None
     lib_id = resp.json()["id"]
-    resp = await client.post(f"/api/libraries/{lib_id}/approve", headers=admin)
-    assert resp.status_code == 200, resp.text
+    # 转公共审批流已移除（#593）：直接置 is_public 复原「已批准的公共独立库」语义
+    async with get_sessionmaker()() as session:
+        from app.models.library_direction import DirectionLibrary as _DL
+
+        lib = await session.get(_DL, uuid.UUID(lib_id))
+        lib.is_public = True
+        await session.commit()
     return creator, admin, lib_id
 
 

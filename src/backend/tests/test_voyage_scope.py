@@ -72,7 +72,14 @@ async def _library(client, admin_hdr, owner_hdr, *, name) -> str:
         "/api/libraries", json={"name": name, "statement": "测试库"}, headers=owner_hdr
     )
     assert resp.status_code == 201, resp.text
-    return resp.json()["id"]
+    lib_id = resp.json()["id"]
+    # 转公共审批流已移除（#593）：直接置 is_public 复原「已批准的公共独立库」语义
+    # （本文件多个用例的前提是公共库对全员可读，如 can_open 一例）
+    async with get_sessionmaker()() as session:
+        lib = await session.get(DirectionLibrary, uuid.UUID(lib_id))
+        lib.is_public = True
+        await session.commit()
+    return lib_id
 
 
 async def test_library_voyages_stay_out_of_the_topic_list(client):

@@ -36,8 +36,13 @@ async def _create_active_standalone(client, creator_headers, admin_headers):
     assert resp.status_code == 201, resp.text
     lib_id = resp.json()["id"]
     assert resp.json()["project_id"] is None
-    resp = await client.post(f"/api/libraries/{lib_id}/approve", headers=admin_headers)
-    assert resp.status_code == 200, resp.text
+    # 转公共审批流已移除（#593）：直接置 is_public 复原「已批准的公共独立库」语义
+    async with get_sessionmaker()() as session:
+        from app.models.library_direction import DirectionLibrary as _DL
+
+        lib = await session.get(_DL, uuid.UUID(lib_id))
+        lib.is_public = True
+        await session.commit()
     return lib_id
 
 
