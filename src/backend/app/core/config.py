@@ -20,6 +20,10 @@ class Settings(BaseSettings):
 
     # ---- App ----
     env: Literal["dev", "prod"] = "dev"
+    # 运行档位：server = 现有多进程形态（uvicorn + arq worker + 外部 Redis/PG）；
+    # desktop = 单进程个人版（SQLite + 进程内任务队列 + 进程内 fakeredis），由
+    # 桌面内核拉起，机器上不需要任何外部服务。见 core/queue.py 与 core/redis.py。
+    profile: Literal["server", "desktop"] = "server"
     secret_key: str = "dev-only-secret-key-change-me"  # JWT 签名
     encryption_key: str = ""  # Fernet key；为空时 security.py 会从 secret_key 派生（仅限 dev）
     invite_code: str = "polaris-lab"  # 注册邀请码（实验室内部制）
@@ -244,6 +248,17 @@ class Settings(BaseSettings):
             logger.warning("env=prod：忽略 POLARIS_LLM_FAKE_FALLBACK=1，生产禁止 fake LLM 回退")
             object.__setattr__(self, "llm_fake_fallback", False)
         return self
+
+    @model_validator(mode="after")
+    def _desktop_forbids_prod(self) -> "Settings":
+        """desktop 档位是单机个人形态，与 env=prod 的多用户部署语义互斥。"""
+        if self.profile == "desktop" and self.env == "prod":
+            raise ValueError("POLARIS_PROFILE=desktop 不能与 POLARIS_ENV=prod 同时使用")
+        return self
+
+    @property
+    def is_desktop(self) -> bool:
+        return self.profile == "desktop"
 
     @property
     def is_sqlite(self) -> bool:

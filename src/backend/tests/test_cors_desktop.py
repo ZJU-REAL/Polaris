@@ -21,7 +21,7 @@ def prod_client(monkeypatch):
     """构造 env=prod 的应用客户端；cors_origins 模拟 POLARIS_CORS_ORIGINS。"""
 
     def make(cors_origins: str = "") -> AsyncClient:
-        settings = Settings(env="prod", cors_origins=cors_origins)
+        settings = Settings(env="prod", profile="server", cors_origins=cors_origins)
         monkeypatch.setattr(main_module, "get_settings", lambda: settings)
         return AsyncClient(
             transport=ASGITransport(app=main_module.create_app()), base_url="http://test"
@@ -86,5 +86,6 @@ async def test_dev_still_allows_any_origin(client):
 
 
 def test_cors_origin_list_strips_and_drops_blanks():
-    assert Settings(env="prod", cors_origins=" a , ,b ").cors_origin_list == ["a", "b"]
-    assert Settings(env="prod", cors_origins="").cors_origin_list == []
+    prod = Settings(env="prod", profile="server", cors_origins=" a , ,b ")
+    assert prod.cors_origin_list == ["a", "b"]
+    assert Settings(env="prod", profile="server", cors_origins="").cors_origin_list == []

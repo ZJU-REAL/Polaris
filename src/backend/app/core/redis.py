@@ -14,7 +14,14 @@ _client: Redis | None = None
 def get_redis() -> Redis:
     global _client
     if _client is None:
-        _client = Redis.from_url(get_settings().redis_url, decode_responses=True)
+        if get_settings().is_desktop:
+            # desktop 档位：单进程内嵌 redis 替身——API 与内联任务队列同进程，
+            # pubsub/缓存/事件流全部走进程内，机器上不需要 Redis 服务。
+            import fakeredis.aioredis
+
+            _client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        else:
+            _client = Redis.from_url(get_settings().redis_url, decode_responses=True)
     return _client
 
 
