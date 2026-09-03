@@ -22,6 +22,7 @@ import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
 import { pingAgent, stopAgent } from './main/agent/supervisor';
+import { startKernel, stopKernel } from './main/kernel';
 import { capabilityManifest } from './main/capabilities';
 import { installIpc } from './main/ipc/router';
 import { extractTarGz } from './main/updates/tar';
@@ -45,6 +46,7 @@ function check(label: string, ok: boolean, detail = ''): void {
 void app.whenReady().then(async () => {
   handleAppProtocol(() => SERVER_URL);
   installIpc(); // preload 的 sendSync 依赖它，不装就测不到真实注入链路
+  await startKernel(); // 与 main/index.ts 同序：内核先于窗口，kernel.status 才是真的
 
   console.log('CSP');
   const csp = buildCsp(SERVER_URL);
@@ -358,6 +360,21 @@ void app.whenReady().then(async () => {
     localError.includes('method not implemented in phase 1'),
     localError.slice(0, 120),
   );
+
+  // 内核：证明 @polaris/kernel 真的挂在主进程里，且 renderer 能经唯一
+  // IPC 通道读到它的状态（renderer → preload → router → kernel 单例）。
+  console.log('\n内核');
+  const kernelState = (await win.webContents.executeJavaScript(
+    `window.polaris.invoke('kernel.status').catch(e => ({ error: String(e && e.message || e) }))`,
+  )) as { started?: boolean; name?: string; plugins?: number; error?: string };
+  check('kernel.status 经 IPC 往返返回', kernelState.error === undefined, kernelState.error ?? '');
+  check('内核已启动（started=true）', kernelState.started === true);
+  check('实例名为 polaris-desktop', kernelState.name === 'polaris-desktop', `name=${kernelState.name}`);
+  check('探针插件已注册（plugins ≥ 1）', (kernelState.plugins ?? 0) >= 1, `plugins=${kernelState.plugins}`);
+
+  // smoke 用 app.exit 直接退出、不经过 before-quit，这里手动停机以覆盖
+  // stop 路径（fiber.dispose 级联）不抛错。
+  await stopKernel();
 
   stopAgent();
 

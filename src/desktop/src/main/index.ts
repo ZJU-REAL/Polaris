@@ -1,6 +1,7 @@
 import { app, shell } from 'electron';
 
 import { installIpc } from './ipc/router';
+import { startKernel, stopKernel } from './kernel';
 import { installMenu } from './menu';
 import { APP_ORIGIN, handleAppProtocol, registerAppScheme } from './protocol';
 import { readConfig } from './store';
@@ -31,7 +32,10 @@ if (!app.requestSingleInstanceLock()) {
     // 一期不处理跳转目标，只保证协议已注册、不会把 URL 当文件打开
   });
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
+    // 内核先于 IPC：installIpc 一装好 renderer 就可能打 kernel.status，
+    // 不能让它读到「还没启动」的假象。start 本身不做 IO，不拖慢首窗。
+    await startKernel();
     app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
     handleAppProtocol(() => readConfig().serverUrl);
     installIpc();
@@ -41,6 +45,19 @@ if (!app.requestSingleInstanceLock()) {
     app.on('activate', () => {
       if (!getWindow()) createWindow();
     });
+  });
+
+  // 退出路径统一走 before-quit（cmd+Q、菜单退出、window-all-closed 的 app.quit
+  // 都会经过这里）。kernel.stop 是异步的（fiber.dispose 级联回收），而 Electron
+  // 的退出流程不等 Promise，所以第一次先拦下退出、停完内核再重新 quit。
+  let kernelStopping = false;
+  app.on('before-quit', (event) => {
+    if (kernelStopping) return;
+    kernelStopping = true;
+    event.preventDefault();
+    void stopKernel()
+      .catch((err) => console.error('[kernel] stop failed:', err))
+      .finally(() => app.quit());
   });
 
   // 全局兜底：任何新建的 webContents（含未来可能出现的子窗口）都不允许

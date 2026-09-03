@@ -49,6 +49,12 @@ jobs:
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
 
+      # The desktop shell imports @polaris/kernel, whose vendored cordis runtime
+      # ships TypeScript sources; tsc must resolve the declaration output instead
+      # of re-checking those sources under the shell's strict options.
+      - name: Build vendored type declarations
+        run: pnpm run vendor:types
+
       - name: Build renderer
         run: pnpm --dir src/frontend run build
 
