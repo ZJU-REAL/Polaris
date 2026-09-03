@@ -10,7 +10,8 @@ from alembic import command
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 HEAD_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
-HEAD_REVISION = "d4b8e26f1a93"  # Drop skill ratings (P1 de-lab)
+HEAD_REVISION = "e6c31f84a2d5"  # Drop library curators (P1 de-lab)
+SKILL_RATINGS_DROP_REVISION = "d4b8e26f1a93"  # Drop skill ratings (P1 de-lab)
 RANKINGS_DROP_REVISION = "c8f2a61d9e37"  # Drop view events (P1 de-lab)
 INVITES_DROP_REVISION = "b7d4f92e6c15"  # Drop project invites (P1 de-lab)
 CODES_DROP_REVISION = "a3e9c17b5f42"  # Drop registration codes (P1 de-lab)
@@ -350,10 +351,9 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "llm_self_managed" in columns["users"]
     # 个人库 wiki 快照列（上一版）
     assert "wiki_content" in columns["user_library_entries"]
-    # 本分支新增：方向文献库三表 + papers.dedup_key（P4 迁移 A）+ 收尾（迁移 B）
+    # 方向文献库两表 + papers.dedup_key（策展人表已在 P1 去实验室化中移除）
     assert {
         "direction_libraries",
-        "direction_library_curators",
         "library_papers",
     } <= columns["_tables"]
     assert "dedup_key" in columns["papers"]
@@ -378,7 +378,6 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"trashed_at", "trashed_by"} <= columns["topic_papers"]
     assert "trashed_at" in columns["user_library_entries"]
     # 上一版的两张回滚备份表（策展人回填 / 库任务脱离课题）
-    assert "_pr3_backfilled_curators" in columns["_tables"]
     assert "_c5e2a90d_voyage_topic" in columns["_tables"]
     # 本分支新增：个人标签表（paper × user × name，与库标签完全独立）
     assert "user_paper_tags" in columns["_tables"]
@@ -515,7 +514,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "evidence_balance",
     } <= columns["interdisciplinary_research_profile_versions"]
 
-    # First undo the skill-ratings drop: the table comes back.
+    # First undo the curators drop: both tables come back.
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == SKILL_RATINGS_DROP_REVISION
+    assert "direction_library_curators" in columns["_tables"]
+    assert "_pr3_backfilled_curators" in columns["_tables"]
+
+    # Then undo the skill-ratings drop: that table comes back too.
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == RANKINGS_DROP_REVISION
@@ -828,7 +834,6 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"id", "user_id", "paper_id", "name"} <= columns["user_paper_tags"]
     assert {"trashed_at", "trashed_by"} <= columns["topic_papers"]
     assert "trashed_at" in columns["user_library_entries"]
-    assert "_pr3_backfilled_curators" in columns["_tables"]
     assert "_c5e2a90d_voyage_topic" in columns["_tables"]
     assert "project_id" not in columns["paper_notes"]
     assert "project_id" not in columns["paper_highlights"]

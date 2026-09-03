@@ -20,7 +20,7 @@ from app.models.interdisciplinary import (
     InterdisciplinaryResearchProfileVersion,
 )
 from app.models.library import UserLibraryEntry
-from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator, LibraryPaper
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.literature_discovery import (
     LiteratureDiscoverySchedule,
     LiteratureHitTranslation,
@@ -82,7 +82,6 @@ __all__ = [
     "DailyFeedLike",
     "DirectionLibrary",
     "EmailVerificationCode",
-    "DirectionLibraryCurator",
     "Experiment",
     "ExperimentRun",
     "Feedback",

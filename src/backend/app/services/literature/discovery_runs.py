@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator
+from app.models.library_direction import DirectionLibrary
 from app.models.literature_discovery import (
     LiteratureSearchHit,
     LiteratureSearchRun,
@@ -24,18 +24,8 @@ from app.services.literature.discovery_ranking import normalized_score_weights
 async def can_manage_discovery(
     session: AsyncSession, *, library: DirectionLibrary, user: User
 ) -> bool:
-    """发现运行写权限：平台管理员、库创建者或策展人。"""
-    if user.role == "admin" or library.submitted_by == user.id:
-        return True
-    return (
-        await session.scalar(
-            select(DirectionLibraryCurator.user_id).where(
-                DirectionLibraryCurator.library_id == library.id,
-                DirectionLibraryCurator.user_id == user.id,
-            )
-        )
-        is not None
-    )
+    """发现运行写权限：平台管理员或库创建者。"""
+    return user.role == "admin" or library.submitted_by == user.id
 
 
 def enabled_sources(source_config: dict | None, query_plan: dict | None) -> list[str]:

@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
-import { api, isAdmin, type DirectionLibraryDetail, type DuplicateCandidatePaper, type ProjectDefinition } from '../../lib/api';
+import { api, type DirectionLibraryDetail, type DuplicateCandidatePaper, type ProjectDefinition } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { InclusionSettingsForm, type InclusionValue } from '../libraries/InclusionSettingsForm';
 import { InterdisciplinaryScopePanel } from '../projects/InterdisciplinaryScopePanel';
@@ -21,22 +20,12 @@ function fromDefinition(def: ProjectDefinition | null): InclusionValue {
 
 /* ============================================================
    文献库治理页签（P6）：
-   - 库信息与预算编辑（可管理者：成员 / 文献库管理员 / 平台管理员）；
+   - 库信息与预算编辑（可管理者）；
    - 本月 AI 用量进度（超限后同步任务暂停到下月）；
-   - 文献库管理员名单（仅平台管理员可编辑）；
    - 重复论文候选与合并（不可撤销）。
    ============================================================ */
 
 export function GovernanceTab({ libraryId, readOnly = false }: { libraryId: string; readOnly?: boolean }) {
-  const { data: me } = useQuery({
-    queryKey: ['me'],
-    queryFn: () => api.me(),
-    retry: false,
-    staleTime: 60_000,
-    enabled: !readOnly,
-  });
-  const admin = isAdmin(me);
-
   const { data: lib } = useQuery({
     queryKey: ['library', libraryId],
     queryFn: () => api.getLibrary(libraryId),
@@ -45,7 +34,7 @@ export function GovernanceTab({ libraryId, readOnly = false }: { libraryId: stri
 
   return (
     <div className="col gap16" style={{ padding: 20, overflowY: 'auto' }}>
-      {lib && <LibraryInfoCard lib={lib} readOnly={readOnly} admin={admin} />}
+      {lib && <LibraryInfoCard lib={lib} readOnly={readOnly} />}
       {lib?.library_kind === 'interdisciplinary' && lib.project_id && (
         <InterdisciplinaryLibraryScope projectId={lib.project_id} library={lib} />
       )}
@@ -55,11 +44,10 @@ export function GovernanceTab({ libraryId, readOnly = false }: { libraryId: stri
           readOnly={readOnly || lib.library_kind === 'interdisciplinary'}
         />
       )}
-      {/* 预算 / 管理员名单 / 重复论文均为管理门数据，普通用户取不到 → 只读时不渲染 */}
+      {/* 预算 / 重复论文均为管理门数据，普通用户取不到 → 只读时不渲染 */}
       {!readOnly && (
         <>
           <BudgetCard libraryId={libraryId} />
-          <CuratorsCard libraryId={libraryId} canEdit={admin} />
           <DuplicatesCard libraryId={libraryId} />
         </>
       )}
@@ -274,12 +262,9 @@ function BudgetCard({ libraryId }: { libraryId: string }) {
 function LibraryInfoCard({
   lib,
   readOnly,
-  admin,
 }: {
   lib: DirectionLibraryDetail;
   readOnly?: boolean;
-  /** 平台管理员：可把公共库转回个人库 */
-  admin?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(lib.name);
@@ -315,18 +300,6 @@ function LibraryInfoCard({
   });
 
   const budgetInvalid = budget.trim() !== '' && (!Number.isFinite(Number(budget)) || Number(budget) < 0);
-
-  // 公共库转回个人库：仅平台管理员，转回后只有归属人能看到
-  const makePersonal = useMutation({
-    mutationFn: () => api.makeLibraryPersonal(lib.id),
-    onSuccess: () => {
-      toast(tr('已转为个人文献库', 'Made personal'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['library', lib.id] });
-      void queryClient.invalidateQueries({ queryKey: ['libraries'] });
-    },
-    onError: () => toast(tr('操作失败，请重试', 'Action failed, please retry'), 'error'),
-  });
-  const canMakePersonal = !readOnly && !!admin && lib.is_public && lib.status === 'active';
 
   return (
     <section className="card" style={{ padding: 18 }}>
@@ -381,30 +354,6 @@ function LibraryInfoCard({
         {!readOnly && budgetInvalid && (
           <div style={{ color: 'var(--danger-tx)', fontSize: 12 }}>
             {tr('预算需为不小于 0 的数字', 'Budget must be a number ≥ 0')}
-          </div>
-        )}
-        {canMakePersonal && (
-          <div
-            className="row"
-            style={{
-              justifyContent: 'space-between',
-              alignItems: 'flex-end',
-              gap: 12,
-              flexWrap: 'wrap',
-              borderTop: '0.5px solid var(--border)',
-              paddingTop: 12,
-            }}
-          >
-            <div className="col gap6" style={{ minWidth: 0 }}>
-              <span className="muted" style={{ fontSize: 12 }}>{tr('归属', 'Ownership')}</span>
-              <span className="row gap6" style={{ fontSize: 13 }}>
-                <Icon name="book" size={13} style={{ color: 'var(--ok-tx)' }} />
-                {tr('公共文献库 · 全实验室可见', 'Public · visible to the whole lab')}
-              </span>
-            </div>
-            <button className="btn btn-soft sm" disabled={makePersonal.isPending} onClick={() => makePersonal.mutate()}>
-              {makePersonal.isPending ? tr('处理中…', 'Working…') : tr('转为个人文献库', 'Make personal')}
-            </button>
           </div>
         )}
       </div>
@@ -465,115 +414,6 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
         showRubric
         readOnly={readOnly}
       />
-    </section>
-  );
-}
-
-/* —— 文献库管理员名单 —— */
-
-function CuratorsCard({ libraryId, canEdit }: { libraryId: string; canEdit: boolean }) {
-  const queryClient = useQueryClient();
-  const [adding, setAdding] = useState(false);
-  const [pick, setPick] = useState('');
-
-  const curatorsQuery = useQuery({
-    queryKey: ['library-curators', libraryId],
-    queryFn: () => api.listLibraryCurators(libraryId),
-    retry: false,
-  });
-  const usersQuery = useQuery({
-    queryKey: ['admin-users'],
-    queryFn: () => api.adminListUsers(),
-    enabled: canEdit && adding,
-    retry: false,
-  });
-
-  const curators = curatorsQuery.data ?? [];
-  const candidates = useMemo(
-    () => (usersQuery.data ?? []).filter((u) => !curators.some((c) => c.user_id === u.id)),
-    [usersQuery.data, curators],
-  );
-
-  const replace = useMutation({
-    mutationFn: (userIds: string[]) => api.setLibraryCurators(libraryId, userIds),
-    onSuccess: (rows) => {
-      queryClient.setQueryData(['library-curators', libraryId], rows);
-      void queryClient.invalidateQueries({ queryKey: ['libraries'] });
-      setPick('');
-      setAdding(false);
-    },
-    onError: () => toast(tr('名单更新失败', 'Failed to update the list'), 'error'),
-  });
-
-  return (
-    <section className="card" style={{ padding: 18 }}>
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 700 }}>{tr('文献库管理员', 'Library managers')}</h3>
-        {canEdit && !adding && (
-          <button className="btn btn-soft sm" onClick={() => setAdding(true)}>
-            <Icon name="plus" size={12} />
-            {tr('添加', 'Add')}
-          </button>
-        )}
-      </div>
-      <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
-        {tr(
-          '管理员可以调整这个库的收录标准、编辑库信息与预算、合并重复论文；名单由平台管理员任命。',
-          'Managers can tune inclusion criteria, edit library info and budget, and merge duplicate papers. Appointed by platform admins.',
-        )}
-      </p>
-      {curatorsQuery.isError ? (
-        <div className="muted" style={{ fontSize: 13 }}>
-          {tr('名单加载失败（可能没有查看权限）', 'Failed to load (you may lack permission)')}
-        </div>
-      ) : curators.length === 0 ? (
-        <div className="muted" style={{ fontSize: 13 }}>
-          {tr('还没有任命管理员：库背后课题的成员与平台管理员可管理。', 'No managers appointed yet; topic members and platform admins can manage.')}
-        </div>
-      ) : (
-        <div className="col gap8">
-          {curators.map((c) => (
-            <div key={c.user_id} className="row" style={{ justifyContent: 'space-between' }}>
-              <div className="row gap8">
-                <Icon name="users" size={14} />
-                <span style={{ fontSize: 13 }}>{c.display_name || c.email}</span>
-                <span className="muted" style={{ fontSize: 12 }}>{c.email}</span>
-              </div>
-              {canEdit && (
-                <button
-                  className="btn btn-ghost sm"
-                  disabled={replace.isPending}
-                  onClick={() => replace.mutate(curators.filter((x) => x.user_id !== c.user_id).map((x) => x.user_id))}
-                >
-                  {tr('移除', 'Remove')}
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      {canEdit && adding && (
-        <div className="row gap8" style={{ marginTop: 12 }}>
-          <select className="input" value={pick} onChange={(e) => setPick(e.target.value)} style={{ flex: 1 }}>
-            <option value="">{tr('选择用户…', 'Pick a user…')}</option>
-            {candidates.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.display_name || u.email}（{u.email}）
-              </option>
-            ))}
-          </select>
-          <button
-            className="btn btn-primary sm"
-            disabled={!pick || replace.isPending}
-            onClick={() => replace.mutate([...curators.map((c) => c.user_id), pick])}
-          >
-            {tr('确认添加', 'Add')}
-          </button>
-          <button className="btn btn-ghost sm" onClick={() => { setAdding(false); setPick(''); }}>
-            {tr('取消', 'Cancel')}
-          </button>
-        </div>
-      )}
     </section>
   );
 }

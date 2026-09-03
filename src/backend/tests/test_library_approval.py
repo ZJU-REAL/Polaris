@@ -1,11 +1,9 @@
-"""P10：文献库个人/公共归属 —— 建库即 active 个人库 + 申请转公共 + admin 审批。
+"""文献库归属与可见性 —— 建库即 active 个人库（转公共审批流已随实验室定位移除）。
 
-- 任意登录用户建库 → 即刻可用的**个人库**（status=active、is_public=false），不审批；
+- 任意登录用户建库 → 即刻可用的**个人库**（status=active、is_public=false）；
 - 个人库仅创建者 + admin 可见/可管理，token 记创建者账；
-- 创建者/策展人经 POST /libraries/{id}/request-public 申请转公共 → status=pending；
-- admin approve → is_public=true active（全实验室可见）；reject → 退回个人 active + 理由；
-- 可见性：个人库对陌生人不可见（列表隐藏 + 详情 404），转公共后全员可见；
-- 删除：个人库创建者本人或 admin 可删；公共库仅 admin 可删。
+- 存量公共库（is_public=true）仍全员可见、仅 admin 可删；
+- 删除：个人库创建者本人或 admin 可删。
 """
 
 import uuid
@@ -27,6 +25,14 @@ async def _promote_admin(email: str) -> None:
 
         user = (await session.execute(select(User).where(User.email == email))).scalar_one()
         user.role = "admin"
+        await session.commit()
+
+
+async def _make_public(lib_id: str) -> None:
+    """直接把库置为公共（原转公共审批流已随实验室定位移除，测试造数据用）。"""
+    async with get_sessionmaker()() as session:
+        lib = await session.get(DirectionLibrary, uuid.UUID(lib_id))
+        lib.is_public = True
         await session.commit()
 
 
@@ -73,95 +79,6 @@ async def test_personal_library_can_ingest_without_approval(client, queue_stub):
 # ---- 申请转公共 + 审批 ----
 
 
-async def test_request_public_sets_pending(client):
-    await _hdr(client, "p10-a3@example.com")  # 占位 admin
-    owner = await _hdr(client, "p10-owner3@example.com")
-    lib_id = await _create_personal(client, owner)
-    resp = await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["status"] == "pending"
-    assert body["is_public"] is False  # 审批前仍是个人库
-
-
-async def test_request_public_stranger_forbidden(client):
-    await _hdr(client, "p10-a4@example.com")  # 占位 admin
-    owner = await _hdr(client, "p10-owner4@example.com")
-    stranger = await _hdr(client, "p10-stranger4@example.com")
-    lib_id = await _create_personal(client, owner)
-    # 陌生人看不到该个人库 → 申请转公共视为不存在（404）
-    resp = await client.post(f"/api/libraries/{lib_id}/request-public", headers=stranger)
-    assert resp.status_code == 404
-
-
-async def test_curator_can_request_public(client):
-    admin = await _hdr(client, "p10-a5@example.com")
-    await _promote_admin("p10-a5@example.com")
-    owner = await _hdr(client, "p10-owner5@example.com")
-    curator = await _hdr(client, "p10-curator5@example.com")
-    lib_id = await _create_personal(client, owner)
-    # admin 把 curator 加为该库策展人
-    async with get_sessionmaker()() as session:
-        from app.models.user import User
-
-        cur = (
-            await session.execute(select(User).where(User.email == "p10-curator5@example.com"))
-        ).scalar_one()
-        cur_id = cur.id
-    resp = await client.put(
-        f"/api/libraries/{lib_id}/curators", json={"user_ids": [str(cur_id)]}, headers=admin
-    )
-    assert resp.status_code == 200, resp.text
-    resp = await client.post(f"/api/libraries/{lib_id}/request-public", headers=curator)
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "pending"
-
-
-async def test_admin_approve_makes_public(client):
-    admin = await _hdr(client, "p10-a6@example.com")
-    await _promote_admin("p10-a6@example.com")
-    owner = await _hdr(client, "p10-owner6@example.com")
-    lib_id = await _create_personal(client, owner)
-    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
-
-    resp = await client.post(f"/api/libraries/{lib_id}/approve", headers=admin)
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["is_public"] is True
-    assert body["status"] == "active"
-    assert body["review_note"] is None
-
-
-async def test_admin_reject_returns_personal_active(client):
-    admin = await _hdr(client, "p10-a7@example.com")
-    await _promote_admin("p10-a7@example.com")
-    owner = await _hdr(client, "p10-owner7@example.com")
-    lib_id = await _create_personal(client, owner)
-    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
-
-    resp = await client.post(
-        f"/api/libraries/{lib_id}/reject", json={"note": "范围太宽，请收窄"}, headers=admin
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["is_public"] is False
-    assert body["status"] == "active"  # 退回可用的个人库，不是不可用的 rejected
-    assert body["review_note"] == "范围太宽，请收窄"
-
-
-async def test_approve_reject_admin_only(client):
-    await _hdr(client, "p10-a8@example.com")  # 占位 admin
-    owner = await _hdr(client, "p10-owner8@example.com")
-    lib_id = await _create_personal(client, owner)
-    resp = await client.post(f"/api/libraries/{lib_id}/approve", headers=owner)
-    assert resp.status_code == 403
-    resp = await client.post(f"/api/libraries/{lib_id}/reject", json={}, headers=owner)
-    assert resp.status_code == 403
-
-
-# ---- 可见性 ----
-
-
 async def test_personal_library_hidden_from_stranger(client):
     await _hdr(client, "p10-a9@example.com")  # 占位 admin
     owner = await _hdr(client, "p10-owner9@example.com")
@@ -185,7 +102,7 @@ async def test_personal_library_read_endpoints_hidden_from_stranger(client):
     回归：修复前这些端点只做 _get_library（查存在），漏了可见性校验。转公共后陌生人可读。"""
     owner = await _hdr(client, "readvis-owner@example.com")
     stranger = await _hdr(client, "readvis-stranger@example.com")
-    admin = await _hdr(client, "readvis-admin@example.com")
+    await _hdr(client, "readvis-admin@example.com")
     await _promote_admin("readvis-admin@example.com")
     lib_id = await _create_personal(client, owner, name="只读端点个人库")
 
@@ -205,8 +122,7 @@ async def test_personal_library_read_endpoints_hidden_from_stranger(client):
     assert resp.status_code == 200
 
     # 申请转公共 + admin 批准 → 陌生人可读
-    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
-    resp = await client.post(f"/api/libraries/{lib_id}/approve", headers=admin)
+    await _make_public(lib_id)
     assert resp.status_code == 200
     resp = await client.get(f"/api/libraries/{lib_id}/papers", headers=stranger)
     assert resp.status_code == 200
@@ -225,7 +141,7 @@ async def test_admin_sees_others_personal(client):
 
 
 async def test_public_library_visible_to_all(client):
-    admin = await _hdr(client, "p10-a11@example.com")
+    await _hdr(client, "p10-a11@example.com")
     await _promote_admin("p10-a11@example.com")
     owner = await _hdr(client, "p10-owner11@example.com")
     stranger = await _hdr(client, "p10-stranger11@example.com")
@@ -234,8 +150,7 @@ async def test_public_library_visible_to_all(client):
     resp = await client.get("/api/libraries", headers=stranger)
     assert lib_id not in {x["id"] for x in resp.json()}
     # 申请 + 审批转公共
-    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
-    await client.post(f"/api/libraries/{lib_id}/approve", headers=admin)
+    await _make_public(lib_id)
     # 转公共后全员可见
     resp = await client.get("/api/libraries", headers=stranger)
     assert lib_id in {x["id"] for x in resp.json()}
@@ -257,14 +172,13 @@ async def test_digest_is_readable_by_anyone_who_can_see_the_library(client):
 
     from app.models.research_digest import LibraryResearchDigest
 
-    admin = await _hdr(client, "digest-admin@example.com")
+    await _hdr(client, "digest-admin@example.com")
     await _promote_admin("digest-admin@example.com")
     owner = await _hdr(client, "digest-owner@example.com")
     stranger = await _hdr(client, "digest-stranger@example.com")
 
     lib_id = await _create_personal(client, owner, name="有简报的库")
-    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
-    await client.post(f"/api/libraries/{lib_id}/approve", headers=admin)
+    await _make_public(lib_id)
 
     async with get_sessionmaker()() as session:
         session.add(
@@ -339,13 +253,12 @@ async def test_personal_library_digest_stays_hidden_from_strangers(client):
 
 
 async def test_list_type_filter(client):
-    admin = await _hdr(client, "p10-a12@example.com")
+    await _hdr(client, "p10-a12@example.com")
     await _promote_admin("p10-a12@example.com")
     owner = await _hdr(client, "p10-owner12@example.com")
     personal_id = await _create_personal(client, owner, name="留个人")
     public_id = await _create_personal(client, owner, name="转公共")
-    await client.post(f"/api/libraries/{public_id}/request-public", headers=owner)
-    await client.post(f"/api/libraries/{public_id}/approve", headers=admin)
+    await _make_public(public_id)
 
     resp = await client.get("/api/libraries?type=personal", headers=owner)
     ids = {x["id"] for x in resp.json()}
@@ -384,8 +297,7 @@ async def test_public_library_only_admin_deletes(client):
     await _promote_admin("p10-a15@example.com")
     owner = await _hdr(client, "p10-owner15@example.com")
     lib_id = await _create_personal(client, owner)
-    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
-    await client.post(f"/api/libraries/{lib_id}/approve", headers=admin)
+    await _make_public(lib_id)
     # 公共库创建者也不能删
     resp = await client.delete(f"/api/libraries/{lib_id}", headers=owner)
     assert resp.status_code == 403
@@ -423,46 +335,3 @@ def test_ingest_billing_owner_unit():
 # ---- P10 细化：admin 直通 / 取消申请 / 转回个人 ----
 
 
-async def test_admin_request_public_auto_approves(client):
-    """平台 admin 发起 request-public → 直接转公共（跳过 pending 审批）。"""
-    admin = await _hdr(client, "auto-admin@example.com")
-    await _promote_admin("auto-admin@example.com")
-    lib_id = await _create_personal(client, admin, name="admin 自建库")
-    resp = await client.post(f"/api/libraries/{lib_id}/request-public", headers=admin)
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["is_public"] is True and body["status"] == "active"
-
-
-async def test_cancel_request_public_returns_personal(client):
-    """归属人撤回 pending 申请 → 退回可用个人库。"""
-    await _hdr(client, "cancel-placeholder@example.com")  # 占位 admin（首个注册用户自动 admin）
-    owner = await _hdr(client, "cancel-owner@example.com")
-    lib_id = await _create_personal(client, owner)
-    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
-    resp = await client.post(f"/api/libraries/{lib_id}/cancel-request-public", headers=owner)
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["status"] == "active" and body["is_public"] is False
-
-
-async def test_make_personal_admin_only(client):
-    """admin 把公共库转回个人（其他人看不到）；非 admin 转个人 → 403。"""
-    await _hdr(client, "mp-placeholder@example.com")  # 占位 admin（首个注册用户自动 admin）
-    owner = await _hdr(client, "mp-owner@example.com")
-    admin = await _hdr(client, "mp-admin@example.com")
-    await _promote_admin("mp-admin@example.com")
-    lib_id = await _create_personal(client, owner)
-    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
-    await client.post(f"/api/libraries/{lib_id}/approve", headers=admin)
-    # 非 admin 转个人 → 403
-    resp = await client.post(f"/api/libraries/{lib_id}/make-personal", headers=owner)
-    assert resp.status_code == 403
-    # admin 转个人 → is_public false
-    resp = await client.post(f"/api/libraries/{lib_id}/make-personal", headers=admin)
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["is_public"] is False
-    # 转回个人后，原本非归属人的陌生人看不到
-    stranger = await _hdr(client, "mp-stranger@example.com")
-    resp = await client.get(f"/api/libraries/{lib_id}", headers=stranger)
-    assert resp.status_code == 404

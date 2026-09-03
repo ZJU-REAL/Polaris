@@ -11,7 +11,7 @@ import uuid
 from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
-from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator
+from app.models.library_direction import DirectionLibrary
 from app.models.project import ProjectMember
 from app.models.user import User
 from tests.conftest import register_and_login
@@ -55,15 +55,6 @@ async def _add_topic_member(project_id: uuid.UUID, user_id: uuid.UUID) -> None:
         await session.commit()
 
 
-async def _add_curator(lib_id: str, user_id: uuid.UUID) -> None:
-    """迁移 b3d81f6c05a9 对每个历史库成员做的事。"""
-    async with get_sessionmaker()() as session:
-        session.add(
-            DirectionLibraryCurator(library_id=uuid.UUID(lib_id), user_id=user_id)
-        )
-        await session.commit()
-
-
 async def _legacy_library(client, *, prefix):
     """造一个「有起源课题」的历史库，返回 (owner_hdr, admin_hdr, lib_id, project_id)。"""
     admin_email = f"{prefix}-admin@example.com"
@@ -86,8 +77,11 @@ async def _legacy_library(client, *, prefix):
     )
     assert resp.status_code == 201, resp.text
     lib_id = resp.json()["id"]
-    resp = await client.post(f"/api/libraries/{lib_id}/approve", headers=admin)
-    assert resp.status_code == 200, resp.text
+    # 转公共审批流已移除：直接把库置为公共（模拟存量公共历史库）
+    async with get_sessionmaker()() as session:
+        lib = await session.get(DirectionLibrary, uuid.UUID(lib_id))
+        lib.is_public = True
+        await session.commit()
 
     await _set_origin_topic(lib_id, project_id)
     return owner, admin, lib_id, project_id
@@ -109,12 +103,9 @@ async def test_topic_membership_alone_does_not_grant_library_manage(client):
     resp = await client.post(f"/api/libraries/{lib_id}/concepts/relink", headers=member)
     assert resp.status_code == 403, resp.text
 
-    # 补成策展人（= 迁移做的事）后放行
-    await _add_curator(lib_id, member_id)
-    resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=member)
-    assert resp.status_code == 200, resp.text
-    resp = await client.post(f"/api/libraries/{lib_id}/concepts/relink", headers=member)
-    assert resp.status_code == 200, resp.text
+    # 库创建者本人照常放行（策展人机制已随实验室定位移除，管理权 = 创建者 ∪ admin）
+    owner_resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=_owner)
+    assert owner_resp.status_code == 200, owner_resp.text
 
 
 async def test_legacy_library_serves_library_scoped_endpoints(client):

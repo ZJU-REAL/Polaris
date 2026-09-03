@@ -92,19 +92,6 @@ class DirectionLibrary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
-class DirectionLibraryCurator(TimestampMixin, Base):
-    """库策展人（P6 治理入口；P4 仅建表）。"""
-
-    __tablename__ = "direction_library_curators"
-
-    library_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("direction_libraries.id", ondelete="CASCADE"), primary_key=True
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-
-
 class LibraryPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """库-论文成员行：某方向库视角下对一篇内容池论文的归属与判断。"""
 

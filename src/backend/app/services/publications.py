@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
 from app.models.library_direction import (
-    DirectionLibraryCurator,
+    DirectionLibrary,
     LibraryPaper,
     TopicSourceLibrary,
 )
@@ -151,9 +151,7 @@ async def match_from_library(session: AsyncSession, *, user_id: uuid.UUID) -> in
     my_libraries = select(TopicSourceLibrary.library_id).where(
         TopicSourceLibrary.topic_id.in_(my_projects)
     )
-    my_curated = select(DirectionLibraryCurator.library_id).where(
-        DirectionLibraryCurator.user_id == user_id
-    )
+    my_created = select(DirectionLibrary.id).where(DirectionLibrary.submitted_by == user_id)
     stmt = (
         select(Paper)
         .distinct()
@@ -161,7 +159,7 @@ async def match_from_library(session: AsyncSession, *, user_id: uuid.UUID) -> in
         .where(
             or_(
                 LibraryPaper.library_id.in_(my_libraries),
-                LibraryPaper.library_id.in_(my_curated),
+                LibraryPaper.library_id.in_(my_created),
             ),
             LibraryPaper.status != "excluded",
         )

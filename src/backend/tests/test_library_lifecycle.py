@@ -2,7 +2,7 @@
 
 - P9c：建课题只建 project（+ 按入参关联已有库），不再自动建起源库；
 - 删课题不级联删库：起源库（存量隐式库，project_id 回指）的 project_id 置 NULL，
-  library_papers/concepts/curators 全部保留，只有该课题自己的关联行随课题消失；
+  library_papers/concepts 全部保留，只有该课题自己的关联行随课题消失；
 - DELETE /libraries/{id}（admin）：有课题关联默认 409，force=true 才删；论文
   内容池（papers 表）行永不受影响。
 """

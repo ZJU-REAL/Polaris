@@ -190,7 +190,7 @@ export function CollectTreeModal({
   const { projects } = useProject();
 
   // 只展示可管理的方向库（无写权限的目标后端也会兜底 forbidden）
-  const libsQuery = useLibraries({ status: 'active' }, open);
+  const libsQuery = useLibraries({}, open);
   const libraries = useMemo(
     () => (libsQuery.data ?? []).filter((l) => l.can_manage),
     [libsQuery.data],

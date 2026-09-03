@@ -23,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import (
     current_active_user,
-    require_admin,
     require_llm_chat,
     require_llm_task,
 )
@@ -38,8 +37,6 @@ from app.models.user import User
 from app.schemas.graph import GraphResponse
 from app.schemas.ingest import DigestGenerateRead, IngestRequest, IngestStateRead
 from app.schemas.libraries import (
-    CuratorRead,
-    CuratorsUpdate,
     DirectionLibraryDetail,
     DirectionLibrarySummary,
     DirectionLibraryUpdate,
@@ -48,7 +45,6 @@ from app.schemas.libraries import (
     LibraryCreate,
     LibraryDigestRead,
     LibraryDigestSummary,
-    LibraryReject,
     PaperMergeRequest,
     PaperMergeResult,
     StatementInterviewQuestion,
@@ -317,99 +313,6 @@ async def get_library_digest(
     return LibraryDigestRead.model_validate(digest)
 
 
-@router.post("/libraries/{library_id}/request-public", response_model=DirectionLibraryDetail)
-async def request_library_public(
-    library_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> DirectionLibraryDetail:
-    """申请把个人库转为公共库（P10）：创建者/策展人发起 → status=pending 等 admin 审批；
-    **平台 admin 发起则直接通过**（直接转公共，无需审批）。无权者视为不存在（404）。
-    """
-    library = await _get_library(session, library_id)
-    is_admin = user.role == "admin"
-    is_owner = library.submitted_by is not None and library.submitted_by == user.id
-    is_curator = await libraries_service.is_library_curator(
-        session, library_id=library.id, user_id=user.id
-    )
-    if not (is_admin or is_owner or is_curator):
-        # 能看到但无权发起 → 403；看不到（陌生人个人库）→ 404 隐藏存在。
-        if libraries_service.library_visible_to(library, user):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_MANAGE_FORBIDDEN")
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
-    if is_admin:
-        library = await libraries_service.approve_library(session, library=library)
-    else:
-        library = await libraries_service.request_public(session, library=library)
-    row = await libraries_service.library_overview(session, library=library, user=user)
-    return DirectionLibraryDetail(**row)
-
-
-@router.post("/libraries/{library_id}/cancel-request-public", response_model=DirectionLibraryDetail)
-async def cancel_request_library_public(
-    library_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> DirectionLibraryDetail:
-    """撤回转公共申请（P10）：创建者/策展人把 pending 退回可用的个人库
-    （is_public=false、status=active）。无权者视为不存在（404）。"""
-    library = await _get_library(session, library_id)
-    is_owner = library.submitted_by is not None and library.submitted_by == user.id
-    is_curator = await libraries_service.is_library_curator(
-        session, library_id=library.id, user_id=user.id
-    )
-    if not (is_owner or is_curator or user.role == "admin"):
-        if libraries_service.library_visible_to(library, user):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_MANAGE_FORBIDDEN")
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
-    library = await libraries_service.cancel_request_public(session, library=library)
-    row = await libraries_service.library_overview(session, library=library, user=user)
-    return DirectionLibraryDetail(**row)
-
-
-@router.post("/libraries/{library_id}/make-personal", response_model=DirectionLibraryDetail)
-async def make_library_personal(
-    library_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_admin),
-) -> DirectionLibraryDetail:
-    """把公共库转回个人库（平台 admin，P10）：is_public → false、status=active。
-    转回后仅归属人 + admin 可见，其他成员看不到。"""
-    library = await _get_library(session, library_id)
-    library = await libraries_service.make_personal(session, library=library)
-    row = await libraries_service.library_overview(session, library=library, user=user)
-    return DirectionLibraryDetail(**row)
-
-
-@router.post("/libraries/{library_id}/approve", response_model=DirectionLibraryDetail)
-async def approve_library(
-    library_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_admin),
-) -> DirectionLibraryDetail:
-    """审批通过转公共库（平台 admin，P10）：is_public → true、status → active，
-    全实验室可见、ingest 走系统/全局 key。"""
-    library = await _get_library(session, library_id)
-    library = await libraries_service.approve_library(session, library=library)
-    row = await libraries_service.library_overview(session, library=library, user=user)
-    return DirectionLibraryDetail(**row)
-
-
-@router.post("/libraries/{library_id}/reject", response_model=DirectionLibraryDetail)
-async def reject_library(
-    library_id: uuid.UUID,
-    data: LibraryReject,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_admin),
-) -> DirectionLibraryDetail:
-    """驳回转公共申请（平台 admin，P10）：退回可用的个人库（is_public=false、
-    status=active），可带理由；创建者可调整后再申请。"""
-    library = await _get_library(session, library_id)
-    library = await libraries_service.reject_library(session, library=library, note=data.note)
-    row = await libraries_service.library_overview(session, library=library, user=user)
-    return DirectionLibraryDetail(**row)
-
-
 @router.patch("/libraries/{library_id}", response_model=DirectionLibraryDetail)
 async def update_library(
     library_id: uuid.UUID,
@@ -515,36 +418,6 @@ async def start_library_ingest(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_BUDGET_EXHAUSTED") from e
     await queue.enqueue("run_voyage", str(run.id))
     return VoyageRead.model_validate(run)
-
-
-@router.get("/libraries/{library_id}/curators", response_model=list[CuratorRead])
-async def list_curators(
-    library_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> list[CuratorRead]:
-    """策展人名单（界面叫「文献库管理员」）；可管理者可见。"""
-    library = await _get_managed_library(session, library_id, user)
-    rows = await libraries_service.list_curators(session, library.id)
-    return [CuratorRead(**row) for row in rows]
-
-
-@router.put("/libraries/{library_id}/curators", response_model=list[CuratorRead])
-async def set_curators(
-    library_id: uuid.UUID,
-    data: CuratorsUpdate,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_admin),
-) -> list[CuratorRead]:
-    """全量替换策展人名单（仅平台 admin）。"""
-    library = await _get_library(session, library_id)
-    try:
-        rows = await libraries_service.set_curators(
-            session, library=library, user_ids=data.user_ids
-        )
-    except ValueError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-    return [CuratorRead(**row) for row in rows]
 
 
 @router.get("/libraries/{library_id}/papers", response_model=PaperListPage)

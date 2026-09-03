@@ -134,12 +134,6 @@ class DirectionLibraryUpdate(BaseModel):
     questions: list[Any] | None = None
 
 
-class CuratorRead(BaseModel):
-    user_id: uuid.UUID
-    email: str
-    display_name: str | None
-
-
 class CuratorsUpdate(BaseModel):
     """策展人名单全量替换（平台 admin）。"""
 

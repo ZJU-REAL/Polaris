@@ -10,11 +10,7 @@ from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
 from app.models.idea import Idea
-from app.models.library_direction import (
-    DirectionLibrary,
-    DirectionLibraryCurator,
-    TopicSourceLibrary,
-)
+from app.models.library_direction import DirectionLibrary, TopicSourceLibrary
 from app.models.user import User
 from app.models.voyage import VoyageRun
 from app.services import voyages as voyages_service
@@ -76,10 +72,7 @@ async def _library(client, admin_hdr, owner_hdr, *, name) -> str:
         "/api/libraries", json={"name": name, "statement": "测试库"}, headers=owner_hdr
     )
     assert resp.status_code == 201, resp.text
-    lib_id = resp.json()["id"]
-    resp = await client.post(f"/api/libraries/{lib_id}/approve", headers=admin_hdr)
-    assert resp.status_code == 200, resp.text
-    return lib_id
+    return resp.json()["id"]
 
 
 async def test_library_voyages_stay_out_of_the_topic_list(client):
@@ -111,36 +104,25 @@ async def test_library_voyages_stay_out_of_the_topic_list(client):
     assert legacy_bootstrap not in ids
 
 
-async def test_standalone_library_voyage_is_visible_to_its_curator(client):
-    """独立库的任务 project_id 为空——按课题成员 join 会整个漏掉，策展人得看得见。"""
+async def test_standalone_library_voyage_is_visible_to_its_creator(client):
+    """独立库的任务 project_id 为空——按课题成员 join 会整个漏掉，创建者得看得见。"""
     admin_email = "vscope-curator-admin@example.com"
     admin = await _hdr(client, admin_email)
     await _promote_admin(admin_email)
-    owner = await _hdr(client, "vscope-curator-owner@example.com")
+    owner_email = "vscope-curator-owner@example.com"
+    owner = await _hdr(client, owner_email)
+    owner_id = await _user_id(owner_email)
     lib_id = await _library(client, admin, owner, name="独立库·任务可见")
 
     run_id = await _make_run(kind="wiki_ingest", library_id=uuid.UUID(lib_id))
 
-    curator_email = "vscope-curator@example.com"
-    await _hdr(client, curator_email)
-    curator_id = await _user_id(curator_email)
     stranger_email = "vscope-stranger@example.com"
     await _hdr(client, stranger_email)
     stranger_id = await _user_id(stranger_email)
 
     async with get_sessionmaker()() as session:
-        # 还不是策展人：看不到
-        runs = await voyages_service.list_voyages(session, user_id=curator_id)
-        assert run_id not in {r.id for r in runs}
-
-    async with get_sessionmaker()() as session:
-        session.add(
-            DirectionLibraryCurator(library_id=uuid.UUID(lib_id), user_id=curator_id)
-        )
-        await session.commit()
-
-    async with get_sessionmaker()() as session:
-        runs = await voyages_service.list_voyages(session, user_id=curator_id)
+        # 库创建者看得到自己库的任务
+        runs = await voyages_service.list_voyages(session, user_id=owner_id)
         assert run_id in {r.id for r in runs}
         # 无关的人始终看不到
         runs = await voyages_service.list_voyages(session, user_id=stranger_id)
@@ -529,5 +511,6 @@ async def test_delete_voyage_keeps_token_accounting(client):
 
     assert (await client.delete(f"/api/voyages/{run_id}", headers=headers)).status_code == 204
     async with get_sessionmaker()() as session:
-        usage = (await session.execute(_select(LLMUsage).where(LLMUsage.model == "fake-default"))).scalars().all()
+        stmt = _select(LLMUsage).where(LLMUsage.model == "fake-default")
+        usage = (await session.execute(stmt)).scalars().all()
     assert len(usage) == 1 and usage[0].voyage_id is None, "用量行必须留下，只解引用"

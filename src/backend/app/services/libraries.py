@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.library_direction import (
     DirectionLibrary,
-    DirectionLibraryCurator,
     LibraryPaper,
     TopicSourceLibrary,
 )
@@ -266,7 +265,7 @@ def dedupe_member_rows(
 def visible_library_clause(user_id: uuid.UUID):
     """「这个库我够得着吗」——库作用域读取口的统一条件，作用于 ``DirectionLibrary.id``。
 
-    够得着 = 库被我参与的某个课题关联 ∪ 我被任命为它的策展人 ∪ 我是平台管理员。
+    够得着 = 库被我参与的某个课题关联 ∪ 我创建的库 ∪ 我是平台管理员。
 
     「我课题的库」走关联表 ``topic_source_libraries`` —— 课题与库是多对多关联，
     不是 project_id 回指。按 project_id 判会漏掉课题关联的独立库（那才是常态：
@@ -279,13 +278,10 @@ def visible_library_clause(user_id: uuid.UUID):
     my_topic_libraries = select(TopicSourceLibrary.library_id).where(
         TopicSourceLibrary.topic_id.in_(my_projects)
     )
-    my_curated = select(DirectionLibraryCurator.library_id).where(
-        DirectionLibraryCurator.user_id == user_id
-    )
     is_admin = select(User.id).where(User.id == user_id, User.role == "admin").exists()
     return or_(
         DirectionLibrary.id.in_(my_topic_libraries),
-        DirectionLibrary.id.in_(my_curated),
+        DirectionLibrary.submitted_by == user_id,
         is_admin,
     )
 
@@ -458,7 +454,6 @@ async def list_libraries_overview(
         session, [lib.id for lib in libraries]
     )
     my_linked = await _my_linked_library_ids(session, user.id)
-    my_curated = await _my_curated_library_ids(session, user.id)
     owner_names = await _owner_names(session, (lib.submitted_by for lib in libraries))
     want = (type or "all").lower()
     result: list[dict[str, Any]] = []
@@ -475,7 +470,7 @@ async def list_libraries_overview(
             _overview_dict(
                 lib,
                 my_linked=my_linked,
-                can_manage=can_manage_library_row(user=user, library=lib, curated_ids=my_curated),
+                can_manage=can_manage_library_row(user=user, library=lib),
                 paper_count=paper_counts.get(lib.id, 0),
                 concept_count=concept_counts.get(lib.id, 0),
                 last_compiled_at=last_compiled.get(lib.id),
@@ -523,13 +518,12 @@ async def source_libraries_overview(
     ids = [lib.id for lib in libraries]
     paper_counts, last_compiled, concept_counts = await _library_stats(session, ids)
     my_linked = await _my_linked_library_ids(session, user.id)
-    my_curated = await _my_curated_library_ids(session, user.id)
     owner_names = await _owner_names(session, (lib.submitted_by for lib in libraries))
     return [
         _overview_dict(
             lib,
             my_linked=my_linked,
-            can_manage=can_manage_library_row(user=user, library=lib, curated_ids=my_curated),
+            can_manage=can_manage_library_row(user=user, library=lib),
             paper_count=paper_counts.get(lib.id, 0),
             concept_count=concept_counts.get(lib.id, 0),
             last_compiled_at=last_compiled.get(lib.id),
@@ -598,95 +592,8 @@ async def create_library(
     )
     session.add(library)
     await session.flush()
-    # 创建者自动成为该库策展人（幂等：避免重复主键）。
-    if not await is_library_curator(session, library_id=library.id, user_id=created_by):
-        session.add(DirectionLibraryCurator(library_id=library.id, user_id=created_by))
-        await session.flush()
     await session.refresh(library)
     return library
-
-
-async def request_public(session: AsyncSession, *, library: DirectionLibrary) -> DirectionLibrary:
-    """申请把个人库转为公共库（P10）：is_public 仍 false，status → pending 等 admin 审批。
-
-    鉴权（仅创建者 / 策展人）由 api 层校验。幂等：重复申请只是保持 pending。commit 落库。
-    """
-    library.status = "pending"
-    await session.commit()
-    await session.refresh(library)
-    return library
-
-
-async def approve_library(session: AsyncSession, *, library: DirectionLibrary) -> DirectionLibrary:
-    """审批通过转公共库（平台 admin，P10）：is_public → true、status → active、清驳回理由。
-
-    公共库全实验室可见、ingest 走系统/全局 key（token 不再记创建者账）。commit 落库。
-    """
-    library.is_public = True
-    library.status = "active"
-    library.review_note = None
-    await session.commit()
-    await session.refresh(library)
-    return library
-
-
-async def reject_library(
-    session: AsyncSession, *, library: DirectionLibrary, note: str | None = None
-) -> DirectionLibrary:
-    """驳回转公共申请（平台 admin，P10）：退回可用的**个人库**（is_public=false、
-    status=active），记录驳回理由。不再置不可用的 rejected 态。commit 落库。
-    """
-    library.is_public = False
-    library.status = "active"
-    library.review_note = note
-    await session.commit()
-    await session.refresh(library)
-    return library
-
-
-async def cancel_request_public(
-    session: AsyncSession, *, library: DirectionLibrary
-) -> DirectionLibrary:
-    """撤回转公共申请（P10）：pending → 退回可用个人库（is_public=false、status=active），
-    清驳回理由。鉴权（创建者/策展人）由 api 层校验。commit 落库。"""
-    library.is_public = False
-    library.status = "active"
-    library.review_note = None
-    await session.commit()
-    await session.refresh(library)
-    return library
-
-
-async def make_personal(session: AsyncSession, *, library: DirectionLibrary) -> DirectionLibrary:
-    """管理员把公共库转回个人库（P10）：is_public → false、status=active。转回后仅
-    归属人 + admin 可见（其他成员看不到）。鉴权（平台 admin）由 api 层校验。commit 落库。"""
-    library.is_public = False
-    library.status = "active"
-    await session.commit()
-    await session.refresh(library)
-    return library
-
-
-# ---- P6 治理：策展人（界面叫「文献库管理员」）与库级写权限 ----
-
-
-async def _my_curated_library_ids(session: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
-    rows = await session.execute(
-        select(DirectionLibraryCurator.library_id).where(DirectionLibraryCurator.user_id == user_id)
-    )
-    return set(rows.scalars().all())
-
-
-async def is_library_curator(
-    session: AsyncSession, *, library_id: uuid.UUID, user_id: uuid.UUID
-) -> bool:
-    row = await session.execute(
-        select(DirectionLibraryCurator.user_id).where(
-            DirectionLibraryCurator.library_id == library_id,
-            DirectionLibraryCurator.user_id == user_id,
-        )
-    )
-    return row.first() is not None
 
 
 async def _is_project_member(
@@ -713,26 +620,18 @@ async def can_manage_library(
     """
     if user.role == "admin":
         return True
-    if library.submitted_by is not None and library.submitted_by == user.id:
-        return True
-    return await is_library_curator(session, library_id=library.id, user_id=user.id)
+    return library.submitted_by is not None and library.submitted_by == user.id
 
 
-def can_manage_library_row(
-    *, user: User, library: DirectionLibrary, curated_ids: set[uuid.UUID]
-) -> bool:
-    """:func:`can_manage_library` 的同步批量版：规则一字不差，只是策展人判定由
-    调用方一次查好（``curated_ids`` = 该用户策展的全部库 id）。
+def can_manage_library_row(*, user: User, library: DirectionLibrary) -> bool:
+    """:func:`can_manage_library` 的同步批量版：规则一字不差（admin ∪ 创建者）。
 
-    列表页逐库 await 会变成 N 次查询，所以有这个版本；但规则**只能有一份**——
-    两处各写各的正是此前「同一个库在列表里能管、点进详情不能管」的来源。
-    改动规则时两个函数一起改。
+    规则**只能有一份**——两处各写各的正是此前「同一个库在列表里能管、点进
+    详情不能管」的来源。改动规则时两个函数一起改。
     """
     if user.role == "admin":
         return True
-    if library.submitted_by is not None and library.submitted_by == user.id:
-        return True
-    return library.id in curated_ids
+    return library.submitted_by is not None and library.submitted_by == user.id
 
 
 async def get_managed_project(
@@ -752,45 +651,11 @@ async def get_managed_project(
             select(DirectionLibrary).where(DirectionLibrary.project_id == project_id)
         )
     ).scalar_one_or_none()
-    if library is not None and await is_library_curator(
-        session, library_id=library.id, user_id=user.id
-    ):
+    if library is not None and library.submitted_by == user.id:
         return project
     return None
 
 
-async def list_curators(session: AsyncSession, library_id: uuid.UUID) -> list[dict[str, Any]]:
-    stmt = (
-        select(DirectionLibraryCurator.user_id, User.email, User.display_name)
-        .join(User, User.id == DirectionLibraryCurator.user_id)
-        .where(DirectionLibraryCurator.library_id == library_id)
-        .order_by(DirectionLibraryCurator.created_at)
-    )
-    return [
-        {"user_id": user_id, "email": email, "display_name": display_name}
-        for user_id, email, display_name in (await session.execute(stmt)).all()
-    ]
-
-
-async def set_curators(
-    session: AsyncSession, *, library: DirectionLibrary, user_ids: list[uuid.UUID]
-) -> list[dict[str, Any]]:
-    """全量替换策展人名单（平台 admin 专用）；未知 user_id 抛 ValueError。commit 落库。"""
-    unique_ids = list(dict.fromkeys(user_ids))
-    if unique_ids:
-        found = set(
-            (await session.execute(select(User.id).where(User.id.in_(unique_ids)))).scalars().all()
-        )
-        missing = [str(uid) for uid in unique_ids if uid not in found]
-        if missing:
-            raise ValueError(f"unknown user ids: {', '.join(missing)}")
-    await session.execute(
-        delete(DirectionLibraryCurator).where(DirectionLibraryCurator.library_id == library.id)
-    )
-    for uid in unique_ids:
-        session.add(DirectionLibraryCurator(library_id=library.id, user_id=uid))
-    await session.commit()
-    return await list_curators(session, library.id)
 
 
 # PATCH 顶层便捷字段 → library.definition 的键（收录配置权威源）。statement/cadence/
