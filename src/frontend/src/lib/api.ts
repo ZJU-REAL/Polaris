@@ -2972,22 +2972,11 @@ export interface SkillListingRead {
   created_at: string;
   skill: SkillRead | null;
   version: number | null;
-  rating_avg: number | null;
-  rating_count: number;
 }
 
 export interface SkillListingDetail extends SkillListingRead {
   manifest: SkillManifest | null;
   body: string | null;
-}
-
-export interface SkillRatingRead {
-  id: string;
-  listing_id: string;
-  user_id: string;
-  rating: number;
-  comment: string | null;
-  created_at: string;
 }
 
 /** 跨部署分享的技能包（format 固定 polaris-skill@1）。 */
@@ -5481,17 +5470,14 @@ export const api = {
   },
 
   // —— Skills · 技能市场（docs/skill-system.md §4.3） ——
-  /** 发布我的技能到市场（当前版本），管理员审核后全员可安装。 */
+  /** 发布我的技能到市场（当前版本），发布后全员可安装。 */
   publishSkill(id: string, input: { summary?: string; tags?: string[] } = {}): Promise<SkillListingRead> {
     return requestJson<SkillListingRead>(`/skills/${id}/publish`, 'POST', input);
   },
-  listMarketSkills(
-    opts: { q?: string; sort?: '-created_at' | 'installs'; status?: 'approved' | 'pending' } = {},
-  ): Promise<SkillListingRead[]> {
+  listMarketSkills(opts: { q?: string; sort?: '-created_at' | 'installs' } = {}): Promise<SkillListingRead[]> {
     const params = new URLSearchParams();
     if (opts.q) params.set('q', opts.q);
     if (opts.sort) params.set('sort', opts.sort);
-    if (opts.status) params.set('status', opts.status);
     const qs = params.toString();
     return request<SkillListingRead[]>(`/market/skills${qs ? `?${qs}` : ''}`);
   },
@@ -5502,17 +5488,8 @@ export const api = {
   installMarketSkill(listingId: string): Promise<SkillDetail> {
     return request<SkillDetail>(`/market/skills/${listingId}/install`, { method: 'POST' });
   },
-  decideListing(listingId: string, decision: 'approve' | 'reject', comment?: string): Promise<SkillListingRead> {
-    return requestJson<SkillListingRead>(`/market/skills/${listingId}/${decision}`, 'POST', comment ? { comment } : {});
-  },
   delistListing(listingId: string): Promise<SkillListingRead> {
     return request<SkillListingRead>(`/market/skills/${listingId}`, { method: 'DELETE' });
-  },
-  listListingReviews(listingId: string): Promise<SkillRatingRead[]> {
-    return request<SkillRatingRead[]>(`/market/skills/${listingId}/reviews`);
-  },
-  addListingReview(listingId: string, input: { rating: number; comment?: string }): Promise<SkillRatingRead> {
-    return requestJson<SkillRatingRead>(`/market/skills/${listingId}/reviews`, 'POST', input);
   },
 
   // —— 我的文献库（跨研究方向的个人收藏 + 浏览记录，issue #108） ——

@@ -61,7 +61,7 @@ from app.models.project import Project, ProjectMember
 from app.models.publication import UserAuthorProfile, UserPublication
 from app.models.research_digest import LibraryResearchDigest
 from app.models.review import ReviewMessage, ReviewSession
-from app.models.skill import Skill, SkillListing, SkillRating, SkillVersion, UserSkill
+from app.models.skill import Skill, SkillListing, SkillVersion, UserSkill
 from app.models.ssh_credential import SSHCredential
 from app.models.system_setting import SystemSetting
 from app.models.topic_shelf import TopicPaper
@@ -137,7 +137,6 @@ __all__ = [
     "SSHCredential",
     "Skill",
     "SkillListing",
-    "SkillRating",
     "SkillVersion",
     "SystemSetting",
     "TimestampMixin",

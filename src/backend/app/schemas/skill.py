@@ -249,8 +249,6 @@ class SkillListingRead(BaseModel):
     # 联表补充（service 填充）
     skill: SkillRead | None = None
     version: int | None = None
-    rating_avg: float | None = None
-    rating_count: int = 0
 
 
 class SkillListingDetail(SkillListingRead):
@@ -258,26 +256,6 @@ class SkillListingDetail(SkillListingRead):
 
     manifest: dict[str, Any] | None = None
     body: str | None = None
-
-
-class SkillRatingCreate(BaseModel):
-    rating: int = Field(ge=1, le=5)
-    comment: str | None = Field(default=None, max_length=2000)
-
-
-class SkillRatingRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    listing_id: uuid.UUID
-    user_id: uuid.UUID
-    rating: int
-    comment: str | None
-    created_at: datetime
-
-
-class ListingDecision(BaseModel):
-    comment: str | None = Field(default=None, max_length=2000)
 
 
 class UserSkillRead(BaseModel):

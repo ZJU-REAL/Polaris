@@ -10,7 +10,8 @@ from alembic import command
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 HEAD_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
-HEAD_REVISION = "c8f2a61d9e37"  # Drop view events (P1 de-lab)
+HEAD_REVISION = "d4b8e26f1a93"  # Drop skill ratings (P1 de-lab)
+RANKINGS_DROP_REVISION = "c8f2a61d9e37"  # Drop view events (P1 de-lab)
 INVITES_DROP_REVISION = "b7d4f92e6c15"  # Drop project invites (P1 de-lab)
 CODES_DROP_REVISION = "a3e9c17b5f42"  # Drop registration codes (P1 de-lab)
 TRANSLATIONS_REVISION = "f4a5b6c7d8e9"  # Versioned discovery-hit translations
@@ -248,8 +249,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"skills", "skill_versions", "user_skills"} <= columns["_tables"]
     assert "project_skills" not in columns["_tables"]
     assert "project_id" not in columns["skills"]
-    # 技能市场 S4：skill_listings / skill_ratings 表
-    assert {"skill_listings", "skill_ratings"} <= columns["_tables"]
+    # 技能市场 S4：skill_listings 表（skill_ratings 已在 P1 去实验室化中移除）
+    assert "skill_listings" in columns["_tables"]
     # 发表机构列（高级检索）
     assert "affiliations" in columns["papers"]
     # 用户系统 U1：users 三新列 + project_invites 表
@@ -514,7 +515,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "evidence_balance",
     } <= columns["interdisciplinary_research_profile_versions"]
 
-    # First undo the view-events drop: the table comes back.
+    # First undo the skill-ratings drop: the table comes back.
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == RANKINGS_DROP_REVISION
+    assert "skill_ratings" in columns["_tables"]
+
+    # Then undo the view-events drop: that table comes back too.
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == INVITES_DROP_REVISION
