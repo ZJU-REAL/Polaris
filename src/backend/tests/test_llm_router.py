@@ -330,7 +330,7 @@ async def test_digest_falls_back_to_default_not_to_librarian(client, monkeypatch
         effort=None,
     )
 
-    async def fake_routes(owner_id):
+    async def fake_routes():
         return {"librarian": librarian_route, "default": default_route}
 
     monkeypatch.setattr(router, "_get_routes", fake_routes)
@@ -355,7 +355,7 @@ async def test_an_explicit_digest_route_wins(client, monkeypatch):
             effort=None,
         )
 
-    async def fake_routes(owner_id):
+    async def fake_routes():
         return {"digest": _route("digest-model"), "librarian": _route("librarian-model")}
 
     monkeypatch.setattr(router, "_get_routes", fake_routes)
@@ -394,7 +394,7 @@ async def test_forge_generate_falls_back_to_default_when_unset(client, monkeypat
             effort=None,
         )
 
-    async def fake_routes(owner_id):
+    async def fake_routes():
         return {
             "forge": _route("forge-model"),
             "default": _route("default-model"),

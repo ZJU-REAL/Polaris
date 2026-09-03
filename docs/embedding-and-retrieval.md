@@ -55,10 +55,10 @@ filters on it. Vectors of different spaces cannot meet in one comparison, struct
 - **The dimension is never hardcoded.** The first successful embed defines the active space from the
   model's *actual* returned dimension, and `paper_vectors.embedding` is a dimension-less pgvector
   column. Moving to a 4096-dim model needs no migration and no code change (issue #191).
-- **The embedding model is global.** `embedding` is in `router.GLOBAL_ONLY_STAGES`, so a
-  self-managed user's route is ignored for it and `/me/llm/routes` rejects the stage outright. The
-  paper pool is shared; per-user embedding models would mix incomparable vectors into it *and* make
-  each user's query vector land in a different space from the documents.
+- **The embedding model is global.** LLM routing itself is platform-wide now — the per-user
+  self-managed track was retired in #621 — so every embed call resolves the same route. The paper
+  pool is shared; per-user embedding models would mix incomparable vectors into it *and* make each
+  user's query vector land in a different space from the documents.
 - **Writes go through one gate.** `services/embedding.py::embed_documents` resolves the space,
   validates every returned vector's dimension, and raises `EmbeddingSpaceMismatchError` rather than
   storing anything questionable — on SQLite the JSON column would otherwise swallow it silently.

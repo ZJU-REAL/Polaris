@@ -45,8 +45,8 @@ async def embed_documents(
     """嵌入一批待入库的文本，返回 (向量, 它们所属的空间)。
 
     平台还没有激活空间时，这一批就定义了它（模型名 + 实际返回的维度），设置随调用方
-    的事务一起提交。``user_id`` 等只用于用量记账，**不影响**用哪个模型——嵌入模型
-    全局统一（见 core/llm/router.py 的 GLOBAL_ONLY_STAGES）。
+    的事务一起提交。``user_id`` 等只用于用量记账，**不影响**用哪个模型——LLM 路由
+    已全平台统一一份（#621），嵌入自然也是全局一个模型。
 
     provider 不支持嵌入时抛 NotImplementedError（调用方按既有降级路径处理）；
     模型或维度与激活空间不符时抛 EmbeddingSpaceMismatchError。

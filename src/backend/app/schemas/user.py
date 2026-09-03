@@ -13,6 +13,9 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     display_name: str
     username: str | None = None
     username_locked: bool = False
+    # 历史遗留：自管 LLM 轨已并入平台配置（#621），users 表里没有这一列了。
+    # 字段保留并恒为 False，只为不动 API 形状（golden transcript 逐字节比对着它）；
+    # 下次允许重录 golden 时一并移除。
     llm_self_managed: bool = False
     has_avatar: bool = False
     settings: dict[str, Any] | None = None

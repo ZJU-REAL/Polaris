@@ -20,7 +20,7 @@ from app.core.llm.anthropic import AnthropicProvider
 from app.core.llm.base import LLMProvider, Message
 from app.core.llm.fake import FakeProvider
 from app.core.llm.openai_compat import OpenAICompatProvider
-from app.core.llm.router import GLOBAL_ONLY_STAGES, STAGES, get_llm_router
+from app.core.llm.router import STAGES, get_llm_router
 from app.core.security import decrypt_secret, encrypt_secret
 from app.models.base import utcnow
 from app.models.llm_config import LLMCallLog, LLMProviderConfig, LLMUsage, ModelRoute
@@ -66,37 +66,30 @@ def _normalize_user_agent(value: str | None) -> str | None:
 # ---- providers ----
 
 
-def _owner_clause(column, owner_id: uuid.UUID | None):
-    """owner 过滤：None → 全局(IS NULL)；<user> → 该用户。"""
-    return column.is_(None) if owner_id is None else column == owner_id
+# owner_id IS NULL 过滤不能省：自管轨退役（#621）只是不再提供入口，
+# 老部署的表里可能还留着 owner=<user> 的存量私有行，混出来就是把某个用户的
+# 私有 key/路由当成了平台配置。
 
 
-async def list_providers(
-    session: AsyncSession, owner_id: uuid.UUID | None = None
-) -> Sequence[LLMProviderConfig]:
+async def list_providers(session: AsyncSession) -> Sequence[LLMProviderConfig]:
     stmt = (
         select(LLMProviderConfig)
-        .where(_owner_clause(LLMProviderConfig.owner_id, owner_id))
+        .where(LLMProviderConfig.owner_id.is_(None))
         .order_by(LLMProviderConfig.created_at)
     )
     return (await session.execute(stmt)).scalars().all()
 
 
-async def get_provider(
-    session: AsyncSession, provider_id: uuid.UUID, owner_id: uuid.UUID | None = None
-) -> LLMProviderConfig | None:
-    """按 owner 取 provider：owner 不匹配返回 None（防跨 owner 改别人配置）。"""
+async def get_provider(session: AsyncSession, provider_id: uuid.UUID) -> LLMProviderConfig | None:
+    """取平台 provider：存量私有行按不存在处理（不给读改别人的旧配置）。"""
     provider = await session.get(LLMProviderConfig, provider_id)
-    if provider is None or provider.owner_id != owner_id:
+    if provider is None or provider.owner_id is not None:
         return None
     return provider
 
 
-async def create_provider(
-    session: AsyncSession, data: ProviderCreate, owner_id: uuid.UUID | None = None
-) -> LLMProviderConfig:
+async def create_provider(session: AsyncSession, data: ProviderCreate) -> LLMProviderConfig:
     provider = LLMProviderConfig(
-        owner_id=owner_id,
         name=data.name,
         kind=data.kind,
         base_url=data.base_url,
@@ -144,46 +137,27 @@ async def delete_provider(session: AsyncSession, provider: LLMProviderConfig) ->
 # ---- routes ----
 
 
-async def list_routes(
-    session: AsyncSession, owner_id: uuid.UUID | None = None
-) -> Sequence[ModelRoute]:
-    stmt = (
-        select(ModelRoute)
-        .where(_owner_clause(ModelRoute.owner_id, owner_id))
-        .order_by(ModelRoute.stage)
-    )
+async def list_routes(session: AsyncSession) -> Sequence[ModelRoute]:
+    stmt = select(ModelRoute).where(ModelRoute.owner_id.is_(None)).order_by(ModelRoute.stage)
     return (await session.execute(stmt)).scalars().all()
 
 
-async def replace_routes(
-    session: AsyncSession, items: Sequence[RouteItem], owner_id: uuid.UUID | None = None
-) -> Sequence[ModelRoute]:
-    """整表覆盖某 owner 的路由。stage 必须合法且不重复，provider 必须属于同一 owner。
-
-    个人路由表里不接受嵌入环节：向量是全平台共享的一份数据，每个人各用各的模型
-    建向量，池子里就会混进互不可比的坐标系（见 core/llm/router.py 的
-    ``GLOBAL_ONLY_STAGES``）。传了也不会生效，所以直接拒绝而不是静默丢弃。
-    """
+async def replace_routes(session: AsyncSession, items: Sequence[RouteItem]) -> Sequence[ModelRoute]:
+    """整表覆盖平台路由。stage 必须合法且不重复，provider 必须是平台的。"""
     seen: set[str] = set()
     for item in items:
         if item.stage not in STAGES:
             raise InvalidRouteError(f"unknown stage: {item.stage}")
-        if owner_id is not None and item.stage in GLOBAL_ONLY_STAGES:
-            raise InvalidRouteError(
-                f"stage '{item.stage}' is set centrally by the admin and cannot be "
-                "configured per user"
-            )
         if item.stage in seen:
             raise InvalidRouteError(f"duplicate stage: {item.stage}")
         seen.add(item.stage)
         provider = await session.get(LLMProviderConfig, item.provider_id)
-        if provider is None or provider.owner_id != owner_id:
+        if provider is None or provider.owner_id is not None:
             raise InvalidRouteError(f"provider not found: {item.provider_id}")
-    await session.execute(delete(ModelRoute).where(_owner_clause(ModelRoute.owner_id, owner_id)))
+    await session.execute(delete(ModelRoute).where(ModelRoute.owner_id.is_(None)))
     for item in items:
         session.add(
             ModelRoute(
-                owner_id=owner_id,
                 stage=item.stage,
                 provider_id=item.provider_id,
                 model=item.model,
@@ -193,7 +167,7 @@ async def replace_routes(
         )
     await session.commit()
     get_llm_router().invalidate_cache()
-    return await list_routes(session, owner_id)
+    return await list_routes(session)
 
 
 # ---- 模型连通性测试 ----

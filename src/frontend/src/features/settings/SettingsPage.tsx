@@ -25,14 +25,12 @@ import {
   type ChatBotPlatform,
   type DailySyncScope,
   LLM_EFFORT_LEVELS,
-  type EffectiveTestResult,
   type LlmCallLogRow,
   type LlmProviderInput,
   type LlmProviderKind,
   type LlmEffort,
   type LlmProviderRead,
   type LlmRoute,
-  type LlmSelfConfig,
   type LlmTestCapability,
   type LlmTestModelInput,
   type LlmTestResult,
@@ -1065,53 +1063,15 @@ function ModelStatusBadge({ state, onTest, idleHint }: {
 /** 「可用模型」列收起时最多展示的 chips 数。 */
 const MODELS_COLLAPSED = 3;
 
-/**
- * LLM 配置的两层各自的 api 方法组：admin 全局配置指向 /admin/llm，
- * 用户自管配置指向 /me/llm。ProvidersSection / RoutesSection 复用同一套 UI，
- * 只换 adapter（keyRoot 用于隔离 TanStack Query 缓存）。
- */
-interface LlmAdapter {
-  /** query 缓存命名空间：admin 全局 'llm'，用户自管 'my-llm' */
-  keyRoot: string;
-  /** 是否全局配置：向量嵌入只由管理员统一设置，个人配置里不出现这一行 */
-  global?: boolean;
-  listProviders: () => Promise<LlmProviderRead[]>;
-  createProvider: (input: LlmProviderInput) => Promise<LlmProviderRead>;
-  patchProvider: (id: string, input: Partial<LlmProviderInput>) => Promise<LlmProviderRead>;
-  deleteProvider: (id: string) => Promise<void>;
-  getRoutes: () => Promise<LlmRoute[]>;
-  putRoutes: (routes: LlmRoute[]) => Promise<LlmRoute[]>;
-  testModel: (input: LlmTestModelInput) => Promise<LlmTestResult>;
-}
+// 曾经有一层 LlmAdapter：同一套 Providers/Routes UI 在 /admin/llm（全局）和
+// /me/llm（用户自管）之间切换。自管轨并入平台配置后（#621）只剩一份配置，
+// 适配层随之拆掉，两个 Section 直接打 /admin/llm。
 
-const adminLlmAdapter: LlmAdapter = {
-  keyRoot: 'llm',
-  global: true,
-  listProviders: () => api.listLlmProviders(),
-  createProvider: (input) => api.createLlmProvider(input),
-  patchProvider: (id, input) => api.patchLlmProvider(id, input),
-  deleteProvider: (id) => api.deleteLlmProvider(id),
-  getRoutes: () => api.getLlmRoutes(),
-  putRoutes: (routes) => api.putLlmRoutes(routes),
-  testModel: (input) => api.testLlmModel(input),
-};
-
-const myLlmAdapter: LlmAdapter = {
-  keyRoot: 'my-llm',
-  listProviders: () => api.myLlmProviders(),
-  createProvider: (input) => api.createMyLlmProvider(input),
-  patchProvider: (id, input) => api.updateMyLlmProvider(id, input),
-  deleteProvider: (id) => api.deleteMyLlmProvider(id),
-  getRoutes: () => api.myLlmRoutes(),
-  putRoutes: (routes) => api.replaceMyLlmRoutes(routes),
-  testModel: (input) => api.testMyLlmModel(input),
-};
-
-function ProvidersSection({ adapter }: { adapter: LlmAdapter }) {
+function ProvidersSection() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: [adapter.keyRoot, 'providers'],
-    queryFn: () => adapter.listProviders(),
+    queryKey: ['llm', 'providers'],
+    queryFn: () => api.listLlmProviders(),
     retry: false,
   });
   const providers = data ?? [];
@@ -1119,12 +1079,12 @@ function ProvidersSection({ adapter }: { adapter: LlmAdapter }) {
   const [modal, setModal] = useState<'closed' | 'create' | string>('closed'); // string = 编辑中的 provider id
   const [draft, setDraft] = useState<ProviderDraft>(emptyDraft());
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
-  const tests = useModelTests(adapter.testModel);
+  const tests = useModelTests(api.testLlmModel);
 
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: [adapter.keyRoot] });
+  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['llm'] });
 
   const createMutation = useMutation({
-    mutationFn: () => adapter.createProvider(toInput(draft)),
+    mutationFn: () => api.createLlmProvider(toInput(draft)),
     onSuccess: () => {
       toast(tr('Provider 已创建', 'Provider created'), 'ok');
       setModal('closed');
@@ -1133,7 +1093,7 @@ function ProvidersSection({ adapter }: { adapter: LlmAdapter }) {
     onError: (err) => toast(`${tr('创建失败', 'Create failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
   const patchMutation = useMutation({
-    mutationFn: (id: string) => adapter.patchProvider(id, toInput(draft)),
+    mutationFn: (id: string) => api.patchLlmProvider(id, toInput(draft)),
     onSuccess: () => {
       toast(tr('Provider 已更新', 'Provider updated'), 'ok');
       setModal('closed');
@@ -1142,7 +1102,7 @@ function ProvidersSection({ adapter }: { adapter: LlmAdapter }) {
     onError: (err) => toast(`${tr('更新失败', 'Update failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => adapter.deleteProvider(id),
+    mutationFn: (id: string) => api.deleteLlmProvider(id),
     onSuccess: () => {
       toast(tr('Provider 已删除', 'Provider deleted'), 'ok');
       invalidate();
@@ -1150,7 +1110,7 @@ function ProvidersSection({ adapter }: { adapter: LlmAdapter }) {
     onError: (err) => toast(`${tr('删除失败', 'Delete failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
   const toggleMutation = useMutation({
-    mutationFn: (p: LlmProviderRead) => adapter.patchProvider(p.id, { enabled: !p.enabled }),
+    mutationFn: (p: LlmProviderRead) => api.patchLlmProvider(p.id, { enabled: !p.enabled }),
     onSuccess: (p) => {
       toast(p.enabled ? tr('Provider 已启用', 'Provider enabled') : tr('Provider 已停用', 'Provider disabled'), 'ok');
       invalidate();
@@ -1361,7 +1321,6 @@ const CAPABILITY_STAGES = new Set(['embedding', 'rerank']);
  * 每个人各用各的模型建向量，池子里就会混进互不可比的向量，检索排序会悄悄变乱
  * （维度恰好一样时连报错都没有）。个人配置里直接不显示这一行，后端也会拒收。
  */
-const GLOBAL_ONLY_STAGES = new Set(['embedding']);
 
 /** 按环节推断测试能力：embedding → embedding，rerank → rerank，其余 chat。 */
 function capabilityOf(stage: string): LlmTestCapability {
@@ -1468,16 +1427,16 @@ function ModelCombobox({ value, options, placeholder, muted, onChange }: {
   );
 }
 
-function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
+function RoutesSection() {
   const queryClient = useQueryClient();
-  const providersQuery = useQuery({ queryKey: [adapter.keyRoot, 'providers'], queryFn: () => adapter.listProviders(), retry: false });
-  const routesQuery = useQuery({ queryKey: [adapter.keyRoot, 'routes'], queryFn: () => adapter.getRoutes(), retry: false });
+  const providersQuery = useQuery({ queryKey: ['llm', 'providers'], queryFn: () => api.listLlmProviders(), retry: false });
+  const routesQuery = useQuery({ queryKey: ['llm', 'routes'], queryFn: () => api.getLlmRoutes(), retry: false });
   const providers = providersQuery.data ?? [];
 
   // 只有显式设置过的 stage 才有行；其余环节运行时回退 default 路由
   const [rows, setRows] = useState<Record<string, RouteDraft>>({});
   const [showAll, setShowAll] = useState(false);
-  const tests = useModelTests(adapter.testModel);
+  const tests = useModelTests(api.testLlmModel);
 
   useEffect(() => {
     if (!routesQuery.data) return;
@@ -1497,8 +1456,6 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
     mutationFn: () => {
       const routes: LlmRoute[] = [];
       for (const stage of LLM_STAGES) {
-        // 个人路由表里不提交只能全局设置的环节（后端会 400）
-        if (!adapter.global && GLOBAL_ONLY_STAGES.has(stage)) continue;
         const r = rows[stage];
         if (!r || !r.provider_id || !r.model.trim()) continue;
         const t = r.temperature.trim();
@@ -1510,11 +1467,11 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
           ...(r.effort ? { effort: r.effort as LlmEffort } : {}),
         });
       }
-      return adapter.putRoutes(routes);
+      return api.putLlmRoutes(routes);
     },
     onSuccess: () => {
       toast(tr('模型路由表已保存', 'Model routing saved'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: [adapter.keyRoot, 'routes'] });
+      void queryClient.invalidateQueries({ queryKey: ['llm', 'routes'] });
     },
     onError: (err) => toast(`${tr('保存失败', 'Save failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
@@ -1561,11 +1518,8 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
   };
 
   // 常驻行固定在顶部；展开区只包含其余环节（embedding/rerank 不重复出现）。
-  // 个人配置里去掉只能全局设置的环节（向量嵌入）——那一行填了也不会生效。
-  const allowed = (stage: string) => adapter.global || !GLOBAL_ONLY_STAGES.has(stage);
-  const visibleStages: string[] = (
-    showAll ? [...PRIMARY_STAGES, ...LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s))] : PRIMARY_STAGES
-  ).filter(allowed);
+  const visibleStages: string[] =
+    showAll ? [...PRIMARY_STAGES, ...LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s))] : PRIMARY_STAGES;
   // 收起态下有显式设置的隐藏行数（提示用）
   const hiddenExplicitCount = LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s) && rows[s]).length;
 
@@ -1576,9 +1530,7 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
           <Icon name="git" size={15} style={{ color: 'var(--accent)' }} />
           {tr('模型路由表', 'Model routing')}{' '}
           <span className="en-label" style={{ fontSize: 11 }}>
-            {adapter.global
-              ? tr('未单独设置的环节自动跟随默认；向量嵌入/重排序需单独配置', 'stages without their own row follow "Default"; embeddings/reranking need their own config')
-              : tr('未单独设置的环节自动跟随默认；重排序需单独配置，向量嵌入由管理员统一设置', 'stages without their own row follow "Default"; reranking needs its own config, embeddings are set centrally by the admin')}
+            {tr('未单独设置的环节自动跟随默认；向量嵌入/重排序需单独配置', 'stages without their own row follow "Default"; embeddings/reranking need their own config')}
           </span>
         </span>
         <div className="row gap8">
@@ -2119,401 +2071,12 @@ function EmbeddingSpaceSection() {
 export function LlmTab() {
   return (
     <>
-      <ProvidersSection adapter={adminLlmAdapter} />
-      <RoutesSection adapter={adminLlmAdapter} />
+      <ProvidersSection />
+      <RoutesSection />
       <EmbeddingSpaceSection />
       <AdminSpeechSettings />
       <AffiliationModeSection />
       <CallLogsSection />
-    </>
-  );
-}
-
-// ---------------- 我的模型（每个用户自管那一层） ----------------
-
-/** 被接管时的只读展示：把生效的 provider 与路由表原样列出。 */
-function ManagedEffectiveView({ effective }: { effective: LlmSelfConfig }) {
-  const providerName = (id: string) => effective.providers.find((p) => p.id === id)?.name ?? id;
-  return (
-    <>
-      <div className="card card-pad" style={{ marginBottom: 20 }}>
-        <div className="section-h" style={{ marginBottom: 12 }}>
-          <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('生效的供应商', 'Effective providers')}{' '}
-          <span className="en-label" style={{ fontSize: 11 }}>{tr('平台默认，只读', 'platform defaults, read-only')}</span>
-        </div>
-        {effective.providers.length === 0 ? (
-          <div className="empty" style={{ padding: 24 }}>{tr('管理员尚未配置任何 provider', 'The admin has not configured any provider yet')}</div>
-        ) : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th style={{ width: 230 }}>{tr('名称', 'Name')}</th>
-                  <th style={{ width: 130 }}>api_key</th>
-                  <th>{tr('可用模型', 'Models')}</th>
-                  <th style={{ width: 80 }}>{tr('状态', 'Status')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {effective.providers.map((p) => {
-                  const models = p.models ?? [];
-                  return (
-                    <tr key={p.id}>
-                      <td>
-                        <div className="row gap6" style={{ alignItems: 'center' }}>
-                          <span style={{ fontSize: 12, fontWeight: 650 }}>{p.name}</span>
-                          <span className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>{p.kind}</span>
-                        </div>
-                        <div className="mono" title={p.base_url ?? undefined}
-                          style={{ fontSize: 10.5, color: 'var(--text-3)', maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {p.base_url ?? '—'}
-                        </div>
-                      </td>
-                      <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{p.api_key_masked ?? '—'}</td>
-                      <td>
-                        {models.length === 0 ? (
-                          <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('（未填写）', '(none)')}</span>
-                        ) : (
-                          <div className="row gap6" style={{ flexWrap: 'wrap' }}>
-                            {models.map((m) => (
-                              <span key={m} className="tag mono" style={{ fontSize: 10.5 }}>{m}</span>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <span className="pill sm" style={p.enabled
-                          ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
-                          : { background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-                          {p.enabled ? tr('启用', 'Enabled') : tr('停用', 'Disabled')}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="card card-pad">
-        <div className="section-h" style={{ marginBottom: 12 }}>
-          <Icon name="git" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('生效的模型路由表', 'Effective model routing')}{' '}
-          <span className="en-label" style={{ fontSize: 11 }}>{tr('平台默认，只读', 'platform defaults, read-only')}</span>
-        </div>
-        {effective.routes.length === 0 ? (
-          <div className="empty" style={{ padding: 24 }}>{tr('管理员尚未配置路由表', 'The admin has not configured any routing yet')}</div>
-        ) : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th style={{ width: 180 }}>{tr('环节', 'Stage')}</th>
-                  <th style={{ width: 170 }}>provider</th>
-                  <th>model</th>
-                  <th style={{ width: 100 }}>temperature</th>
-                </tr>
-              </thead>
-              <tbody>
-                {effective.routes.map((r) => {
-                  const label = STAGE_LABELS[r.stage];
-                  return (
-                    <tr key={r.stage}>
-                      <td>
-                        <div style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : r.stage}</div>
-                        <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{r.stage}</div>
-                      </td>
-                      <td style={{ fontSize: 12 }}>{providerName(r.provider_id)}</td>
-                      <td className="mono" style={{ fontSize: 11.5 }}>{r.model}</td>
-                      <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-                        {r.temperature === null || r.temperature === undefined ? tr('默认', 'default') : r.temperature}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </>
-  );
-}
-
-// ---- 生效模型状态测试（被接管 / 自管两种状态都用） ----
-
-type EffState =
-  | { status: 'idle' }
-  | { status: 'testing' }
-  | { status: 'done'; result: EffectiveTestResult };
-
-/**
- * 「模型状态」区：列出当前**生效**的每条 stage 路由，逐条测试。
- * 测的是用户实际生效的配置（被接管测全局、自管测自己），与是否自管无关，
- * 因此两种状态下都展示。
- */
-function MyModelStatusSection({ config }: { config: LlmSelfConfig }) {
-  const [results, setResults] = useState<Record<string, EffState>>({});
-  const [testingAll, setTestingAll] = useState(false);
-
-  const providerName = (id: string) => config.providers.find((p) => p.id === id)?.name ?? id;
-  const routes = config.routes;
-
-  const testOne = async (stage: string) => {
-    setResults((prev) => ({ ...prev, [stage]: { status: 'testing' } }));
-    try {
-      const result = await api.testMyLlmEffective({ stage });
-      setResults((prev) => ({ ...prev, [stage]: { status: 'done', result } }));
-    } catch (e) {
-      setResults((prev) => ({
-        ...prev,
-        [stage]: {
-          status: 'done',
-          result: {
-            ok: false,
-            latency_ms: 0,
-            error: e instanceof Error ? e.message : String(e),
-            model: '',
-            provider_name: '',
-            is_fake: false,
-          },
-        },
-      }));
-    }
-  };
-
-  const testAll = async () => {
-    setTestingAll(true);
-    try {
-      for (const r of routes) await testOne(r.stage);
-    } finally {
-      setTestingAll(false);
-    }
-  };
-
-  const renderResult = (state: EffState | undefined) => {
-    if (!state || state.status === 'idle') return null;
-    if (state.status === 'testing') {
-      return (
-        <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
-          <Icon name="refresh" size={11} style={{ animation: 'spin 1s linear infinite' }} />
-          {tr('测试中…', 'Testing…')}
-        </span>
-      );
-    }
-    const r = state.result;
-    if (r.is_fake) {
-      return <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>{tr('未配置真实模型', 'No real model configured')}</span>;
-    }
-    if (r.ok) {
-      return (
-        <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-          <Icon name="check" size={11} />
-          {r.latency_ms.toLocaleString()}ms
-        </span>
-      );
-    }
-    return (
-      <span className="pill sm" style={{ background: 'var(--danger-bg)', color: 'var(--danger-tx)' }} title={r.error ?? undefined}>
-        <Icon name="x" size={11} />
-        {r.error || tr('失败', 'Failed')}
-      </span>
-    );
-  };
-
-  return (
-    <div className="card card-pad" style={{ marginBottom: 20 }}>
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
-        <span className="section-h">
-          <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('模型状态', 'Model status')}{' '}
-          <span className="en-label" style={{ fontSize: 11 }}>
-            {tr('测试你当前生效的每条路由', 'test each route currently in effect for you')}
-          </span>
-        </span>
-        <button className="btn btn-soft sm" disabled={testingAll || routes.length === 0} onClick={() => void testAll()}>
-          <Icon name="play" size={12} />
-          {testingAll ? tr('测试中…', 'Testing…') : tr('测试全部', 'Test all')}
-        </button>
-      </div>
-      {routes.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('还没有生效的模型路由', 'No routes in effect yet')}</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: 180 }}>{tr('环节', 'Stage')}</th>
-                <th>provider · model</th>
-                <th style={{ width: 220 }}>{tr('状态', 'Status')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {routes.map((r) => {
-                const label = STAGE_LABELS[r.stage];
-                const state = results[r.stage];
-                return (
-                  <tr key={r.stage}>
-                    <td>
-                      <div style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : r.stage}</div>
-                      <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{r.stage}</div>
-                    </td>
-                    <td className="mono" style={{ fontSize: 11.5 }}>
-                      {providerName(r.provider_id)}
-                      <span style={{ color: 'var(--text-3)' }}> · {r.model}</span>
-                    </td>
-                    <td>
-                      <div className="row gap8" style={{ alignItems: 'center' }}>
-                        <button
-                          className="btn btn-soft sm"
-                          disabled={testingAll || state?.status === 'testing'}
-                          onClick={() => void testOne(r.stage)}
-                        >
-                          {tr('测试', 'Test')}
-                        </button>
-                        {renderResult(state)}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MyLlmTab() {
-  const queryClient = useQueryClient();
-  const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['my-llm', 'effective'],
-    queryFn: () => api.myLlmEffective(),
-    retry: false,
-  });
-  const [confirmOpen, setConfirmOpen] = useState(false);
-
-  const invalidateAll = () => {
-    void queryClient.invalidateQueries({ queryKey: ['my-llm'] });
-    void queryClient.invalidateQueries({ queryKey: ['me'] });
-  };
-
-  const selfManageMutation = useMutation({
-    mutationFn: () => api.llmSelfManage(),
-    onSuccess: () => {
-      toast(tr('已取消接管，现在使用你自己的配置', 'Takeover removed — now using your own configuration'), 'ok');
-      setConfirmOpen(false);
-      invalidateAll();
-    },
-    onError: (e) => toast(`${tr('操作失败', 'Failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
-  const managedMutation = useMutation({
-    mutationFn: () => api.llmManaged(),
-    onSuccess: () => {
-      toast(tr('已切回管理员接管', 'Switched back to admin-managed'), 'ok');
-      invalidateAll();
-    },
-    onError: (e) => toast(`${tr('操作失败', 'Failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
-
-  if (isLoading) return <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>;
-  if (isError || !data) {
-    return (
-      <div className="empty" style={{ padding: 24 }}>
-        {tr('无法加载（后端不可用）', 'Failed to load (backend unavailable)')}
-        <div style={{ marginTop: 10 }}>
-          <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-        </div>
-      </div>
-    );
-  }
-
-  if (!data.self_managed) {
-    return (
-      <>
-        <div className="card card-pad" style={{ marginBottom: 20, borderColor: 'var(--accent)', background: 'var(--accent-soft)' }}>
-          <div className="row gap10" style={{ alignItems: 'flex-start' }}>
-            <Icon name="shield" size={18} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 1 }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--accent-text)' }}>
-                {tr('你的模型配置由管理员统一接管', 'Your model configuration is managed by the admin')}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4, lineHeight: 1.5 }}>
-                {tr(
-                  '当前使用平台默认的 Provider 与路由表（见下方，只读）。',
-                  'You are using the platform default providers and routing (shown below, read-only).',
-                )}
-              </div>
-              <div style={{ marginTop: 12 }}>
-                <button className="btn btn-primary sm" disabled={selfManageMutation.isPending} onClick={() => setConfirmOpen(true)}>
-                  <Icon name="sliders" size={13} />
-                  {tr('取消接管，自行设置', 'Remove takeover, configure my own')}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <MyModelStatusSection config={data} />
-
-        <ManagedEffectiveView effective={data} />
-
-        <Modal
-          open={confirmOpen}
-          onClose={() => setConfirmOpen(false)}
-          width={440}
-          title={tr('取消管理员接管？', 'Remove admin takeover?')}
-          footer={
-            <>
-              <button className="btn btn-ghost" onClick={() => setConfirmOpen(false)}>{tr('取消', 'Cancel')}</button>
-              <button className="btn btn-primary" disabled={selfManageMutation.isPending} onClick={() => selfManageMutation.mutate()}>
-                {selfManageMutation.isPending ? tr('处理中…', 'Working…') : tr('确认取消接管', 'Confirm')}
-              </button>
-            </>
-          }
-        >
-          <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--text-2)' }}>
-            {tr(
-              '取消后将改用你自己的配置，管理员的默认配置对你失效。你需要自行填好 Provider 与路由表；在配好之前无法调用真实模型。随时可以切回接管。',
-              'After this you will use your own configuration and the admin defaults no longer apply to you. You must set up your own providers and routing; until then no real model can be called. You can switch back to admin-managed at any time.',
-            )}
-          </div>
-        </Modal>
-      </>
-    );
-  }
-
-  return (
-    <>
-      <div className="card card-pad" style={{ marginBottom: 20 }}>
-        <div className="row gap10" style={{ alignItems: 'flex-start' }}>
-          <Icon name="sliders" size={18} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 1 }} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 650 }}>
-              {tr('你正在使用自己的模型配置', 'You are using your own model configuration')}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4, lineHeight: 1.5 }}>
-              {tr(
-                '下面的 Provider 与路由表只对你自己生效（BYO key，后端只写不读）。',
-                'The providers and routing below apply only to you (BYO key, write-only on the backend).',
-              )}
-            </div>
-          </div>
-          <button className="btn btn-soft sm" style={{ flexShrink: 0 }} disabled={managedMutation.isPending} onClick={() => managedMutation.mutate()}>
-            <Icon name="refresh" size={13} />
-            {managedMutation.isPending ? tr('处理中…', 'Working…') : tr('切回管理员接管', 'Switch back to admin-managed')}
-          </button>
-        </div>
-      </div>
-
-      <MyModelStatusSection config={data} />
-
-      <ProvidersSection adapter={myLlmAdapter} />
-      <RoutesSection adapter={myLlmAdapter} />
     </>
   );
 }
@@ -2722,7 +2285,7 @@ function MyUsageTab() {
 // ---------------- 页面 ----------------
 
 /** 普通用户设置的标签页（管理员那组在 /admin，见 AdminSettingsPage）。 */
-type Tab = 'personal' | 'prefs' | 'buddy' | 'speech' | 'bots' | 'ssh' | 'mymodels' | 'myusage' | 'extension' | 'mcp';
+type Tab = 'personal' | 'prefs' | 'buddy' | 'speech' | 'bots' | 'ssh' | 'myusage' | 'extension' | 'mcp';
 
 /** 旧的 /settings?tab=xxx 深链里属于管理员组的值 → 统一改跳 /admin。 */
 export const ADMIN_TABS = ['llm', 'daily', 'usage', 'codes', 'feedback'] as const;
@@ -3153,7 +2716,7 @@ export function DailyCategoriesTab() {
   );
 }
 
-const PERSONAL_TABS: Tab[] = ['personal', 'prefs', 'buddy', 'speech', 'bots', 'ssh', 'mymodels', 'myusage', 'extension', 'mcp'];
+const PERSONAL_TABS: Tab[] = ['personal', 'prefs', 'buddy', 'speech', 'bots', 'ssh', 'myusage', 'extension', 'mcp'];
 
 export function SettingsPage() {
   // 支持 /settings?tab=mcp 这类深链（如旧 /mcp-tools 路由的重定向）
@@ -3163,7 +2726,11 @@ export function SettingsPage() {
     param !== null && PERSONAL_TABS.includes(param as Tab) ? (param as Tab) : 'personal',
   );
 
-  // 旧的管理员深链（/settings?tab=llm）改跳新的管理页
+  // 旧的管理员深链（/settings?tab=llm）改跳新的管理页；
+  // 「我的模型」自管轨并入平台配置后（#621），旧深链也指到那里
+  if (param === 'mymodels') {
+    return <Navigate to="/admin?tab=llm" replace />;
+  }
   if (param !== null && (ADMIN_TABS as readonly string[]).includes(param)) {
     return <Navigate to={`/admin?tab=${param}`} replace />;
   }
@@ -3175,7 +2742,6 @@ export function SettingsPage() {
     { v: 'speech', label: tr('语音听读', 'Speech') },
     { v: 'bots', label: tr('群机器人', 'Group bots') },
     { v: 'ssh', label: tr('SSH 凭据', 'SSH credentials') },
-    { v: 'mymodels', label: tr('我的模型', 'My LLM') },
     { v: 'myusage', label: tr('用量', 'Usage') },
     { v: 'extension', label: tr('Polaris 扩展', 'Polaris extension') },
     { v: 'mcp', label: tr('MCP 接入', 'MCP access') },
@@ -3193,7 +2759,6 @@ export function SettingsPage() {
       {tab === 'speech' && <PersonalSpeechSettings />}
       {tab === 'bots' && <ChatBotsTab />}
       {tab === 'ssh' && <SshTab />}
-      {tab === 'mymodels' && <MyLlmTab />}
       {tab === 'myusage' && <MyUsageTab />}
       {tab === 'extension' && <ExtensionApiKeySettings />}
       {tab === 'mcp' && <McpToolsContent />}

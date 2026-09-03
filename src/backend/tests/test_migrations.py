@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "c3c404803ca4"  # Drop library status/review_note (P1 de-lab)
+HEAD_REVISION = "dd572a7f063c"  # Merge LLM config tracks: drop users.llm_self_managed (#621)
+LIBRARY_STATUS_DROP_REVISION = "c3c404803ca4"  # Drop library status/review_note (P1 de-lab)
 FEEDBACK_DROP_REVISION = "9b2e5d81c7a3"  # Drop in-app feedback tables (#617)
 GOVERNANCE_DROP_REVISION = "4f8d2c9b7a61"  # Drop user governance columns (P1 de-lab)
 CURATORS_DROP_REVISION = "e6c31f84a2d5"  # Drop library curators (P1 de-lab)
@@ -345,7 +346,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "paper_id" in columns["user_publications"]
     assert "owner_id" in columns["llm_providers"]
     assert "owner_id" in columns["model_routes"]
-    assert "llm_self_managed" in columns["users"]
+    # 自管轨并入平台配置（#621）：接管开关列已删，providers/routes 的 owner_id 保留
+    assert "llm_self_managed" not in columns["users"]
     # 个人库 wiki 快照列（上一版）
     assert "wiki_content" in columns["user_library_entries"]
     # 方向文献库两表 + papers.dedup_key（策展人表已在 P1 去实验室化中移除）
@@ -511,7 +513,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "evidence_balance",
     } <= columns["interdisciplinary_research_profile_versions"]
 
-    # 先退掉库状态删列：status/review_note 按原形状回来（server_default='active'）。
+    # 先退掉自管轨合并（#621）：users.llm_self_managed 回来，全员落回默认（被接管）。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == LIBRARY_STATUS_DROP_REVISION
+    assert "llm_self_managed" in columns["users"]
+
+    # 再退掉库状态删列：status/review_note 按原形状回来（server_default='active'）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == FEEDBACK_DROP_REVISION
@@ -863,7 +871,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "project_id" not in columns["paper_highlights"]
     assert "models" in columns["llm_providers"]
     assert "owner_id" in columns["llm_providers"]
-    assert "llm_self_managed" in columns["users"]
+    assert "llm_self_managed" not in columns["users"]  # head 已删（#621）
     assert not {"feedback", "feedback_images"} & columns["_tables"]  # head 已删（#617）
     # P9a 列在重新 upgrade 后回归
     assert "library_id" in columns["voyage_runs"]

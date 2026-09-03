@@ -18,7 +18,6 @@ from app.core.embedding_space import (
     set_active_space,
 )
 from app.core.llm.fake import EMBEDDING_DIM
-from app.core.llm.router import GLOBAL_ONLY_STAGES, LLMRouter
 from app.models.paper import new_paper
 from app.models.vectors import PaperVector
 from app.services.embedding import (
@@ -208,49 +207,7 @@ async def test_index_status_marks_stale_instead_of_missing(client):
     assert body["paper_vector"]["model"] == FAKE_SPACE.model  # 还能看出是谁建的
 
 
-# ---- 4. 嵌入模型不给用户自选 ----
-
-
-async def test_embedding_stage_ignores_user_routes(client):
-    """自管用户的 embedding 路由不生效：向量是全平台共享的一份数据。"""
-    assert "embedding" in GLOBAL_ONLY_STAGES
-    router = LLMRouter()
-    owner = await router._effective_owner(uuid.uuid4(), "embedding")
-    assert owner is None, "嵌入一律走全局配置"
-    # 对照：普通环节仍按用户自管状态解析
-    assert await router._effective_owner(None, "default") is None
-
-
-async def test_user_cannot_configure_embedding_route(client):
-    """个人路由表拒收 embedding 环节（填了也不会生效，所以直接报错而不是静默丢弃）。"""
-    token = await register_and_login(client)
-    headers = {"Authorization": f"Bearer {token}"}
-    await client.post("/api/me/llm/self-manage", headers=headers)
-    resp = await client.post(
-        "/api/me/llm/providers",
-        json={"name": "mine", "kind": "fake", "base_url": None, "api_key": "x"},
-        headers=headers,
-    )
-    provider_id = resp.json()["id"]
-
-    resp = await client.put(
-        "/api/me/llm/routes",
-        json=[{"stage": "embedding", "provider_id": provider_id, "model": "my-embed"}],
-        headers=headers,
-    )
-    assert resp.status_code == 400
-    assert "embedding" in resp.json()["detail"]
-
-    # rerank 不受影响：逐条打分，没有跨调用可比性问题
-    resp = await client.put(
-        "/api/me/llm/routes",
-        json=[{"stage": "rerank", "provider_id": provider_id, "model": "my-rerank"}],
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
-
-
-# ---- 5. 管理端 ----
+# ---- 4. 管理端 ----
 
 
 async def test_admin_space_status_reports_mismatch(client):
