@@ -78,56 +78,6 @@ async def test_update_display_name_and_usage(client):
 # ---- 邀请链接 ----
 
 
-async def test_invite_link_flow(client):
-    owner = await register_and_login(client)  # 首个用户 = admin，但这里按 owner 用
-    owner_h = {"Authorization": f"Bearer {owner}"}
-    pid = await _create_project(client, owner)
-
-    resp = await client.post(
-        f"/api/projects/{pid}/invites", json={"expires_days": 7, "max_uses": 2}, headers=owner_h
-    )
-    assert resp.status_code == 201, resp.text
-    invite = resp.json()
-    assert invite["used_count"] == 0
-
-    # 新用户通过链接预览并加入
-    guest = await register_and_login(client, email="guest@example.com")
-    guest_h = {"Authorization": f"Bearer {guest}"}
-    resp = await client.get(f"/api/invites/{invite['token']}", headers=guest_h)
-    info = resp.json()
-    assert info["valid"] is True and info["already_member"] is False
-    assert info["project_name"] == "user-sys-proj"
-
-    resp = await client.post(f"/api/invites/{invite['token']}/accept", headers=guest_h)
-    assert resp.status_code == 200
-    assert resp.json()["id"] == pid
-    # 幂等：再接受一次仍 200
-    resp = await client.post(f"/api/invites/{invite['token']}/accept", headers=guest_h)
-    assert resp.status_code == 200
-
-    # guest 现在能看到项目
-    resp = await client.get("/api/projects", headers=guest_h)
-    assert any(p["id"] == pid for p in resp.json())
-
-    # 撤销后新用户不能再加入
-    resp = await client.delete(f"/api/projects/{pid}/invites/{invite['id']}", headers=owner_h)
-    assert resp.status_code == 204
-    other = await register_and_login(client, email="late@example.com")
-    resp = await client.post(
-        f"/api/invites/{invite['token']}/accept", headers={"Authorization": f"Bearer {other}"}
-    )
-    assert resp.status_code == 410
-
-    # 非成员不能生成邀请
-    resp = await client.post(
-        f"/api/projects/{pid}/invites", json={}, headers={"Authorization": f"Bearer {other}"}
-    )
-    assert resp.status_code == 404
-
-
-# ---- 管理员用户管理 ----
-
-
 async def test_admin_user_management(client):
     admin = await register_and_login(client)  # 首个注册用户自动 admin
     admin_h = {"Authorization": f"Bearer {admin}"}

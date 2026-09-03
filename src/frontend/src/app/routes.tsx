@@ -153,7 +153,6 @@ export const router = createBrowserRouter([
       { path: 'projects/new', element: page(() => import('../features/projects/ProjectWizardPage'), 'ProjectWizardPage') },
       // 课题设置已并入工作台「课题设置」标签：/projects/:id → /t/:id?tab=settings
       { path: 'projects/:id', element: <ProjectSettingsRedirect /> },
-      { path: 'join/:token', element: page(() => import('../features/projects/JoinPage'), 'JoinPage') },
       { path: 'library', element: page(() => import('../features/library/LibraryPage'), 'LibraryPage') },
       // 实验室工作台：实验室资源概况 + 全部任务（含 project_id 为空的课题外任务）
       { path: 'lab', element: page(() => import('../features/lab/LabPage'), 'LabPage') },

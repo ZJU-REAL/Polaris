@@ -51,8 +51,6 @@ from app.schemas.manuscript import (
     ManuscriptRead,
     ManuscriptUpdate,
     ReferencesRefreshResult,
-    ShareLink,
-    ShareLinkCreate,
     TemplateDownloadProgress,
     TemplateInfo,
     TemplateSeedResult,
@@ -561,39 +559,6 @@ async def remove_collaborator(
     if project.owner_id == user_id:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="CANNOT_REMOVE_OWNER")
     await projects_service.remove_member(session, project.id, user_id=user_id)
-
-
-@router.post(
-    "/manuscripts/{manuscript_id}/share-link",
-    response_model=ShareLink,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_share_link(
-    manuscript_id: uuid.UUID,
-    data: ShareLinkCreate | None = None,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> ShareLink:
-    """生成协同编辑分享链接（复用研究方向邀请）：平台用户打开 /join/{token}
-    登录后加入即获协同编辑权。需 owner/管理员。"""
-    manuscript = await _member_manuscript(session, manuscript_id, user)
-    project = await _manuscript_project(session, manuscript, user)
-    if not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
-    data = data or ShareLinkCreate()
-    invite = await projects_service.create_invite(
-        session,
-        project_id=project.id,
-        created_by=user.id,
-        expires_days=data.expires_days,
-        max_uses=data.max_uses,
-    )
-    return ShareLink(
-        token=invite.token,
-        join_path=f"/join/{invite.token}",
-        expires_at=invite.expires_at,
-        max_uses=invite.max_uses,
-    )
 
 
 # ---- §2 文件 ----

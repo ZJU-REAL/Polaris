@@ -292,25 +292,6 @@ export interface AdminUserRead {
 }
 
 
-export interface InviteRead {
-  id: string;
-  project_id: string;
-  token: string;
-  expires_at: string | null;
-  max_uses: number | null;
-  used_count: number;
-  revoked: boolean;
-  created_at: string;
-}
-
-export interface InviteInfo {
-  project_id: string;
-  project_name: string;
-  inviter_name: string | null;
-  valid: boolean;
-  already_member: boolean;
-}
-
 export interface RegisterInput {
   email: string;
   password: string;
@@ -2661,14 +2642,6 @@ export interface UserSearchResult {
   display_name: string;
 }
 
-/** 协同编辑分享链接（完整 URL = origin + join_path）。 */
-export interface ShareLink {
-  token: string;
-  join_path: string;
-  expires_at: string | null;
-  max_uses: number | null;
-}
-
 /** 单文件内容（编辑器初始加载 / readonly 文件查看用；实时同步走 WS CRDT）。 */
 export interface ManuscriptFileRead {
   id: string;
@@ -3609,23 +3582,6 @@ export const api = {
   },
   myUsageHistory(input: { days: number }): Promise<LlmUsageRow[]> {
     return request<LlmUsageRow[]>(`/users/me/usage/history?days=${input.days}`);
-  },
-
-  // —— 邀请链接 ——
-  createInvite(projectId: string, input: { expires_days?: number | null; max_uses?: number | null }): Promise<InviteRead> {
-    return requestJson<InviteRead>(`/projects/${projectId}/invites`, 'POST', input);
-  },
-  listInvites(projectId: string): Promise<InviteRead[]> {
-    return request<InviteRead[]>(`/projects/${projectId}/invites`);
-  },
-  revokeInvite(projectId: string, inviteId: string): Promise<void> {
-    return request<void>(`/projects/${projectId}/invites/${inviteId}`, { method: 'DELETE' });
-  },
-  inviteInfo(token: string): Promise<InviteInfo> {
-    return request<InviteInfo>(`/invites/${token}`);
-  },
-  acceptInvite(token: string): Promise<ProjectRead> {
-    return request<ProjectRead>(`/invites/${token}/accept`, { method: 'POST' });
   },
 
   // —— 管理员：用户管理 ——
@@ -5172,10 +5128,6 @@ export const api = {
   /** 移除协作者（不能删 owner，409 CANNOT_REMOVE_OWNER）。 */
   removeCollaborator(id: string, userId: string): Promise<void> {
     return request<void>(`/manuscripts/${id}/collaborators/${userId}`, { method: 'DELETE' });
-  },
-  /** 生成协同编辑分享链接（平台用户登录后即可加入协同）。 */
-  createManuscriptShareLink(id: string, input?: { expires_days?: number; max_uses?: number }): Promise<ShareLink> {
-    return requestJson<ShareLink>(`/manuscripts/${id}/share-link`, 'POST', input ?? {});
   },
 
   // —— Admin · LLM ——

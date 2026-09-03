@@ -5,13 +5,10 @@ import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
 import { api, ApiError, type CollaboratorRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { portalUrl } from '../../lib/endpoint';
-import { copyText } from '../../lib/clipboard';
 
 /* ============================================================
    协作者管理弹窗：列出协作者（owner 高亮），搜索平台用户加入，
-   移除非 owner，生成协同编辑分享链接并复制。
-   加人/移除/生成链接需研究方向 owner 或管理员权限（403 提示）。
+   移除非 owner。加人/移除需研究方向 owner 或管理员权限（403 提示）。
    ============================================================ */
 
 export interface CollaboratorsModalProps {
@@ -33,13 +30,11 @@ export function CollaboratorsModal({ open, onClose, manuscriptId }: Collaborator
   const queryClient = useQueryClient();
   const [term, setTerm] = useState('');
   const [debounced, setDebounced] = useState('');
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       setTerm('');
       setDebounced('');
-      setShareUrl(null);
     }
   }, [open]);
 
@@ -94,27 +89,7 @@ export function CollaboratorsModal({ open, onClose, manuscriptId }: Collaborator
     },
   });
 
-  const shareMutation = useMutation({
-    mutationFn: () => api.createManuscriptShareLink(manuscriptId),
-    onSuccess: (link) => {
-      setShareUrl(portalUrl(link.join_path));
-    },
-    onError: (e) => {
-      if (isForbidden(e)) toast(tr('需要课题 owner 或管理员权限', 'Requires topic owner or admin permission'), 'error');
-      else toast(`${tr('生成链接失败：', 'Create link failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
-    },
-  });
-
   const busy = addMutation.isPending || removeMutation.isPending;
-
-  async function copyShare() {
-    if (!shareUrl) return;
-    if (await copyText(shareUrl)) {
-      toast(tr('已复制分享链接', 'Share link copied'), 'ok');
-    } else {
-      toast(tr('复制失败，请手动选择链接复制', 'Copy failed — select the link and copy manually'), 'error');
-    }
-  }
 
   function CollabRow({ c }: { c: CollaboratorRead }) {
     return (
@@ -251,37 +226,6 @@ export function CollaboratorsModal({ open, onClose, manuscriptId }: Collaborator
           ))}
         </div>
       )}
-
-      {/* 分享链接 */}
-      <div style={{ marginTop: 16, paddingTop: 14, borderTop: '0.5px solid var(--border)' }}>
-        <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 8 }}>
-          {tr('平台用户打开此链接登录后即可协同编辑。', 'Any platform user who opens this link and signs in can co-edit.')}
-        </div>
-        {shareUrl ? (
-          <div className="row gap6">
-            <input
-              className="input mono"
-              readOnly
-              value={shareUrl}
-              onFocus={(e) => e.currentTarget.select()}
-              style={{ flex: 1, minWidth: 0, height: 32, fontSize: 11 }}
-            />
-            <button className="btn btn-primary sm" onClick={() => void copyShare()}>
-              <Icon name="link" size={13} />
-              {tr('复制', 'Copy')}
-            </button>
-          </div>
-        ) : (
-          <button
-            className="btn btn-soft sm"
-            disabled={shareMutation.isPending}
-            onClick={() => shareMutation.mutate()}
-          >
-            <Icon name="link" size={13} />
-            {shareMutation.isPending ? tr('生成中…', 'Creating…') : tr('生成协同编辑分享链接', 'Create co-editing share link')}
-          </button>
-        )}
-      </div>
     </Modal>
   );
 }
