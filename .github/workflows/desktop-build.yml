@@ -17,6 +17,10 @@ on:
     paths:
       - "src/frontend/**"
       - "src/desktop/**"
+      # The shell bundles @polaris/kernel into its main process, so kernel
+      # changes can break the client while kernel's own tests stay green
+      # (e.g. importing a Node builtin that Electron's Node does not ship).
+      - "src/kernel/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - ".github/workflows/desktop-build.yml"

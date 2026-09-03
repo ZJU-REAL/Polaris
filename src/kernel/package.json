@@ -1,6 +1,7 @@
 {
   "name": "@polaris/kernel",
   "private": true,
+  "sideEffects": false,
   "version": "0.1.0",
   "description": "Polaris plugin kernel: cordis runtime host, config tree, process seams",
   "type": "module",

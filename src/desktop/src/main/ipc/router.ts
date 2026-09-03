@@ -20,7 +20,7 @@ import {
   type RpcRequest,
 } from '../../shared/contract';
 import { capabilityManifest } from '../capabilities';
-import { kernelStatus, localBackend } from '../kernel';
+import { engineBootstrapStatus, kernelStatus, localBackend } from '../kernel';
 import { applyUpdate, checkForUpdate } from '../updates';
 import * as host from './methods.host';
 import * as local from './methods.local';
@@ -55,6 +55,7 @@ const HANDLERS: Record<MethodName, Handler> = {
   'host.update.apply': () => applyUpdate(),
   'kernel.status': () => kernelStatus(),
   'kernel.localBackend': () => localBackend(),
+  'kernel.engineBootstrapStatus': () => engineBootstrapStatus(),
   // local.* 一期全部走到 agent 再以 ERR_CAPABILITY_UNAVAILABLE 结束（见 methods.local.ts）
   'local.latex.compile': (p) => local.latexCompile(p),
   'local.fs.pickFolder': (p) => local.pickFolder(p),

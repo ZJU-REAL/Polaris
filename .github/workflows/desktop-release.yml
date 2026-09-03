@@ -44,12 +44,17 @@ jobs:
           - os: macos-14
             name: macos
             args: --mac --universal
+            # Where electron-builder leaves the unpacked resources dir, used by
+            # the bundled-backend smoke below.
+            resources: mac-universal/Polaris.app/Contents/Resources
           - os: windows-latest
             name: windows
             args: --win --x64
+            resources: win-unpacked/resources
           - os: ubuntu-latest
             name: linux
             args: --linux --x64
+            resources: linux-unpacked/resources
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -135,10 +140,35 @@ jobs:
           mkdir -p src/desktop/release
           tar -czf "src/desktop/release/renderer-$VERSION-c$CONTRACT.tar.gz" -C src/frontend/dist .
 
+      # Downloads the pinned uv binary and copies the backend sources into
+      # src/desktop/resources/, which electron-builder ships as extraResources.
+      # The packaged app bootstraps a Python environment from them on first
+      # launch (#607); see src/desktop/src/main/engine-bootstrap.ts.
+      - name: Stage bundled engine resources
+        shell: bash
+        run: pnpm --dir src/desktop run stage:resources
+
       - name: Package
         shell: bash
         working-directory: src/desktop
         run: npx electron-builder ${{ matrix.args }} --publish never
+
+      # Proves the bundled uv + backend resources inside the packaged output can
+      # bootstrap a working engine (managed Python install, venv, dependency
+      # install, alembic migrations, /api/health 200) with no system Python —
+      # the exact first-launch code path of the packaged app. The smoke drives
+      # the bootstrap module directly with node against the unpacked resources
+      # rather than launching the packaged Electron app headless: a GUI launch
+      # fails differently on every runner (Gatekeeper on macOS, no xvfb
+      # equivalent on Windows, SUID sandbox on Linux), while everything this
+      # step adds lives below Electron; the Electron shell itself is already
+      # covered by the Linux smoke test above.
+      - name: Bundled backend smoke
+        shell: bash
+        run: |
+          node src/desktop/dist/bootstrap-smoke.cjs \
+            --resources "src/desktop/release/${{ matrix.resources }}" \
+            --data "${RUNNER_TEMP}/polaris-engine-smoke"
 
       # Collect installers only; release/ also holds *-unpacked directories and
       # .blockmap files that need not be uploaded.

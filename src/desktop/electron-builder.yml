@@ -15,6 +15,13 @@ files:
 extraResources:
   - from: ../frontend/dist
     to: renderer
+  # 内嵌后端（#607）：uv 二进制与后端源码由 stage:resources（scripts/fetch-uv.mjs
+  # + scripts/stage-backend.mjs）在打包前整理进 resources/，这里原样进包。
+  # 首启引导（下载 Python、装依赖）见 src/main/engine-bootstrap.ts。
+  - from: resources/uv
+    to: uv
+  - from: resources/backend
+    to: backend
 
 asar: true
 
@@ -30,6 +37,10 @@ afterPack: build/after-pack.cjs
 
 mac:
   category: public.app-category.productivity
+  # uv 已在 fetch-uv.mjs 里 lipo 成 fat 二进制、两个分架构包中逐字节相同；
+  # @electron/universal 合并时要求这类「相同的 Mach-O」显式列进 x64ArchFiles，
+  # 否则按「该 lipo 而没 lipo」处理直接报错中止。
+  x64ArchFiles: Contents/Resources/uv/uv
   target:
     # zip 优先：分发时比 dmg 少一层隔离属性传播，未签名场景更省事
     - target: zip

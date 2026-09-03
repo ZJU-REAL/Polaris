@@ -10,15 +10,17 @@
     "build:main": "esbuild src/main/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/main.cjs --external:electron",
     "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/preload.cjs --external:electron",
     "build:agent": "esbuild src/agent/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/agent.cjs --external:electron",
+    "build:bootstrap-smoke": "esbuild src/bootstrap-smoke.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/bootstrap-smoke.cjs",
     "build:smoke": "esbuild src/smoke.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/smoke.cjs --external:electron",
-    "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:agent",
+    "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:agent && pnpm run build:bootstrap-smoke",
     "smoke": "pnpm run build:preload && pnpm run build:agent && pnpm run build:smoke && electron dist/smoke.cjs",
     "dev": "pnpm run build && electron .",
     "lint": "tsc --noEmit",
     "icons": "./scripts/make-icons.sh",
-    "dist:mac": "pnpm run build && electron-builder --mac --universal",
-    "dist:win": "pnpm run build && electron-builder --win",
-    "dist:linux": "pnpm run build && electron-builder --linux"
+    "stage:resources": "node scripts/fetch-uv.mjs && node scripts/stage-backend.mjs",
+    "dist:mac": "pnpm run stage:resources && pnpm run build && electron-builder --mac --universal",
+    "dist:win": "pnpm run stage:resources && pnpm run build && electron-builder --win",
+    "dist:linux": "pnpm run stage:resources && pnpm run build && electron-builder --linux"
   },
   "dependencies": {
     "@polaris/kernel": "workspace:*"

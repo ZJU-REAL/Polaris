@@ -9,16 +9,29 @@
    装载列表：
    - desktop-probe：空探针，存在本身就证明 cordis 插件树被真的建起来了
      （kernel.status 的 plugins 计数由它兜底 ≥ 1）。
-   - legacy-engine：仅当设置了 POLARIS_DESKTOP_ENGINE 时装载，把 Python
-     后端作为本地子进程拉起（desktop 档位单进程，见 #583）；未设置时
-     保持现有的远端服务器流程，一行不变。
+   - legacy-engine：把 Python 后端作为本地子进程拉起（desktop 档位单进程，
+     见 #583）。配置来源按优先级：
+       1. POLARIS_DESKTOP_ENGINE 显式指定（开发/调试，行为与从前完全一致）
+       2. 打包态自动引导（#607）：安装包自带 uv + 后端源码，首启在 userData
+          里装出 venv 后以 command 模式拉起——用户机器不需要 Python/docker
+     两者都不成立（开发态未设 env）时不装引擎，保持远端服务器流程。
    ============================================================ */
+
+import { app } from 'electron';
 
 import { createKernel, legacyEngine, type Kernel, type LegacyEngineConfig } from '@polaris/kernel';
 
-import type { KernelStatus, LocalBackendInfo } from '../shared/contract';
+import type { EngineBootstrapStatus, KernelStatus, LocalBackendInfo } from '../shared/contract';
+import { bootstrapEngine } from './engine-bootstrap';
 
 let kernel: Kernel | null = null;
+
+/**
+ * 内嵌引擎引导进度，kernel.engineBootstrapStatus 直接读它。
+ * idle = 没走内嵌路径（开发态 / 显式 env）；failed = 引导失败已回落远端。
+ * 渲染层的进度条二期再接，这里先把契约与状态源立起来。
+ */
+let bootstrapStatus: EngineBootstrapStatus = { phase: 'idle', done: false };
 
 /** 空探针插件。命名走 kebab-case，与 config-tree / legacy-engine 一致。 */
 const desktopProbe = {
@@ -32,7 +45,7 @@ const desktopProbe = {
  * POLARIS_DESKTOP_ENGINE 的取值：
  *   docker:<image>:<backendDirAbs>   如 docker:polaris-api-test:local:/repo/src/backend
  *   command:<json argv>              如 command:["node","engine.js"]
- * 未设置 / 解析失败 = 不装本地引擎。
+ * 未设置 / 解析失败 = 不用显式配置（打包态转入自动引导，开发态不装引擎）。
  */
 function parseEngineSpec(raw: string | undefined): LegacyEngineConfig | null {
   if (!raw) return null;
@@ -61,13 +74,41 @@ function parseEngineSpec(raw: string | undefined): LegacyEngineConfig | null {
   return null;
 }
 
+/**
+ * 打包态的自动引导：用安装包里的 uv + 后端源码在 userData 装出运行环境，
+ * 返回 legacy-engine 的 command 配置。失败返回 null（回落远端流程），
+ * 绝不让引导问题挡住窗口创建。
+ */
+async function bootstrapPackagedEngine(): Promise<LegacyEngineConfig | null> {
+  try {
+    const config = await bootstrapEngine({
+      resourcesDir: process.resourcesPath,
+      dataDir: app.getPath('userData'),
+      onProgress: ({ phase, line }) => {
+        bootstrapStatus = { phase, done: false };
+        // 首启会下载 Python 工具链，日志是唯一的可观测面（进度条二期接）
+        if (line) console.log(`[engine-bootstrap] ${line}`);
+      },
+    });
+    bootstrapStatus = { phase: 'ready', done: true };
+    return config;
+  } catch (err) {
+    bootstrapStatus = { phase: 'failed', done: true };
+    console.error('[kernel] 内嵌引擎引导失败，回落远端流程：', err);
+    return null;
+  }
+}
+
 /** 幂等启动：重复调用返回同一实例（app ready 与 smoke 都可能触发）。 */
 export async function startKernel(): Promise<Kernel> {
   if (kernel) return kernel;
   const instance = createKernel({ name: 'polaris-desktop' });
   instance.ctx.plugin(desktopProbe);
 
-  const engine = parseEngineSpec(process.env.POLARIS_DESKTOP_ENGINE);
+  let engine = parseEngineSpec(process.env.POLARIS_DESKTOP_ENGINE);
+  if (!engine && app.isPackaged) {
+    engine = await bootstrapPackagedEngine();
+  }
   if (engine) {
     // 等到健康（或失败）再返回：窗口在 startKernel 之后才创建，这样
     // kernel.localBackend 与 CSP 在首个页面请求时就已是最终答案，渲染层
@@ -103,6 +144,11 @@ export function kernelStatus(): KernelStatus {
     name: kernel?.name ?? '',
     plugins: kernel ? kernel.ctx.registry.size : 0,
   };
+}
+
+/** kernel.engineBootstrapStatus 的实现：内嵌引擎引导进度（诊断/进度条用）。 */
+export function engineBootstrapStatus(): EngineBootstrapStatus {
+  return bootstrapStatus;
 }
 
 /**
