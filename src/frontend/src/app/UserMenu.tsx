@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Avatar } from '../components/ui/Avatar';
 import { Icon } from '../components/ui/Icon';
 import { Modal } from '../components/ui/Modal';
 import { useAuth } from './auth';
-import { isAdmin, type UserRead } from '../lib/api';
+import { api, isAdmin, type UserRead } from '../lib/api';
 import { tr } from '../lib/i18n';
 
 /* 侧栏底部用户区：点头像弹出菜单（关于我们 / 设置 / 退出登录）。邀请协作者入口在研究方向详情页。 */
@@ -99,6 +100,15 @@ export function UserMenu({ me, collapsed }: { me: UserRead | undefined; collapse
   const [aboutOpen, setAboutOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
+  // desktop 免登录模式下没有「登录」这回事，退出入口一并隐藏
+  const capabilities = useQuery({
+    queryKey: ['auth-capabilities'],
+    queryFn: () => api.authCapabilities(),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const localSession = capabilities.data?.local_session === true;
+
   // 点击菜单外部 / Esc 关闭（菜单是 rootRef 的子元素，contains 即可覆盖）
   useEffect(() => {
     if (!open) return;
@@ -165,19 +175,23 @@ export function UserMenu({ me, collapsed }: { me: UserRead | undefined; collapse
             <Icon name="settings" size={15} />
             {tr('设置', 'Settings')}
           </button>
-          <div className="user-menu-sep" />
-          <button
-            className="user-menu-item danger"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              logout();
-              navigate('/login');
-            }}
-          >
-            <Icon name="logout" size={15} />
-            {tr('退出登录', 'Log out')}
-          </button>
+          {!localSession && (
+            <>
+              <div className="user-menu-sep" />
+              <button
+                className="user-menu-item danger"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  logout();
+                  navigate('/login');
+                }}
+              >
+                <Icon name="logout" size={15} />
+                {tr('退出登录', 'Log out')}
+              </button>
+            </>
+          )}
         </div>
       )}
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />

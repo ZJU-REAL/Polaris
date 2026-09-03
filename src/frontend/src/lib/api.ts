@@ -2,6 +2,7 @@ import { tr } from './i18n';
 import { apiBase, serverOrigin } from './endpoint';
 import { readToken, writeToken } from './token-store';
 import { LocalUnavailable, noteLocalFailure, resolveLocalHandler } from './local-routes';
+import { handleUnauthorized, requestLocalSessionToken } from './local-session';
 /* ============================================================
    Polaris API client — thin fetch wrapper.
    baseURL /api (proxied to FastAPI at :8000 in dev), JSON,
@@ -58,11 +59,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   const res = await fetch(`${apiBase()}${path}`, { ...init, headers });
   if (res.status === 401 && token && !path.startsWith('/auth/')) {
-    // 会话过期/失效：清 token 并跳登录（避免在登录/注册接口上误触发）
+    // 会话过期/失效：清 token 后统一处理——免登录模式重取本地会话并刷新页面，
+    // 否则跳登录（避免在登录/注册接口上误触发）
     setToken(null);
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-      window.location.assign('/login');
-    }
+    handleUnauthorized();
   }
   if (!res.ok) {
     let detail = res.statusText || `HTTP ${res.status}`;
@@ -119,9 +119,7 @@ async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> 
   const res = await fetch(`${apiBase()}${path}`, { ...init, headers });
   if (res.status === 401 && token && !path.startsWith('/auth/')) {
     setToken(null);
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-      window.location.assign('/login');
-    }
+    handleUnauthorized();
   }
   if (!res.ok) {
     let detail = res.statusText || `HTTP ${res.status}`;
@@ -166,9 +164,7 @@ async function requestStream(path: string, init: RequestInit = {}): Promise<Resp
   const res = await fetch(`${apiBase()}${path}`, { ...init, headers });
   if (res.status === 401 && token && !path.startsWith('/auth/')) {
     setToken(null);
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-      window.location.assign('/login');
-    }
+    handleUnauthorized();
   }
   if (!res.ok) {
     let detail = res.statusText || `HTTP ${res.status}`;
@@ -306,6 +302,8 @@ export interface AuthCapabilities {
   email: boolean;
   password_reset: boolean;
   register_email_code: boolean;
+  /** true = desktop 档位免登录：前端自动取本地会话、不渲染登录页、隐藏退出入口 */
+  local_session: boolean;
 }
 
 export interface SendCodeResult {
@@ -3474,6 +3472,11 @@ export const api = {
   /** 邮件系统是否可用（决定验证码与「忘记密码」入口是否显示）。 */
   authCapabilities(): Promise<AuthCapabilities> {
     return request<AuthCapabilities>('/auth/capabilities');
+  },
+
+  /** desktop 档位免登录：无凭证换取本地会话 token（server 档位 404）。 */
+  localSession(): Promise<string> {
+    return requestLocalSessionToken();
   },
 
   /** 申请邮箱验证码；冷却中返回 sent=false 与剩余秒数。 */

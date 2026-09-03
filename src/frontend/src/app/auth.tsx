@@ -1,7 +1,8 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, getToken, setToken, type RegisterInput } from '../lib/api';
+import { acquireLocalSession, detectLocalSession } from '../lib/local-session';
 import { setLastAccount, setRemembered } from '../lib/token-store';
 
 interface AuthValue {
@@ -12,6 +13,8 @@ interface AuthValue {
   /** 注册（含邀请码）后自动登录。 */
   register: (input: RegisterInput) => Promise<void>;
   logout: () => void;
+  /** 采纳一个已按惯例落存储的 token（desktop 免登录引导用），不清缓存。 */
+  adoptToken: (token: string) => void;
 }
 
 const AuthContext = createContext<AuthValue | null>(null);
@@ -42,6 +45,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [login],
   );
 
+  const adoptToken = useCallback((t: string) => {
+    setToken(t);
+    setTokenState(t);
+  }, []);
+
   const logout = useCallback(() => {
     setToken(null);
     setTokenState(null);
@@ -50,8 +58,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   const value = useMemo<AuthValue>(
-    () => ({ token, isAuthenticated: token !== null, login, register, logout }),
-    [token, login, register, logout],
+    () => ({ token, isAuthenticated: token !== null, login, register, logout, adoptToken }),
+    [token, login, register, logout, adoptToken],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -63,12 +71,35 @@ export function useAuth(): AuthValue {
   return ctx;
 }
 
-/** 路由守卫：未登录跳转 /login。 */
+/** 路由守卫：未登录先探测 desktop 免登录能力——支持就静默取会话直接进应用
+    （用户永远不见登录页），否则回落到 /login。探测期间渲染空白，避免闪现登录页。 */
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, adoptToken } = useAuth();
   const location = useLocation();
-  if (!isAuthenticated) {
+  // checking = 正在探测/取会话；login = 免登录不可用，走现有登录页流程
+  const [fallback, setFallback] = useState<'checking' | 'login'>('checking');
+
+  useEffect(() => {
+    if (isAuthenticated) return;
+    let alive = true;
+    void (async () => {
+      if (await detectLocalSession()) {
+        const token = await acquireLocalSession();
+        if (token) {
+          if (alive) adoptToken(token);
+          return;
+        }
+      }
+      if (alive) setFallback('login');
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isAuthenticated, adoptToken]);
+
+  if (isAuthenticated) return <>{children}</>;
+  if (fallback === 'login') {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
-  return <>{children}</>;
+  return null;
 }

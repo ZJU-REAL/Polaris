@@ -314,9 +314,60 @@ async def register(
 
 @router.get("/auth/capabilities", tags=["auth"])
 async def auth_capabilities() -> dict[str, bool]:
-    """前端据此决定是否显示验证码输入与「忘记密码」——没配 SMTP 就别给走不通的入口。"""
-    enabled = get_settings().email_enabled
-    return {"email": enabled, "password_reset": enabled, "register_email_code": enabled}
+    """前端据此决定是否显示验证码输入与「忘记密码」——没配 SMTP 就别给走不通的入口。
+
+    ``local_session``：desktop 档位免登录（见 /auth/local-session）。前端见到它为
+    true 就自动取会话、不再渲染登录页。"""
+    settings = get_settings()
+    enabled = settings.email_enabled
+    return {
+        "email": enabled,
+        "password_reset": enabled,
+        "register_email_code": enabled,
+        "local_session": settings.is_desktop,
+    }
+
+
+# desktop 档位的本地用户身份。固定邮箱做幂等键；机器的主人就是自己的管理员。
+LOCAL_USER_EMAIL = "local@polaris.desktop"
+LOCAL_USERNAME = "local"
+
+
+@router.post("/auth/local-session", tags=["auth"])
+async def local_session(
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    """desktop 档位免登录：幂等确保本地用户存在并直接签发会话。
+
+    server 档位下这个端点结构性不存在（404）——不是 403：多用户部署里它就不该
+    被发现。本地用户 role=admin（个人机器的主人管理自己的一切），密码是随机散列、
+    永远无法用于登录——会话只能经这个端点取得，而它只在单机档位存在。
+    """
+    if not get_settings().is_desktop:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    user = (
+        await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
+    ).scalar_one_or_none()
+    if user is None:
+        import secrets as _secrets
+
+        from fastapi_users.password import PasswordHelper
+
+        user = User(
+            email=LOCAL_USER_EMAIL,
+            hashed_password=PasswordHelper().hash(_secrets.token_urlsafe(32)),
+            is_active=True,
+            is_superuser=False,
+            is_verified=True,
+            display_name="Local",
+            username=LOCAL_USERNAME,
+            role="admin",
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+    token = await get_jwt_strategy().write_token(user)
+    return {"access_token": token, "token_type": "bearer"}
 
 
 @router.post("/auth/send-code", response_model=SendCodeResult, tags=["auth"])
