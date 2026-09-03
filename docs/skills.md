@@ -156,7 +156,7 @@ the model. After a Polaris skill loads, its `allowed-tools` list restricts only
 the current turn's Polaris MCP tools. Multiple skill lists intersect, and the
 restriction never widens the existing DSH tool surface.
 
-See [Polaris for DeepSeek Harness](../integrations/deepseek-harness/README.md)
+See [Polaris for DeepSeek Harness](https://github.com/ZJU-REAL/Polaris/tree/main/integrations/deepseek-harness)
 for installation, token scopes, failure behavior, and configuration.
 
 ## Tips and limits

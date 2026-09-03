@@ -105,7 +105,7 @@ The optional `X-Polaris-Tool-Profile` request header selects a stable catalog:
 
 Profiles govern both discovery and direct invocation. A client cannot call a
 hidden tool by guessing its name. See the
-[DeepSeek Harness bundle](../integrations/deepseek-harness/README.md) for token,
+[DeepSeek Harness bundle](https://github.com/ZJU-REAL/Polaris/tree/main/integrations/deepseek-harness) for token,
 installation, and skill-provider instructions.
 
 ---
@@ -349,5 +349,5 @@ that breaks a tool fails the build rather than surfacing in your agent.
   contract.
 - [Configuration](configuration.md#application-settings-polaris_-prefix) — public URL and link
   lifetime settings.
-- [DeepSeek Harness bundle](../integrations/deepseek-harness/README.md) — native
+- [DeepSeek Harness bundle](https://github.com/ZJU-REAL/Polaris/tree/main/integrations/deepseek-harness) — native
   skills, MCP profiles, installation, and operations.
