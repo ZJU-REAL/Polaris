@@ -127,7 +127,7 @@ export interface PapersTabProps {
 
 /* ---------------- 添加文献 Modal ---------------- */
 
-type ImportMethod = 'arxiv' | 'doi' | 'corpus' | 'bibtex';
+type ImportMethod = 'arxiv' | 'doi' | 'corpus' | 'bibtex' | 'zotero';
 
 /** 按 BibTeX 条目的配对大括号/圆括号切分，保留坏条目交给后端逐项报错。 */
 function splitBibtexEntries(raw: string): string[] {
@@ -196,6 +196,8 @@ function AddPaperModal({
   const [doi, setDoi] = useState('');
   const [corpusId, setCorpusId] = useState('');
   const [bibtex, setBibtex] = useState('');
+  const [zoteroBib, setZoteroBib] = useState<File | null>(null);
+  const [zoteroZip, setZoteroZip] = useState<File | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ taskId: string; total: number } | null>(null);
 
@@ -217,6 +219,8 @@ function AddPaperModal({
     setDoi('');
     setCorpusId('');
     setBibtex('');
+    setZoteroBib(null);
+    setZoteroZip(null);
     setParseError(null);
   };
 
@@ -244,6 +248,33 @@ function AddPaperModal({
     },
   });
 
+  // Zotero 导入是文件上传（multipart），与逐条 JSON 的批量添加分开一条 mutation；
+  // 结果复用同一个 paper-task 进度弹窗。
+  const zoteroMutation = useMutation({
+    mutationFn: ({ bib, zip }: { bib: File; zip: File | null }) =>
+      api.importLibraryZotero(libraryId!, bib, zip),
+    onSuccess: (task) => {
+      reset();
+      onClose();
+      setProgress({ taskId: task.task_id, total: task.total });
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 422) {
+        setParseError(
+          tr('无法从这个 .bib 文件解析出文献条目，或条目超过 500 条。', 'No entries could be parsed from this .bib file, or it holds more than 500 entries.'),
+        );
+      } else if (e instanceof ApiError && e.status === 413) {
+        setParseError(tr('文件太大，请在 Zotero 里分批导出后再试。', 'The file is too large; export smaller batches from Zotero.'));
+      } else if (e instanceof ApiError && e.status === 503) {
+        setParseError(
+          tr('后台任务服务暂时不可用，请稍后再试。', 'The background task service is temporarily unavailable.'),
+        );
+      } else {
+        toast(`${tr('导入失败：', 'Import failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+      }
+    },
+  });
+
   return (
     <>
     <Modal
@@ -258,13 +289,28 @@ function AddPaperModal({
           </button>
           <button
             className="btn btn-primary sm"
-            disabled={batchItems.length === 0 || tooMany || importMutation.isPending}
-            onClick={() => importMutation.mutate({ items: batchItems })}
+            disabled={
+              method === 'zotero'
+                ? !zoteroBib || zoteroMutation.isPending
+                : batchItems.length === 0 || tooMany || importMutation.isPending
+            }
+            onClick={() => {
+              if (method === 'zotero') {
+                if (libraryId && zoteroBib) zoteroMutation.mutate({ bib: zoteroBib, zip: zoteroZip });
+              } else {
+                importMutation.mutate({ items: batchItems });
+              }
+            }}
           >
-            {importMutation.isPending ? (
+            {(method === 'zotero' ? zoteroMutation.isPending : importMutation.isPending) ? (
               <>
                 <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-                {tr('添加中…', 'Adding…')}
+                {method === 'zotero' ? tr('导入中…', 'Importing…') : tr('添加中…', 'Adding…')}
+              </>
+            ) : method === 'zotero' ? (
+              <>
+                <Icon name="plus" size={13} />
+                {tr('导入', 'Import')}
               </>
             ) : (
               <>
@@ -284,6 +330,7 @@ function AddPaperModal({
           { v: 'doi', label: 'DOI' },
           { v: 'corpus', label: 'Corpus ID' },
           { v: 'bibtex', label: tr('BibTeX 粘贴', 'Paste BibTeX') },
+          ...(libraryId ? [{ v: 'zotero' as const, label: tr('Zotero 导入', 'Zotero import') }] : []),
         ]}
         value={method}
         onChange={(m) => {
@@ -344,6 +391,34 @@ function AddPaperModal({
             />
             <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
               {tr('支持纯数字或 CorpusId: 前缀；最多 50 篇。', 'Numeric IDs and the CorpusId: prefix are supported; up to 50.')}
+            </div>
+          </>
+        ) : method === 'zotero' ? (
+          <>
+            <label className="col" style={{ gap: 6, fontSize: 12 }}>
+              <span>{tr('BibTeX 文件（Zotero / Better BibTeX 导出的 .bib）', 'BibTeX file (.bib exported from Zotero / Better BibTeX)')}</span>
+              <input
+                type="file"
+                accept=".bib,text/x-bibtex"
+                onChange={(e) => {
+                  setZoteroBib(e.target.files?.[0] ?? null);
+                  setParseError(null);
+                }}
+              />
+            </label>
+            <label className="col" style={{ gap: 6, fontSize: 12, marginTop: 12 }}>
+              <span>{tr('附件压缩包（可选：把带 files/ 目录的导出文件夹打包成 zip）', 'Attachments archive (optional: zip the export folder that contains files/)')}</span>
+              <input
+                type="file"
+                accept=".zip,application/zip"
+                onChange={(e) => setZoteroZip(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
+              {tr(
+                '在 Zotero 中右键分类 → 导出分类，格式选 BibTeX；勾选「导出文件」可连 PDF 一起带上。已在库里的文献（按 DOI / arXiv / 标题判断）会自动跳过。',
+                'In Zotero right-click a collection and choose Export Collection with the BibTeX format; check “Export Files” to include PDFs. Papers already in the library (matched by DOI / arXiv / title) are skipped automatically.',
+              )}
             </div>
           </>
         ) : (

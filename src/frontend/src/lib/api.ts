@@ -4056,6 +4056,13 @@ export const api = {
   importLibraryPapersBatch(id: string, input: PaperBatchImportInput): Promise<PaperBatchTask> {
     return requestJson<PaperBatchTask>(`/libraries/${id}/paper-imports/batch`, 'POST', input);
   },
+  /** Zotero 导入：.bib（可选附件 zip）multipart 上传，逐项结果同走 paper-task SSE。 */
+  importLibraryZotero(id: string, bib: File, attachments?: File | null): Promise<PaperBatchTask> {
+    const form = new FormData();
+    form.append('bib', bib);
+    if (attachments) form.append('attachments', attachments);
+    return request<PaperBatchTask>(`/libraries/${id}/import/zotero`, { method: 'POST', body: form });
+  },
   /** 批量删除库内论文：默认软删（回收站），hard=true 彻底删除。 */
   batchDeleteLibraryPapers(id: string, paperIds: string[], hard = false): Promise<{ deleted: number }> {
     return requestJson<{ deleted: number }>(`/libraries/${id}/papers/batch-delete`, 'POST', {

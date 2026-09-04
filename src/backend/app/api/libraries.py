@@ -10,11 +10,13 @@ papers/wiki/concepts 路由里，鉴权同样接入库级写权限助手。
 
 import json
 import logging
+import shutil
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy import select
@@ -79,6 +81,7 @@ from app.services import paper_merge as paper_merge_service
 from app.services import papers as papers_service
 from app.services import research_digest as research_digest_service
 from app.services import statement_interview as interview
+from app.services import zotero_import as zotero_import_service
 from app.services.embedding import embed_query
 from app.services.literature.arxiv import ArxivRateLimitedError
 from app.services.wiki_export import build_obsidian_zip_for_libraries
@@ -808,6 +811,103 @@ async def add_library_papers_manually_batch(
     if task_id is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="TASK_SERVICE_UNAVAILABLE")
     return PaperManualBatchTaskRead(task_id=task_id, total=len(data.items))
+
+
+# ---- Zotero 库导入（#638） ----
+
+#: 一次导入的 .bib 条数上限。批量手动添加限 50 是「人肉粘贴」的量级；Zotero 是
+#: 整库搬迁，放宽到 500，再大的库建议按分类分批导出。
+MAX_ZOTERO_ENTRIES = 500
+MAX_ZOTERO_BIB_BYTES = 20 * 1024 * 1024
+MAX_ZOTERO_ZIP_BYTES = 500 * 1024 * 1024
+#: 任务归属 key 的 TTL 与 worker 任务超时对齐（4h）：导完之前 SSE 鉴权不能先过期。
+ZOTERO_TASK_OWNER_TTL_SECONDS = 4 * 3600
+
+
+@router.post(
+    "/libraries/{library_id}/import/zotero",
+    response_model=PaperManualBatchTaskRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def import_library_zotero(
+    library_id: uuid.UUID,
+    bib: UploadFile = File(...),
+    attachments: UploadFile | None = File(None),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+    redis: Redis = Depends(get_redis_dep),
+    queue: TaskQueue = Depends(get_task_queue),
+) -> PaperManualBatchTaskRead:
+    """从 Zotero 导出的 .bib（可选附件 zip）批量导入本库（可管理者）。
+
+    同步阶段只解析计数 + 把上传暂存到共享数据卷（api/worker 同挂），逐条建行、
+    三级去重、挂附件、后台补全都在 zotero_import 任务里做；进度与结果走
+    /paper-tasks/{task_id}/events（与批量手动添加同一事件口径）。
+    """
+    library = await _get_managed_library(session, library_id, user)
+    raw = await bib.read(MAX_ZOTERO_BIB_BYTES + 1)
+    if len(raw) > MAX_ZOTERO_BIB_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="ZOTERO_BIB_TOO_LARGE"
+        )
+    try:
+        # 同步解析一遍是为了当场把「文件根本不是 bib」顶回去并给出条数；worker 侧
+        # 会从暂存文件重新解析（任务参数只传路径，跨进程不传大对象）。
+        entries = zotero_import_service.parse_zotero_bib(
+            raw.decode("utf-8-sig", errors="replace")
+        )
+    except paper_import_service.ParseFailedError as e:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"PARSE_FAILED: {e}"
+        ) from e
+    if len(entries) > MAX_ZOTERO_ENTRIES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="ZOTERO_TOO_MANY_ENTRIES"
+        )
+
+    task_id = uuid.uuid4().hex
+    try:
+        await redis.setex(
+            paper_enrich_service.paper_task_owner_key(task_id),
+            ZOTERO_TASK_OWNER_TTL_SECONDS,
+            str(user.id),
+        )
+    except Exception as e:  # noqa: BLE001 — redis 不可达时任务进度无从追踪，直接拒绝
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="TASK_SERVICE_UNAVAILABLE"
+        ) from e
+
+    from app.core.config import get_settings
+
+    staged = Path(get_settings().data_dir) / "zotero_imports" / task_id
+    staged.mkdir(parents=True, exist_ok=True)
+    bib_path = staged / "library.bib"
+    bib_path.write_bytes(raw)
+    zip_path: Path | None = None
+    if attachments is not None and attachments.filename:
+        zip_path = staged / "attachments.zip"
+        size = 0
+        with zip_path.open("wb") as out:
+            # 附件包可能有几百 MB，分块落盘而不是整包进内存；超限当场清掉暂存目录
+            while chunk := await attachments.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_ZOTERO_ZIP_BYTES:
+                    shutil.rmtree(staged, ignore_errors=True)
+                    raise HTTPException(
+                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="ZOTERO_ZIP_TOO_LARGE",
+                    )
+                out.write(chunk)
+    await queue.enqueue(
+        "zotero_import",
+        task_id=task_id,
+        bib_path=str(bib_path),
+        zip_path=str(zip_path) if zip_path else None,
+        library_id=str(library.id),
+        user_id=str(user.id),
+        project_id=str(library.project_id) if library.project_id else None,
+    )
+    return PaperManualBatchTaskRead(task_id=task_id, total=len(entries))
 
 
 @router.post("/libraries/{library_id}/papers/batch-delete")
