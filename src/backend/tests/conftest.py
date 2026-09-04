@@ -18,6 +18,8 @@ os.environ["POLARIS_INVITE_CODE"] = "test-invite"
 os.environ["POLARIS_ENCRYPTION_KEY"] = ""
 os.environ["POLARIS_DATA_DIR"] = f"{_TMPDIR}/data"  # PDF/全文落盘目录（M2）
 os.environ["POLARIS_LLM_FAKE_FALLBACK"] = "1"  # 测试套件依赖确定性 fake provider
+# 补全钩子里的 OpenAlex 对齐是真实出网调用，离线测试一律关（专测用例自行开）
+os.environ["POLARIS_OPENALEX_ALIGN_ON_ENRICH"] = "0"
 
 from app.core.db import Base, dispose_engine, get_engine  # noqa: E402
 from app.core.events import get_event_bus  # noqa: E402

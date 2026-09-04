@@ -88,6 +88,10 @@ class Settings(BaseSettings):
         default="polaris@example.org",
         validation_alias=AliasChoices("POLARIS_OPENALEX_MAILTO", "OPENALEX_MAILTO"),
     )  # OpenAlex polite pool
+    # 新论文补全时顺带做 OpenAlex 对齐（#639）。默认开；测试套件置 0——
+    # 补全钩子里的对齐是真实出网调用，离线跑测试不该碰它（专测对齐的用例
+    # 自己注入 mock 客户端并临时打开）。
+    openalex_align_on_enrich: bool = True
     pubmed_email: str = Field(
         default="",
         validation_alias=AliasChoices(

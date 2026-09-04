@@ -4,7 +4,7 @@ import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
-import { api, type MyMeta, type PaperConceptRef, type ReadingStatus } from '../../lib/api';
+import { api, type CitationIntent, type MyMeta, type PaperConceptRef, type ReadingStatus } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { NoteCard } from '../reading/NotesPanel';
 import { READING_STATUS } from '../reading/shared';
@@ -474,3 +474,111 @@ export function WikiHeaderActions({
     </div>
   );
 }
+
+/* ---------------- 引文（按意图分组，#639） ---------------- */
+
+/** 意图五档的大白话名字（模块级常量只存 zh/en，渲染处再 tr()）。 */
+const CITATION_INTENT_LABELS: Record<CitationIntent, { zh: string; en: string }> = {
+  background: { zh: '背景铺垫', en: 'Background' },
+  method: { zh: '方法沿用', en: 'Method' },
+  comparison: { zh: '实验对比', en: 'Comparison' },
+  support: { zh: '结论支持', en: 'Support' },
+  contrast: { zh: '观点相左', en: 'Contrast' },
+};
+
+/**
+ * 论文详情的引文分组列表（简单列表；引文网络等深度 UI 归 D5）。
+ * 折叠卡：展开才拉数据——绝大多数浏览不看引文，不值得每次详情都多一个请求。
+ */
+export function PaperCitationsSection({ paperId }: { paperId: string }) {
+  const [open, setOpen] = useState(false);
+  const citationsQuery = useQuery({
+    queryKey: ['paper-citations', paperId],
+    queryFn: () => api.getPaperCitations(paperId),
+    enabled: open,
+    retry: false,
+  });
+  const groups = citationsQuery.data?.groups ?? [];
+  const total = citationsQuery.data?.total;
+
+  return (
+    <div className="card" style={{ marginTop: 18, overflow: 'hidden' }}>
+      <div
+        className="row"
+        onClick={() => setOpen((o) => !o)}
+        style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
+      >
+        <span className="row gap6" style={{ fontSize: 12.5, fontWeight: 650 }}>
+          <Icon name="link" size={12} style={{ color: 'var(--text-3)' }} />
+          {tr('引文（按意图）', 'Citations by intent')}
+          {typeof total === 'number' && (
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 400 }}>
+              · {total}
+            </span>
+          )}
+        </span>
+        <Icon
+          name="chevDown"
+          size={13}
+          style={{ color: 'var(--text-3)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
+        />
+      </div>
+      {open && (
+        <div style={{ padding: '0 16px 14px' }}>
+          {citationsQuery.isLoading ? (
+            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+              {tr('加载引文…', 'Loading citations…')}
+            </p>
+          ) : citationsQuery.isError ? (
+            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+              {tr('引文加载失败。', 'Failed to load citations.')}
+            </p>
+          ) : groups.length === 0 ? (
+            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+              {tr(
+                '还没有解析出引文——需要先有 PDF 全文（含参考文献表）。',
+                'No citations parsed yet — the paper needs a full text with a reference list.',
+              )}
+            </p>
+          ) : (
+            groups.map((group) => {
+              const label = group.intent ? CITATION_INTENT_LABELS[group.intent] : null;
+              return (
+                <div key={group.intent ?? 'unclassified'} style={{ marginBottom: 10 }}>
+                  <div className="row gap6" style={{ margin: '8px 0 6px' }}>
+                    <span
+                      className="pill sm"
+                      style={{ background: group.intent ? 'var(--accent-soft)' : 'var(--surface-3)', color: group.intent ? 'var(--accent-text)' : 'var(--text-3)' }}
+                    >
+                      {label ? tr(label.zh, label.en) : tr('未分类', 'Unclassified')}
+                    </span>
+                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+                      {group.items.length}
+                    </span>
+                  </div>
+                  {group.items.map((item) => (
+                    <div key={item.id} style={{ padding: '5px 0', borderBottom: '0.5px solid var(--border)' }}>
+                      <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-2)', overflowWrap: 'break-word' }}>
+                        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginRight: 6 }}>
+                          [{item.ref_index}]
+                        </span>
+                        {item.cited_paper_title ?? item.cited_ref_raw}
+                      </div>
+                      {item.context && (
+                        <div style={{ fontSize: 11, lineHeight: 1.55, color: 'var(--text-4)', marginTop: 2, overflowWrap: 'break-word' }}>
+                          {tr('引用处：', 'Cited as: ')}
+                          {item.context}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+

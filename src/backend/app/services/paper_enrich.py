@@ -250,6 +250,50 @@ async def enrich_paper(
             logger.warning("enrich affiliations failed for paper %s", paper_id, exc_info=True)
             paper = await _rollback_and_reload()
 
+    # 引文意图（#639，增量钩子）：全文就位后建引文边并批量分类意图。非独立进度
+    # 阶段（STAGES 不变）、best-effort；无全文/无文献表时零输出——bibtex 导入等
+    # golden 链路因此逐字节不受影响。
+    try:
+        from app.core.llm.router import get_llm_router
+        from app.services.citation_graph import (
+            classify_citation_intents,
+            ensure_citation_edges,
+        )
+
+        if await ensure_citation_edges(session, paper):
+            await session.commit()
+        if await classify_citation_intents(
+            session,
+            paper,
+            get_llm_router(),
+            user_id=user_id,
+            project_id=project_id,
+            library_id=target_id,
+        ):
+            await session.commit()
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.warning("enrich citation intents failed for paper %s", paper_id, exc_info=True)
+        paper = await _rollback_and_reload()
+
+    # OpenAlex 对齐（#639，增量钩子）：缺 OpenAlex id 的记录按 DOI/arXiv 精确、
+    # 标题+年份模糊补 id 并回填空元数据。这是真实出网调用，受设置开关控制
+    # （测试套件默认关，见 core/config.py）；best-effort，不发进度事件。
+    from app.core.config import get_settings
+
+    if get_settings().openalex_align_on_enrich:
+        try:
+            from app.services.openalex_align import align_paper
+
+            if await align_paper(session, paper):
+                await session.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.warning("enrich openalex alignment failed for %s", paper_id, exc_info=True)
+            paper = await _rollback_and_reload()
+
     # ---- embed ----
     await emit("embed", "running")
     if await has_current_paper_vector(session, paper):

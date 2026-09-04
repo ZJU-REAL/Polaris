@@ -79,6 +79,7 @@ STAGES = (
     "writing",
     "review",
     "reading",
+    "citation_intent",
 )
 
 _ROUTE_CACHE_TTL = 60.0
@@ -165,6 +166,7 @@ _SHORT_CALL_STAGES = frozenset(
         "forge",
         "forge_signal",
         "reading",
+        "citation_intent",  # 引文意图批量分类：短 JSON、便宜模型（#639）
     }
 )
 

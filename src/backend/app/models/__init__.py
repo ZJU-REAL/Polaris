@@ -51,6 +51,7 @@ from app.models.paper import (
     paper_tag_links,
 )
 from app.models.paper_assets import AssetGrant, PaperAsset, PdfBlob
+from app.models.paper_citation import CITATION_INTENTS, PaperCitation
 from app.models.paper_content import (
     PaperContentChunk,
     PaperContentChunkVector,
@@ -119,7 +120,9 @@ __all__ = [
     "ModelRoute",
     "Paper",
     "PdfBlob",
+    "CITATION_INTENTS",
     "PaperAsset",
+    "PaperCitation",
     "AssetGrant",
     "PaperChunk",
     "PaperChunkVector",

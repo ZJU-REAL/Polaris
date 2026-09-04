@@ -36,6 +36,7 @@ _CONCEPTS_MARKER = "概念列表："
 # fake 的「这不是概念」判据（替身规则，见 _respond_concepts）：图/表引用形态
 _FAKE_FIGURE_REF_RE = re.compile(r"^(?:fig|figure|tab|table|eq)\s*[:：]", re.IGNORECASE)
 _AFFILIATIONS_MARKER = "POLARIS_AUTHOR_AFFIL"  # 逐位作者机构解析（affiliations.py 专门调用）
+_CITATION_INTENT_MARKER = "POLARIS_CITATION_INTENT"  # 引文意图批量分类（citation_graph.py）
 _AFFIL_COMPILE_MARKER = "POLARIS_AFFILIATIONS"  # on_compile 折叠进 wiki 编译的机构定界块请求
 # on_compile 模式下 librarian 编译输出附带的确定性机构定界块（与 FULL_TEXT 对齐）
 _FAKE_AFFIL_BLOCK = (
@@ -400,6 +401,9 @@ class FakeProvider(LLMProvider):
                 },
                 ensure_ascii=False,
             )
+        # 引文意图分类：user prompt 内嵌论文正文原句（可能撞任意通用 marker），须先判断
+        if _CITATION_INTENT_MARKER in full_text:
+            return FakeProvider._respond_citation_intent(last_user)
         # 发表机构解析（专门调用）：system prompt 带 POLARIS_AUTHOR_AFFIL，user prompt 内嵌
         # 标题页文本（可能含 TL;DR 等其他 marker），须先于通用 marker 判断；返回逐位作者映射
         if _AFFILIATIONS_MARKER in full_text:
@@ -538,6 +542,41 @@ class FakeProvider(LLMProvider):
             },
             ensure_ascii=False,
         )
+
+
+    # 引文意图的确定性替身规则（citation_graph.py 的 prompt 对齐）：真模型按语义判
+    # 五档意图，fake 只按上下文关键词给可预期的结果——测试要的是「分类会落库、
+    # 会分组展示」这条链路，不是判得多准。规则顺序即优先级。
+    _FAKE_INTENT_RULES = (
+        ("comparison", ("compare", "compared", "comparison", "outperform", "对比", "优于")),
+        ("contrast", ("however", "unlike", "in contrast", "contrary", "相反", "不同于")),
+        (
+            "method",
+            ("we use", "we adopt", "we follow", "follow", "build on", "based on", "采用", "沿用"),
+        ),
+        ("support", ("consistent with", "support", "corroborate", "in line with", "支持", "一致")),
+    )
+
+    @staticmethod
+    def _respond_citation_intent(last_user: str) -> str:
+        """引文意图批量分类：user prompt 是 {"items": [{"index", "context"}]} JSON。"""
+        start = last_user.find("{")
+        try:
+            payload = json.loads(last_user[start:]) if start != -1 else {}
+        except json.JSONDecodeError:
+            payload = {}
+        out = []
+        for item in payload.get("items") or []:
+            if not isinstance(item, dict) or "index" not in item:
+                continue
+            context = str(item.get("context") or "").lower()
+            intent, confidence = "background", 0.6
+            for name, keywords in FakeProvider._FAKE_INTENT_RULES:
+                if any(k in context for k in keywords):
+                    intent, confidence = name, 0.9
+                    break
+            out.append({"index": item["index"], "intent": intent, "confidence": confidence})
+        return json.dumps({"items": out}, ensure_ascii=False)
 
     @staticmethod
     def _respond_daily_digest(last_user: str) -> str:

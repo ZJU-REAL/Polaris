@@ -28,6 +28,9 @@ from app.schemas.paper import (
     MyTagRead,
     PaperBatchIds,
     PaperChatRequest,
+    PaperCitationGroup,
+    PaperCitationItem,
+    PaperCitationsRead,
     PaperDetail,
     PaperFigure,
     PaperFiguresResponse,
@@ -51,6 +54,7 @@ from app.schemas.paper import (
     ResolvedPaperRead,
     TagRead,
 )
+from app.services import citation_graph as citation_graph_service
 from app.services import figure_annotate as figure_service
 from app.services import libraries as libraries_service
 from app.services import library_chat as library_chat_service
@@ -841,6 +845,35 @@ async def get_collecting_libraries(
     await _get_member_paper(session, paper_id, user, include_pool=True)
     rows = await papers_service.collecting_libraries(session, paper_id, user)
     return [CollectingLibraryRead(**row) for row in rows]
+
+
+@router.get("/papers/{paper_id}/citations", response_model=PaperCitationsRead)
+async def get_paper_citations(
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperCitationsRead:
+    """按意图分组的引文列表（#639）。
+
+    分组顺序固定（CITATION_INTENTS 声明序），未分类的归到 intent=null 一组殿后；
+    空组不返回。深度 UI（引文网络图等）归 D5，这里只给详情页的分组列表。
+    """
+    from app.models.paper_citation import CITATION_INTENTS
+
+    await _get_member_paper(session, paper_id, user, include_pool=True)
+    rows = await citation_graph_service.list_citations(session, paper_id)
+    by_intent: dict[str | None, list[PaperCitationItem]] = {}
+    for citation, cited_title in rows:
+        item = PaperCitationItem.model_validate(citation).model_copy(
+            update={"cited_paper_title": cited_title}
+        )
+        by_intent.setdefault(citation.intent, []).append(item)
+    groups = [
+        PaperCitationGroup(intent=intent, items=by_intent[intent])
+        for intent in [*CITATION_INTENTS, None]
+        if by_intent.get(intent)
+    ]
+    return PaperCitationsRead(total=len(rows), groups=groups)
 
 
 @router.get("/papers/{paper_id}/index-status", response_model=PaperIndexStatusRead)

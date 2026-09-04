@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "7e2b9f4c1a86"  # Hypothesis/experiment tree nodes (#637)
+HEAD_REVISION = "57543f6328a1"  # Paper citation edges (#639)
+HYPOTHESIS_TREE_REVISION = "7e2b9f4c1a86"  # Hypothesis/experiment tree nodes (#637)
 MEMBERS_DROP_REVISION = "b0dd1709e2a1"  # Drop project_members (#625)
 LLM_MERGE_REVISION = "dd572a7f063c"  # Merge LLM config tracks: drop users.llm_self_managed (#621)
 LIBRARY_STATUS_DROP_REVISION = "c3c404803ca4"  # Drop library status/review_note (P1 de-lab)
@@ -145,6 +146,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "paper_content_version_vectors",
                     "paper_content_chunk_vectors",
                     "paper_evidence_anchors",
+                    "paper_citations",
                     "download_api_keys",
                     "download_batches",
                     "download_batch_items",
@@ -534,7 +536,30 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "evidence_balance",
     } <= columns["interdisciplinary_research_profile_versions"]
 
-    # 先退掉假设树建表（#637）：整表消失，其余不受影响。
+    # 本分支新增：引文边表（#639）
+    assert "paper_citations" in columns["_tables"]
+    assert {
+        "citing_paper_id",
+        "cited_paper_id",
+        "ref_index",
+        "cited_ref_raw",
+        "context",
+        "intent",
+        "confidence",
+    } <= columns["paper_citations"]
+    assert {
+        "ix_paper_citations_citing_paper_id",
+        "ix_paper_citations_cited_paper_id",
+    } <= _index_names(db_path, "paper_citations")
+
+    # 先退掉引文边表（#639）：假设树表不受影响。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == HYPOTHESIS_TREE_REVISION
+    assert "paper_citations" not in columns["_tables"]
+    assert "hypothesis_nodes" in columns["_tables"]
+
+    # 再退掉假设树建表（#637）：整表消失，其余不受影响。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == MEMBERS_DROP_REVISION
@@ -902,6 +927,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
+    assert "paper_citations" in columns["_tables"]  # 引文边表回归（#639）
     assert "effort" in columns["model_routes"]
     assert "chat_bot_configs" in columns["_tables"]
     # 索引回归；个人标签表、回收站列与两张备份表也仍在
