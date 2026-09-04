@@ -21,6 +21,7 @@ from worker.tasks import (
     run_voyage,
     translate_literature_hit,
     watch_unanswered_managed_commands,
+    zotero_import,
 )
 
 # 航程任务超时：GPU 训练轮合法地跑数小时；1h 的默认会把轮询任务掐死→ARQ 按任务
@@ -43,6 +44,8 @@ class WorkerSettings:
         daily_publication_match,
         func(run_literature_discovery, timeout=3600),
         func(translate_literature_hit, timeout=600),
+        # Zotero 导入：整库几百条 + 逐篇补全（LLM 打分限并发 3），1h 上限不够用
+        func(zotero_import, timeout=4 * 3600),
     ]
     # 抓取时刻可由管理员配置（SystemSetting daily_feed_sync_time，默认 UTC 02:30 =
     # 北京 10:30；arXiv 约北京 10:00 放新公告）。arq 的 cron 时刻在 worker 启动时就固定

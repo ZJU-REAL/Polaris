@@ -462,3 +462,32 @@ async def translate_literature_hit(ctx: dict[str, Any], translation_id: str) -> 
             "translation_id": translation_id,
             "status": row.status if row is not None else "missing",
         }
+
+
+async def zotero_import(
+    ctx: dict[str, Any],
+    *,
+    task_id: str,
+    bib_path: str,
+    zip_path: str | None,
+    library_id: str,
+    user_id: str,
+    project_id: str | None = None,
+) -> dict[str, int]:
+    """Zotero 库导入（#638）：API 侧把上传暂存到 data_dir 后入队，这里逐条落库。
+
+    文件走共享数据卷（api 与 worker 同挂 /srv/data），进度与结果按 paper-task
+    事件口径发（任务归属在 API 入队前已注册），前端订阅
+    /paper-tasks/{task_id}/events。返回汇总计数（arq 结果可查）。
+    """
+    from app.services.zotero_import import run_zotero_import
+
+    return await run_zotero_import(
+        ctx["redis"],
+        task_id=task_id,
+        bib_path=bib_path,
+        zip_path=zip_path or None,
+        library_id=uuid.UUID(library_id),
+        user_id=uuid.UUID(user_id),
+        project_id=uuid.UUID(project_id) if project_id else None,
+    )

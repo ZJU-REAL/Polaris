@@ -32,6 +32,7 @@ WORKER_FUNCTIONS = frozenset(
         "daily_publication_match",
         "run_literature_discovery",
         "translate_literature_hit",
+        "zotero_import",
     }
 )
 
