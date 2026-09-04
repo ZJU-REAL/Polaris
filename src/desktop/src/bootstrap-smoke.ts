@@ -154,7 +154,20 @@ async function main(): Promise<void> {
     if (args.keep) {
       console.log(`bootstrap-smoke: --keep，保留 ${dataDir}`);
     } else {
-      await rm(dataDir, { recursive: true, force: true });
+      // Windows 上刚被 kill 的引擎会短暂占着 python.exe 的文件锁，立刻删目录
+      // 会 EPERM——重试几轮；清理失败只警告不改判（冒烟结论以引擎断言为准）
+      for (let i = 0; i < 5; i++) {
+        try {
+          await rm(dataDir, { recursive: true, force: true });
+          break;
+        } catch (err) {
+          if (i === 4) {
+            console.warn(`bootstrap-smoke: 清理 ${dataDir} 失败（${err instanceof Error ? err.message : String(err)}），忽略`);
+          } else {
+            await delay(1_000);
+          }
+        }
+      }
     }
   }
   process.exit(failed ? 1 : 0);
