@@ -1,6 +1,6 @@
 """Idea Forge / 评审锦标赛 / 讨论路由（docs/api-m3.md）。
 
-权限：一律项目成员（非成员 404 不泄露存在性）；promote 仅项目 owner / 平台 admin。
+权限：一律课题主人（非本人 404 不泄露存在性）。
 """
 
 import uuid

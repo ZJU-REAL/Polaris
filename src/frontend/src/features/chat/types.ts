@@ -28,12 +28,12 @@ export interface ContextRef {
   label: string;
 }
 
-/** @ 分享目标：平台用户 or 第三方机器人 */
-export type MentionKind = 'user' | 'dingtalk' | 'feishu';
+/** @ 分享目标：第三方群机器人（平台用户分享已随课题成员机制移除，#625） */
+export type MentionKind = 'dingtalk' | 'feishu';
 
 export interface MentionTarget {
   kind: MentionKind;
-  /** user: user_id；bot: 固定标识 */
+  /** bot 固定标识 */
   id: string;
   label: string;
   sub?: string;

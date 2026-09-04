@@ -21,11 +21,9 @@ from app.schemas.user import (
     UsageSummary,
     UsernameUpdate,
     UserRead,
-    UserSearchResult,
 )
 from app.services import llm_admin as llm_admin_service
 from app.services import managed_command_watchdog as watchdog_service
-from app.services import users as users_service
 from app.services.users import tokens_used_by_user
 
 router = APIRouter(tags=["users"])
@@ -86,18 +84,6 @@ async def set_my_username(
     await session.commit()
     await session.refresh(user)
     return user
-
-
-# 注意：不能用 /users/search —— 会被 fastapi-users 的 /users/{id}（超管）路由抢占
-@router.get("/collaborators/search", response_model=list[UserSearchResult])
-async def search_users(
-    q: str,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> list[UserSearchResult]:
-    """按 email/显示名模糊查平台用户（加协作者用）；排除自己。"""
-    rows = await users_service.search_users(session, q, limit=10, exclude_ids=[user.id])
-    return [UserSearchResult(id=u.id, email=u.email, display_name=u.display_name) for u in rows]
 
 
 _MAX_AVATAR_BYTES = 2 * 1024 * 1024

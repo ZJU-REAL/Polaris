@@ -589,12 +589,9 @@ export function ReviewPage() {
   });
   const latestTournament = tournamentQuery.data ?? null;
 
-  // 晋级按钮 owner 可见（admin 旁路已随 #614 移除）；成员信息缺失时放行（后端仍会校验）
+  // 晋级按钮 owner 可见（成员机制已随 #625 移除，归属只看 owner_id）；信息缺失时放行（后端仍会校验）
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
-  const members = currentProject?.members;
-  const canPromote =
-    !members ||
-    members.some((m) => m.role === 'owner' && ((me?.id && m.user_id === me.id) || (me?.email && m.email === me.email)));
+  const canPromote = !currentProject || !me?.id || currentProject.owner_id === me.id;
 
   const retryMutation = useMutation({
     mutationFn: () => api.retryFailedTournamentMatches(pid!),

@@ -13,7 +13,6 @@ import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { api, ApiError, type ManuscriptRead } from '../../lib/api';
 import { NewManuscriptModal } from './NewManuscriptModal';
-import { CollaboratorsModal } from './CollaboratorsModal';
 import { saveBlob } from '../wiki/shared';
 
 /* ============================================================
@@ -98,7 +97,6 @@ function ManuscriptCard({
   onToggleSelect,
   onOpen,
   onPin,
-  onShare,
   onExport,
   onTrash,
   onRestore,
@@ -113,7 +111,6 @@ function ManuscriptCard({
   onToggleSelect: () => void;
   onOpen: () => void;
   onPin: () => void;
-  onShare: () => void;
   onExport: () => void;
   onTrash: () => void;
   onRestore: () => void;
@@ -218,7 +215,6 @@ function ManuscriptCard({
               title={isPinned ? tr('取消置顶', 'Unpin') : tr('置顶', 'Pin to top')}
               onClick={onPin}
             />
-            <CardAction icon="share" title={tr('分享', 'Share')} onClick={onShare} />
             <CardAction
               icon="download"
               title={tr('导出 arXiv 投稿包', 'Export arXiv package')}
@@ -242,7 +238,6 @@ export function WriterPage() {
   const [view, setView] = useState<ViewMode>('active');
   const [multiSelect, setMultiSelect] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [shareId, setShareId] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<
     | null
     | { title: string; message: string; confirmText: string; run: () => void }
@@ -530,7 +525,6 @@ export function WriterPage() {
                 onToggleSelect={() => toggleSelect(m.id)}
                 onOpen={() => navigate(`/writer/${m.id}`)}
                 onPin={() => pinOne.mutate({ id: m.id, pinned: !m.pinned_at })}
-                onShare={() => setShareId(m.id)}
                 onExport={() => exportOne.mutate(m)}
                 onTrash={() => trashOne.mutate(m.id)}
                 onRestore={() => restoreOne.mutate(m.id)}
@@ -617,7 +611,6 @@ export function WriterPage() {
 
       {pid && <NewManuscriptModal open={modalOpen} onClose={() => setModalOpen(false)} pid={pid} />}
 
-      <CollaboratorsModal open={!!shareId} manuscriptId={shareId ?? ''} onClose={() => setShareId(null)} />
 
       <ConfirmModal
         open={!!confirm}

@@ -321,13 +321,6 @@ export interface ProjectDefinition {
   cadence?: string;
 }
 
-export interface ProjectMemberRead {
-  user_id?: string;
-  email?: string;
-  display_name?: string | null;
-  role?: string;
-}
-
 export interface ProjectRead {
   id: string;
   name: string;
@@ -336,7 +329,6 @@ export interface ProjectRead {
   status: string;
   research_mode: 'conventional' | 'interdisciplinary';
   owner_id: string;
-  members?: ProjectMemberRead[];
   created_at: string;
   updated_at: string;
 }
@@ -2536,22 +2528,6 @@ export interface ManuscriptFileMeta {
   is_folder?: boolean;
 }
 
-/** 稿件协作者（owner 高亮，role 决定能否加人/删人）。 */
-export interface CollaboratorRead {
-  user_id: string;
-  email: string;
-  display_name: string;
-  role: string;
-  is_owner: boolean;
-}
-
-/** 协作者搜索结果（GET /collaborators/search）。 */
-export interface UserSearchResult {
-  id: string;
-  email: string;
-  display_name: string;
-}
-
 /** 单文件内容（编辑器初始加载 / readonly 文件查看用；实时同步走 WS CRDT）。 */
 export interface ManuscriptFileRead {
   id: string;
@@ -3475,9 +3451,6 @@ export const api = {
     input: { name?: string; statement?: string; status?: string },
   ): Promise<ProjectRead> {
     return requestJson<ProjectRead>(`/projects/${id}`, 'PATCH', input);
-  },
-  addProjectMember(id: string, input: { email: string; role: 'member' | 'owner' }): Promise<void> {
-    return requestJson<void>(`/projects/${id}/members`, 'POST', input);
   },
   /** 删除研究方向（仅 owner / 平台 admin），方向下的论文、概念、任务等一并删除。 */
   deleteProject(id: string): Promise<void> {
@@ -4821,27 +4794,6 @@ export const api = {
     const decoded = raw ? decodeURIComponent(raw) : '';
     const notes = decoded ? decoded.split('|').map((s) => s.trim()).filter(Boolean) : [];
     return { blob: await res.blob(), notes };
-  },
-
-  // —— 协作者 + 共享编辑链接 ——
-  /** 按关键词搜平台用户（加协作者用）。 */
-  searchUsers(q: string): Promise<UserSearchResult[]> {
-    return request<UserSearchResult[]>(`/collaborators/search?q=${encodeURIComponent(q)}`);
-  },
-  listCollaborators(id: string): Promise<CollaboratorRead[]> {
-    return request<CollaboratorRead[]>(`/manuscripts/${id}/collaborators`);
-  },
-  /** 加协作者（需 owner/管理员，否则 403 OWNER_OR_ADMIN_REQUIRED）；返回更新后的数组。 */
-  addCollaborator(id: string, userId: string, role?: string): Promise<CollaboratorRead[]> {
-    return requestJson<CollaboratorRead[]>(
-      `/manuscripts/${id}/collaborators`,
-      'POST',
-      role ? { user_id: userId, role } : { user_id: userId },
-    );
-  },
-  /** 移除协作者（不能删 owner，409 CANNOT_REMOVE_OWNER）。 */
-  removeCollaborator(id: string, userId: string): Promise<void> {
-    return request<void>(`/manuscripts/${id}/collaborators/${userId}`, { method: 'DELETE' });
   },
 
   // —— Admin · LLM ——

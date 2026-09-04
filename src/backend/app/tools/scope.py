@@ -23,7 +23,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper
-from app.models.project import ProjectMember
+from app.models.project import Project
 from app.models.user import User
 from app.services.libraries import (
     get_source_library_ids,
@@ -59,20 +59,20 @@ async def library_ids_for(session: AsyncSession, ctx: ToolContext) -> list[uuid.
 async def project_ids_for(session: AsyncSession, ctx: ToolContext) -> list[uuid.UUID]:
     """这次能看哪些课题的资产（实验、想法、稿件）。
 
-    :func:`library_ids_for` 的对偶。选了课题就只有它；**没选就是这个人参与的全部
+    :func:`library_ids_for` 的对偶。选了课题就只有它；**没选就是这个人自己的全部
     课题**——「所有资产」是放开范围，不是没有范围。
 
     这里曾经直接拿 ``ctx.project_id`` 去比：不选课题时它是 None，SQL 里就成了
     ``project_id = NULL``，永远匹配不上。于是助手在默认状态下报「项目内不存在该
-    实验」，而那个实验就在用户眼前的页面上。空列表是合法结果（这人一个课题都没
-    参与），调用方给空态，不报错。
+    实验」，而那个实验就在用户眼前的页面上。空列表是合法结果（这人一个课题都
+    没建），调用方给空态，不报错。
     """
     if ctx.project_id is not None:
         return [ctx.project_id]
     if ctx.user_id is None:
         return []
     rows = await session.execute(
-        select(ProjectMember.project_id).where(ProjectMember.user_id == ctx.user_id)
+        select(Project.id).where(Project.owner_id == ctx.user_id)
     )
     return list(rows.scalars().all())
 

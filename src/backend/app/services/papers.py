@@ -37,7 +37,7 @@ from app.models.paper import (
     UserPaperTag,
     paper_tag_links,
 )
-from app.models.project import ProjectMember
+from app.models.project import Project
 from app.models.publication import UserPublication
 from app.models.topic_shelf import TopicPaper
 from app.services import concepts as concepts_service
@@ -295,7 +295,7 @@ async def list_papers(
     last_sync_only: bool = False,
 ) -> tuple[Sequence[PaperView], int]:
     """库内论文列表。入口可为 library_id（单库读视图/库工作台）、project_id
-    （课题成员视角 = 关联库并集，P7），或调用方已经完成权限计算的 library_ids。
+    （课题视角 = 关联库并集，P7），或调用方已经完成权限计算的 library_ids。
     project_id 兼作 PaperView 的课题上下文回填。
 
     单库（含课题只关联一个库的常见情形）走 SQL 分页快路径；课题关联多库时跨库
@@ -476,11 +476,11 @@ async def _pool_paper_view(
         return PaperView(paper, shared, None)
     stmt = (
         select(TopicPaper.topic_id)
-        .join(ProjectMember, ProjectMember.project_id == TopicPaper.topic_id)
+        .join(Project, Project.id == TopicPaper.topic_id)
         .where(
             TopicPaper.paper_id == paper_id,
             TopicPaper.trashed_at.is_(None),  # 回收站里的书架行不再是可达链路
-            ProjectMember.user_id == user_id,
+            Project.owner_id == user_id,
         )
         .order_by(TopicPaper.created_at)
         .limit(1)

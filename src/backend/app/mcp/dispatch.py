@@ -127,7 +127,7 @@ async def call_tool(
                 is_error=True,
             )
 
-        # 越权隔离：非项目成员一律当作项目不存在
+        # 越权隔离：非课题主人一律当作项目不存在（成员机制已随 #625 移除）
         project = await projects_service.get_project(
             session, project_id=project_id, user_id=user_id
         )

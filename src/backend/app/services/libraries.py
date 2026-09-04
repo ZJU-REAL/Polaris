@@ -21,7 +21,7 @@ from app.models.library_direction import (
     TopicSourceLibrary,
 )
 from app.models.paper import CONCEPT_STATUS_ACTIVE, Concept, Paper, PaperWiki, paper_concepts
-from app.models.project import Project, ProjectMember
+from app.models.project import Project
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -265,7 +265,7 @@ def dedupe_member_rows(
 def visible_library_clause(user_id: uuid.UUID):
     """「这个库我够得着吗」——库作用域读取口的统一条件，作用于 ``DirectionLibrary.id``。
 
-    够得着 = 库被我参与的某个课题关联 ∪ 我创建的库 ∪ 我是平台管理员。
+    够得着 = 库被我的某个课题关联 ∪ 我创建的库 ∪ 无主库。
 
     「我课题的库」走关联表 ``topic_source_libraries`` —— 课题与库是多对多关联，
     不是 project_id 回指。按 project_id 判会漏掉课题关联的独立库（那才是常态：
@@ -274,7 +274,7 @@ def visible_library_clause(user_id: uuid.UUID):
     单独抽出来是因为不止论文要用：全局搜索的论文与概念两支都得用同一条判据，
     各写一遍迟早会分叉——而搜索一旦比列表页宽，就是越权，比漏搜严重得多。
     """
-    my_projects = select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+    my_projects = select(Project.id).where(Project.owner_id == user_id)
     my_topic_libraries = select(TopicSourceLibrary.library_id).where(
         TopicSourceLibrary.topic_id.in_(my_projects)
     )
@@ -368,18 +368,16 @@ async def _library_stats(
 
 
 async def _my_project_ids(session: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
-    rows = await session.execute(
-        select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
-    )
+    rows = await session.execute(select(Project.id).where(Project.owner_id == user_id))
     return set(rows.scalars().all())
 
 
 async def _my_linked_library_ids(session: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
-    """被我参与的课题关联的库 id（P7：is_mine 按关联判定，而非起源课题）。"""
+    """被我的课题关联的库 id（P7：is_mine 按关联判定，而非起源课题）。"""
     rows = await session.execute(
         select(TopicSourceLibrary.library_id)
-        .join(ProjectMember, ProjectMember.project_id == TopicSourceLibrary.topic_id)
-        .where(ProjectMember.user_id == user_id)
+        .join(Project, Project.id == TopicSourceLibrary.topic_id)
+        .where(Project.owner_id == user_id)
     )
     return set(rows.scalars().all())
 
@@ -587,17 +585,6 @@ async def create_library(
     return library
 
 
-async def _is_project_member(
-    session: AsyncSession, *, project_id: uuid.UUID, user_id: uuid.UUID
-) -> bool:
-    row = await session.execute(
-        select(ProjectMember.user_id).where(
-            ProjectMember.project_id == project_id, ProjectMember.user_id == user_id
-        )
-    )
-    return row.first() is not None
-
-
 async def can_manage_library(
     session: AsyncSession, *, user: User, library: DirectionLibrary
 ) -> bool:
@@ -623,12 +610,12 @@ def can_manage_library_row(*, user: User, library: DirectionLibrary) -> bool:
 async def get_managed_project(
     session: AsyncSession, *, project_id: uuid.UUID, user: User
 ) -> Project | None:
-    """库管理入口的统一鉴权（project 作用域的文献管理端点用）：课题成员照常放行；
+    """库管理入口的统一鉴权（project 作用域的文献管理端点用）：课题主人照常放行；
     该课题隐式库的创建者同权；无权限视为不存在（返回 None）。"""
     project = await session.get(Project, project_id)
     if project is None:
         return None
-    if await _is_project_member(session, project_id=project_id, user_id=user.id):
+    if project.owner_id == user.id:
         return project
     library = (
         await session.execute(

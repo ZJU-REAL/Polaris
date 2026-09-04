@@ -107,19 +107,6 @@ class FolderCreate(BaseModel):
     path: str = Field(min_length=1, max_length=1024)
 
 
-class CollaboratorRead(BaseModel):
-    user_id: str
-    email: str
-    display_name: str
-    role: str
-    is_owner: bool
-
-
-class AddCollaborator(BaseModel):
-    user_id: uuid.UUID
-    role: Literal["member", "owner"] = "member"
-
-
 class CompileDiagnostic(BaseModel):
     severity: Literal["error", "warning"]
     file: str | None

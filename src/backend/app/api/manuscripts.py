@@ -1,6 +1,6 @@
 """论文撰写路由（docs/api-m5-b.md §1/§2/§3/§4/§5/§7）。
 
-权限：一律项目成员（非成员 404 不泄露存在性）；DELETE 稿件仅 owner/admin。
+权限：一律课题主人（非本人 404 不泄露存在性）。
 编译为同步端点（tectonic 硬超时 120s）；实时协同走 /ws/manuscripts/{fid}（api/ws.py）。
 """
 
@@ -27,10 +27,8 @@ from app.models.manuscript import Manuscript, ManuscriptFile
 from app.models.user import User
 from app.schemas.gate import GateRead
 from app.schemas.manuscript import (
-    AddCollaborator,
     AssistRequest,
     BatchResult,
-    CollaboratorRead,
     CompileResult,
     DraftRequest,
     FileVersionContent,
@@ -485,74 +483,6 @@ async def empty_manuscript_trash(
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
     n = await manuscripts_service.purge_manuscripts(session, project_id=project_id, ids=None)
     return BatchResult(affected=n)
-
-
-# ---- §1b 协作者 / 分享（稿件权限=项目成员，操作落到所属研究方向） ----
-
-
-async def _manuscript_project(session: AsyncSession, manuscript: Manuscript, user: User):
-    project = await projects_service.get_project(
-        session, project_id=manuscript.project_id, user_id=user.id
-    )
-    if project is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
-    return project
-
-
-@router.get("/manuscripts/{manuscript_id}/collaborators", response_model=list[CollaboratorRead])
-async def list_collaborators(
-    manuscript_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> list[CollaboratorRead]:
-    manuscript = await _member_manuscript(session, manuscript_id, user)
-    project = await _manuscript_project(session, manuscript, user)
-    rows = await projects_service.list_members_detailed(session, project)
-    return [CollaboratorRead.model_validate(r) for r in rows]
-
-
-@router.post(
-    "/manuscripts/{manuscript_id}/collaborators",
-    response_model=list[CollaboratorRead],
-    status_code=status.HTTP_201_CREATED,
-)
-async def add_collaborator(
-    manuscript_id: uuid.UUID,
-    data: AddCollaborator,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> list[CollaboratorRead]:
-    """把平台用户加入所属研究方向（即获得该稿件协同编辑权）。需 owner/管理员。"""
-    manuscript = await _member_manuscript(session, manuscript_id, user)
-    project = await _manuscript_project(session, manuscript, user)
-    if not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
-    ok = await projects_service.add_member_by_id(
-        session, project.id, user_id=data.user_id, role=data.role
-    )
-    if not ok:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="USER_NOT_FOUND")
-    rows = await projects_service.list_members_detailed(session, project)
-    return [CollaboratorRead.model_validate(r) for r in rows]
-
-
-@router.delete(
-    "/manuscripts/{manuscript_id}/collaborators/{user_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def remove_collaborator(
-    manuscript_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> None:
-    manuscript = await _member_manuscript(session, manuscript_id, user)
-    project = await _manuscript_project(session, manuscript, user)
-    if not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
-    if project.owner_id == user_id:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="CANNOT_REMOVE_OWNER")
-    await projects_service.remove_member(session, project.id, user_id=user_id)
 
 
 # ---- §2 文件 ----

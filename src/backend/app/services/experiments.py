@@ -96,7 +96,7 @@ def append_terminal_output(
 ) -> Path:
     """远端命令原始输出落盘。
 
-    写之前先脱敏：这个文件通过 /experiments/{id}/terminal-logs 原样发给课题成员
+    写之前先脱敏：这个文件通过 /experiments/{id}/terminal-logs 原样发给课题主人
     与平台管理员，是这套机制里最大的一个外露面。快照和失败报告都脱敏了，这里不脱
     就等于白做——实验脚本里 echo 一次 HF_TOKEN 就直接进了所有人的终端面板。
     """
@@ -348,7 +348,7 @@ async def purge_experiments(
 async def get_experiment_for_user(
     session: AsyncSession, *, experiment_id: uuid.UUID, user_id: uuid.UUID
 ) -> tuple[Experiment, str] | None:
-    """取实验（含 runs）；非项目成员视为不存在（平台管理员够得着全部课题）。"""
+    """取实验（含 runs）；非课题主人视为不存在（不泄露存在性）。"""
     stmt = (
         select(Experiment, Idea.title)
         .join(Idea, Idea.id == Experiment.idea_id)

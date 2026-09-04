@@ -322,7 +322,7 @@ async def _ai_stream(
 async def _ai_phase(
     ctx: ActionContext, *, manuscript_id: uuid.UUID, file_id: uuid.UUID, section: str, phase: str
 ) -> None:
-    """把 AI 撰写相位（typing/revising/done/compiling）推给项目成员的通知 WS，
+    """把 AI 撰写相位（typing/revising/done/compiling）推给课题通知 WS，
     前端据此画 AI 光标与状态条。"""
     await ctx.notify(
         {

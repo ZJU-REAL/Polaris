@@ -207,7 +207,7 @@ function SourceList({
 }
 
 export interface LibraryChatTabProps {
-  /** 课题作用域（成员视角，走 /projects/{pid}/chat） */
+  /** 课题作用域（课题主人视角，走 /projects/{pid}/chat） */
   pid?: string;
   /** 独立库作用域（走 /libraries/{id}/chat）；与 pid 二选一 */
   libraryId?: string;

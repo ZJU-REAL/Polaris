@@ -134,13 +134,8 @@ async def test_my_meta_upsert_and_per_user_view(client):
     )
     assert resp.status_code == 422
 
-    # 个人视角互不影响：另一成员看到默认值
+    # 个人视角互不影响：另一用户（经公共库路径可读同一篇）看到默认值
     bob = await register_and_login(client, email="bob-meta@example.com")
-    await client.post(
-        f"/api/projects/{project_id}/members",
-        json={"email": "bob-meta@example.com", "role": "member"},
-        headers=headers,
-    )
     resp = await client.get(f"/api/papers/{ids['p1']}", headers={"Authorization": f"Bearer {bob}"})
     body = resp.json()
     assert body["starred"] is False and body["reading_status"] == "unread"
@@ -230,13 +225,8 @@ async def test_my_tags_are_per_user(client):
 
     bob = await register_and_login(client, email="bob-mytags@example.com")
     bob_headers = {"Authorization": f"Bearer {bob}"}
-    await client.post(
-        f"/api/projects/{project_id}/members",
-        json={"email": "bob-mytags@example.com", "role": "member"},
-        headers=headers,
-    )
 
-    # 同一篇论文，看不到别人的个人标签
+    # 同一篇论文（经公共库路径可读），看不到别人的个人标签
     resp = await client.get(f"/api/papers/{ids['p1']}", headers=bob_headers)
     assert resp.json()["my_tags"] == []
     assert (await client.get("/api/me/paper-tags", headers=bob_headers)).json() == []

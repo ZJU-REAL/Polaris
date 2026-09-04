@@ -110,17 +110,7 @@ async def test_delete_project_requires_owner(client):
     resp = await client.post("/api/projects", json={"name": "guarded"}, headers=headers_a)
     project_id = resp.json()["id"]
 
-    # 普通成员：403；非成员：404
-    token_b = await register_and_login(client, email="member@example.com")
-    headers_b = {"Authorization": f"Bearer {token_b}"}
-    await client.post(
-        "/api/projects/" + project_id + "/members",
-        json={"email": "member@example.com", "role": "member"},
-        headers=headers_a,
-    )
-    resp = await client.delete(f"/api/projects/{project_id}", headers=headers_b)
-    assert resp.status_code == 403
-
+    # 非本人：404（不泄露存在性；成员机制已随 #625 移除，没有 403 档）
     token_c = await register_and_login(client, email="stranger@example.com")
     resp = await client.delete(
         f"/api/projects/{project_id}", headers={"Authorization": f"Bearer {token_c}"}

@@ -5,7 +5,6 @@ import { Icon, type IconName } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../components/ui/Toast';
-import { SelectMenu } from '../../components/ui/SelectMenu';
 import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type ProjectRead } from '../../lib/api';
@@ -16,7 +15,7 @@ import { InterdisciplinaryScopePanel } from './InterdisciplinaryScopePanel';
 
 /* ============================================================
    /projects/:id — 课题设置：只留真正的课题属性
-   （名称 / 课题定义 statement / 关联文献库 / 成员·邀请 / 删除课题）。
+   （名称 / 课题定义 statement / 关联文献库 / 删除课题）。
    收录配置（rubric/锚点/关键词/arXiv 分类/节奏）已迁到文献库收录设置（P8）。
    ============================================================ */
 
@@ -170,19 +169,6 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
       toast(tr('关联文献库已更新', 'Linked libraries updated'), 'ok');
     },
     onError: (err) => toast(`${tr('更新失败：', 'Update failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
-  });
-
-  // —— 成员 ——
-  const [memberEmail, setMemberEmail] = useState('');
-  const [memberRole, setMemberRole] = useState<'member' | 'owner'>('member');
-  const addMemberMutation = useMutation({
-    mutationFn: () => api.addProjectMember(id, { email: memberEmail.trim(), role: memberRole }),
-    onSuccess: () => {
-      toast(tr('成员已添加', 'Member added'), 'ok');
-      setMemberEmail('');
-      void queryClient.invalidateQueries({ queryKey: ['project', id] });
-    },
-    onError: (err) => toast(`${tr('添加失败：', 'Failed to add: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
   // —— 名称编辑 ——
@@ -375,46 +361,6 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
           )}
         </SectionCard>
 
-        {/* 成员 */}
-        <SectionCard icon="users" zh="成员" en="Members">
-          <div className="col gap8" style={{ marginBottom: 16 }}>
-            {project.members?.length ? (
-              project.members.map((m, i) => (
-                <div key={m.user_id ?? i} className="row gap10" style={{ padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 9 }}>
-                  <div className="av" style={{ width: 24, height: 24, fontSize: 10 }}>
-                    {(m.display_name ?? m.email ?? '?').slice(0, 2).toUpperCase()}
-                  </div>
-                  <span style={{ fontSize: 13, flex: 1 }}>{m.display_name ?? m.email ?? m.user_id}</span>
-                  {m.email && m.display_name && <span className="mono muted" style={{ fontSize: 11 }}>{m.email}</span>}
-                  <span className="pill sm" style={m.role === 'owner' ? { background: 'var(--accent-soft)', color: 'var(--accent-text)' } : {}}>
-                    {m.role ?? 'member'}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <div style={{ fontSize: 13, color: 'var(--text-4)' }}>{tr('暂无成员信息', 'No member info yet')}</div>
-            )}
-          </div>
-          <div className="row gap8">
-            <input className="input" style={{ flex: 1 }} placeholder={tr('成员邮箱', 'Member email')} type="email"
-              value={memberEmail} onChange={(e) => setMemberEmail(e.target.value)} />
-            <SelectMenu
-              wrapStyle={{ width: 120 }}
-              value={memberRole}
-              options={[
-                { value: 'member', label: 'member' },
-                { value: 'owner', label: 'owner' },
-              ]}
-              onChange={(v) => setMemberRole(v as 'member' | 'owner')}
-            />
-            <button className="btn btn-primary" style={{ height: 38 }}
-              disabled={!memberEmail.trim() || addMemberMutation.isPending}
-              onClick={() => addMemberMutation.mutate()}>
-              <Icon name="plus" size={13} />
-              {tr('添加成员', 'Add member')}
-            </button>
-          </div>
-        </SectionCard>
       </div>
     </>
   );

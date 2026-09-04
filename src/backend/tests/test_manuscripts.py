@@ -244,23 +244,9 @@ async def test_manuscript_permissions_and_delete(client):
     resp = await client.get(f"/api/manuscripts/{ms_id}", headers=outsider_headers)
     assert resp.status_code == 404
 
-    # 普通成员可读不可删（owner/admin only）
-    member_token = await register_and_login(client, email="bob@example.com")
-    member_headers = {"Authorization": f"Bearer {member_token}"}
-    resp = await client.post(
-        f"/api/projects/{project_id}/members",
-        json={"email": "bob@example.com", "role": "member"},
-        headers=headers,
-    )
-    assert resp.status_code == 204, resp.text
-    resp = await client.get(f"/api/manuscripts/{ms_id}", headers=member_headers)
-    assert resp.status_code == 200
-    resp = await client.delete(f"/api/manuscripts/{ms_id}", headers=member_headers)
-    assert resp.status_code == 403
-
-    # PATCH 标题（成员可改），owner 可删
+    # PATCH 标题（owner），owner 可删（成员档位已随 #625 移除，非本人一律 404）
     resp = await client.patch(
-        f"/api/manuscripts/{ms_id}", json={"title": "New Title"}, headers=member_headers
+        f"/api/manuscripts/{ms_id}", json={"title": "New Title"}, headers=headers
     )
     assert resp.status_code == 200 and resp.json()["title"] == "New Title"
     # owner 删除 → 移入垃圾箱（软删除）：不在活跃列表，在垃圾箱列表

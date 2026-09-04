@@ -442,22 +442,11 @@ async def test_promote_gate_approve_links_idea_status(client, queue_stub, bus_re
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id, "待晋级想法", status="under_review")
 
-    # 普通成员（role=member）不可 promote
-    await register_and_login(client, email="bob@example.com")
-    resp = await client.post(
-        f"/api/projects/{project_id}/members",
-        json={"email": "bob@example.com", "role": "member"},
-        headers=headers,
-    )
-    assert resp.status_code == 204
-    resp = await client.post(
-        "/api/auth/jwt/login",
-        data={"username": "bob@example.com", "password": "str0ng-password"},
-    )
-    headers_bob = {"Authorization": f"Bearer {resp.json()['access_token']}"}
+    # 别人（非课题主人）连想法都看不到：promote 404（成员机制已随 #625 移除）
+    bob_token = await register_and_login(client, email="bob@example.com")
+    headers_bob = {"Authorization": f"Bearer {bob_token}"}
     resp = await client.post(f"/api/ideas/{idea_id}/promote", headers=headers_bob)
-    assert resp.status_code == 403
-    assert resp.json()["detail"] == "PROMOTE_FORBIDDEN"
+    assert resp.status_code == 404
 
     # owner promote → 创建 idea_promotion 闸门（pending）+ gate.created 通知
     resp = await client.post(f"/api/ideas/{idea_id}/promote", headers=headers)

@@ -13,7 +13,7 @@ from app.models.gate import Gate
 from app.models.idea import IDEA_STATUSES, Idea
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Concept, Paper, paper_concepts
-from app.models.project import Project, ProjectMember
+from app.models.project import Project
 from app.models.user import User
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.idea import DeepIdeaRequest, ForgeKnobs
@@ -552,7 +552,7 @@ async def list_ideas(
 async def get_idea_for_user(
     session: AsyncSession, *, idea_id: uuid.UUID, user_id: uuid.UUID
 ) -> Idea | None:
-    """取 idea；非项目成员视为不存在（平台管理员够得着全部课题）。"""
+    """取 idea；非课题主人视为不存在（不泄露存在性）。"""
     stmt = select(Idea).where(
         Idea.id == idea_id, in_my_projects(Idea.project_id, user_id)
     )
@@ -652,9 +652,10 @@ async def seed_idea_brief(session: AsyncSession, idea: Idea) -> dict[str, Any] |
 
 
 async def can_promote(session: AsyncSession, *, project_id: uuid.UUID, user: User) -> bool:
-    """promote 权限：项目 owner（成员角色 owner；admin 旁路已随 role 移除，#614）。"""
-    member = await session.get(ProjectMember, (project_id, user.id))
-    return member is not None and member.role == "owner"
+    """promote 权限：项目 owner。成员机制移除（#625）后可见性==归属，走到这里的
+    请求几乎必然放行；保留显式判据是为了闸门语义不隐式依赖上游鉴权。"""
+    project = await session.get(Project, project_id)
+    return project is not None and project.owner_id == user.id
 
 
 async def find_pending_promotion_gate(session: AsyncSession, idea_id: uuid.UUID) -> Gate | None:

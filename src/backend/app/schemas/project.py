@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProjectCreate(BaseModel):
@@ -42,22 +42,3 @@ class ProjectRead(BaseModel):
     owner_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
-
-
-class ProjectMemberRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    project_id: uuid.UUID
-    user_id: uuid.UUID
-    role: str
-    email: str | None = None
-    display_name: str | None = None
-
-
-class ProjectDetailRead(ProjectRead):
-    members: list[ProjectMemberRead] = []
-
-
-class ProjectMemberAdd(BaseModel):
-    email: EmailStr
-    role: str = Field(default="member", pattern="^(member|owner)$")

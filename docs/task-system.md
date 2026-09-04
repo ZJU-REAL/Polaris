@@ -225,7 +225,7 @@ scope columns are null because the daily feed is shared by the whole lab.
 `list_voyages()` applies `_visible_filter()` from `app/services/voyages.py`, which is an `OR` of four
 clauses:
 
-1. `project_id` is one of the topics I am a member of (`project_members`);
+1. `project_id` is one of the topics I own (`projects.owner_id`; the membership table was removed in #625);
 2. `library_id` is one of the libraries I can manage — I created it (`direction_libraries
    .submitted_by`) or I curate it (`direction_library_curators`);
 3. I started this run myself (`voyage_runs.created_by`) **and** the run has a scope (at least one of
