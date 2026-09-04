@@ -154,6 +154,9 @@ export async function bootstrapEngine(opts: BootstrapOptions): Promise<EngineCom
       UV_CACHE_DIR: join(engineDir, 'uv-cache'),
       UV_PYTHON_PREFERENCE: 'only-managed',
       UV_NO_CONFIG: '1',
+      // Windows 上 Python 默认 cp1252，读 UTF-8 源码/配置直接 charmap 崩；
+      // 统一强制 UTF-8 模式，其余平台本就是 UTF-8，无副作用
+      PYTHONUTF8: '1',
     };
     delete env.VIRTUAL_ENV; // 开发者 shell 里的 venv 不能泄漏进来
 
@@ -191,6 +194,8 @@ function buildEngineCommand(venvPython: string, backendDir: string, engineDir: s
   // 借它安全嵌入含空格/反斜杠/非 ASCII 的路径
   const launcher = [
     'import os, subprocess, sys',
+    // 传给 alembic 子进程（子解释器启动时读 env；本进程靠 -X utf8）
+    "os.environ.setdefault('PYTHONUTF8', '1')",
     "os.environ.setdefault('POLARIS_PROFILE', 'desktop')",
     `os.environ['POLARIS_DATABASE_URL'] = ${JSON.stringify(`sqlite+aiosqlite:///${dbPath}`)}`,
     `os.chdir(${JSON.stringify(backendDir)})`,
@@ -198,5 +203,6 @@ function buildEngineCommand(venvPython: string, backendDir: string, engineDir: s
     'import uvicorn',
     `uvicorn.run('app.main:app', host='127.0.0.1', port=${ENGINE_PORT})`,
   ].join('\n');
-  return [venvPython, '-c', launcher];
+  // -X utf8：启动器自身的解释器也走 UTF-8 模式（env 对已启动的进程无效）
+  return [venvPython, '-X', 'utf8', '-c', launcher];
 }
