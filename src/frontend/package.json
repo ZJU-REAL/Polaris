@@ -11,7 +11,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@codemirror/commands": "^6.10.4",
     "@codemirror/language": "^6.12.4",
     "@codemirror/legacy-modes": "^6.5.3",
     "@codemirror/search": "^6.7.1",
@@ -31,7 +30,6 @@
     "yjs": "^13.6.31"
   },
   "devDependencies": {
-    "@types/katex": "^0.16.8",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",

@@ -422,7 +422,7 @@ async def list_papers(
 
 
 async def paper_in_daily_feed(session: AsyncSession, paper_id: uuid.UUID) -> bool:
-    """论文是否在当前每日推送里——每日池全实验室可读，登录用户即可读它。"""
+    """论文是否在当前每日推送里——每日池全部署共享，登录用户即可读它。"""
     from app.models.daily_feed import DailyFeedEntry
 
     row = (
@@ -439,7 +439,7 @@ async def _pool_paper_view(
     """池级可见性兜底（P5b）：论文不在任何可见方向库，但个人链路可达时仍可读。
 
     可达条件：该论文在请求者任一课题的相关研究书架上、在其个人库条目里
-    （dedup 匹配），或仍在每日推送池里（每日推送全实验室可读，未收录也能读）。
+    （dedup 匹配），或仍在每日推送池里（每日推送全部署共享，未收录也能读）。
     返回的视角带**临时成员行**（不入 session、永不落库）：
     status=included、无判断字段；``project_id`` 取最早入架的课题（仅个人库
     可达时为 None）。只用于读路径——写成员行的端点不开启池级兜底。
@@ -451,7 +451,7 @@ async def _pool_paper_view(
     paper = await session.get(Paper, paper_id, options=options)
     if paper is None:
         return None
-    # P5c 公共方向库全实验室可读：论文在任一**公共**库有成员行时，任何登录用户可读；
+    # P5c 公共方向库全员可读：论文在任一**公共**库有成员行时，任何登录用户可读；
     # 个人库（is_public=false）只对归属人放行，与 library_visible_to 的口径一致——
     # 否则别人私有个人库里的论文可被任意用户凭 paper_id 读到。
     # 视角取确定性成员行（最早入库的那份）；无课题上下文

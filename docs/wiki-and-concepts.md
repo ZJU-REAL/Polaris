@@ -157,7 +157,7 @@ in the library, see it in the feed" work with no synchronisation at all.
 Recompiling is not privileged. Any user with full LLM access (`require_llm_task`) who can see the
 paper can do it — for `POST /papers/{id}/recompile` that means the paper is in a library they can
 reach (`_get_member_paper` without the pool fallback, `app/api/papers.py:113`); for the daily
-endpoint, being logged in is enough, because the feed is lab-wide.
+endpoint, being logged in is enough, because the feed is deployment-wide.
 
 The semantics are blunt: **overwrite, no history.** There is no version table, no diff, no undo. The
 old text is gone the moment the new one is flushed, and `compiled_by` becomes the new person's.

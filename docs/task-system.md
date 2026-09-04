@@ -14,7 +14,7 @@ Sextant), see [Core Concepts](concepts.md#the-voyage-long-running-agent).
 - Business logic and visibility: `src/backend/app/services/voyages.py`
 - HTTP API: `src/backend/app/api/voyages.py` (mounted under `/api`)
 - Worker and schedules: `src/backend/worker/tasks.py`, `src/backend/worker/settings.py`
-- UI: `src/frontend/src/features/voyages/`, plus the Tasks tabs in the topic and lab workspaces
+- UI: `src/frontend/src/features/voyages/`, plus the topic Tasks tab and the Library Tasks page
 
 ---
 
@@ -201,7 +201,7 @@ Tasks are split into two levels, and the split is decided **by `kind`**, via
 
 - **Library tasks** — building a library, incrementally updating it, and the daily new-paper fetch.
   These belong to the literature library itself, not to any topic. A topic merely links a library in
-  order to use its corpus. They show up in the **lab workspace**, and are filtered *out* of a topic's
+  order to use its corpus. They show up on the **Library Tasks page** (`/lab`), and are filtered *out* of a topic's
   task list.
 - **Topic tasks** — everything else: ideas, proposals, experiments, drafting, review, slides,
   workflow skills, demo.
@@ -214,7 +214,7 @@ leak into topic task lists. `kind` is stable across that migration, so it is the
 `LIBRARY_TASK_KINDS` in `src/frontend/src/features/voyages/VoyagesPage.tsx`.
 
 `daily_feed_sync` is the extreme case: it is a library-level kind that has *no* library either. Both
-scope columns are null because the daily feed is shared by the whole lab.
+scope columns are null because the daily feed is shared by the whole deployment.
 
 ---
 
@@ -226,11 +226,12 @@ scope columns are null because the daily feed is shared by the whole lab.
 clauses:
 
 1. `project_id` is one of the topics I own (`projects.owner_id`; the membership table was removed in #625);
-2. `library_id` is one of the libraries I can manage — I created it (`direction_libraries
-   .submitted_by`) or I curate it (`direction_library_curators`);
+2. `library_id` is one of the libraries I created (`direction_libraries.submitted_by`; curators
+   were removed in #593);
 3. I started this run myself (`voyage_runs.created_by`) **and** the run has a scope (at least one of
    `project_id` / `library_id` is set);
-4. I am a platform admin (`users.role == "admin"`) — then everything is visible.
+4. the run is platform-level (both scope ids null, e.g. the daily fetch) — visible to every
+   logged-in user (the admin-only rule went away with roles in #614).
 
 Clause 2 exists because a library task's `project_id` is deliberately left empty
 (`create_ingest_voyage` sets only `library_id`, so library tasks do not pollute topic task lists).
@@ -239,35 +240,30 @@ topic are the normal case. Merely *linking* a library to a topic (`topic_source_
 nothing here: the link means the topic consumes the library's papers, not that its members run it.
 
 Then, if `project_id` is passed as a query parameter, the list is additionally narrowed to that
-topic's own tasks **and library kinds are excluded** — those belong in the lab workspace.
+topic's own tasks **and library kinds are excluded** — those belong on the Library Tasks page.
 
 Note what this means for a platform-level task: `daily_feed_sync` runs have both scope ids null, so
-clauses 1–3 can never match (clause 3 is explicitly scoped for this reason). Only clause 4 does.
-**Non-admins do not see the daily fetch task at all.**
+clauses 1–3 can never match (clause 3 is explicitly scoped for this reason). Only clause 4 does —
+it is what makes the daily fetch task visible to everyone.
 
 ### 3.2 The detail (`can_view_voyage`)
 
 Detail, logs, SSE, cancel and retry all go through `get_voyage()` → `can_view_voyage()`. No access is
 reported as `404 VOYAGE_NOT_FOUND`, not `403` — existence is not leaked.
 
-1. **Platform admin**: everything.
-2. **Platform-level run** (both scope ids null, i.e. the daily fetch): admins only, so this returns
-   false for everyone else — including whoever started it. Without clause 1 even an admin would get a
-   404 there, taking its logs, SSE stream, cancel and retry down with it. The rule matches the rest of
-   the daily feed's admin surface (managing subscribed categories, manual refresh, the embedding
-   toggle).
-3. **I started it** (`created_by`): the run I kicked off stays open to me even if I later lose
-   curatorship of that library.
-4. **Topic-scoped run** (`project_id` set): the caller must be a member of that topic.
-5. **Library-scoped run** (`library_id` set): the caller must pass `can_manage_library()` — i.e. be a
-   platform admin, the creator, or a curator of that library.
+1. **Platform-level run** (both scope ids null, i.e. the daily fetch): every logged-in user —
+   the admin-only rule went away with roles (#614).
+2. **I started it** (`created_by`): the run I kicked off stays open to me.
+3. **Topic-scoped run** (`project_id` set): the caller must own that topic.
+4. **Library-scoped run** (`library_id` set): the caller must pass `can_manage_library()` — i.e. be
+   the library's creator (unowned legacy libraries are manageable by anyone).
 
 `_visible_filter()` is the SQL mirror of this predicate and the two must be changed together:
 anything you can see in the list must open. (They used to diverge — the list counted tasks of
 libraries merely linked to my topic, the detail required library write access, so those rows 404ed.)
 
-`can_view_voyage()` needs the full `User` object (role, creator, curator lookups); `get_voyage()`
-loads it when the call site only has a `user_id`.
+`can_view_voyage()` needs the full `User` object (creator / library-ownership lookups);
+`get_voyage()` loads it when the call site only has a `user_id`.
 
 ### 3.3 Cancel, retry, and talking to a run
 
@@ -662,13 +658,13 @@ personal one uses the creator's, and either way tokens are recorded against `lib
 
 **If it breaks.** Say arXiv is unreachable and step 1 returns an `error`. Pipeline mode allows 1
 attempt, so there is no in-place retry; there is no `on_failure: "fail"`, so the run goes to
-`paused_error`. It is visible in the lab workspace under the library's group with the reason in the
+`paused_error`. It is visible on the Library Tasks page under the library's group with the reason in the
 log. Once the network is back, `POST /voyages/{id}/resume` resets that step to `pending` and drives
 on. If it dies at step 5 instead, steps 1–4 are `passed` and are not redone — the crawl and the
 scoring are not repeated.
 
 **Visibility.** `project_id` is null, so this run never appears in a topic's task list. List and
-detail use the same rule (§3): whoever can manage the library (creator / curator / admin), plus
+detail use the same rule (§3): whoever can manage the library (its creator), plus
 whoever started this particular run. Linking the library to a topic does not let its members open the
 task. A read-only visitor still sees "running" on the library page — `GET /libraries/{id}/ingest/
 state` returns `running_voyage_id` together with `can_open_running_voyage` (and `last_run.can_open`),
@@ -705,9 +701,9 @@ the list, and a retry button. The direct function `sync_daily_feed()` still exis
 `app/services/daily_feed.py` for scripts and tests, and shares the same step functions, but nothing
 in production calls it.
 
-**Visibility.** Both scope ids are null, so only platform admins can see it — in the lab workspace's
-"other tasks" group. That matches the rest of the daily feed's admin surface (category subscriptions,
-manual refresh, the embedding toggle). A non-admin sees the papers, not the machinery.
+**Visibility.** Both scope ids are null, so it shows up in the Library Tasks page's
+"other tasks" group — visible to every logged-in user since the admin-only rule went away with
+roles (#614).
 
 ---
 

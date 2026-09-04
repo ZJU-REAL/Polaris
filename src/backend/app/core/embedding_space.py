@@ -20,8 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # 激活空间：检索唯一认的空间，也是新向量的写入目标。未设置 = 平台还没建过任何向量。
 ACTIVE_SPACE_SETTING_KEY = "embedding_active_space"
-# 在建空间：后台正在预建的下一个空间（蓝绿切换用，本期只定义键，不消费）。
-BUILDING_SPACE_SETTING_KEY = "embedding_building_space"
 
 
 class EmbeddingSpaceMismatchError(RuntimeError):
@@ -71,24 +69,12 @@ async def active_space(session: AsyncSession) -> EmbeddingSpace | None:
     return await _read(session, ACTIVE_SPACE_SETTING_KEY)
 
 
-async def building_space(session: AsyncSession) -> EmbeddingSpace | None:
-    """后台正在预建的空间（尚未对检索可见）。"""
-    return await _read(session, BUILDING_SPACE_SETTING_KEY)
-
-
 async def set_active_space(session: AsyncSession, space: EmbeddingSpace) -> None:
     """切换激活空间（调用方负责 commit）。
 
     切换本身只是一次设置写入：旧空间的向量行原封不动留在库里，切回去即可回滚。
     """
     await _write(session, ACTIVE_SPACE_SETTING_KEY, space)
-
-
-async def set_building_space(
-    session: AsyncSession, space: EmbeddingSpace | None
-) -> None:
-    """设置/清空在建空间（调用方负责 commit）。"""
-    await _write(session, BUILDING_SPACE_SETTING_KEY, space)
 
 
 async def _write(session: AsyncSession, key: str, space: EmbeddingSpace | None) -> None:

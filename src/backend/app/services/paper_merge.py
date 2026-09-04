@@ -1,6 +1,6 @@
-"""重复论文合并（P6 策展工具，docs-dev/rfc-paper-content-pool.md §5）。
+"""重复论文合并（docs-dev/rfc-paper-content-pool.md §5）。
 
-模糊去重的漏网（预印本 vs 正式版、标题变体）由策展人人工确认合并：把 drop 行的
+模糊去重的漏网（预印本 vs 正式版、标题变体）由用户人工确认合并：把 drop 行的
 全部归属 repoint 到 keep 行后删除 drop。所有归属只经 paper_id 引用，合并是局部操作。
 
 约定：

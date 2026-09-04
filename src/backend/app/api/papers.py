@@ -117,7 +117,8 @@ async def _paper_detail(
 
 
 async def _get_managed_project(session: AsyncSession, project_id: uuid.UUID, user: User):
-    """库管理校验（文献管理端点用）：成员 ∪ 策展人 ∪ 平台 admin（P6）。"""
+    """库管理校验（文献管理端点用）：课题主人 ∪ 隐式库创建者
+    （见 services/libraries.get_managed_project）。"""
     project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
@@ -390,7 +391,7 @@ async def get_project_paper(
 
     精确锁定起源库 (library, paper_id) 的成员行——相关度/状态/wiki 都是该库口径，
     不做跨库归并（对照无库作用域的 ``GET /papers/{id}``）。论文不在该课题库 → 404。
-    鉴权同课题其它读端点（成员 ∪ 策展人 ∪ admin）。
+    鉴权同课题其它文献管理端点（课题主人 ∪ 隐式库创建者）。
     """
     await _get_managed_project(session, project_id, user)
     library = await libraries_service.get_library_for_project(session, project_id)

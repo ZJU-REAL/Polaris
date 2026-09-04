@@ -131,7 +131,7 @@ class DailyCollectionsRead(BaseModel):
 
 
 class DailyCompileResult(BaseModel):
-    """单篇解读编译结果（全实验室共享一份，存 entry 上）。"""
+    """单篇解读编译结果（全部署共享一份，存 entry 上）。"""
 
     entry_id: uuid.UUID
     wiki_content: str

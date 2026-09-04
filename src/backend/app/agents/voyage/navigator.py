@@ -652,8 +652,6 @@ def _expand_workflow(slug: str, workflows: list[dict[str, Any]]) -> list[dict[st
     return validate_steps({"steps": entry.get("steps") or []})
 
 
-# 纯通用计划（无领域前缀）调整时可用的通用动作
-_GENERIC_EDIT_ACTIONS = frozenset({"sleep", "llm.complete", "artifact.write"})
 # 领域计划（experiment.* 等）调整时唯一放行的通用动作：无副作用、不产出"看似完成"
 # 的内容。llm.complete/artifact.write 见 allowed_edit_actions 内注释。
 _DOMAIN_SAFE_GENERIC_ACTIONS = frozenset({"sleep"})

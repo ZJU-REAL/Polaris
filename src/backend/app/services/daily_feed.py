@@ -6,7 +6,7 @@
   唯一约束保证同日重跑幂等。
 - 滚动 7 天：清理直接删过期 entry（likes 显式跟删，兼容 sqlite 测试无 FK 级联）；
   内容池 Paper 与各库成员表一概不动——收录动作写的是目标库自己的表。
-- 点赞：全实验室共享，每人每篇一赞；列表按赞数排序、附前几名点赞人（facepile 用）。
+- 点赞：所有用户共享，每人每篇一赞；列表按赞数排序、附前几名点赞人（facepile 用）。
 - 收录：分发到现成写路径（方向库 ensure_membership / 课题书架 add_to_shelf /
   个人库 save_paper），无权目标单独标记 forbidden，不整体失败。
 """
@@ -541,7 +541,7 @@ async def create_daily_feed_voyage(
 ) -> VoyageRun:
     """建一次「每日新论文抓取」任务（互斥检查），由调用方入队 run_voyage。
 
-    这个任务既不属于课题也不属于库（全实验室共享的每日推送），两个作用域 id 都为空；
+    这个任务既不属于课题也不属于库（全部署共享的每日推送），两个作用域 id 都为空；
     可见性口径与订阅分类管理/手动刷新一致——所有登录用户（services/voyages.py，#614）。
     只有最后一步「建立语义向量」可能花 token 且量很小，故不设 token 预算。
     """
@@ -1373,9 +1373,6 @@ SYNC_TIME_SETTING_KEY = "daily_feed_sync_time"
 #: 拿到上一批、去重后一条不进、每一步却都报成功（生产上就是这么连丢两天的）。
 #: 改成从早探到晚：探到的批次日期不是今天就什么都不做，等下一个检查点。
 DEFAULT_SYNC_UTC = (1, 30)
-
-#: 库同步排在抓取之后多久。每日池是所有文献库的唯一供给，抓取没跑完就同步等于空跑一轮。
-LIBRARY_SYNC_DELAY_MINUTES = 90
 
 
 async def get_sync_time(session: AsyncSession) -> tuple[int, int]:

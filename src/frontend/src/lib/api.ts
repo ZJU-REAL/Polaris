@@ -2,7 +2,7 @@ import { tr } from './i18n';
 import { apiBase, serverOrigin } from './endpoint';
 import { readToken, writeToken } from './token-store';
 import { LocalUnavailable, noteLocalFailure, resolveLocalHandler } from './local-routes';
-import { handleUnauthorized, requestLocalSessionToken } from './local-session';
+import { handleUnauthorized } from './local-session';
 /* ============================================================
    Polaris API client — thin fetch wrapper.
    baseURL /api (proxied to FastAPI at :8000 in dev), JSON,
@@ -76,18 +76,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       /* non-JSON error body — keep statusText */
     }
-    throw new ApiError(res.status, readOnlyMessage(detail), body);
+    throw new ApiError(res.status, detail, body);
   }
   if (res.status === 204) {
     return undefined as T;
   }
   return (await res.json()) as T;
-}
-
-/** 只读账号撞上写操作时，别把后端的错误码原样甩给用户。只此一处，全站受益。 */
-function readOnlyMessage(detail: string): string {
-  if (detail !== 'READ_ONLY_ACCOUNT') return detail;
-  return tr('这是只读账号，只能查看，不能修改。', 'This account is read-only — you can look, but not change anything.');
 }
 
 function requestJson<T>(path: string, method: string, body: unknown): Promise<T> {
@@ -133,7 +127,7 @@ async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> 
     } catch {
       /* keep statusText */
     }
-    throw new ApiError(res.status, readOnlyMessage(detail), body);
+    throw new ApiError(res.status, detail, body);
   }
   return res.blob();
 }
@@ -178,7 +172,7 @@ async function requestStream(path: string, init: RequestInit = {}): Promise<Resp
     } catch {
       /* keep statusText */
     }
-    throw new ApiError(res.status, readOnlyMessage(detail), body);
+    throw new ApiError(res.status, detail, body);
   }
   if (!res.body) throw new ApiError(502, 'TTS_EMPTY_STREAM');
   return res;
@@ -627,8 +621,6 @@ export const LLM_STAGES = [
   'writing',
   'review',
 ] as const;
-
-export type LlmStage = (typeof LLM_STAGES)[number];
 
 export interface LlmProviderRead {
   id: string;
@@ -1194,12 +1186,6 @@ export interface PaperBatchItemResult {
   title?: string;
   error?: string;
   processing?: boolean;
-}
-
-export interface TagRead {
-  id: string;
-  name: string;
-  paper_count: number;
 }
 
 /** 「我的所有标签」一行；个人标签没有独立实体，所以只有名字 + 标了几篇。 */
@@ -1880,8 +1866,6 @@ export type IdeaDepth = 'sketch' | 'proposal';
 /** 研究类型枚举（docs/api-idea2.md §3 goal.research_type）。 */
 export const RESEARCH_TYPES = ['method', 'benchmark', 'analysis', 'survey', 'application', 'theory'] as const;
 
-export type ResearchType = (typeof RESEARCH_TYPES)[number];
-
 /** 四维评分（0-10）。 */
 export interface IdeaScores {
   novelty: number;
@@ -2076,9 +2060,6 @@ export interface TournamentSummary {
   is_retry: boolean;
   can_retry: boolean;
 }
-
-/** idea_match = 一场辩论；idea_discussion = 常驻人机讨论区。 */
-export type ReviewTargetType = 'idea_match' | 'idea_discussion';
 
 export interface ReviewSessionRead {
   id: string;
@@ -3276,10 +3257,6 @@ export const api = {
     return request<AuthCapabilities>('/auth/capabilities');
   },
 
-  /** desktop 档位免登录：无凭证换取本地会话 token（server 档位 404）。 */
-  localSession(): Promise<string> {
-    return requestLocalSessionToken();
-  },
 
   /** 申请邮箱验证码；冷却中返回 sent=false 与剩余秒数。 */
   sendAuthCode(email: string, purpose: 'register' | 'reset'): Promise<SendCodeResult> {
@@ -3411,14 +3388,6 @@ export const api = {
   },
 
   // —— Voyages ——
-  createVoyage(input: {
-    kind: string;
-    project_id: string;
-    goal: string;
-    params?: Record<string, unknown>;
-  }): Promise<VoyageRead> {
-    return requestJson<VoyageRead>('/voyages', 'POST', input);
-  },
   listVoyages(projectId?: string): Promise<VoyageRead[]> {
     const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
     return request<VoyageRead[]>(`/voyages${qs}`);
@@ -3536,10 +3505,6 @@ export const api = {
   getProjectPaper(projectId: string, paperId: string): Promise<PaperDetail> {
     return request<PaperDetail>(`/projects/${projectId}/papers/${paperId}`);
   },
-  /** 人工纳入/排除。 */
-  patchPaper(id: string, input: { status: 'included' | 'excluded' }): Promise<PaperRead> {
-    return requestJson<PaperRead>(`/papers/${id}`, 'PATCH', input);
-  },
 
   // —— Lit · PDF 阅读 ——
   /** 论文 PDF 原件（blob，用 objectURL 喂给 iframe）。无 PDF → 404 PDF_NOT_AVAILABLE。 */
@@ -3652,20 +3617,12 @@ export const api = {
       chunks: targets.chunks ?? true,
     });
   },
-  /** 删除论文（清理落盘文件，笔记/标签/分段级联删除）。 */
-  deletePaper(id: string): Promise<void> {
-    return request<void>(`/papers/${id}`, { method: 'DELETE' });
-  },
   /** 批量删除：默认软删（移入回收站，可召回）；hard=true 彻底删除。 */
   batchDeletePapers(projectId: string, paperIds: string[], hard = false): Promise<{ deleted: number }> {
     return requestJson<{ deleted: number }>(`/projects/${projectId}/papers/batch-delete`, 'POST', {
       paper_ids: paperIds,
       hard,
     });
-  },
-  /** 从回收站召回（已编译回 compiled、打过分回 scored、否则按人工精选）。 */
-  restorePaper(id: string): Promise<PaperDetail> {
-    return request<PaperDetail>(`/papers/${id}/restore`, { method: 'POST' });
   },
   /** 课题起源库作用域的召回/彻底删除（精确锁定本库成员行，避免跨库误删）。 */
   restoreProjectPaper(projectId: string, paperId: string): Promise<PaperDetail> {
@@ -3725,24 +3682,11 @@ export const api = {
     return request<PageOf<NoteWithPaper>>(`/projects/${projectId}/notes${qs ? `?${qs}` : ''}`);
   },
 
-  // —— Lit · 手动添加文献 ——
-  /** 409 → ApiError(detail=PAPER_EXISTS, body 含 paper_id)；422 → PARSE_FAILED。 */
-  importPaper(projectId: string, input: PaperImportInput): Promise<PaperDetail> {
-    return requestJson<PaperDetail>(`/projects/${projectId}/papers`, 'POST', input);
-  },
   /** 批量导入 1–50 篇；逐项结果通过返回 task_id 的 SSE 流获取。 */
   importPapersBatch(projectId: string, input: PaperBatchImportInput): Promise<PaperBatchTask> {
     return requestJson<PaperBatchTask>(`/projects/${projectId}/paper-imports/batch`, 'POST', input);
   },
 
-  // —— Lit · 标签与个人状态 ——
-  listTags(projectId: string): Promise<TagRead[]> {
-    return request<TagRead[]>(`/projects/${projectId}/tags`);
-  },
-  /** 整组覆盖论文标签；新名字自动建 tag；空数组=清空。 */
-  putPaperTags(id: string, names: string[]): Promise<PaperDetail> {
-    return requestJson<PaperDetail>(`/papers/${id}/tags`, 'PUT', { names });
-  },
   /** 我的所有个人标签（含标了几篇），给筛选下拉 / 输入建议用。 */
   listMyTags(): Promise<MyTagRead[]> {
     return request<MyTagRead[]>('/me/paper-tags');
@@ -4030,20 +3974,6 @@ export const api = {
   mergePapers(input: { keep_id: string; drop_id: string }): Promise<PaperMergeResult> {
     return requestJson<PaperMergeResult>('/papers/merge', 'POST', input);
   },
-  /** 库内论文（缺省只列相关性达标的）。 */
-  listLibraryPapers(
-    id: string,
-    opts: { status?: PaperStatusFilter; q?: string; sort?: PaperSort; page?: number; size?: number } = {},
-  ): Promise<PageOf<PaperRead>> {
-    const params = new URLSearchParams();
-    if (opts.status) params.set('status', opts.status);
-    if (opts.q) params.set('q', opts.q);
-    if (opts.sort) params.set('sort', opts.sort);
-    if (opts.page) params.set('page', String(opts.page));
-    if (opts.size) params.set('size', String(opts.size));
-    const qs = params.toString();
-    return request<PageOf<PaperRead>>(`/libraries/${id}/papers${qs ? `?${qs}` : ''}`);
-  },
   listLibraryConcepts(
     id: string,
     opts: { category?: ConceptCategory; q?: string } = {},
@@ -4122,10 +4052,6 @@ export const api = {
   deleteLibraryPaper(id: string, paperId: string): Promise<void> {
     return request<void>(`/libraries/${id}/papers/${paperId}`, { method: 'DELETE' });
   },
-  /** 手动添加文献到库；409 → PAPER_EXISTS（body 含 paper_id）；422 → PARSE_FAILED。 */
-  importLibraryPaper(id: string, input: PaperImportInput): Promise<PaperDetail> {
-    return requestJson<PaperDetail>(`/libraries/${id}/papers`, 'POST', input);
-  },
   /** 批量手动添加到指定库；逐项结果通过 paper-task SSE 获取。 */
   importLibraryPapersBatch(id: string, input: PaperBatchImportInput): Promise<PaperBatchTask> {
     return requestJson<PaperBatchTask>(`/libraries/${id}/paper-imports/batch`, 'POST', input);
@@ -4140,10 +4066,6 @@ export const api = {
   /** 清空库回收站：彻底删除库内全部已删除论文。 */
   emptyLibraryTrash(id: string): Promise<{ deleted: number }> {
     return request<{ deleted: number }>(`/libraries/${id}/trash/empty`, { method: 'POST' });
-  },
-  /** 库标签（独立库不支持标签，恒返回 []）。 */
-  listLibraryTags(id: string): Promise<TagRead[]> {
-    return request<TagRead[]>(`/libraries/${id}/tags`);
   },
   getLibraryIngestState(id: string): Promise<IngestState> {
     return request<IngestState>(`/libraries/${id}/ingest/state`);
@@ -4531,7 +4453,7 @@ export const api = {
     const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
     return request<TemplateInfo[]>(`/manuscripts/templates${qs}`);
   },
-  /** 上传模板 zip。给 project_id=项目私有；不给=全平台（需平台管理员，否则 403 ADMIN_REQUIRED_FOR_GLOBAL）。zip 无 .tex → 422。 */
+  /** 上传模板 zip。给 project_id=项目私有；不给=全平台。zip 无 .tex → 422。 */
   uploadManuscriptTemplate(input: {
     file: File;
     name: string;
@@ -4549,19 +4471,11 @@ export const api = {
     if (input.project_id) form.append('project_id', input.project_id);
     return request<TemplateInfo>('/manuscripts/templates', { method: 'POST', body: form });
   },
-  /** 下载库内模板 zip（downloadable=true 的模板）。 */
-  downloadManuscriptTemplate(id: string): Promise<Blob> {
-    return requestBlob(`/manuscripts/templates/${id}/download`);
-  },
   /** 触发官方模板按需下载（幂等）；已下载则直接返回 phase="done" 带 template_id；未知 key → 404。 */
   startTemplateDownload(key: string): Promise<TemplateDownloadProgress> {
     return request<TemplateDownloadProgress>(`/manuscripts/templates/download/${encodeURIComponent(key)}`, {
       method: 'POST',
     });
-  },
-  /** 删除模板（创建者/项目管理者/平台 admin 可删）。 */
-  deleteManuscriptTemplate(id: string): Promise<void> {
-    return request<void>(`/manuscripts/templates/${id}`, { method: 'DELETE' });
   },
   createManuscript(projectId: string, input: CreateManuscriptInput): Promise<ManuscriptRead> {
     return requestJson<ManuscriptRead>(`/projects/${projectId}/manuscripts`, 'POST', input);
@@ -4579,10 +4493,6 @@ export const api = {
     input: { title?: string; main_tex?: string; engine?: CompileEngine; pinned?: boolean },
   ): Promise<ManuscriptRead> {
     return requestJson<ManuscriptRead>(`/manuscripts/${id}`, 'PATCH', input);
-  },
-  /** 仅 owner/admin。 */
-  deleteManuscript(id: string): Promise<void> {
-    return request<void>(`/manuscripts/${id}`, { method: 'DELETE' });
   },
   /** 软删除：移入回收站（仅 owner/admin，否则 403）。 */
   trashManuscript(id: string): Promise<void> {
@@ -4681,9 +4591,6 @@ export const api = {
   /** 同步编译（tectonic，硬超时 120s），直接返回诊断结果。 */
   compileManuscript(id: string): Promise<CompileResult> {
     return request<CompileResult>(`/manuscripts/${id}/compile`, { method: 'POST' });
-  },
-  getLatestCompile(id: string): Promise<CompileResult> {
-    return request<CompileResult>(`/manuscripts/${id}/compile/latest`);
   },
   /** 最新成功版 PDF（blob → objectURL 喂 iframe）。从未编译成功 → 404。 */
   fetchManuscriptPdf(id: string): Promise<Blob> {
@@ -4932,18 +4839,6 @@ export const api = {
   setTtsSettings(payload: TTSUserSettingsUpdate): Promise<TTSUserSettings> {
     return requestJson<TTSUserSettings>('/tts/settings', 'PUT', payload);
   },
-  synthesizeSpeech(
-    text: string,
-    context: 'assistant' | 'digest',
-    signal?: AbortSignal,
-  ): Promise<Blob> {
-    return requestBlob('/tts/speech', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, context }),
-      signal,
-    });
-  },
   async streamSpeech(
     text: string,
     context: 'assistant' | 'digest',
@@ -5006,9 +4901,6 @@ export const api = {
   },
   getSkill(id: string): Promise<SkillDetail> {
     return request<SkillDetail>(`/skills/${id}`);
-  },
-  listSkillVersions(id: string): Promise<SkillVersionRead[]> {
-    return request<SkillVersionRead[]>(`/skills/${id}/versions`);
   },
   /** 编辑技能 = 追加新版本（版本不可变）。 */
   addSkillVersion(
@@ -5093,9 +4985,6 @@ export const api = {
   /** 安装 = 拷贝为我的技能。 */
   installMarketSkill(listingId: string): Promise<SkillDetail> {
     return request<SkillDetail>(`/market/skills/${listingId}/install`, { method: 'POST' });
-  },
-  delistListing(listingId: string): Promise<SkillListingRead> {
-    return request<SkillListingRead>(`/market/skills/${listingId}`, { method: 'DELETE' });
   },
 
   // —— 我的文献库（跨研究方向的个人收藏 + 浏览记录，issue #108） ——
@@ -5435,20 +5324,13 @@ export const api = {
   getDailySyncStatus(): Promise<DailySyncStatus> {
     return request<DailySyncStatus>('/daily/sync-status');
   },
-  /** 按 arXiv id 取题目等元数据（只读 arXiv，不入库）。解析不出为 422。 */
   /** 这篇论文被哪些文献库收录了（只列可见的库）。 */
   getCollectingLibraries(paperId: string): Promise<CollectingLibrary[]> {
     return request<CollectingLibrary[]>(`/papers/${paperId}/libraries`);
-  },
-  resolvePaperByArxivId(arxivId: string): Promise<ResolvedPaper> {
-    return request<ResolvedPaper>(`/papers/resolve?arxiv_id=${encodeURIComponent(arxivId)}`);
   },
   resolvePapersByArxivIds(arxivIds: string[]): Promise<{ items: ResolvedPaperBatchItem[] }> {
     return requestJson<{ items: ResolvedPaperBatchItem[] }>('/papers/resolve-batch', 'POST', {
       arxiv_ids: arxivIds,
     });
-  },
-  refreshDailyFeed(): Promise<{ status: string; voyage_id: string }> {
-    return request<{ status: string; voyage_id: string }>('/daily/refresh', { method: 'POST' });
   },
 };

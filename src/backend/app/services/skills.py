@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -523,7 +523,3 @@ async def ensure_builtin_skills(session: AsyncSession) -> int:
         await session.commit()
     return created
 
-
-async def builtin_count(session: AsyncSession) -> int:
-    stmt = select(func.count()).select_from(Skill).where(Skill.scope == "builtin")
-    return int((await session.execute(stmt)).scalar_one())

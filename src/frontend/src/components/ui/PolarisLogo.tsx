@@ -96,13 +96,3 @@ export function PolarisWordmark({ height = 16, title = 'Polaris' }: { height?: n
     </svg>
   );
 }
-
-/** 横排组合标：图形标 + 字标。 */
-export function PolarisLockup({ markSize = 30 }: { markSize?: number }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: markSize * 0.26 }}>
-      <PolarisMark size={markSize} />
-      <PolarisWordmark height={markSize * 0.55} />
-    </span>
-  );
-}

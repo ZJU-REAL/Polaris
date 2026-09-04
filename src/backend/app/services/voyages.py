@@ -47,7 +47,7 @@ def _visible_filter(stmt, user_id: uuid.UUID):
     会把它们整个漏掉——而独立库是常态（P9c 起建课题不再自动建库）。
 
     「课题关联了某个库」不给可见性：关联只是拿它的语料，管不了它的建库任务
-    （库级写权限 = 创建者/admin，见 libraries.can_manage_library）。
+    （库级写权限 = 创建者，见 libraries.can_manage_library）。
     """
     my_projects = select(Project.id).where(Project.owner_id == user_id)
     my_libraries = select(DirectionLibrary.id).where(DirectionLibrary.submitted_by == user_id)
@@ -74,8 +74,8 @@ async def list_voyages(
 ) -> Sequence[VoyageRun]:
     """列出用户够得着的任务；``project_id`` 只取该课题自己的任务。
 
-    按课题过滤时排除库任务（建库 / 增量更新）：那是文献库自己的事，在实验室
-    工作台看。判据是 kind 而不是 library_id —— 库化改造前建的存量任务只挂了
+    按课题过滤时排除库任务（建库 / 增量更新）：那是文献库自己的事，在文献任务页看。
+    判据是 kind 而不是 library_id —— 库化改造前建的存量任务只挂了
     课题，没有 library_id，按后者判会把它们当成课题任务漏出来。
     """
     stmt = _visible_filter(select(VoyageRun), user_id).order_by(VoyageRun.created_at.desc())
@@ -137,7 +137,7 @@ async def get_voyage(
 ) -> VoyageRun | None:
     """取航程；无访问权视为不存在（返回 None）。访问权见 :func:`can_view_voyage`。
 
-    鉴权要完整 ``user``（角色/创建者/策展人判定），只传 ``user_id`` 的调用点回查一次。
+    鉴权要完整 ``user``（创建者/库归属判定），只传 ``user_id`` 的调用点回查一次。
     """
     stmt = select(VoyageRun).where(VoyageRun.id == voyage_id)
     if with_steps:

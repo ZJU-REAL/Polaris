@@ -32,9 +32,9 @@ class DirectionLibrarySummary(BaseModel):
     owner_name: str | None = None
     # 请求者是否本库归属人（submitted_by==我）：个人库删除 / 申请转公共入口据此
     is_owner: bool = False
-    # 是否「我的课题的库」（请求者是背后课题的成员 → 前端显示管理入口）
+    # 是否「我的课题的库」（被我的课题关联 → 前端显示管理入口）
     is_mine: bool
-    # 是否可管理本库：成员 ∪ 策展人（界面叫「文献库管理员」）∪ 平台 admin（P6）
+    # 是否可管理本库：创建者 ∪ 无主库（见 services/libraries.can_manage_library，#614 后）
     can_manage: bool
     paper_count: int
     concept_count: int
@@ -76,30 +76,6 @@ class LibraryCreate(BaseModel):
     keywords: dict[str, Any] | None = None  # {arxiv_categories, include, exclude, synonyms}
 
 
-class SuggestedKeywords(BaseModel):
-    """AI 生成的检索关键词块（与库 definition.keywords 的形状对齐，可直接填表单）。"""
-
-    arxiv_categories: list[str] = Field(default_factory=list)  # arXiv 分类代码
-    include: list[str] = Field(default_factory=list)  # 检索关键词/术语
-    exclude: list[str] = Field(default_factory=list)  # 排除关键词（命中即不收）
-
-
-class SuggestedRubricDimension(BaseModel):
-    """AI 生成的相关性打分维度（与 rubric 项形状对齐）。"""
-
-    name: str
-    description: str = ""
-    weight: float = 0.0  # 0-1，各维之和≈1
-
-
-class SuggestedAnchor(BaseModel):
-    """AI 生成的锚点论文（与 anchor_papers 项形状对齐；arxiv_id 可空/可能不准）。"""
-
-    title: str
-    arxiv_id: str | None = None
-    reason: str | None = None
-
-
 class SourceLibrariesUpdate(BaseModel):
     """课题关联库全量替换（PUT /projects/{id}/source-libraries）；空列表 = 清空关联。"""
 
@@ -128,12 +104,6 @@ class DirectionLibraryUpdate(BaseModel):
     questions: list[Any] | None = None
     # 共享开关（#619）：审批流移除后创建者直接设置「公开给所有人」；None = 不改
     is_public: bool | None = None
-
-
-class CuratorsUpdate(BaseModel):
-    """策展人名单全量替换（平台 admin）。"""
-
-    user_ids: list[uuid.UUID]
 
 
 class DuplicateCandidatePaper(BaseModel):

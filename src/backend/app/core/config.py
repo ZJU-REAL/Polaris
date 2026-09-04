@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     profile: Literal["server", "desktop"] = "server"
     secret_key: str = "dev-only-secret-key-change-me"  # JWT 签名
     encryption_key: str = ""  # Fernet key；为空时 security.py 会从 secret_key 派生（仅限 dev）
-    invite_code: str = "polaris-lab"  # 注册邀请码（实验室内部制）
+    invite_code: str = "polaris-lab"  # 注册邀请码（部署级静态码，见 api/auth.py 注册端点）
     # 登录会话有效期。默认 30 天：桌面端与网页都希望「登录一次就一直在」，
     # 24h 会让用户每天重登一次。没有 refresh token 机制，所以直接给长有效期；
     # 想收紧就调小这个值（单位：秒）。
@@ -63,10 +63,10 @@ class Settings(BaseSettings):
     db_max_overflow: int = 50
     db_pool_timeout: int = 30
 
-    # ---- LLM providers（初始值；后续可在 DB 模型路由表中配置）----
+    # ---- LLM providers ----
+    # 服务商与密钥在管理页配置、存 DB（services/llm_admin.py）；这里只有 openai_compat
+    # 路由未填 base_url 时的兜底地址。密钥类环境变量从未有读取点，已删（#629）。
     openai_compat_base_url: str = "https://api.deepseek.com/v1"
-    openai_compat_api_key: str = ""
-    anthropic_api_key: str = ""
     # 未配置任何 LLM 路由时是否回退内置 fake provider（仅测试/无 key 演示用）。
     # 默认关闭：未配置时 AI 功能返回 LLM_NOT_CONFIGURED，而不是产出演示假内容。
     # 生产（env=prod）下无论如何都强制关闭，见下方 _prod_forbids_fake_llm。
@@ -225,8 +225,6 @@ class Settings(BaseSettings):
         "core_api_key",
         "sciverse_api_tokens",
         "mineru_api_tokens",
-        "openai_compat_api_key",
-        "anthropic_api_key",
         "outbound_proxy",
         mode="before",
     )

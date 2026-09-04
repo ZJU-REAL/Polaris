@@ -41,10 +41,10 @@ import { ExtensionApiKeySettings } from './ExtensionApiKeySettings';
 import { AdminSpeechSettings, PersonalSpeechSettings } from './SpeechSettings';
 
 /* ============================================================
-   /settings — 普通用户设置：个人信息 / 文献对话 / 界面偏好 / SSH 凭据 /
-   我的模型 / 用量 / MCP 接入。
-   管理员那组（LLM 管理、每日论文、注册码、反馈、用量总览）搬到了
-   /admin（AdminSettingsPage），但标签页组件仍住在本文件里 export 出去复用。
+   /settings — 个人设置：个人信息 / 界面偏好 / PolarisBuddy / 语音 /
+   群机器人 / SSH 凭据 / 用量 / 扩展 / MCP 接入。
+   管理那组（LLM 管理、每日论文、用量总览）搬到了 /admin
+   （AdminSettingsPage），但标签页组件仍住在本文件里 export 出去复用。
    ============================================================ */
 
 const KINDS: LlmProviderKind[] = ['openai_compat', 'anthropic'];
@@ -2288,7 +2288,7 @@ function MyUsageTab() {
 type Tab = 'personal' | 'prefs' | 'buddy' | 'speech' | 'bots' | 'ssh' | 'myusage' | 'extension' | 'mcp';
 
 /** 旧的 /settings?tab=xxx 深链里属于管理员组的值 → 统一改跳 /admin。 */
-export const ADMIN_TABS = ['llm', 'daily', 'usage', 'codes', 'feedback'] as const;
+export const ADMIN_TABS = ['llm', 'daily', 'usage'] as const;
 
 // ---------------- 每日新论文订阅分类（admin） ----------------
 
@@ -2353,7 +2353,7 @@ function DailyCategoriesSection() {
       <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 14 }}>
         {tr(
           '每天从 arxiv 抓取这些分类下的新提交，全实验室共用一份。改动从下一次抓取开始生效。',
-          'New arxiv submissions in these categories are fetched daily, shared lab-wide. Changes apply from the next fetch.',
+          'New arxiv submissions in these categories are fetched daily and shared across the deployment. Changes apply from the next fetch.',
         )}
       </div>
 

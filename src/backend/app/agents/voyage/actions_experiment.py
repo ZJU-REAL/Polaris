@@ -3154,58 +3154,6 @@ async def _poll_run(
 
         await asyncio.sleep(RUN_POLL_SECONDS)
 
-
-async def _poll_setup(
-    ctx: ActionContext,
-    session: AsyncSession,
-    executor: Runner,
-    experiment: Experiment,
-    pid: int,
-) -> tuple[int, Runner]:
-    """轮询后台依赖安装直到 setup.exit 出现，返回 (exit_code, executor)。
-
-    容错同 _poll_run：安装进程经 nohup 脱离、退出码持久化在 setup.exit——轮询期间 SSH 瞬时断连
-    应「重连后接着跟同一安装进程」而非从头重装；连续多次重连失败才放弃。超 SETUP_TIMEOUT 未完
-    则 kill 并抛 TimeoutError（上层当可修失败：让 LLM 精简依赖再来）。executor 可能因重连被替换。"""
-    started = utcnow()
-    conn_fail_streak = 0
-    max_conn_fails = 6
-
-    async def reconnect() -> None:
-        nonlocal executor
-        with contextlib.suppress(Exception):  # 旧连接已坏，关闭失败无所谓
-            await executor.close()
-        executor = await _open_executor(session, ctx, experiment)
-
-    while True:
-        try:
-            exit_code = await executor.read_setup_exit()
-            if exit_code is not None:
-                return exit_code, executor
-            if not await executor.check_pid(int(pid)):
-                # 进程没了但没读到退出码：再读一次（竞态），仍无按 -1（异常收尾）
-                again = await executor.read_setup_exit()
-                return (again if again is not None else -1), executor
-            conn_fail_streak = 0
-        except Exception as e:  # noqa: BLE001 — 瞬时断连：重连续跟；其它异常照抛
-            if not ssh_exec.is_connection_error(e):
-                raise
-            conn_fail_streak += 1
-            if conn_fail_streak > max_conn_fails:
-                raise RuntimeError(
-                    f"SSH 反复断开（连续 {conn_fail_streak} 次），放弃跟踪依赖安装：{e}"
-                ) from e
-            await asyncio.sleep(_reconnect_backoff(conn_fail_streak))
-            with contextlib.suppress(Exception):  # 重连失败：下轮继续退避重试
-                await reconnect()
-            continue  # setup.exit 持久化，重连后下一轮接着读
-        if _elapsed_hours(started) * 3600.0 > ssh_exec.SETUP_TIMEOUT_SECONDS:
-            with contextlib.suppress(Exception):
-                await executor.kill_pid(int(pid))
-            raise TimeoutError(f"依赖安装超过 {ssh_exec.SETUP_TIMEOUT_SECONDS:.0f}s 未完成，已中止")
-        await asyncio.sleep(RUN_POLL_SECONDS)
-
-
 # ---- 5. 图表：metrics_all.json → LLM 绘图脚本 → run_plot → 拉回 → VLM 质检 ----
 
 

@@ -2,7 +2,8 @@
 
 Polaris runs the entire research lifecycle as a single web application: literature survey, idea
 generation, idea review, experiment building on real GPU servers, LaTeX paper writing, and paper
-review. It is built for a research lab, with multi-user access, RBAC, and invite-code registration.
+review. It is built for individual researchers; registration is gated by a deployment-level
+invite code.
 The heavy lifting (crawling, parsing, deduplication, metric parsing, citation matching) is
 deterministic code; LLMs are reserved for the judgement calls (scoring, synthesis, drafting, review).
 Every long task runs as a **Voyage**: a persisted, resumable, human-gated agent run that can span

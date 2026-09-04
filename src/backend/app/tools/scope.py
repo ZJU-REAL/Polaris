@@ -124,7 +124,7 @@ async def paper_access(
     """这次能不能读这篇论文；读不到返回 None。**所有**按 id 读单篇论文的工具走这里。
 
     先按本次范围取成员行（:func:`membership_in_scope`），范围外再看它在不在每日新论文
-    池里——每日新论文全实验室可读（``paper_in_daily_feed``，与 HTTP 端点的池级兜底同
+    池里——每日新论文所有用户可读（``paper_in_daily_feed``，与 HTTP 端点的池级兜底同
     一条判据），登录用户就能读。
 
     为什么非兜底不可：``search_daily_pool`` 交给模型的，按定义就是**尚未收录进任何库**

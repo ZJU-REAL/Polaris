@@ -12,7 +12,6 @@
 一股脑当事实存，几十条之后每轮都在为陈年琐事付费。
 """
 
-import uuid
 from typing import Any
 
 from app.core.db import get_sessionmaker
@@ -96,6 +95,3 @@ async def recall(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
         ]
     }
 
-
-def _unused(_: uuid.UUID) -> None:  # pragma: no cover - 保持 uuid 导入被使用
-    return None

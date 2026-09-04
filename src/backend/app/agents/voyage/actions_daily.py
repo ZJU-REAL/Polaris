@@ -8,7 +8,7 @@
 - 跨步骤传值走 ``ctx.checkpoint``（抓到的条目 / 本次涉及的论文 id），断点续跑时
   引擎会把 checkpoint 原样带回来；
 - ``daily.fetch`` **任一分类抓失败即报错**（不是「全都空才报」）：部分失败会让当天
-  那个分类的论文永久缺失，而全实验室的文献库都靠这个池供料；
+  那个分类的论文永久缺失，而所有文献库都靠这个池供料；
 - ``daily.sync_libraries`` 收尾时触发各库同步：池子备好了才同步，时刻不用猜；
 - ``daily.embed`` 保持 best-effort：向量化是可选增强，失败不该让整次同步算失败。
 """
@@ -90,7 +90,7 @@ async def fetch(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
         return result
     if failed:
         # **任一分类失败就报错**，不是「全都空才报」。部分失败下当天那个分类的论文会
-        # 永久缺失（RSS 只公告一次，每日池只留一周），而全实验室的文献库都靠这个池
+        # 永久缺失（新公告只出现一次，每日池只留一周），而所有文献库都靠这个池
         # 供料——静默残缺比整体失败更危险。
         result["error"] = (
             f"{len(failed)} 个分类抓取失败：{'、'.join(failed)}；"

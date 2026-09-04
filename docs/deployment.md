@@ -94,8 +94,9 @@ cp .env.example .env
 ```
 
 Set the production essentials: a strong `POLARIS_SECRET_KEY`, a real `POLARIS_ENCRYPTION_KEY`, the
-`POLARIS_INVITE_CODE`, a Postgres `POLARIS_DATABASE_URL`, `POLARIS_REDIS_URL`, and at least one LLM
-provider key. See [Configuration](configuration.md) for the full table.
+`POLARIS_INVITE_CODE`, a Postgres `POLARIS_DATABASE_URL`, and `POLARIS_REDIS_URL`. LLM providers
+and their API keys are configured in-app after first login (Manage → LLM admin). See
+[Configuration](configuration.md) for the full table.
 
 ### Restricted networks
 
