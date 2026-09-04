@@ -53,7 +53,9 @@ class DeepSeed(BaseModel):
 
 
 class DeepKnobs(BaseModel):
-    confirm_goal: bool = True  # 生成前人工确认研究目标（idea_goal 闸门）
+    # 生成前人工确认研究目标（idea_goal 闸门）。默认关：单人产品里任务默认直行，
+    # 审批断点是显式选项（#626 起闸门机制保留但不再默认拦截）
+    confirm_goal: bool = False
     max_tool_calls: int = Field(default=15, ge=3, le=40)  # 目标构建探索轮数上限
     external_search: bool = True  # 新颖性核查/相关工作是否做外部检索
     revise_rounds: int = Field(default=2, ge=0, le=4)  # 评审-修订最大轮数

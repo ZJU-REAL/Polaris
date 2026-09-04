@@ -1825,21 +1825,24 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             )
         plan = experiment.plan
 
-        # 预算闸门 payload（engine 建 Gate 时合并）：实验 id + 预算摘要 + 计划摘要
-        ctx.checkpoint["gate_payload"] = {
-            "experiment_id": str(experiment.id),
-            "idea_title": idea.title,
-            "budget": experiment.budget,
-            "budget_estimate": plan.get("budget_estimate"),
-            "plan_summary": {
-                "hypotheses": [h["text"] for h in plan.get("hypotheses", [])],
-                "repro_strategy": str(plan.get("repro_strategy", ""))[:300],
-                "primary_metric": plan.get("primary_metric"),
-                "steps": len(plan.get("steps", [])),
-            },
-        }
-        # 固定管线下一站是 compute_budget 闸门
-        await _set_status(ctx, session, experiment, "awaiting_gate")
+        # 预算闸门默认不拦（#626）：显式 confirm_budget=True 才预置闸门 payload 并把
+        # 实验转 awaiting_gate；默认直接放行，下一步 setup 会把状态推进到 setup
+        if _params(ctx).get("confirm_budget"):
+            # 闸门 payload（engine 建 Gate 时合并）：实验 id + 预算摘要 + 计划摘要
+            ctx.checkpoint["gate_payload"] = {
+                "experiment_id": str(experiment.id),
+                "idea_title": idea.title,
+                "budget": experiment.budget,
+                "budget_estimate": plan.get("budget_estimate"),
+                "plan_summary": {
+                    "hypotheses": [h["text"] for h in plan.get("hypotheses", [])],
+                    "repro_strategy": str(plan.get("repro_strategy", ""))[:300],
+                    "primary_metric": plan.get("primary_metric"),
+                    "steps": len(plan.get("steps", [])),
+                },
+            }
+            # 显式开了预算确认：固定管线下一站是 compute_budget 闸门
+            await _set_status(ctx, session, experiment, "awaiting_gate")
 
     return {
         "hypotheses": len(plan.get("hypotheses", [])),

@@ -75,7 +75,12 @@ async def _seed_default_route() -> None:
 async def _create_with_params(client, headers, project_id, idea_id, cred_id, params):
     resp = await client.post(
         f"/api/projects/{project_id}/experiments",
-        json={"idea_id": idea_id, "credential_id": cred_id, "params": params},
+        # 闸门默认不拦（#626）：这些用例拿 compute_budget 闸门当断点，显式开回来
+        json={
+            "idea_id": idea_id,
+            "credential_id": cred_id,
+            "params": {"confirm_budget": True, **params},
+        },
         headers=headers,
     )
     assert resp.status_code == 201, resp.text

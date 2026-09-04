@@ -1761,30 +1761,6 @@ export interface LibraryDigestRead extends LibraryDigestSummary {
   updated_at: string;
 }
 
-// ============================================================
-// 实验室数据面板（/lab 概况页）
-// ============================================================
-
-export interface LabStats {
-  libraries: { total: number; public: number; personal: number };
-  papers: {
-    /** 全局内容池总量（含每日新论文、个人库导入） */
-    pool_total: number;
-    /** 可见库并集内的论文数，跨库同一篇只算一次 */
-    library_members_deduped: number;
-    compiled: number;
-  };
-  concepts: { total: number };
-  chunks: {
-    papers_with_chunks: number;
-    total_chunks: number;
-    chunks_with_embedding: number;
-    /** false 时向量存了也不能按语义搜（本机 sqlite） */
-    vector_search_supported: boolean;
-  };
-  vectors: { papers_with_embedding: number; papers_total: number };
-}
-
 /** 实验的全局环境设置（所有实验共用一份）。空串 = 不配置该项。 */
 export interface ExperimentEnvSettings {
   /** 本机模型根目录，如 /hf/model */
@@ -3145,29 +3121,6 @@ export interface DailyDay {
   count: number;
 }
 
-/** 某个库今天从每日论文自动收录的一轮：漏斗数字 + 任务状态。 */
-export interface DailyIngestStatus {
-  library_id: string;
-  library_name: string;
-  is_public: boolean;
-  voyage_id: string;
-  /** 任务状态：executing / done / failed / paused_error / cancelled … */
-  status: string;
-  started_at: string;
-  finished_at?: string | null;
-  /** 池子里扫了多少 */
-  feed_total: number;
-  /** 送进打分的候选数 */
-  candidates: number;
-  /** 打分通过、真正收下的 */
-  admitted: number;
-  /** 相关性不够被淘汰的 */
-  rejected: number;
-  /** 编译成功的 */
-  compiled: number;
-  step_status: Record<string, string>;
-}
-
 /** 库同步每次扫描每日池的范围。 */
 export type DailySyncScope = 'since_last' | 'daily' | 'full';
 
@@ -4213,19 +4166,6 @@ export const api = {
     });
   },
 
-  // —— 实验室数据面板（/lab 概况页） ——
-  /** 索引与内容统计（跨库论文去重，只算当前用户看得到的库）。 */
-  getLabStats(): Promise<LabStats> {
-    return request<LabStats>('/lab/stats');
-  },
-  /** 全实验室最近 N 天 token 用量（按 日期 × stage × model）。 */
-  getLabUsage(days: number): Promise<LlmUsageRow[]> {
-    return request<LlmUsageRow[]>(`/lab/usage?days=${days}`);
-  },
-  /** 跨库图谱：不传 libraryId = 全部可见库的并集。 */
-  getLabGraph(libraryId?: string): Promise<GraphData> {
-    return request<GraphData>(`/lab/graph${libraryId ? `?library_id=${libraryId}` : ''}`);
-  },
   /** 库笔记本：全库笔记分页 + 搜索。 */
   listLibraryNotes(
     id: string,
@@ -5280,11 +5220,6 @@ export const api = {
   /** 池内现存日期（倒序）与每天篇数。 */
   /** 每天的条目数。带上当前筛选，否则日期标签上的数字会和列表对不上。 */
   /** 每日池保留天数（管理员可配；界面上别写死）。 */
-  /** 今天各可见库从每日论文自动收录的漏斗与状态。 */
-  listDailyIngestStatus(): Promise<DailyIngestStatus[]> {
-    return request<DailyIngestStatus[]>('/lab/daily-ingest');
-  },
-
   /** 库同步每次扫描每日池的范围：since_last 上次同步以来 / daily 只当天 / full 整池。 */
   /** 方向描述访谈的下一步（无状态：把已答内容全量带上）。 */
   statementInterview(

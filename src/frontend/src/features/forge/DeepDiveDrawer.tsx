@@ -45,7 +45,8 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
   const [paperId, setPaperId] = useState('');
   const [paperQ, setPaperQ] = useState('');
   const [ideaId, setIdeaId] = useState('');
-  const [confirmGoal, setConfirmGoal] = useState(true);
+  // 目标确认闸门默认关（#626）：任务默认直行，想中途拍板的人显式勾选
+  const [confirmGoal, setConfirmGoal] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [externalSearch, setExternalSearch] = useState(true);
   const [reviseRounds, setReviseRounds] = useState(2);
@@ -60,7 +61,7 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
     setPaperId('');
     setPaperQ('');
     setIdeaId(initialSeedIdea?.id ?? '');
-    setConfirmGoal(true);
+    setConfirmGoal(false);
     setShowAdvanced(false);
     setExternalSearch(true);
     setReviseRounds(2);
@@ -236,7 +237,7 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
       >
         <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer' }}>
           <input type="checkbox" checked={confirmGoal} onChange={(e) => setConfirmGoal(e.target.checked)} />
-          {tr('开启（推荐）', 'On (recommended)')}
+          {tr('开启', 'On')}
         </label>
       </FormField>
 

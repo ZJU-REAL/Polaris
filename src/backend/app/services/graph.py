@@ -71,21 +71,6 @@ async def library_graph(
     )
 
 
-async def libraries_graph(
-    session: AsyncSession,
-    *,
-    library_ids: list[uuid.UUID],
-    max_papers: int = MAX_PAPERS,
-    max_authors: int = MAX_AUTHORS,
-) -> dict[str, Any]:
-    """构建一组库并集的知识图谱（实验室面板：全部可见库）。空集合返回空图。"""
-    if not library_ids:
-        return {"nodes": [], "edges": [], "paper_total": 0, "truncated": False}
-    return await _graph_for_library_ids(
-        session, library_ids=library_ids, max_papers=max_papers, max_authors=max_authors
-    )
-
-
 async def _graph_for_library_ids(
     session: AsyncSession,
     *,

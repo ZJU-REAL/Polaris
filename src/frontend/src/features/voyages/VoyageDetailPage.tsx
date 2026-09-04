@@ -212,8 +212,8 @@ export function VoyageDetailPage() {
       <div className="row" style={{ alignItems: 'flex-start', marginBottom: 20 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="h-eyebrow row gap8">
-            {/* 返回按任务层级分流：文献库任务（建库/增量更新）与每日新论文归实验室
-                工作台，其余归课题工作台。判据与面包屑同一份（isLabScopedTask）——
+            {/* 返回按任务层级分流：文献库任务（建库/增量更新）与每日新论文归 /lab
+                任务列表，其余归课题工作台。判据与面包屑同一份（isLabScopedTask）——
                 原来这里单用 WIKI_RUN_KINDS，漏掉每日新论文，把它送去了课题工作台；
                 而它 project_id 为空，跳课题只会落到首页。 */}
             <span
@@ -222,13 +222,13 @@ export function VoyageDetailPage() {
               onClick={() =>
                 navigate(
                   isLabScopedTask(voyage)
-                    ? '/lab?tab=tasks'
+                    ? '/lab'
                     : topicPath(voyage.project_id, 'voyages'),
                 )
               }
             >
               {isLabScopedTask(voyage)
-                ? tr('← 实验室任务', '← Lab tasks')
+                ? tr('← 文献任务', '← Library tasks')
                 : tr('← 课题任务', '← Topic tasks')}
             </span>
             <span className="mono" style={{ textTransform: 'none', color: 'var(--text-4)' }}>{voyage.id.slice(0, 8)}</span>

@@ -59,7 +59,8 @@ from app.services.literature.semantic_scholar import SemanticScholarClient
 from app.services.review import serialize_message
 
 DEFAULT_DEEP_KNOBS: dict[str, Any] = {
-    "confirm_goal": True,
+    # 闸门默认不拦（#626）：想要目标确认断点得显式把 confirm_goal 传成 True
+    "confirm_goal": False,
     "max_tool_calls": 15,
     "external_search": True,
     "revise_rounds": 2,
