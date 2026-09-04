@@ -102,7 +102,17 @@ async function fetchTarget(target) {
   const extractDir = join(cacheDir, target, 'extract');
   rmSync(extractDir, { recursive: true, force: true });
   mkdirSync(extractDir, { recursive: true });
-  execFileSync('tar', ['-xf', archive, '-C', extractDir], { stdio: 'inherit' });
+  if (process.platform === 'win32' && archive.endsWith('.zip')) {
+    // CI 的 PATH 上 MSYS tar 先于系统 bsdtar，解 zip 直接 exit 128——
+    // 用 Expand-Archive 绕开 tar 选型问题（win10+ 恒有）。
+    execFileSync(
+      'powershell',
+      ['-NoProfile', '-Command', `Expand-Archive -Path '${archive}' -DestinationPath '${extractDir}' -Force`],
+      { stdio: 'inherit' },
+    );
+  } else {
+    execFileSync('tar', ['-xf', archive, '-C', extractDir], { stdio: 'inherit' });
+  }
   const bin = findBinary(extractDir, binName);
   if (!bin) throw new Error(`fetch-uv: 解包后找不到 ${binName}（${asset}）`);
   cpSync(bin, cached);
