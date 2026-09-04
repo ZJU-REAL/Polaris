@@ -1,6 +1,6 @@
 """闸门路由（docs/api-m1.md §4）：列表 / 审批 / 驳回。
 
-- 项目成员可见与可审批本项目闸门（M2 再细化角色权限）；
+- 课题主人可见与可审批本项目闸门；
 - approve：payload.voyage_id 存在时入队 resume_voyage 恢复航程；
   payload.idea_id 存在时联动 idea.status=promoted 并发布 idea.status 事件（M3）；
   paper_submission 闸门批准前置稿件 review_passed（M5-C），管理员可传

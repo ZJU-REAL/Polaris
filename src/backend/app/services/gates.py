@@ -54,10 +54,9 @@ async def get_gate(session: AsyncSession, gate_id: uuid.UUID) -> Gate | None:
 async def can_access_project(
     session: AsyncSession, project_id: uuid.UUID, user_id: uuid.UUID
 ) -> bool:
-    """能否在这个课题里操作：课题成员，或平台管理员（最高权限）。
+    """能否在这个课题里操作：课题主人（成员机制已随 #625 移除）。
 
-    审批闸门、跑技能、开报告都用它。原来只认成员身份，管理员在自己没参与的
-    课题里会被挡——与「管理员看得到这些课题和它们的任务」自相矛盾。
+    审批闸门、跑技能、开报告都用它，口径与 in_my_projects 一致。
     """
     stmt = select(Project.id).where(
         Project.id == project_id, in_my_projects(Project.id, user_id)

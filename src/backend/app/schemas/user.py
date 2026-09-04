@@ -21,14 +21,6 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     settings: dict[str, Any] | None = None
 
 
-class UserSearchResult(BaseModel):
-    """平台用户查找结果（加协作者用，不含敏感字段）。"""
-
-    id: uuid.UUID
-    email: str
-    display_name: str
-
-
 class UserCreate(schemas.BaseUserCreate):
     # 姓名与用户名注册时必填；用户名小写字母/数字/下划线 3-32 位、全局唯一
     display_name: str = Field(min_length=1, max_length=255)

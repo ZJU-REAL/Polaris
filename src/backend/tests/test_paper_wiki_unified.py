@@ -85,14 +85,19 @@ async def test_second_user_recompile_overwrites_and_takes_over_compiled_by(clien
     await client.post(f"/api/papers/{paper_id}/recompile", headers=headers)
     first = await wiki_of_str(paper_id)
 
+    # bob 不是课题成员（机制已随 #625 移除）：他用自己的课题关联同一个公共库，
+    # 由此拿到库可见性——重编译是写路径，只认「我的课题关联的库 ∪ 我建的库」
     bob = await register_and_login(client, email="wiki-bob@example.com")
     bob_headers = {"Authorization": f"Bearer {bob}"}
-    resp = await client.post(
-        f"/api/projects/{project_id}/members",
-        json={"email": "wiki-bob@example.com", "role": "member"},
-        headers=headers,
+    resp = await client.post("/api/projects", json={"name": "bob-overwrite"}, headers=bob_headers)
+    assert resp.status_code == 201, resp.text
+    bob_project_id = resp.json()["id"]
+    resp = await client.put(
+        f"/api/projects/{bob_project_id}/source-libraries",
+        json={"library_ids": [str(_library_id)]},
+        headers=bob_headers,
     )
-    assert resp.status_code == 204, resp.text
+    assert resp.status_code == 200, resp.text
 
     resp = await client.post(f"/api/papers/{paper_id}/recompile", headers=bob_headers)
     assert resp.status_code == 200, resp.text

@@ -9,19 +9,14 @@ RECT = {"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.12}
 
 
 async def _setup(client):
-    """alice 建项目 + 一篇论文，bob 为项目成员。"""
+    """alice 建项目 + 一篇论文；bob 是另一个用户（成员机制已随 #625 移除），
+    经公共起源库路径可读同一篇论文。"""
     alice = await register_and_login(client)
     headers = {"Authorization": f"Bearer {alice}"}
     resp = await client.post("/api/projects", json={"name": "hl-proj"}, headers=headers)
     project_id = resp.json()["id"]
 
     bob = await register_and_login(client, email="bob@example.com")
-    resp = await client.post(
-        f"/api/projects/{project_id}/members",
-        json={"email": "bob@example.com", "role": "member"},
-        headers=headers,
-    )
-    assert resp.status_code == 204, resp.text
 
     async with get_sessionmaker()() as session:
         p1 = await add_paper(session,
@@ -155,7 +150,7 @@ async def test_highlight_permissions(client):
     )
     hl_id = resp.json()["id"]
 
-    # 非作者成员改/删 → 404（P5b 起他人划线不可见，视为不存在）
+    # 非作者改/删 → 404（P5b 起他人划线不可见，视为不存在）
     assert (
         await client.patch(f"/api/highlights/{hl_id}", json={"color": "pink"}, headers=bob)
     ).status_code == 404

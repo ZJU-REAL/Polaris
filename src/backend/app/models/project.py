@@ -1,9 +1,13 @@
-"""项目（研究方向）与项目成员。"""
+"""项目（研究方向）。
+
+课题成员机制已随个人化定位移除（#625）：课题归创建者（owner_id）所有，
+可见性与管理权都只看这一列——服务器档多用户隔离靠它，不再有成员表。
+"""
 
 import uuid
 
 from sqlalchemy import ForeignKey, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
@@ -25,22 +29,3 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     owner_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
-
-    members: Mapped[list["ProjectMember"]] = relationship(
-        back_populates="project", cascade="all, delete-orphan"
-    )
-
-
-class ProjectMember(TimestampMixin, Base):
-    __tablename__ = "project_members"
-
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    role: Mapped[str] = mapped_column(String(32), default="member", nullable=False)  # owner|member
-
-    project: Mapped[Project] = relationship(back_populates="members")
-

@@ -56,7 +56,7 @@ from app.models.paper_content import (
     PaperContentVersion,
     PaperContentVersionVector,
 )
-from app.models.project import Project, ProjectMember
+from app.models.project import Project
 from app.models.publication import UserAuthorProfile, UserPublication
 from app.models.research_digest import LibraryResearchDigest
 from app.models.review import ReviewMessage, ReviewSession
@@ -127,7 +127,6 @@ __all__ = [
     "PaperUserMeta",
     "PaperVector",
     "Project",
-    "ProjectMember",
     "ReviewMessage",
     "ReviewSession",
     "SSHCredential",

@@ -24,7 +24,7 @@ from app.models.idea import Idea
 from app.models.library import UserLibraryEntry
 from app.models.manuscript import Manuscript
 from app.models.paper import PaperUserMeta
-from app.models.project import ProjectMember
+from app.models.project import Project
 
 #: 「最近」的口径。七天是一周工作节奏，比"今天"稳（周一看不到上周五的成果会很挫）。
 RECENT_DAYS = 7
@@ -60,9 +60,9 @@ class BuddyStats:
 
 
 async def collect_stats(session: AsyncSession, *, user_id: uuid.UUID) -> BuddyStats:
-    """用户自己的近况。只统计他真的参与的课题——别人课题的想法数与他无关。"""
+    """用户自己的近况。只统计他自己建的课题——别人课题的想法数与他无关。"""
     since = dt.datetime.now(dt.UTC) - dt.timedelta(days=RECENT_DAYS)
-    my_projects = select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+    my_projects = select(Project.id).where(Project.owner_id == user_id)
 
     async def count(stmt: Any) -> int:
         return int((await session.execute(stmt)).scalar_one() or 0)
@@ -120,7 +120,7 @@ async def collect_stats(session: AsyncSession, *, user_id: uuid.UUID) -> BuddySt
         .where(Manuscript.project_id.in_(my_projects), Manuscript.trashed_at.is_(None))
     )
     topics = await count(
-        select(func.count()).select_from(ProjectMember).where(ProjectMember.user_id == user_id)
+        select(func.count()).select_from(Project).where(Project.owner_id == user_id)
     )
     return BuddyStats(
         saved_recent=saved_recent,

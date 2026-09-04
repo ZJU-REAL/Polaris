@@ -680,7 +680,7 @@ async def get_manuscript_for_user(
     user_id: uuid.UUID,
     with_files: bool = False,
 ) -> Manuscript | None:
-    """取稿件；非项目成员视为不存在（平台管理员够得着全部课题）。"""
+    """取稿件；非课题主人视为不存在（不泄露存在性）。"""
     stmt = select(Manuscript).where(
         Manuscript.id == manuscript_id, in_my_projects(Manuscript.project_id, user_id)
     )
@@ -692,7 +692,7 @@ async def get_manuscript_for_user(
 async def get_file_for_user(
     session: AsyncSession, *, file_id: uuid.UUID, user_id: uuid.UUID
 ) -> ManuscriptFile | None:
-    """取稿件文件；非项目成员视为不存在（平台管理员够得着全部课题）。CRDT WS on_connect 也用。"""
+    """取稿件文件；非课题主人视为不存在（不泄露存在性）。CRDT WS on_connect 也用。"""
     stmt = (
         select(ManuscriptFile)
         .join(Manuscript, Manuscript.id == ManuscriptFile.manuscript_id)

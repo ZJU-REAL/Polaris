@@ -155,7 +155,7 @@ def _blocked_on(run: VoyageRun, gates: list[Any]) -> dict[str, Any] | None:
                 "gate_id": str(gate.id),
                 "kind": gate.kind,
                 "payload": gate.payload,
-                "next_action": "本课题成员可在网页端审批该闸门后任务会自动继续",
+                "next_action": "可在网页端审批该闸门，之后任务会自动继续",
             }
     return None
 

@@ -1,6 +1,6 @@
 """Experiment Lab 路由（docs/api-m4.md §2/§4）。
 
-权限：一律项目成员（非成员 404 不泄露存在性）；凭据校验属当前用户。
+权限：一律课题主人（非本人 404 不泄露存在性）；凭据校验属当前用户。
 日志读取只走本地镜像文件（worker 轮询远端时同步写入），不在请求线程碰 SSH。
 """
 
@@ -358,7 +358,7 @@ async def experiment_sysinfo(
 ) -> dict[str, Any]:
     """实验所在服务器的系统状态（CPU/内存/磁盘/GPU）——实验搭建/运行期间实时查看。
 
-    项目成员可见（只读探测）；凭据缺失/已删 404；连不上 ok=false 而非 500。
+    课题主人可见（只读探测）；凭据缺失/已删 404；连不上 ok=false 而非 500。
     """
     experiment, _ = await _member_experiment(session, experiment_id, user)
     if experiment.credential_id is None:

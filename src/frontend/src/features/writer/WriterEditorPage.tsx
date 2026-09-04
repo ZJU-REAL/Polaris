@@ -29,7 +29,6 @@ import { DraftModal } from './DraftModal';
 import { OutlinePanel } from './OutlinePanel';
 import { AssistPanel, type AssistMode } from './AssistPanel';
 import { HistoryModal } from './HistoryModal';
-import { CollaboratorsModal } from './CollaboratorsModal';
 import { colorForUser, ruleText, sectionText, type AiWritingState } from './shared';
 
 /* ============================================================
@@ -594,7 +593,6 @@ export function WriterEditorPage() {
   // —— 抽屉 / Modal ——
   const [factOpen, setFactOpen] = useState(false);
   const [draftOpen, setDraftOpen] = useState(false);
-  const [collabOpen, setCollabOpen] = useState(false);
 
   // 「初始化结构」后打开新生成的 draft.tex：先等详情刷新（文件树里出现 draft.tex、
   // 主文件选择器切到 draft.tex），再选中它，避免自动选主文件的副作用把选区抢回去。
@@ -789,10 +787,6 @@ export function WriterEditorPage() {
           </div>
         )}
 
-        <button className="btn btn-ghost sm" onClick={() => setCollabOpen(true)} title={tr('管理协作者与分享链接', 'Manage collaborators and share link')}>
-          <Icon name="users" size={13} />
-          {tr('协作者', 'Collaborators')}
-        </button>
         <button className="btn btn-ghost sm" onClick={() => setFactOpen(true)}>
           <Icon name="layers" size={13} />
           {tr('事实包', 'Fact pack')}
@@ -1288,7 +1282,6 @@ export function WriterEditorPage() {
         onInsertFigure={onInsertFigure}
       />
       <DraftModal open={draftOpen} onClose={() => setDraftOpen(false)} manuscript={ms} onInitialized={handleInitialized} />
-      <CollaboratorsModal open={collabOpen} onClose={() => setCollabOpen(false)} manuscriptId={ms.id} />
     </div>
   );
 }

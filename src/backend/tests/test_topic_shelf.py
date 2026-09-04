@@ -432,7 +432,7 @@ async def test_shelf_filters_by_my_tag(client):
     assert got == [] and total == 0
 
 
-async def test_shelf_requires_project_membership(client):
+async def test_shelf_requires_project_ownership(client):
     project_id, headers = await _setup(client)
     paper_id = await _seed_paper(project_id, title="Members Only", status="scored")
     outsider = await register_and_login(client, email="shelf-outsider@example.com")

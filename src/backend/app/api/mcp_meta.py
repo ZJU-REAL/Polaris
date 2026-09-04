@@ -5,7 +5,7 @@
 - ``POST /mcp/selfcheck``：用课题里的真实数据把所有工具跑一遍，报告哪些已失效。
 
 后两个都走 ``app.mcp.dispatch.call_tool``——和外部 MCP 客户端完全同一条路径
-（含课题成员校验），所以页面上跑通 = 客户端也跑得通。
+（含课题归属校验），所以页面上跑通 = 客户端也跑得通。
 MCP 协议本身在 ``POST /mcp``（见 app/mcp/http.py、docs/development.md「Testing the tools」）。
 """
 

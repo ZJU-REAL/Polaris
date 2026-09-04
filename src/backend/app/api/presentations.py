@@ -2,7 +2,7 @@
 
 - POST /projects/{pid}/presentations：single（单篇分享）| survey（多篇梳理）→
   创建 kind=presentation 的 AI 任务并入队；
-- GET /presentations/{voyage_id}/file：下载生成的 .pptx（项目成员）。
+- GET /presentations/{voyage_id}/file：下载生成的 .pptx（课题主人）。
 """
 
 import uuid

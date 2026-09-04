@@ -6,7 +6,7 @@
   manuscript.status）；
 - ``WS /ws/manuscripts/{file_id}?token=<jwt>``（docs/api-m5-b.md §6）：pycrdt CRDT
   协同房间（y-websocket 二进制协议，房间名 = file id）。on_connect 校验
-  JWT + 项目成员 + 文件存在且非 readonly，失败分别以 4401 / 4404 / 4403 关闭。
+  JWT + 课题归属 + 文件存在且非 readonly，失败分别以 4401 / 4404 / 4403 关闭。
 """
 
 import asyncio
@@ -21,7 +21,7 @@ from app.api.auth import UserManager, get_jwt_strategy
 from app.core.db import get_sessionmaker
 from app.core.events import notify_channel
 from app.core.redis import get_redis
-from app.models.project import ProjectMember
+from app.models.project import Project
 from app.models.user import User
 from app.services import manuscripts as manuscripts_service
 from app.services.crdt_rooms import get_crdt_rooms
@@ -45,7 +45,7 @@ async def authenticate_ws_token(token: str | None) -> User | None:
 
 async def _user_project_ids(user_id: uuid.UUID) -> list[uuid.UUID]:
     async with get_sessionmaker()() as session:
-        stmt = select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+        stmt = select(Project.id).where(Project.owner_id == user_id)
         return [pid for (pid,) in (await session.execute(stmt)).all()]
 
 
@@ -148,7 +148,7 @@ async def manuscript_crdt_ws(
             session, file_id=file_id, user_id=user.id
         )
     if file is None:
-        await websocket.close(code=4404)  # 不存在或非项目成员（不泄露存在性）
+        await websocket.close(code=4404)  # 不存在或非课题主人（不泄露存在性）
         return
     if file.readonly:
         await websocket.close(code=4403)  # 只读模板文件不开协同房间

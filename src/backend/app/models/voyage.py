@@ -183,7 +183,7 @@ VOYAGE_MESSAGE_STATUSES = (
 class VoyageMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """任务对话流的一条消息：用户与任务 agent 的双向通道。
 
-    run 资产（非用户资产）：项目成员共享同一条流，随任务级联删除——与
+    run 资产（非用户资产）：随任务级联删除，课题内共用同一条流——与
     Conversation（用户资产，课题删了对话还在）刻意区分，不复用。
     """
 

@@ -294,8 +294,8 @@ export function McpToolsContent() {
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55 }}>
           {tr(
-            '调用工具时需在参数里带 project_id（目标课题 uuid），服务端会校验你是否为该课题成员。本地桌面客户端也可用 stdio：python -m app.mcp（详见 docs/concepts.md）。',
-            'Each tool call takes a project_id (target topic uuid); the server verifies your membership. Local desktop clients can also use stdio: python -m app.mcp (see docs/concepts.md).',
+            '调用工具时需在参数里带 project_id（目标课题 uuid），服务端会校验该课题是否归你所有。本地桌面客户端也可用 stdio：python -m app.mcp（详见 docs/concepts.md）。',
+            'Each tool call takes a project_id (target topic uuid); the server verifies the topic belongs to you. Local desktop clients can also use stdio: python -m app.mcp (see docs/concepts.md).',
           )}
         </div>
       </div>

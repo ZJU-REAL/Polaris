@@ -144,14 +144,6 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
     pendingShareRef.current = null;
     if (!share || failed) return;
     const link = cfg.shareLink ? tr('，已附论文链接', ' with paper link') : '';
-    if (share.kind === 'user') {
-      // 平台成员私信不在本次群机器人单向推送范围内，保留原有提示。
-      toast(
-        tr(`已排队分享给 ${share.label}${link}（成员分享后端待接）`, `Queued to share with ${share.label}${link} (member delivery pending)`),
-        'info',
-      );
-      return;
-    }
     const assistant = finalMsgs[finalMsgs.length - 1];
     const text = assistant?.role === 'assistant' ? assistant.content.trim() : '';
     if (!text) {

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.library_direction import DirectionLibrary
-from app.models.project import ProjectMember
+from app.models.project import Project
 from app.models.user import User
 from app.models.voyage import LIBRARY_KINDS, TERMINAL_STATUSES, VoyageRun
 from app.schemas.voyage import VoyageCreate
@@ -40,16 +40,16 @@ async def create_voyage(
 
 
 def _visible_filter(stmt, user_id: uuid.UUID):
-    """可见任务 = 我所在课题的任务 ∪ 我能管的库的任务 ∪ 我自己发起的任务（∪ admin 全部）。
+    """可见任务 = 我课题的任务 ∪ 我能管的库的任务 ∪ 我自己发起的任务。
 
     这是 :func:`can_view_voyage` 的 SQL 镜像——列表里能看到的，点进去必须打得开。
-    库任务不能只靠 project_id 判：独立库的任务 project_id 为空，按课题成员 join
+    库任务不能只靠 project_id 判：独立库的任务 project_id 为空，按课题归属 join
     会把它们整个漏掉——而独立库是常态（P9c 起建课题不再自动建库）。
 
     「课题关联了某个库」不给可见性：关联只是拿它的语料，管不了它的建库任务
     （库级写权限 = 创建者/admin，见 libraries.can_manage_library）。
     """
-    my_projects = select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+    my_projects = select(Project.id).where(Project.owner_id == user_id)
     my_libraries = select(DirectionLibrary.id).where(DirectionLibrary.submitted_by == user_id)
     # 平台级任务（两个作用域 id 都为空，如每日新论文抓取）此前是 admin-only；
     # admin 旁路随 role 移除（#614）后对所有登录用户可见——单机档位登录即主人，
@@ -86,13 +86,11 @@ async def list_voyages(
     return (await session.execute(stmt)).scalars().all()
 
 
-async def _is_project_member(
+async def _owns_project(
     session: AsyncSession, *, project_id: uuid.UUID, user_id: uuid.UUID
 ) -> bool:
     row = await session.execute(
-        select(ProjectMember.user_id).where(
-            ProjectMember.project_id == project_id, ProjectMember.user_id == user_id
-        )
+        select(Project.id).where(Project.id == project_id, Project.owner_id == user_id)
     )
     return row.first() is not None
 
@@ -105,7 +103,7 @@ async def can_view_voyage(
     - 平台级任务（两个作用域 id 都为空，如每日新论文抓取）：所有登录用户
       （admin-only 口径随 role 移除，#614）；
     - 我发起的任务（``created_by``）：自己点的那次运行；
-    - 课题作用域任务：课题成员；
+    - 课题作用域任务：课题主人；
     - 库作用域任务：能管这个库的人（创建者，见 libraries.can_manage_library）。
 
     :func:`_visible_filter` 是它的 SQL 镜像，两边必须一起改。
@@ -114,7 +112,7 @@ async def can_view_voyage(
         return True
     if run.created_by is not None and run.created_by == user.id:
         return True
-    if run.project_id is not None and await _is_project_member(
+    if run.project_id is not None and await _owns_project(
         session, project_id=run.project_id, user_id=user.id
     ):
         return True

@@ -179,7 +179,7 @@ async def test_shelf_readd_after_trash_revives_row(client):
     assert (await _shelf(client, headers, other_id))["total"] == 0
 
 
-async def test_shelf_trash_requires_project_membership(client):
+async def test_shelf_trash_requires_project_ownership(client):
     project_id, headers = await _setup(client, name="trash-authz")
     paper_id = await _seed_paper(project_id, title="Members Only", status="scored")
     await client.post(

@@ -21,7 +21,7 @@ export function topicPath(topicId: string | null | undefined, sub?: string): str
 }
 
 export interface ProjectContextValue {
-  /** 本人是成员的项目列表（后端不可用时为 []）。 */
+  /** 本人创建的项目列表（后端不可用时为 []）。 */
   projects: ProjectRead[];
   isLoading: boolean;
   /** 列表加载失败（后端未起/404 等），UI 需优雅降级。 */

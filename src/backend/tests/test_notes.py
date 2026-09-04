@@ -14,19 +14,14 @@ from tests.conftest import add_paper, membership_of, register_and_login
 
 
 async def _setup(client):
-    """alice 建项目 + 两篇论文，bob 为项目成员。"""
+    """alice 建项目 + 两篇论文；bob 是另一个用户（成员机制已随 #625 移除），
+    经公共起源库路径可读同一批论文，但够不着 alice 的课题作用域端点。"""
     alice = await register_and_login(client)
     headers = {"Authorization": f"Bearer {alice}"}
     resp = await client.post("/api/projects", json={"name": "notes-proj"}, headers=headers)
     project_id = resp.json()["id"]
 
     bob = await register_and_login(client, email="bob@example.com")
-    resp = await client.post(
-        f"/api/projects/{project_id}/members",
-        json={"email": "bob@example.com", "role": "member"},
-        headers=headers,
-    )
-    assert resp.status_code == 204, resp.text
 
     async with get_sessionmaker()() as session:
         p1 = await add_paper(session,
@@ -135,7 +130,7 @@ async def test_notes_permissions(client):
     )
     note_id = resp.json()["id"]
 
-    # 非作者成员改/删 → 404（P5b 起他人笔记不可见，视为不存在）
+    # 非作者改/删 → 404（P5b 起他人笔记不可见，视为不存在）
     resp = await client.patch(f"/api/notes/{note_id}", json={"content": "x"}, headers=bob)
     assert resp.status_code == 404
     resp = await client.delete(f"/api/notes/{note_id}", headers=bob)
@@ -174,9 +169,10 @@ async def test_project_notebook_pagination_and_search(client):
     assert body["total"] == 4 and len(body["items"]) == 2
     assert body["items"][0]["content"] == "另一篇的量子笔记"  # created_at 倒序
     assert body["items"][0]["paper_title"] == "Second Paper"
+    # bob 不是课题主人：课题笔记本对他 404（多用户隔离），
+    # 他的笔记本身还在（paper × author，可经他自己的入口聚合）
     resp = await client.get(f"/api/projects/{project_id}/notes", headers=bob)
-    assert resp.json()["total"] == 1
-    assert resp.json()["items"][0]["content"] == "bob 私有笔记"
+    assert resp.status_code == 404
 
     # q 内容搜索 + paper_id 过滤
     resp = await client.get(f"/api/projects/{project_id}/notes?q=量子", headers=alice)
@@ -203,11 +199,11 @@ async def test_keyword_search_includes_own_note_hits_only(client):
     titles = [p["title"] for p in resp.json()["papers"]]
     assert titles == ["Second Paper"]  # 仅笔记命中也返回
 
-    # bob 搜同一关键词：alice 的私有笔记不参与命中
+    # bob 不是课题主人：课题内搜索对他 404（多用户隔离，#625）
     resp = await client.get(
         f"/api/projects/{project_id}/search?q=量子退火&mode=keyword", headers=bob
     )
-    assert resp.json()["papers"] == []
+    assert resp.status_code == 404
 
 
 async def test_obsidian_export_includes_own_notes_section(client):
@@ -227,8 +223,6 @@ async def test_obsidian_export_includes_own_notes_section(client):
     second_md = zf.read("papers/second-paper.md").decode("utf-8")
     assert "## 笔记" not in second_md
 
-    # bob 导出：alice 的笔记不出现（只导出请求者本人的）
+    # bob 不是课题主人：导出对他 404（多用户隔离，#625）
     resp = await client.get(f"/api/projects/{project_id}/export/obsidian", headers=bob)
-    zf_bob = zipfile.ZipFile(io.BytesIO(resp.content))
-    bob_md = zf_bob.read("papers/agent-planning-with-rl.md").decode("utf-8")
-    assert "## 笔记" not in bob_md
+    assert resp.status_code == 404

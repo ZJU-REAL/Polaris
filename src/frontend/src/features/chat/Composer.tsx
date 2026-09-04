@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { useProject } from '../../app/project';
 import {
   CONTEXT_KIND_META,
   type ContextKind,
@@ -36,7 +35,6 @@ const BOTS: MentionTarget[] = [
 ];
 
 const MENTION_ICON: Record<MentionTarget['kind'], IconName> = {
-  user: 'users',
   dingtalk: 'chat',
   feishu: 'chat',
 };
@@ -54,7 +52,6 @@ export function Composer({
   onSend,
   onStop,
 }: ComposerProps) {
-  const { currentProject } = useProject();
   const [text, setText] = useState('');
   const [context, setContext] = useState<ContextRef[]>([]);
   const [shareTo, setShareTo] = useState<MentionTarget | null>(null);
@@ -124,14 +121,7 @@ export function Composer({
 
   const mentionItems = useMemo<MentionTarget[]>(() => {
     if (menu?.type !== 'mention') return [];
-    const users: MentionTarget[] = (currentProject?.members ?? [])
-      .filter((m) => m.user_id)
-      .map((m) => ({
-        kind: 'user' as const,
-        id: m.user_id!,
-        label: m.display_name || m.email || tr('成员', 'Member'),
-        sub: m.email ?? undefined,
-      }));
+    // 平台用户分享已随课题成员机制移除（#625），@ 只剩群机器人
     const bots = BOTS.map((bot) => {
       const config = botConfigsQ.data?.find((item) => item.platform === bot.kind);
       const status = config?.configured
@@ -139,10 +129,9 @@ export function Composer({
         : tr('未配置 · 请先到设置页填写', 'Not configured · set it up in Settings');
       return { ...bot, sub: `${bot.sub} · ${status}` };
     });
-    const all = [...users, ...bots];
     const q = menu.query.toLowerCase();
-    return all.filter((t) => !q || t.label.toLowerCase().includes(q) || (t.sub ?? '').toLowerCase().includes(q));
-  }, [menu, currentProject?.members, botConfigsQ.data]);
+    return bots.filter((t) => !q || t.label.toLowerCase().includes(q) || (t.sub ?? '').toLowerCase().includes(q));
+  }, [menu, botConfigsQ.data]);
 
   const menuLen = slashOpen ? slashItems.length : mentionItems.length;
   useEffect(() => {
@@ -232,7 +221,7 @@ export function Composer({
           <div className="chat-pop-head mono">
             {slashOpen
               ? tr('放入上下文 · 论文 / 实验 / 想法 / 概念', 'Add context · papers / experiments / ideas / concepts')
-              : tr('分享给 · 成员或机器人', 'Share to · members or bots')}
+              : tr('分享给 · 群机器人', 'Share to · group bots')}
           </div>
           <div className="chat-pop-list scroll">
             {slashOpen
