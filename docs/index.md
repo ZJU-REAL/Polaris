@@ -26,11 +26,10 @@ question instead of failing. Every plan, action, and verdict is retained and rep
 The full loop — Navigator plans, Helm executes, Sextant verifies — is explained in
 [Core concepts](concepts.md) and, at implementation depth, in [The task system](task-system.md).
 
-**Built for a lab, not a single user.** Polaris is multi-user from the ground up: JWT auth with
-role-based access, invite-code registration (admin-managed codes with expiry and usage limits),
-per-user encrypted SSH credentials, per-call token and cost accounting attributed to user, project,
-and run, and library governance (curators, monthly budgets, admin approval for shared libraries).
-The first account to register becomes the platform administrator.
+**Built for individual researchers.** Registration is gated by a deployment-level invite code;
+every account gets per-user encrypted SSH credentials, per-call token and cost accounting
+attributed to user, project, and run, and its own libraries (share one by flipping it public, with
+optional monthly AI budgets).
 
 ## The pipeline, stage by stage
 

@@ -130,11 +130,10 @@ async def register(
     user_manager: UserManager = Depends(get_user_manager),
     session: AsyncSession = Depends(get_session),
 ) -> User:
-    """注册（实验室邀请制）：body 里的 invite_code 需命中一个可用注册码。
+    """注册（邀请制）：body 里的 invite_code 需等于 settings.invite_code 静态码。
 
-    优先核销数据库里的管理注册码（可设过期 / 次数 / 停用）；未命中时回退到
-    settings.invite_code 静态码（兜底，避免没建过码时无人能注册 / 把管理员锁死）。
-    注册码带预设研究方向时，注册成功后自动为新用户建好对应方向的项目。
+    数据库注册码系统（可设过期/次数/预设方向）已随个人化定位移除（#585），
+    只剩这一个部署级静态码把关。
     """
     # 邮箱验证码：开启邮件系统后必填必对（未配 SMTP 的部署跳过，否则没人能注册）
     if get_settings().email_enabled:

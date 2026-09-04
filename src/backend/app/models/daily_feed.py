@@ -1,4 +1,4 @@
-"""实验室「每日新论文」池（Daily Paper）。
+"""「每日新论文」池（Daily Paper）。
 
 每天从 arxiv 订阅分类抓 New submissions 进池，滚动保留 7 天：
 - 论文本体走全局内容池（paper_id 引用 papers，永不复制、过期不删）；
@@ -52,7 +52,7 @@ class DailyFeedEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 class DailyFeedLike(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """点赞：全实验室共享，每人每篇一赞；entry 过期删除时级联消失。"""
+    """点赞：所有用户共享，每人每篇一赞；entry 过期删除时级联消失。"""
 
     __tablename__ = "daily_feed_likes"
     __table_args__ = (UniqueConstraint("entry_id", "user_id", name="uq_daily_feed_likes"),)

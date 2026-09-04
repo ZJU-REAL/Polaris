@@ -3,8 +3,9 @@
 礼貌限速：官方建议请求间隔 3 秒（缓存命中不占限速额度）。被限流时按 ``Retry-After``
 或指数退避重试，见 :meth:`ArxivClient._request`——所有出网请求都走那一个出口。
 
-另含分类 RSS「新鲜源」（``fetch_new``）：``rss.arxiv.org/rss/{category}`` 返回当天新公告，
+另含分类「新鲜源」（``fetch_new``）：``/list/{category}/new`` 列表页返回当天新公告，
 即时无滞后——用于绕开关键词检索索引 3-5 天的滞后（增量同步搜不到最新论文的根因）。
+（数据源曾是 rss.arxiv.org，会按分类各自陈旧且毫无迹象，#415 起换列表页。）
 """
 
 import asyncio
@@ -26,7 +27,6 @@ from app.services.literature.cache import MinIntervalLimiter, ResponseCache, cac
 logger = logging.getLogger(__name__)
 
 API_URL = "https://export.arxiv.org/api/query"
-RSS_URL_TEMPLATE = "https://rss.arxiv.org/rss/{category}"
 PDF_URL_TEMPLATE = "https://arxiv.org/pdf/{arxiv_id}"
 ABS_URL_TEMPLATE = "https://arxiv.org/abs/{arxiv_id}"
 
@@ -36,21 +36,11 @@ _NS = {
     "opensearch": "http://a9.com/-/spec/opensearch/1.1/",
 }
 
-# RSS 2.0 feed 命名空间（item 子元素多为无前缀的 RSS 默认元素，仅这两个带前缀）
-_RSS_NS = {
-    "arxiv": "http://arxiv.org/schemas/atom",
-    "dc": "http://purl.org/dc/elements/1.1/",
-}
-
-# RSS /new 每天更新一次、URL 只按分类（对所有用户/项目相同）→ 短 TTL 缓存跨用户共享，
-# 当天能及时拿到新公告又不重复打 arXiv。3 小时。
-#: RSS 缓存时长。**短**，因为轮询要在同一天内看到批次的变化；而它必须存在，因为
+# 列表页 /new 每天更新一次、URL 只按分类（对所有用户/项目相同）→ 短 TTL 缓存跨用户共享。
+#: 新鲜源缓存时长。**短**，因为轮询要在同一天内看到批次的变化；而它必须存在，因为
 #: 不缓存就等于每次探测都打 arXiv——生产上正是这么被 429 的（日期判据恒假 →
 #: 从来没写进过缓存 → 每次都真打）。
 _RSS_CACHE_TTL = 10 * 60
-
-# 只接纳当天首发/跨列表公告；replace / replace-cross 是旧论文更新，跳过。
-_RSS_KEEP_TYPES = frozenset({"new", "cross"})
 
 _VERSION_RE = re.compile(r"v\d+$")
 _BOOLEAN_QUERY_TOKEN_RE = re.compile(
@@ -152,64 +142,6 @@ def _parse_entry(entry: ET.Element) -> dict[str, Any]:
     }
 
 
-def _rss_field(item: ET.Element, path: str) -> str | None:
-    node = item.find(path, _RSS_NS)
-    if node is None or node.text is None:
-        return None
-    return " ".join(node.text.split())
-
-
-def _parse_rss_item(item: ET.Element) -> dict[str, Any] | None:
-    """解析一条 RSS item；非 new/cross（旧论文更新）或缺关键字段时返回 None。"""
-    announce = _rss_field(item, "arxiv:announce_type")
-    if announce not in _RSS_KEEP_TYPES:
-        return None
-
-    # arxiv_id 优先从 guid（oai:arXiv.org:2607.15380v1）取末段，回退 link 的 /abs/ URL
-    guid = _rss_field(item, "guid")
-    raw_id = guid.rsplit(":", 1)[-1] if guid else (_rss_field(item, "link") or "")
-    arxiv_id = normalize_arxiv_id(raw_id)
-    title = _rss_field(item, "title") or ""
-    if not arxiv_id or not title:
-        return None
-
-    # description = "arXiv:<id> Announce Type: <t>  Abstract: <全文摘要>"，截 Abstract: 之后
-    desc = _rss_field(item, "description") or ""
-    abstract = desc.split("Abstract:", 1)[1].strip() if "Abstract:" in desc else None
-
-    creator = _rss_field(item, "dc:creator") or ""
-    authors = [{"name": n.strip()} for n in creator.split(",") if n.strip()] or None
-
-    categories = [c.text.strip() for c in item.findall("category") if c.text and c.text.strip()]
-
-    pubdate = _rss_field(item, "pubDate")
-    published: str | None = None
-    year: int | None = None
-    if pubdate:
-        try:
-            dt = parsedate_to_datetime(pubdate)
-            published = dt.isoformat()
-            year = dt.year
-        except (TypeError, ValueError, IndexError):
-            pass
-
-    return {
-        "arxiv_id": arxiv_id,
-        "title": title,
-        "abstract": abstract,
-        "authors": authors,
-        "published": published,
-        "updated": None,
-        "year": year,
-        "categories": categories,
-        "primary_category": categories[0] if categories else None,
-        "doi": None,
-        "url": ABS_URL_TEMPLATE.format(arxiv_id=arxiv_id),
-        "pdf_url": PDF_URL_TEMPLATE.format(arxiv_id=arxiv_id),
-        "announce_type": announce,
-    }
-
-
 def _parse_listing_date(raw: str | None) -> datetime | None:
     """把列表页页头的日期（``12 August 2026``）转成 UTC datetime。
 
@@ -226,30 +158,6 @@ def _parse_listing_date(raw: str | None) -> datetime | None:
             continue
     logger.warning("unrecognised arxiv listing date: %r", raw)
     return None
-
-
-def _parse_rss(text: str) -> tuple[list[dict[str, Any]], datetime | None]:
-    """解析 RSS，返回 (条目, **这一批的公告日期**)。
-
-    批次日期取 channel 的 ``pubDate``（arXiv 自己声明这批是哪天的公告）。有了它，
-    「抓早了拿到上一批」就能当场识别——否则那种失败完全无声：条目照样有几百条，
-    只是全都是昨天的，去重之后一条不进，而每一步都报成功。
-    """
-    root = ET.fromstring(text)
-    out: list[dict[str, Any]] = []
-    for item in root.findall(".//item"):
-        parsed = _parse_rss_item(item)
-        if parsed is not None:
-            out.append(parsed)
-    batch_at: datetime | None = None
-    channel = root.find("channel")
-    raw = channel.findtext("pubDate") if channel is not None else None
-    if raw:
-        try:
-            batch_at = parsedate_to_datetime(raw)
-        except (TypeError, ValueError, IndexError):
-            batch_at = None
-    return out, batch_at
 
 
 def build_search_query(
@@ -561,7 +469,7 @@ class ArxivClient:
 
         **失败原样上抛**（限流已在 :meth:`_request` 里重试过，走到这里是真失败）。
         这里曾经把任何异常吞成 []，于是「被限流」和「今天确实没有新论文」变成同一个
-        结果，谁都分不出来。每日池是所有文献库的唯一供给，一次静默的空池等于全实验室
+        结果，谁都分不出来。每日池是所有文献库的唯一供给，一次静默的空池等于所有文献库
         当天颗粒无收却无人知晓——由调用方按分类记录成败，见
         :func:`app.services.daily_feed.fetch_new_by_category`。
         失败不写缓存，下次重试。

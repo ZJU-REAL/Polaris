@@ -1,10 +1,10 @@
-"""共享方向库路由（P5c 只读 + P6 治理，docs-dev/workspace-ia-redesign.md §2/§5/§6/§7）。
+"""共享方向库路由（docs-dev/workspace-ia-redesign.md §2/§5/§6/§7）。
 
-方向库对全实验室可读：读端点只做登录校验、不做课题归属校验。
-治理端点（库定义编辑 / 策展人任命）按库级写权限校验：成员 ∪ 策展人 ∪ 平台 admin
-（策展人任命仅平台 admin）。集合级写/管理入口（ingest、论文管理、概念补建、全文
-索引重建等）本文件都有库作用域版本（独立库靠它们获得同等能力）；同名的 project
-作用域端点仍在 papers/wiki/concepts 路由里，鉴权同样接入库级写权限助手。
+读端点按库可见性校验（公共库全员可读，个人库仅创建者）。管理端点（库定义编辑等）
+按库级写权限校验：创建者 ∪ 无主库（见 services/libraries.can_manage_library，#614 后
+无 admin 旁路）。集合级写/管理入口（ingest、论文管理、概念补建、全文索引重建等）
+本文件都有库作用域版本（独立库靠它们获得同等能力）；同名的 project 作用域端点仍在
+papers/wiki/concepts 路由里，鉴权同样接入库级写权限助手。
 个人文献库路由在 ``app/api/library.py``（/me/library），勿混淆。
 """
 
@@ -112,7 +112,7 @@ async def _get_library(session: AsyncSession, library_id: uuid.UUID) -> Directio
 async def _get_managed_library(
     session: AsyncSession, library_id: uuid.UUID, user: User
 ) -> DirectionLibrary:
-    """治理端点统一入口：库存在 + 请求者有库级写权限（成员/策展人/admin），否则 403。"""
+    """管理端点统一入口：库存在 + 请求者有库级写权限（创建者 ∪ 无主库），否则 403。"""
     library = await _get_library(session, library_id)
     if not await libraries_service.can_manage_library(session, user=user, library=library):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_MANAGE_FORBIDDEN")
@@ -122,8 +122,9 @@ async def _get_managed_library(
 async def _get_visible_library(
     session: AsyncSession, library_id: uuid.UUID, user: User
 ) -> DirectionLibrary:
-    """只读端点统一入口：库存在 + 对请求者可见（P10：公共库全员，个人库仅归属人/admin）；
-    不可见按不存在处理（404），避免个人库经 id 泄漏内容。"""
+    """只读端点统一入口：库存在 + 对请求者可见（公共库与无主库全员，个人库仅创建者，
+    见 services/libraries.library_visible_to）；不可见按不存在处理（404），避免个人库经 id
+    泄漏内容。"""
     library = await _get_library(session, library_id)
     if not libraries_service.library_visible_to(library, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
@@ -331,8 +332,8 @@ async def delete_library(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> None:
-    """删库（P10）：个人库创建者本人或 admin 可删；公共库仅 admin 可删（否则 403）。
-    论文内容池行不动，成员行/概念/策展人一并清除。
+    """删库（P10）：创建者本人可删，无主库谁都能删（否则 403，口径见
+    services/libraries.can_delete_library）。论文内容池行不动，库内论文行/概念一并清除。
 
     仍有课题关联时默认拒绝（409 LIBRARY_HAS_TOPICS），带 ``?force=true`` 才会
     一并解除关联（不影响课题本身，课题只是失去这条语料来源）。
@@ -380,9 +381,9 @@ async def start_library_ingest(
     user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
-    """对某个方向库直接触发抓取（P9a）：可管理者（成员/策展人/admin）皆可。
+    """对某个方向库直接触发抓取（P9a）：可管理者（创建者 ∪ 无主库）皆可。
 
-    管理员创建的独立库（project_id 为空）由此入口驱动 ingest；起源课题的隐式库同时
+    独立建的库（project_id 为空）由此入口驱动 ingest；起源课题的隐式库同时
     带上 project 以兼容活动流/鉴权。互斥以库为准，超预算 409 拒绝。
     """
     library = await _get_managed_library(session, library_id, user)
@@ -484,7 +485,7 @@ async def get_library_paper(
 
     精确锁定 (library_id, paper_id)：相关度/状态/wiki 都是本库那份成员行，不做
     跨库归并（对照 :func:`papers_service.get_paper_for_user` 的确定性归并）。库不含
-    该论文 → 404。读端点全实验室可读（可见性同本文件其它读端点）。
+    该论文 → 404。读端点按库可见性可读（同本文件其它读端点）。
     """
     library = await _get_visible_library(session, library_id, user)
     view = await papers_service.get_library_paper_view(
@@ -654,7 +655,7 @@ async def export_library_citations(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> Response:
-    """库作用域引用导出：BibTeX / CSL-JSON（独立方向库也可用；读端点全实验室可读）。
+    """库作用域引用导出：BibTeX / CSL-JSON（独立方向库也可用；读端点按库可见性可读）。
 
     不传 ids 导出全库在库论文（缺省 status in compiled/included）；ids 指定时按 id
     精确导出（多选导出），非成员/回收站（excluded）不含。
@@ -691,7 +692,7 @@ async def export_library_obsidian(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> Response:
-    """库作用域 Obsidian 笔记库导出（zip；独立方向库也可用；读端点全实验室可读）。
+    """库作用域 Obsidian 笔记库导出（zip；独立方向库也可用；读端点按库可见性可读）。
 
     语料 = 本库在库论文（compiled/included）+ 本库概念；笔记只含请求者本人的。
     与课题版同一套 vault 结构，只是范围换成单个库。
@@ -711,7 +712,7 @@ async def export_library_obsidian(
 # ---- P9d 库级论文管理 / ingest 状态 / 图谱 / 对话 / 笔记（库工作台，含独立库） ----
 #
 # 说明：单篇写操作（改状态/软删召回/彻底删/重编译/标签）仍走 papers 路由的
-# paper 级端点（经库可见性解析成员行，可管理者含策展人/创建者/admin）；本节只补
+# paper 级端点（经库可见性解析库内论文行，可管理者=创建者 ∪ 无主库）；本节只补
 # 「集合级」库端点——课题版按 project 作用域，独立库靠这些端点获得同等管理能力。
 
 
@@ -915,7 +916,7 @@ async def library_graph(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> GraphResponse:
-    """库知识图谱：论文 / 作者 / 概念节点与关联边（确定性构建，不走 LLM；全实验室可读）。"""
+    """库知识图谱：论文 / 作者 / 概念节点与关联边（确定性构建，不走 LLM；按库可见性可读）。"""
     library = await _get_visible_library(session, library_id, user)
     data = await graph_service.library_graph(session, library_id=library.id)
     return GraphResponse(**data)
@@ -965,7 +966,7 @@ async def chat_with_library(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> StreamingResponse:
-    """库文献对话：跨库内文献检索 + stage=reading 流式回答（全实验室可读，费用记个人）。
+    """库文献对话：跨库内文献检索 + stage=reading 流式回答（按库可见性可读，费用记个人）。
 
     事件：``sources``（引用来源清单）→ ``delta``* → ``done``；错误 ``error`` 后关流。
     """

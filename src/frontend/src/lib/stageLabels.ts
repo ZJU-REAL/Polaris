@@ -1,6 +1,6 @@
 /**
  * LLM 环节（stage）的大白话名字。清单与后端 `app/core/llm/router.py` 的 STAGES
- * 一一对应（同一份 stage 标识符在设置页配路由、在实验室页看用量分布）。
+ * 一一对应（同一份 stage 标识符在设置页配路由、看用量分布）。
  *
  * 模块级常量只存 zh/en，渲染处再 tr()（见前端单语 + 中英切换约定）。
  */
@@ -28,8 +28,3 @@ export const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   writing: { zh: '论文撰写', en: 'Paper writing' },
   review: { zh: '论文评审', en: 'Paper review' },
 };
-
-/** 取环节的显示名；未知 stage（如历史用量里的旧标识符）回退为标识符本身。 */
-export function stageLabel(stage: string): { zh: string; en: string } {
-  return STAGE_LABELS[stage] ?? { zh: stage, en: stage };
-}

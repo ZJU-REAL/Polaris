@@ -6,7 +6,7 @@
 """
 
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,20 +55,6 @@ async def upsert_wiki(
     set_committed_value(paper, "wiki", wiki)
     return wiki
 
-
-async def wikis_for(
-    session: AsyncSession, paper_ids: Sequence[uuid.UUID]
-) -> dict[uuid.UUID, PaperWiki]:
-    """paper_id → 解读行（没有解读的不在结果里）；列表路径批量取用。"""
-    ids = list(paper_ids)
-    if not ids:
-        return {}
-    rows = (
-        (await session.execute(select(PaperWiki).where(PaperWiki.paper_id.in_(ids))))
-        .scalars()
-        .all()
-    )
-    return {row.paper_id: row for row in rows}
 
 
 async def content_for(session: AsyncSession, paper_id: uuid.UUID) -> str | None:

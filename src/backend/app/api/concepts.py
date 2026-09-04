@@ -123,7 +123,7 @@ async def get_concept(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> ConceptDetail:
-    """概念详情（登录即可读；P5c 方向库全实验室可读）。
+    """概念详情（登录即可读；方向库按可见性可读）。
 
     词条本身（名称/定义/slug）永远是同一份，按库变化的只有「关联论文」：
     从库的上下文点进来（带 library_id）就只列该库里关联它的论文，从池级上下文

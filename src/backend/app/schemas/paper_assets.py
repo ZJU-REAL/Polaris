@@ -2,12 +2,8 @@
 
 import uuid
 from datetime import datetime
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
-
-AssetSource = Literal["oa", "upload", "extension", "arxiv", "manual", "unknown"]
-SharingScope = Literal["private", "library", "public"]
+from pydantic import BaseModel, ConfigDict
 
 
 class PaperAssetRead(BaseModel):
@@ -42,14 +38,6 @@ class AssetGrantRead(BaseModel):
     revoked_by: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
-
-
-class AssetCreate(BaseModel):
-    source: AssetSource = "upload"
-    source_locator: str | None = Field(default=None, max_length=2048)
-    identity_key: str | None = Field(default=None, max_length=512)
-    identity_status: str = Field(default="verified", max_length=16)
-    sharing_scope: SharingScope = "private"
 
 
 class AssetReuseRequest(BaseModel):

@@ -45,7 +45,7 @@ async def list_gates(
 
 
 async def _get_decidable_gate(session: AsyncSession, gate_id: uuid.UUID, user: User) -> Gate:
-    """成员（及平台管理员）才可见/可审批；够不着的人一律 404（不泄露存在性）。"""
+    """课题主人才可见/可审批（见 gates.can_access_project）；够不着的人一律 404（不泄露存在性）。"""
     gate = await gates_service.get_gate(session, gate_id)
     if gate is None or not await gates_service.can_access_project(
         session, gate.project_id, user.id

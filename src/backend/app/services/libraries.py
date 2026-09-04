@@ -89,13 +89,6 @@ async def get_library_for_project(
     return libraries[0] if libraries else None
 
 
-async def get_library_id_for_project(
-    session: AsyncSession, project_id: uuid.UUID
-) -> uuid.UUID | None:
-    library = await get_library_for_project(session, project_id)
-    return library.id if library else None
-
-
 async def get_source_library_ids(session: AsyncSession, topic_id: uuid.UUID) -> list[uuid.UUID]:
     """课题关联的全部库 id（按关联建立时间；空=无语料）。"""
     stmt = (
@@ -305,7 +298,7 @@ def user_visible_paper_stmt(user_id: uuid.UUID) -> Select:
     )
 
 
-# ---- 共享方向库读视图（P5c：全实验室可读，docs-dev/workspace-ia-redesign.md §2/§5） ----
+# ---- 共享方向库读视图（P5c：公共库全员可读，docs-dev/workspace-ia-redesign.md §2/§5） ----
 
 
 def _last_synced_of(ingest_state: Any) -> Any:
@@ -365,11 +358,6 @@ async def _library_stats(
     )
     concept_counts = {lib_id: int(count) for lib_id, count in concept_rows.all()}
     return paper_counts, last_compiled, concept_counts
-
-
-async def _my_project_ids(session: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
-    rows = await session.execute(select(Project.id).where(Project.owner_id == user_id))
-    return set(rows.scalars().all())
 
 
 async def _my_linked_library_ids(session: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
@@ -526,16 +514,6 @@ async def source_libraries_overview(
     ]
 
 
-# ---- AI 一键生成收录设置（建库/编辑弹窗用；同步 LLM→JSON，失败给空兜底不抛） ----
-
-_SUGGEST_MAX_TOKENS = 2048
-_SUGGEST_MAX_CATEGORIES = 12
-_SUGGEST_MAX_EXCLUDES = 20
-_SUGGEST_MAX_KEYWORDS = 30
-_SUGGEST_MAX_RUBRIC = 6
-_SUGGEST_MAX_ANCHORS = 8
-
-# 标记（POLARIS_LIBRARY_SUGGEST）供 fake provider / 日志识别本次调用用途。
 async def create_library(
     session: AsyncSession,
     *,
@@ -718,10 +696,11 @@ async def delete_library(
     user: User,
     force: bool = False,
 ) -> None:
-    """删库（P10）：公共库仅平台 admin；个人库创建者本人或 admin 可删（无权抛
-    ``LibraryDeleteForbiddenError`` → 403）。论文内容池行不动；成员行/概念/策展人/
-    课题关联行随库一并清除（DB ``ondelete=CASCADE``）。有课题关联且未 ``force`` → 拒绝
-    （``LibraryHasTopicsError``，路由映射 409，提示先解绑或带 force 确认）。
+    """删库：创建者本人可删，无主库谁都能删（口径同 ``can_delete_library``，#614 后无
+    admin 旁路；无权抛 ``LibraryDeleteForbiddenError`` → 403）。论文内容池行不动；
+    库内论文行/概念/课题关联行随库一并清除（DB ``ondelete=CASCADE``）。
+    有课题关联且未 ``force`` → 拒绝（``LibraryHasTopicsError``，路由映射 409，
+    提示先解绑或带 force 确认）。
     """
     if not can_delete_library(library, user):
         raise LibraryDeleteForbiddenError(str(library.id))

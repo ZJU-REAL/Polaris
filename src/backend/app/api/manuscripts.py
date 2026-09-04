@@ -139,7 +139,7 @@ async def upload_template(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> TemplateInfo:
-    """上传 zip 建模板。给 project_id → 该研究方向私有（需成员）；否则全平台。"""
+    """上传 zip 建模板。给 project_id → 该研究方向私有（需本人课题）；否则全平台。"""
     if project_id is not None:
         project = await projects_service.get_project(
             session, project_id=project_id, user_id=user.id

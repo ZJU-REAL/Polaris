@@ -21,8 +21,8 @@ The literature stage leaves you with a library of compiled wiki pages and a conc
   full research proposal through a plan–execute–verify loop, with a novelty check against the
   library and external sources and an internal review-and-revise pass.
 - **Idea Review** runs a debate tournament: AI reviewer personas argue pairs of ideas pro and con, a
-  judge picks winners, and Elo ratings accumulate into a leaderboard. Lab members comment live, and
-  their comments become context for the next debates.
+  judge picks winners, and Elo ratings accumulate into a leaderboard. You can comment live, and
+  your comments become context for the next debates.
 
 Ideas live in a per-topic **candidate pool** and move through a selection funnel:
 `candidate → under review → promoted` (or `rejected`). Each idea also has a **depth** — `sketch`
@@ -208,9 +208,9 @@ under-rated, say why *before* the next tournament run.
 
 Promotion is the human checkpoint between "highly ranked" and "worth spending compute on":
 
-1. On the leaderboard or the idea detail page, click **Promote** (topic owner or admin only). This
+1. On the leaderboard or the idea detail page, click **Promote** (topic owner only). This
    creates an **Idea promotion approval** — the idea itself does not change yet.
-2. Any topic member can decide the approval (**Approve** / **Reject**, with an optional comment)
+2. The topic owner decides the approval (**Approve** / **Reject**, with an optional comment)
    from the approvals drawer. Approval flips the idea to `promoted`.
 3. A promoted idea unlocks **Start experiment**, which opens the [Experiment Lab](experiments.md)
    with the idea preloaded — an experiment can only be created from a promoted idea.

@@ -14,7 +14,6 @@ from typing import Any, Literal
 from app.core.llm.base import Message
 from app.services.literature.discovery_ranking import (
     RankedCandidate,
-    candidate_identity,
     merge_candidates,
     normalized_score_weights,
 )
@@ -475,8 +474,3 @@ async def model_rerank(
             "error": f"{type(exc).__name__}: {exc}"[:500],
         }
 
-
-def retrieval_identity(candidate: Mapping[str, Any]) -> str:
-    """Expose the stable identity for diagnostics without duplicating normalization."""
-
-    return candidate_identity(candidate)

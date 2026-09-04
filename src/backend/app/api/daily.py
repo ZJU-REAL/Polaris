@@ -1,6 +1,6 @@
 """每日新论文池路由：/daily。
 
-全实验室共享：登录即可浏览/点赞/收录（收录目标各自校验写权限）；
+全部署共享：登录即可浏览/点赞/收录（收录目标各自校验写权限）；
 订阅分类管理与手动刷新仅 admin。业务逻辑在 services/daily_feed.py。
 """
 
@@ -179,7 +179,7 @@ async def export_daily_citations(
     """导出每日新论文的引用：BibTeX / CSL-JSON。
 
     范围 = 当前滚动窗口内的每日论文；ids 指定时按 id 精确导出（窗口外的 id 落选）。
-    每日推送全实验室共享，登录即可导出。
+    每日推送全部署共享，登录即可导出。
     """
     paper_ids: list[uuid.UUID] | None = None
     if ids:
@@ -332,7 +332,7 @@ async def get_sync_status(
 ) -> DailySyncStatus:
     """每日论文池的同步状况（全员可读）。
 
-    池子是所有文献库的唯一供给，抓取失败会让全实验室当天颗粒无收——所以这个状态要
+    池子是所有文献库的唯一供给，抓取失败会让所有文献库当天颗粒无收——所以这个状态要
     摆在每日页上，而不是只留在任务日志里。
     """
     return DailySyncStatus(**await daily_service.sync_status(session))
@@ -494,7 +494,7 @@ async def fetch_entry_pdf(
     """把这篇每日论文的 PDF 下到平台（幂等），下完即可在线阅读。
 
     每日池论文通常不属于任何库/书架，走不了 /papers/{id}/fetch-pdf 的成员可见性兜底，
-    故按 entry 授权单开一条；每日推送全实验室共享，登录即可。
+    故按 entry 授权单开一条；每日推送全部署共享，登录即可。
     """
     try:
         await daily_service.fetch_entry_pdf(session, entry_id=entry_id, user_id=user.id)

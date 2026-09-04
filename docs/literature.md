@@ -17,7 +17,7 @@ duplicated:
 | Collection | Where in the UI | What it is |
 | --- | --- | --- |
 | **Direction library** | Libraries | A research direction with an inclusion config; the only collection that *builds* content (score → fetch → compile) |
-| **Daily feed** | Daily Papers | The lab-wide feed of each day's new arXiv papers — the single arXiv entry point |
+| **Daily feed** | Daily Papers | The deployment-wide feed of each day's new arXiv papers — the single arXiv entry point |
 | **Topic shelf** | Related Work (per topic) | A topic's curated reading list |
 | **Personal library** | My Library | Your saved papers and browsing history |
 
@@ -56,12 +56,11 @@ question, the subject of study, the sub-problems you care about, and the method 
 explicitly don't want — each with checkbox options plus free text, then drafts the statement for
 you. Accept it with **Use this statement**.
 
-A new library is **personal**: usable immediately, visible to you and admins only. To share it
-lab-wide, use **Request to make public**; an admin approves or rejects the request, and the library
-stays usable while pending. Admins can also manage **Library managers** (extra people with manage
-rights) and each library carries an optional **Monthly AI budget** in tokens — syncs stop with a
-clear message when it is spent, and the **AI usage this month** card in **Library config** shows
-where you stand.
+A new library is **personal**: usable immediately, visible to you only. Its creator can flip it
+to **public** (visible to every account on the deployment) directly in **Library config** — the
+old request-and-approval flow is gone. Each library carries an optional **Monthly AI budget** in
+tokens — syncs stop with a clear message when it is spent, and the **AI usage this month** card in
+**Library config** shows where you stand.
 
 ### Inclusion settings
 
@@ -83,7 +82,7 @@ direction:
 
 ### The daily feed
 
-**Daily Papers** is the lab-wide feed of each day's new arXiv announcements (`new` and `cross`
+**Daily Papers** is the deployment-wide feed of each day's new arXiv announcements (`new` and `cross`
 listings) in the categories an admin subscribes (default `cs.AI`, `cs.CL`, `cs.CV`). A worker probes
 arXiv from a configurable time each day (default 01:30 UTC) until the day's batch actually appears;
 weekends show as quiet because arXiv does not publish. Feed papers enter the content pool as
@@ -96,7 +95,7 @@ land, and each library filters the pool. Entries roll off after a retention wind
 admin-configurable 1–90).
 
 On the page you can filter by day, category, and announcement type, search the pool (keyword or
-semantic), like papers (likes are lab-wide, with a likers preview), read the abstract, trigger a
+semantic), like papers (likes are deployment-wide, with a likers preview), read the abstract, trigger a
 one-off **Compile** for an **AI intro**, and — the main action — **Add to libraries**: a tree modal
 that distributes selected papers into **Shared libraries**, **Topic related work** shelves, and
 **My library** in one click. Collected papers are enriched in the background (PDF, full text,

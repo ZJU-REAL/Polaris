@@ -67,7 +67,7 @@ All four reference the same pool paper; they differ in ownership, scope, and wha
 
 | Collection | Table / model | Scope & ownership | Per-row state |
 | --- | --- | --- | --- |
-| **Direction library** | `library_papers` / `LibraryPaper` | A public lab-wide library or a personal one; has a definition, anchors, scoring rubric, ingest cadence | `status` (`candidate`→`scored`/`excluded`→`fetched`→`compiled`; `included` = manual), `relevance_score`, `tldr_note`, `trash_reason`, `scored_at`, tags |
+| **Direction library** | `library_papers` / `LibraryPaper` | A public deployment-wide library or a personal one; has a definition, anchors, scoring rubric, ingest cadence | `status` (`candidate`→`scored`/`excluded`→`fetched`→`compiled`; `included` = manual), `relevance_score`, `tldr_note`, `trash_reason`, `scored_at`, tags |
 | **Topic related-work shelf** | `topic_papers` / `TopicPaper` | A topic's reading list ("相关研究") | `source_library_id`, `note`, `added_by`, `trashed_at` / `trashed_by` |
 | **Personal library** | `user_library_entries` / `UserLibraryEntry` | One user's saved papers + browsing history | `dedup_key`, `saved` + `saved_at`, `trashed_at`, snapshot of title/authors/etc., `last_paper_id` (soft link to the live pool paper, `SET NULL`), `note`, `visit_count` / `last_visited_at` |
 | **Daily feed** | `daily_feed_entries` / `DailyFeedEntry` | Lab-wide daily arXiv feed, rolling 7-day window (`DAILY_FEED_RETENTION_DAYS = 7`) | `feed_date`, `primary_category`, `categories`, `announce_type` (`new`/`cross`) |
@@ -90,20 +90,18 @@ Key relationships:
 
 ### Who owns and manages a direction library
 
-A library is personal by default and can be promoted to public (lab-wide) through an admin-approved
-request; `direction_libraries.is_public` and `status` (`pending` / `active` / `rejected`) carry that.
-Billing follows the same line: a public library's ingest uses the global key, a personal one is billed
-to its creator.
+A library is personal by default; its creator can make it public (visible to every account)
+directly — the approval flow was removed in #593 and the leftover `status` / `review_note` columns
+in #619. `direction_libraries.is_public` is all that is left.
 
 **Management rights no longer follow the origin topic.** `can_manage_library()` in
-`services/libraries.py` accepts exactly three identities:
+`services/libraries.py` accepts exactly two identities:
 
-1. platform admins (`users.role == "admin"`);
-2. the creator (`direction_libraries.submitted_by`);
-3. curators (`direction_library_curators`).
+1. the creator (`direction_libraries.submitted_by`);
+2. anyone, for unowned legacy libraries (`submitted_by` null) — with roles gone (#614) there is no
+   admin to fall back on, and a library nobody can manage would be worse.
 
-Being a member of the topic the library was originally created from grants nothing. When that rule
-changed, a migration backfilled the affected people as curators, so nobody lost access.
+Being linked to a topic grants nothing (curators and the admin bypass were removed in #593/#614).
 
 Two consequences worth keeping straight:
 
@@ -120,8 +118,8 @@ Two consequences worth keeping straight:
   first-associated one, else `None` — but it no longer creates anything.
 
 Topic-scoped literature endpoints (`/projects/{id}/...`) use a different gate,
-`get_managed_project()`: topic members pass, plus admins, plus curators of the topic's origin
-library. So topic membership still lets you manage papers *through the topic*, just not through
+`get_managed_project()`: the topic's owner passes, plus the creator of the topic's implicit origin
+library. So owning the topic still lets you manage papers *through the topic*, just not through
 `/libraries/{id}/...`.
 
 ## Paper lifecycle
@@ -312,18 +310,3 @@ Removal is layered:
 This is why a truly single-collection paper is fully removed (re-adding re-downloads it), while a
 shared one only loses one membership.
 
-## Lab-wide counts
-
-`GET /lab/stats` (`api/lab.py`, service `services/lab.py::lab_stats`) is the single read model behind
-the lab workspace's overview. It returns `libraries {total, public, personal}`, `papers {pool_total,
-library_members_deduped, compiled}`, `concepts {total}`, `chunks {papers_with_chunks, total_chunks,
-chunks_with_embedding, vector_search_supported}`, `vectors {papers_with_embedding, papers_total}` and
-`leaderboard_enabled`. Everything except `pool_total` is scoped to the libraries the caller can see;
-`pool_total` is the global content-pool count, which is why it is usually larger than the sum of the
-per-library numbers.
-
-The same router carries three siblings: `GET /lab/usage?days=` (token usage over time),
-`GET /lab/usage/leaderboard?days=&limit=` (`403 LEADERBOARD_DISABLED` for non-admins when the
-`lab_leaderboard_enabled` setting is off), and `GET /lab/graph?library_id=` (the concept graph for one
-library, `404 LIBRARY_NOT_FOUND` if it is not visible to the caller). All four are read-only and
-require login.

@@ -63,7 +63,7 @@ the HTTP surface thin and makes the business logic reusable from both request ha
 tasks.
 
 - `api/` exposes REST endpoints (all under `/api`), authenticated with JWT via fastapi-users, with
-  RBAC and invite-code registration. Project-scoped endpoints verify membership.
+  invite-code registration. Project-scoped endpoints verify ownership.
 - `services/` holds the actual work: literature ingest, wiki compilation, idea forge, review, SSH
   experiment execution, manuscript editing and compilation, skills, and so on.
 - `models/` holds the SQLAlchemy 2 models. Migrations are managed with Alembic.

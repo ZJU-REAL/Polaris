@@ -29,7 +29,7 @@ _ABSTRACT_CHARS = 400
 
 
 async def _require_user(session: Any, ctx: ToolContext) -> User:
-    """库可见性判定要完整 User（角色/归属/策展人），ToolContext 只带 user_id。"""
+    """库可见性判定要完整 User（归属判定），ToolContext 只带 user_id。"""
     user = await session.get(User, ctx.user_id) if ctx.user_id is not None else None
     if user is None:
         raise ValueError("该工具需要用户身份（系统内部调用不可用）")

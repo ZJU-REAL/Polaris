@@ -1,29 +1,12 @@
 """阅读器、MCP 和 AI 产物共用的证据定位 DTO。"""
 
 import uuid
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 EvidenceAnchorType = Literal["sentence", "paragraph", "chunk", "paper"]
 EvidenceFallback = Literal["exact", "sentence", "paragraph", "chunk", "paper"]
-
-
-class EvidenceAnchorRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    paper_id: uuid.UUID
-    chunk_id: uuid.UUID | None
-    source: str
-    content_revision: str
-    anchor_key: str
-    anchor_type: EvidenceAnchorType
-    seq: int | None
-    paragraph_index: int | None
-    sentence_index: int | None
-    quoted_text: str
-    locator: dict[str, Any] | None
 
 
 class EvidenceResolution(BaseModel):

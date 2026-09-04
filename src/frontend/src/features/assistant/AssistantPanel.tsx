@@ -137,9 +137,6 @@ function errorText(detail: string): string {
   if (detail === 'LLM_NOT_CONFIGURED') {
     return tr('还没配可用的模型，去设置里配一个。', 'No usable model is configured yet — set one up in settings.');
   }
-  if (detail === 'QUOTA_EXCEEDED') {
-    return tr('你的 AI 用量已经用完了。', 'You have used up your AI quota.');
-  }
   return detail;
 }
 

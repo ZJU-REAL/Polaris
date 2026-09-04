@@ -421,9 +421,6 @@ input {
 .card-pad { padding: 20px 22px; }
 .hoverable { transition: box-shadow 0.14s, border-color 0.14s, transform 0.14s; cursor: pointer; }
 .hoverable:hover { box-shadow: var(--shadow-pop); border-color: var(--border-2); }
-/* 列表行 hover（分隔线式列表，如文献追踪论文库 / 我的文献库） */
-.list-hover { transition: background 0.12s; }
-.list-hover:hover { background: var(--surface-2); }
 
 /* pills / badges */
 .pill {
@@ -561,7 +558,7 @@ input {
 .row { display: flex; align-items: center; }
 .col { display: flex; flex-direction: column; }
 .gap6 { gap: 6px; } .gap8 { gap: 8px; } .gap10 { gap: 10px; } .gap12 { gap: 12px; }
-.gap14 { gap: 14px; } .gap16 { gap: 16px; } .gap20 { gap: 20px; } .gap24 { gap: 24px; }
+.gap14 { gap: 14px; } .gap16 { gap: 16px; } .gap20 { gap: 20px; }
 .wrap { flex-wrap: wrap; }
 
 /* ============================================================
@@ -770,29 +767,6 @@ select.input { padding-right: 8px; cursor: pointer; }
 .chip.on { background: var(--accent-soft); color: var(--accent-text); border-color: var(--accent-soft-2); }
 
 /* ============================================================
-   Wizard step indicator
-   ============================================================ */
-.wiz-steps { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
-.wiz-step {
-  display: flex; align-items: center; gap: 7px;
-  padding: 6px 12px 6px 8px; border-radius: 9px;
-  border: 0.5px solid var(--border); background: var(--surface);
-  opacity: 0.65; user-select: none;
-}
-.wiz-step.on { opacity: 1; border-color: var(--accent-soft-2); background: var(--accent-soft); }
-.wiz-step.done { opacity: 0.9; }
-.wiz-no {
-  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--surface-3); color: var(--text-3); font-size: 10.5px; font-weight: 700;
-}
-.wiz-step.on .wiz-no { background: var(--accent); color: #fff; }
-.wiz-step.done .wiz-no { background: var(--ok-bg); color: var(--ok-tx); }
-.wiz-label { font-size: 12px; font-weight: 600; color: var(--text-2); }
-.wiz-step.on .wiz-label { color: var(--accent-text); }
-.wiz-label .en { display: block; font-size: 10px; font-weight: 400; color: var(--text-4); }
-
-/* ============================================================
    Timeline (voyage steps)
    ============================================================ */
 .tl { display: flex; flex-direction: column; }
@@ -804,16 +778,6 @@ select.input { padding-right: 8px; cursor: pointer; }
   font-size: 11.5px; font-weight: 700; border: 0.5px solid var(--border);
 }
 .tl-line { flex: 1; width: 2px; background: var(--border-2); margin-top: 4px; border-radius: 2px; }
-
-/* ============================================================
-   Voyage state machine bar
-   ============================================================ */
-.sm-bar { display: flex; align-items: center; width: 100%; }
-.sm-node {
-  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 12px;
-  border-radius: 13px; font-size: 12px; font-weight: 650; white-space: nowrap; flex-shrink: 0;
-}
-.sm-link { display: block; flex: 1; height: 2px; margin: 0 8px; border-radius: 2px; min-width: 14px; }
 
 /* ============================================================
    Table
@@ -1261,7 +1225,6 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 .paper-reader-eyebrow { font-size: 11px; color: var(--accent-text); letter-spacing: 0.04em; margin-bottom: 10px; }
 .paper-reader-header h1 { font-size: 27px; font-weight: 700; line-height: 1.28; letter-spacing: -0.015em; margin: 0 0 12px; color: var(--text); }
 .paper-reader-authors { font-size: 13px; color: var(--text-2); line-height: 1.6; }
-.paper-reader-arxiv { font-size: 11px; color: var(--text-4); margin-top: 8px; }
 .paper-reader-tldr {
   background: var(--accent-soft); border-radius: 12px; padding: 16px 20px; margin-bottom: 30px;
 }
@@ -1726,10 +1689,9 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   .dash-stats { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* 统计卡与流水线节点的宽度下限：宽度低于此值时中文会被压成竖排单字，
+/* 统计卡的宽度下限：宽度低于此值时中文会被压成竖排单字，
    那已经不是「紧凑」而是读不了。 */
 .dash-stats > * { min-width: 132px; }
-.pipeline-node { min-width: 92px; }
 
 
 /* 运行中的呼吸灯。绿色 + 呼吸而不是转圈：它要在余光里可见，又不能像 spinner 那样

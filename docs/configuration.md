@@ -18,7 +18,7 @@ noted below.
 | `POLARIS_ENV` | Runtime environment. `prod` forces safe defaults (the fake LLM fallback is structurally disabled, CORS is restricted). | `dev` (or `prod`) |
 | `POLARIS_SECRET_KEY` | Signs JWT auth tokens. Generate with `openssl rand -hex 32`. | `change-me-random-64-chars` |
 | `POLARIS_ENCRYPTION_KEY` | Fernet key that encrypts SSH credentials at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Empty in dev derives a key from the secret key; set it explicitly for production. Do not leave the template placeholder — it is not a valid Fernet key. | `change-me-fernet-key` |
-| `POLARIS_INVITE_CODE` | Static fallback invite code for registration. Admin-managed registration codes (with expiry, usage limits, and preset directions) are created in the app under Admin → Codes; this static code always keeps working so the admin cannot be locked out. | `polaris-lab` |
+| `POLARIS_INVITE_CODE` | The invite code required to register (the in-app registration-code system was removed in #585). | `polaris-lab` |
 | `POLARIS_SESSION_LIFETIME_SECONDS` | Login session lifetime in seconds. There is no refresh-token mechanism, so the default is long. | `2592000` (30 days) |
 | `POLARIS_CORS_ORIGINS` | Extra allowed cross-origin frontend origins in `prod`, comma-separated. Only needed when the frontend is served from a different domain than the API; the web production path (nginx same-origin reverse proxy) does not need it, and the desktop client's `app://polaris` origin is always whitelisted. | (empty), e.g. `https://polaris.example.edu` |
 | `POLARIS_LLM_FAKE_FALLBACK` | Fall back to the built-in fake LLM provider when no route is configured (key-less demos and tests only). Off by default; when off, AI features return `LLM_NOT_CONFIGURED` instead of fabricated content. Ignored (forced off) when `POLARIS_ENV=prod`. | (unset) |
@@ -29,9 +29,7 @@ noted below.
 | `POLARIS_DATABASE_URL` | Async SQLAlchemy database URL. Falls back to local SQLite when unset, which enables a no-Docker quick start; production uses Postgres with asyncpg. | `postgresql+asyncpg://polaris:polaris@postgres:5432/polaris` (default when unset: `sqlite+aiosqlite:///./polaris_dev.db`) |
 | `POLARIS_DB_POOL_SIZE` / `POLARIS_DB_MAX_OVERFLOW` / `POLARIS_DB_POOL_TIMEOUT` | SQLAlchemy connection pool sizing. The defaults are tuned for the worker's concurrency (parallel scoring sessions per voyage); shrink them only if your Postgres `max_connections` is low. | `20` / `50` / `30` |
 | `POLARIS_REDIS_URL` | Redis URL for the ARQ broker and cache. | `redis://redis:6379/0` (local default `redis://localhost:6379/0`) |
-| `POLARIS_OPENAI_COMPAT_BASE_URL` | Base URL of the OpenAI-compatible provider. | `https://api.deepseek.com/v1` |
-| `POLARIS_OPENAI_COMPAT_API_KEY` | API key for the OpenAI-compatible provider. | (empty) |
-| `POLARIS_ANTHROPIC_API_KEY` | API key for Anthropic. | (empty) |
+| `POLARIS_OPENAI_COMPAT_BASE_URL` | Fallback base URL for OpenAI-compatible model routes that leave `base_url` empty. Providers and API keys themselves are configured in-app (Manage → LLM admin) and stored in the database. | `https://api.deepseek.com/v1` |
 | `POLARIS_S2_API_KEY` | Semantic Scholar API key. Optional; without it rate limits are stricter. | (empty) |
 | `POLARIS_OPENALEX_MAILTO` | Contact email for the OpenAlex polite pool. | `polaris@example.org` |
 | `POLARIS_DATA_DIR` | Directory for PDFs and generated artifacts. In containers this is set to `/srv/data` and bind-mounted; keep it out of the code tree. | `./data` (containers: `/srv/data`) |

@@ -65,10 +65,6 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
     },
     onError: (e) => {
       if (e instanceof ApiError) {
-        if (e.status === 403 && e.message.includes('ADMIN_REQUIRED_FOR_GLOBAL')) {
-          toast(tr('设为全平台模板需要平台管理员', 'Making a template global requires a platform admin'), 'error');
-          return;
-        }
         if (e.status === 422) {
           toast(tr('模板包无效：zip 内需包含 .tex 文件', 'Invalid template: the zip must contain a .tex file'), 'error');
           return;

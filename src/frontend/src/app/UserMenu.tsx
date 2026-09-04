@@ -8,7 +8,7 @@ import { useAuth } from './auth';
 import { api, type UserRead } from '../lib/api';
 import { tr } from '../lib/i18n';
 
-/* 侧栏底部用户区：点头像弹出菜单（关于 / 设置 / 退出登录）。邀请协作者入口在研究方向详情页。 */
+/* 侧栏底部用户区：点头像弹出菜单（关于 / 设置 / 退出登录）。 */
 
 /* —— 关于弹窗：产品简介 + 开源仓库链接。只讲产品，不带机构品牌 —— */
 function AboutModal({ open, onClose }: { open: boolean; onClose: () => void }) {
