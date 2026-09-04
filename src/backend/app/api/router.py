@@ -16,6 +16,7 @@ from app.api import (
     gates,
     health,
     highlights,
+    hypotheses,
     ideas,
     ingest,
     integration_tokens,
@@ -53,6 +54,7 @@ api_router.include_router(users_profile.router)
 api_router.include_router(projects.router)
 api_router.include_router(gates.router)
 api_router.include_router(voyages.router)
+api_router.include_router(hypotheses.router)
 api_router.include_router(admin_llm.router)
 api_router.include_router(admin_settings.router)
 api_router.include_router(papers.router)

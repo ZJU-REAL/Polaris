@@ -12,6 +12,7 @@ from app.models.email_code import EmailVerificationCode
 from app.models.evidence import PaperEvidenceAnchor
 from app.models.experiment import Experiment, ExperimentRun
 from app.models.gate import Gate
+from app.models.hypothesis import HypothesisNode
 from app.models.idea import Idea
 from app.models.integration_token import IntegrationToken
 from app.models.interdisciplinary import (
@@ -84,6 +85,7 @@ __all__ = [
     "Experiment",
     "ExperimentRun",
     "Gate",
+    "HypothesisNode",
     "Idea",
     "InterdisciplinaryResearchProfile",
     "InterdisciplinaryResearchProfileVersion",
