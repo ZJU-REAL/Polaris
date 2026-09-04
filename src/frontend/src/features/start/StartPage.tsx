@@ -37,9 +37,9 @@ const ENTRIES: { to: string; icon: IconName; zh: [string, string]; en: [string, 
   },
   {
     to: '/lab',
-    icon: 'flask',
-    zh: ['实验室工作台', '实验室资源概况，以及全部 AI 任务的运行情况。'],
-    en: ['Lab workbench', 'Lab resources at a glance, plus every AI task and how it is running.'],
+    icon: 'compass',
+    zh: ['文献任务', '建库、增量更新与每日新论文等课题外任务的运行情况。'],
+    en: ['Library tasks', 'How library builds, syncs and the daily paper feed are running.'],
   },
   {
     to: '/library',

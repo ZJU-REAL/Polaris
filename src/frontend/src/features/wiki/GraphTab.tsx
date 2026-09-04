@@ -1291,27 +1291,20 @@ export interface GraphTabProps {
   pid?: string;
   /** 独立库作用域：给定时图谱走 /libraries/{id}/graph */
   libraryId?: string;
-  /** 实验室作用域：走 /lab/graph（全部可见文献库的并集；同时给 libraryId 则只看那一个库） */
-  scope?: 'lab';
   onOpenPaper: (id: string) => void;
   onOpenConcept: (id: string) => void;
 }
 
-export function GraphTab({ pid, libraryId, scope, onOpenPaper, onOpenConcept }: GraphTabProps) {
+export function GraphTab({ pid, libraryId, onOpenPaper, onOpenConcept }: GraphTabProps) {
   const [view, setView] = useState<GraphView>('trends');
   const [focusConceptId, setFocusConceptId] = useState('');
-  // 后端不再截断论文，全实验室能一次给上千个节点：网络图超过阈值先问一句再画
+  // 大库能一次给上千个节点：网络图超过阈值先问一句再画
   const [forceNetwork, setForceNetwork] = useState(false);
-  const scopeId = scope === 'lab' ? `lab:${libraryId ?? 'all'}` : (libraryId ?? pid ?? '');
+  const scopeId = libraryId ?? pid ?? '';
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['project-graph', scopeId],
-    queryFn: () =>
-      scope === 'lab'
-        ? api.getLabGraph(libraryId)
-        : libraryId
-          ? api.getLibraryGraph(libraryId)
-          : api.getProjectGraph(scopeId),
+    queryFn: () => (libraryId ? api.getLibraryGraph(libraryId) : api.getProjectGraph(scopeId)),
     retry: false,
     staleTime: 60_000,
   });
@@ -1321,12 +1314,6 @@ export function GraphTab({ pid, libraryId, scope, onOpenPaper, onOpenConcept }: 
     setFocusConceptId('');
     setForceNetwork(false);
   }, [scopeId]);
-
-  // 实验室尺度没有网络/时间线这两个视图；状态若停在上面（组件复用、以后改默认值）
-  // 会渲染出一个标签栏上根本选不中的视图，兜回趋势。
-  useEffect(() => {
-    if (scope === 'lab' && (view === 'network' || view === 'timeline')) setView('trends');
-  }, [scope, view]);
 
   const model = useMemo(() => (data ? buildModel(data, focusConceptId) : null), [data, focusConceptId]);
 
@@ -1359,17 +1346,10 @@ export function GraphTab({ pid, libraryId, scope, onOpenPaper, onOpenConcept }: 
           compact
           icon="layers"
           title={tr('还没有可展示的网络', 'No network to show yet')}
-          desc={
-            scope === 'lab'
-              ? tr(
-                  '你能看到的文献库里还没有通过筛选并编译过的论文。',
-                  'None of the libraries you can see has screened and compiled papers yet.',
-                )
-              : tr(
-                  '先运行初始建库，让论文通过筛选并完成编译。',
-                  'Run the initial library build so papers get screened and compiled.',
-                )
-          }
+          desc={tr(
+            '先运行初始建库，让论文通过筛选并完成编译。',
+            'Run the initial library build so papers get screened and compiled.',
+          )}
         />
       </div>
     );
@@ -1382,21 +1362,12 @@ export function GraphTab({ pid, libraryId, scope, onOpenPaper, onOpenConcept }: 
       {/* —— 视图 + 子主题工具栏 —— */}
       <div className="row gap8 wrap" style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)' }}>
         <Segmented<GraphView>
-          options={
-            // 实验室尺度只留趋势与主题两个聚合视图。网络图在上千节点下是一团糊，
-            // 时间线按论文分列同样只是把内容摊平——都看不出东西。
-            scope === 'lab'
-              ? [
-                  { v: 'trends' as const, label: tr('趋势', 'Trends') },
-                  { v: 'topics' as const, label: tr('主题', 'Topics') },
-                ]
-              : [
-                  { v: 'network' as const, label: tr('网络', 'Network') },
-                  { v: 'timeline' as const, label: tr('时间线', 'Timeline') },
-                  { v: 'trends' as const, label: tr('趋势', 'Trends') },
-                  { v: 'topics' as const, label: tr('主题', 'Topics') },
-                ]
-          }
+          options={[
+            { v: 'network' as const, label: tr('网络', 'Network') },
+            { v: 'timeline' as const, label: tr('时间线', 'Timeline') },
+            { v: 'trends' as const, label: tr('趋势', 'Trends') },
+            { v: 'topics' as const, label: tr('主题', 'Topics') },
+          ]}
           value={view}
           onChange={setView}
         />

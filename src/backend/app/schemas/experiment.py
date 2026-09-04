@@ -25,6 +25,9 @@ class IntakeQA(BaseModel):
 class ExperimentParams(BaseModel):
     gpu_hint: str | None = None
     budget: ExperimentBudget | None = None
+    # 建环境前过 compute_budget 人工审批闸门。默认关（#626）：单人产品里实验默认
+    # 直行到跑完；要人拍板预算就显式传 True，机制（Gate + engine 断点）原样保留
+    confirm_budget: bool = False
     # 评测模型：非空时 setup 会把 default 路由的 base_url/api_key + 该 model
     # 写成 workdir/llm_config.json，供 training-free agentic 评测代码调用 LLM API
     eval_model: str | None = None

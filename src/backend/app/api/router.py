@@ -20,7 +20,6 @@ from app.api import (
     ingest,
     integration_tokens,
     interdisciplinary,
-    lab,
     libraries,
     library,
     literature_discovery,
@@ -56,7 +55,6 @@ api_router.include_router(gates.router)
 api_router.include_router(voyages.router)
 api_router.include_router(admin_llm.router)
 api_router.include_router(admin_settings.router)
-api_router.include_router(lab.router)
 api_router.include_router(papers.router)
 api_router.include_router(library.router)
 api_router.include_router(literature_discovery.router)

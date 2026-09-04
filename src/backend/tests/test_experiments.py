@@ -96,9 +96,12 @@ async def _create_credential(client, headers) -> str:
 
 
 async def _create_experiment(client, headers, project_id, idea_id, cred_id, budget=None):
-    payload = {"idea_id": idea_id, "credential_id": cred_id}
+    # 闸门默认不拦（#626）后这里显式开 confirm_budget：这批用例既覆盖闸门机制本身，
+    # 也大量拿 compute_budget 闸门当「跑到建环境前」的断点；默认直行由
+    # test_experiment_defaults_run_without_budget_gate 单独覆盖
+    payload = {"idea_id": idea_id, "credential_id": cred_id, "params": {"confirm_budget": True}}
     if budget is not None:
-        payload["params"] = {"budget": budget}
+        payload["params"]["budget"] = budget
     resp = await client.post(
         f"/api/projects/{project_id}/experiments", json=payload, headers=headers
     )
@@ -316,6 +319,44 @@ async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_record
     assert "event: log" in body
     assert body.rstrip().endswith('data: {"status": "done"}')
     assert "event: end" in body
+
+
+async def test_experiment_defaults_run_without_budget_gate(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """默认（不传 confirm_budget）：计划完成后不建闸门、不停 awaiting_gate，一路直行到 done。
+
+    闸门机制本身仍被上面那批用例覆盖——它们显式传 confirm_budget=True（#626：
+    机制保留，默认不拦截）。
+    """
+    fake_ssh.run_logs = [RUN_LOG, metric_log(0.75), metric_log(0.8)]
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+
+    resp = await client.post(
+        f"/api/projects/{project_id}/experiments",
+        json={"idea_id": idea_id, "credential_id": cred_id},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    exp = resp.json()
+    voyage_id = exp["voyage_id"]
+
+    engine, bus = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    assert resp.json()["status"] == "done", resp.json()
+    # 全程没有任何闸门
+    resp = await client.get(f"/api/gates?project_id={project_id}", headers=headers)
+    assert resp.json() == []
+    resp = await client.get(f"/api/experiments/{exp['id']}", headers=headers)
+    assert resp.json()["status"] == "done"
+    # 状态流跳过 awaiting_gate：planning 之后直接 setup
+    exp_statuses = [m["status"] for _, m in bus.notify if m.get("type") == "experiment.status"]
+    assert "awaiting_gate" not in exp_statuses
+    assert exp_statuses == ["setup", "running", "reporting", "done"]
 
 
 async def test_smoke_failure_fixed_and_retried(client, queue_stub, fake_ssh, bus_recorder):
@@ -691,6 +732,7 @@ async def test_intake_questions_and_answers_reach_plan(client, queue_stub, fake_
             "idea_id": idea_id,
             "credential_id": cred_id,
             "params": {
+                "confirm_budget": True,  # 拿闸门当断点：跑到 plan 完即停
                 "intake": [
                     {"question": "用哪个数据集？", "answer": "用 GSM8K 的前 500 条"},
                     {"question": "要对照组吗？", "answer": ""},

@@ -226,11 +226,12 @@ def _proposal_body_steps() -> list[dict[str, Any]]:
 
 def proposal_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """idea_proposal 固定计划（docs/api-idea2.md）：
-    目标构建 →（confirm_goal 时 idea_goal 闸门 + 修订）→ 方案深耕 → 评审修订。
+    目标构建 →（显式 confirm_goal=True 时 idea_goal 闸门 + 修订）→ 方案深耕 → 评审修订。
     """
     params = (run.checkpoint or {}).get("params") or {}
     knobs = params.get("knobs") if isinstance(params.get("knobs"), dict) else {}
-    confirm_goal = knobs.get("confirm_goal", True)
+    # 闸门默认不拦（#626）：只有显式把 confirm_goal 传成 True 才插入审批断点
+    confirm_goal = knobs.get("confirm_goal", False)
     steps = [
         _proposal_step(
             "目标构建（文献探索）", "goal.explore", "goal 已通过结构校验（grounding/可检验目标）"
@@ -258,7 +259,8 @@ def proposal_replan(
 ) -> list[dict[str, Any]]:
     """idea_proposal 确定性重规划（不经 LLM，docs/api-idea2.md §5）：
 
-    - DUPLICATE → 插入 idea_pivot 闸门的 goal.refine，再从 design 起重跑；
+    - DUPLICATE → 插入 goal.refine 调整方向，再从 design 起重跑（用户显式开了
+      confirm_goal 才带 idea_pivot 闸门；默认不拦，按重合详情自动调整）；
     - NEEDS_DIFFERENTIATION → 从 design 起重跑（带诊断回炉设计）；
     - 其余失败 → 从失败步骤起原样重跑（失败步骤带上诊断）。
     """
@@ -272,11 +274,18 @@ def proposal_replan(
         return tail
 
     if diagnosis.startswith(_DIAG_DUPLICATE):
+        # 闸门与初始计划同一开关：显式 confirm_goal=True 才在方向调整前停下等人拍板，
+        # 否则 goal.refine 直接按重合详情自动调整方向（#626：默认不拦截）
+        params = (run.checkpoint or {}).get("params") or {}
+        knobs = params.get("knobs") if isinstance(params.get("knobs"), dict) else {}
+        gated = bool(knobs.get("confirm_goal", False))
         pivot = _proposal_step(
-            "方向调整确认（人工审批）",
+            "方向调整确认（人工审批）" if gated else "方向调整（自动）",
             "goal.refine",
-            "研究方向已按人工意见调整并通过结构校验",
-            requires_gate="idea_pivot",
+            "研究方向已按人工意见调整并通过结构校验"
+            if gated
+            else "研究方向已按重合详情调整并通过结构校验",
+            requires_gate="idea_pivot" if gated else None,
             params={"reason": "duplicate"},
         )
         return [pivot, *tail_from("proposal.design", f"方向已调整（原判定：{diagnosis[:500]}）")]
@@ -324,7 +333,8 @@ def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
 
 def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """experiment 启动计划（docs/voyage-loop.md §7，mode=loop）：
-    计划 →（compute_budget 闸门）建环境 → 冒烟 → 第 1 轮运行 → 第 1 轮分析。
+    计划 →（显式 confirm_budget=True 时过 compute_budget 闸门）建环境 → 冒烟
+    → 第 1 轮运行 → 第 1 轮分析。
     后续轮次由 experiment.analyze 的 plan_signal 走确定性分支表动态追加
     （improve/debug → 下一轮 run+analyze；终止 → figures+report 收尾）。
 
@@ -333,6 +343,11 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
     LLM 修复循环（只受时间预算约束），仍失败会转向用户提问，不自动重规划
     且 max_attempts=1 防引擎级重跑整个修复循环。
     """
+    # 预算闸门默认不拦（#626）：创建实验时显式传 confirm_budget=True 才在建环境前
+    # 停下等审批；机制（Gate 模型 + engine 断点）原样保留。
+    # run 可为 None（失败语义单测直接调计划模板），当默认（不拦）处理
+    checkpoint = (run.checkpoint if run is not None else None) or {}
+    confirm_budget = bool((checkpoint.get("params") or {}).get("confirm_budget"))
     steps = [
         (
             "实验计划（LLM）",
@@ -344,7 +359,7 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "建环境（SSH + 代码生成）",
             "experiment.setup",
             "远端 workdir 就绪、代码文件已写入、venv 依赖安装成功",
-            "compute_budget",
+            "compute_budget" if confirm_budget else None,
         ),
         ("冒烟测试", "experiment.smoke", "run.sh --smoke 退出码为 0", None),
     ]

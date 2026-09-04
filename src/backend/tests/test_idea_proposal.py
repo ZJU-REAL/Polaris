@@ -4,6 +4,9 @@
 → 新颖性核查 → 评审修订 → Research Proposal 入库；duplicate → idea_pivot 闸门 →
 调整方向续跑；并发 409 / 种子校验 / 权限；跳过目标确认。
 
+闸门默认不拦（#626）：KNOBS 里显式 confirm_goal=True 才有审批断点；
+默认直行（含 duplicate 自动调整方向）由专门用例覆盖。
+
 外部检索一律 external_search=False（离线）。
 """
 
@@ -22,7 +25,7 @@ from tests.conftest import RecordingBus, add_paper, register_and_login
 STATEMENT = "自动化科研 agent 的方法研究"
 
 KNOBS = {
-    "confirm_goal": True,
+    "confirm_goal": True,  # 显式开启（默认已关，#626）——多数用例要拿闸门当断点
     "max_tool_calls": 5,
     "external_search": False,
     "revise_rounds": 1,
@@ -254,7 +257,10 @@ async def test_deep_full_pipeline_with_goal_gate(client, queue_stub, bus_recorde
 
 async def test_deep_duplicate_pivot_and_leftover_mustfix(client, queue_stub, bus_recorder):
     """novelty 判 duplicate → idea_pivot 闸门 → 批准调整方向后回炉 design 续跑；
-    评审 must_fix 修不完 → 轮次耗尽照常入池并写入遗留问题。"""
+    评审 must_fix 修不完 → 轮次耗尽照常入池并写入遗留问题。
+
+    闸门默认不拦（#626）后 idea_pivot 跟 confirm_goal 同一个开关，所以这里显式
+    开着跑：先过 idea_goal 闸门，再撞 duplicate 停在 idea_pivot 闸门。"""
     statement = f"{STATEMENT} NOVELTY_DUP_TEST PROPOSAL_MUSTFIX_TEST"
     project_id, headers = await _setup_project(client, statement=statement)
     await _seed_searchable_papers(project_id, statement, n=3)
@@ -263,13 +269,20 @@ async def test_deep_duplicate_pivot_and_leftover_mustfix(client, queue_stub, bus
         f"/api/projects/{project_id}/ideas/deep",
         json={
             "seed": {"type": "text", "value": "撞车方向"},
-            "knobs": {**KNOBS, "confirm_goal": False},
+            "knobs": KNOBS,
         },
         headers=headers,
     )
     run_id = resp.json()["id"]
     engine, _ = _make_engine()
     await engine.run(uuid.UUID(run_id))
+
+    # 先停在 idea_goal 闸门（confirm_goal 显式开着）
+    resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
+    assert resp.json()["status"] == "paused_gate", resp.json()
+    await _approve_pending_gate(client, headers, project_id, kind="idea_goal", comment="")
+    engine_goal, _ = _make_engine()
+    await engine_goal.resume(uuid.UUID(run_id))
 
     # duplicate → 重规划插入 idea_pivot 闸门并暂停
     resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
@@ -338,6 +351,44 @@ async def test_deep_skip_goal_gate_runs_to_done(client, queue_stub):
             .all()
         )
         assert gates == []
+
+
+async def test_deep_duplicate_auto_pivots_without_gate_by_default(client, queue_stub):
+    """默认（knobs 不带 confirm_goal）：duplicate 不再停 idea_pivot 闸门，
+    goal.refine 按重合详情自动调整方向后回炉 design，一口气跑完、零闸门（#626）。"""
+    statement = f"{STATEMENT} NOVELTY_DUP_TEST"
+    project_id, headers = await _setup_project(client, statement=statement)
+    await _seed_searchable_papers(project_id, statement, n=3)
+
+    resp = await client.post(
+        f"/api/projects/{project_id}/ideas/deep",
+        json={
+            "seed": {"type": "text", "value": "撞车方向（无人值守）"},
+            "knobs": {k: v for k, v in KNOBS.items() if k != "confirm_goal"},
+        },
+        headers=headers,
+    )
+    run_id = resp.json()["id"]
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(run_id))
+
+    resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
+    detail = resp.json()
+    assert detail["status"] == "done", detail
+    actions = [s["action"] for s in detail["steps"]]
+    # 自动方向调整发生了，且 design 回炉后 novelty 只重判一次
+    assert "goal.refine" in actions and actions.count("proposal.novelty_check") == 1
+
+    async with get_sessionmaker()() as session:
+        gates = (
+            (await session.execute(select(Gate).where(Gate.kind.in_(("idea_goal", "idea_pivot")))))
+            .scalars()
+            .all()
+        )
+        assert gates == []
+        idea = (await session.execute(select(Idea).where(Idea.depth == "proposal"))).scalars().one()
+        # 回炉后的设计（fake 修订版）进入最终正文
+        assert "（fake 修订设计）" in idea.content
 
 
 async def test_deep_seed_validation_and_permissions(client, queue_stub):

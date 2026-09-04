@@ -207,8 +207,8 @@ export function SkeletonRows() {
 /**
  * 任务列表主体（过滤条 + 列表）：无自身 PageHead / 页壳，供工作台「任务」标签内嵌。
  * - `showScopeSwitch`：是否显示「当前课题 / 全部课题」切换器。课题工作台里固定看本课题
- *   （课题外的任务在 /lab 的「任务」标签按类型分组看），所以默认关闭。
- * - `labLink`：底部是否显示「课题外的任务在实验室工作台」引导（课题工作台用）。
+ *   （课题外的任务在 /lab 的文献任务页按归属分组看），所以默认关闭。
+ * - `labLink`：底部是否显示「课题外的任务在文献任务页」引导（课题工作台用）。
  */
 export function VoyagesList({
   showScopeSwitch = false,
@@ -313,9 +313,9 @@ export function VoyagesList({
           {labLink && (
             <div className="row gap6" style={{ marginTop: 12, fontSize: 12, color: 'var(--text-3)' }}>
               <Icon name="flask" size={13} style={{ flexShrink: 0 }} />
-              <span>{tr('这里只看当前课题的任务；课题外的任务（建库、每日新论文等）在', 'Only this topic’s tasks are listed here. Tasks outside topics (library builds, daily papers, …) live in the')}</span>
-              <Link to="/lab?tab=tasks" style={{ color: 'var(--accent)', fontWeight: 600 }}>
-                {tr('实验室工作台', 'Lab Workbench')}
+              <span>{tr('这里只看当前课题的任务；课题外的任务（建库、每日新论文等）在', 'Only this topic’s tasks are listed here. Tasks outside topics (library builds, daily papers, …) live in')}</span>
+              <Link to="/lab" style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                {tr('文献任务', 'Library Tasks')}
               </Link>
             </div>
           )}

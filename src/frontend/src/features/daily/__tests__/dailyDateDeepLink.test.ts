@@ -3,11 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /* ============================================================
-   实验室工作台的每日新论文柱子 → 直达那一天。
-
-   两边各有一半，缺一半就没用：工作台不带 ?date= 是白链，/daily 不认 ?date= 是白传。
-   而两种坏法的表现一模一样——点“8月4日 · 903 篇”落在最新一天，看着像没生效。
-   类型检查看不见这类回归，所以在源码层面钉住。
+   /daily 认 ?date= 深链。站内发这种链接的柱状图随实验室面板一起移除了
+   （#626），但 URL 契约保留：收藏/外部分享的带日期链接还要能直达那一天。
+   坏掉的表现是「带着日期进来却落在最新一天」，类型检查看不见这类回归，
+   所以在源码层面钉住。
    ============================================================ */
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8');
@@ -19,18 +18,9 @@ const code = (source: string) =>
     .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
     .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-const lab = code(read('../../lab/LabPage.tsx'));
 const daily = code(read('../DailyPage.tsx'));
 
 describe('每日新论文的日期直达', () => {
-  it('工作台的柱子带上 ?date=', () => {
-    expect(lab).toMatch(/to=\{`\/daily\?date=\$\{encodeURIComponent\(d\.date\)\}`\}/);
-  });
-
-  it('版块标题旁的按钮不带日期（那是「去看看」，不是某一天）', () => {
-    expect(lab).toContain('to="/daily"');
-  });
-
   it('/daily 认 ?date=', () => {
     expect(daily).toContain('useSearchParams');
     expect(daily).toMatch(/searchParams\.get\('date'\)/);

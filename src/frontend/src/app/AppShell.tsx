@@ -43,11 +43,12 @@ const NAV_GROUPS = {
   personal: { zh: '个人', en: 'Personal' },
 } as const;
 
-// 实验室级导航：跨课题的公共资产（P5c 起为共享方向文献库列表）
+// 文献区导航：跨课题的公共资产。/lab 的数据面板（索引统计/用量/跨库图谱）
+// 随 #626 移除，该路由只剩课题外的任务列表，条目名跟着改
 const NAV_LAB: NavEntry[] = [
-  { to: '/lab', icon: 'flask', zh: '实验室工作台', en: 'Lab Workbench' },
   { to: '/libraries', icon: 'book', zh: '文献库', en: 'Libraries' },
   { to: '/daily', icon: 'heart', zh: '每日新论文', en: 'Daily Papers' },
+  { to: '/lab', icon: 'compass', zh: '文献任务', en: 'Library Tasks' },
 ];
 
 const NAV_MAIN: NavEntry[] = [
@@ -89,7 +90,7 @@ function navCrumb(key: string, pid: string | null): Crumb {
 
 /**
  * 当前路径 → 面包屑层级（分组 › 侧栏条目 › 当前实体），与侧栏三组保持一致。
- * 分组段指向该组的落地页（实验室工作台 / 课题工作台 / 我的文献库）。
+ * 分组段指向该组的落地页（文献库列表 / 课题工作台 / 我的文献库）。
  * libName：文献库详情页的库名（列表缓存里已有，取不到时退回通用文案）。
  */
 function crumbsFor(
@@ -98,7 +99,8 @@ function crumbsFor(
   libName?: string | null,
   labTask?: boolean,
 ): Crumb[] {
-  const lab: Crumb = { label: tr(NAV_GROUPS.lab.zh, NAV_GROUPS.lab.en), to: '/lab' };
+  // 实验室组的落地页改为文献库列表：/lab 只剩任务列表（#626），不再是这组的门面
+  const lab: Crumb = { label: tr(NAV_GROUPS.lab.zh, NAV_GROUPS.lab.en), to: '/libraries' };
   const topic: Crumb = {
     label: tr(NAV_GROUPS.topic.zh, NAV_GROUPS.topic.en),
     to: pid ? topicPath(pid) : '/start',
@@ -128,7 +130,7 @@ function crumbsFor(
     // 其余归课题。归属要等任务本身取回来才知道，取不到时按课题走（占多数）。
     if (p.startsWith('/voyages/'))
       return labTask
-        ? [lab, { ...e('/lab'), to: '/lab?tab=tasks' }, { label: tr('任务详情', 'Task detail') }]
+        ? [lab, e('/lab'), { label: tr('任务详情', 'Task detail') }]
         : [
             topic,
             { ...e(''), to: topicPath(pid) + '?tab=tasks' },

@@ -154,9 +154,9 @@ export const router = createBrowserRouter([
       // 课题设置已并入工作台「课题设置」标签：/projects/:id → /t/:id?tab=settings
       { path: 'projects/:id', element: <ProjectSettingsRedirect /> },
       { path: 'library', element: page(() => import('../features/library/LibraryPage'), 'LibraryPage') },
-      // 实验室工作台：实验室资源概况 + 全部任务（含 project_id 为空的课题外任务）
+      // 课题外任务列表（文献库任务 + 每日新论文）。原实验室数据面板随 #626 移除
       { path: 'lab', element: page(() => import('../features/lab/LabPage'), 'LabPage') },
-      // 实验室区：共享方向文献库（全实验室可读，无需课题）
+      // 共享方向文献库（无需课题即可读）
       { path: 'libraries', element: page(() => import('../features/libraries/LibrariesPage'), 'LibrariesPage') },
       { path: 'libraries/:id', element: page(() => import('../features/libraries/LibraryDetailPage'), 'LibraryDetailPage') },
       // 实验室区：每日新论文池（arxiv 每日新提交，保留最近 7 天）
