@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b0dd1709e2a1"  # Drop project_members (#625)
+HEAD_REVISION = "7e2b9f4c1a86"  # Hypothesis/experiment tree nodes (#637)
+MEMBERS_DROP_REVISION = "b0dd1709e2a1"  # Drop project_members (#625)
 LLM_MERGE_REVISION = "dd572a7f063c"  # Merge LLM config tracks: drop users.llm_self_managed (#621)
 LIBRARY_STATUS_DROP_REVISION = "c3c404803ca4"  # Drop library status/review_note (P1 de-lab)
 FEEDBACK_DROP_REVISION = "9b2e5d81c7a3"  # Drop in-app feedback tables (#617)
@@ -153,6 +154,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "interdisciplinary_research_profile_versions",
                     "registration_codes",  # head 已删；仅 downgrade 断言用
                     "project_members",  # head 已删（#625）；仅 downgrade 断言用
+                    "hypothesis_nodes",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -173,6 +175,20 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert not {"role", "read_only", "llm_access", "token_quota", "features"} & columns[
         "users"
     ]
+    # 假设/实验树节点表（#637，设计报告 §8.2）
+    assert "hypothesis_nodes" in columns["_tables"]
+    assert {
+        "run_id",
+        "parent_id",
+        "kind",
+        "statement",
+        "grounding",
+        "novelty_report",
+        "feasibility",
+        "score",
+        "status",
+    } <= columns["hypothesis_nodes"]
+    assert "ix_hypothesis_nodes_run_id" in _index_names(db_path, "hypothesis_nodes")
     # 课题成员表已随个人化定位删除（#625）：归属只看 projects.owner_id
     assert "project_members" not in columns["_tables"]
     assert "owner_id" in columns["projects"]
@@ -518,7 +534,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "evidence_balance",
     } <= columns["interdisciplinary_research_profile_versions"]
 
-    # 先退掉成员表删除（#625）：project_members 按原形状回来，owner 行由
+    # 先退掉假设树建表（#637）：整表消失，其余不受影响。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == MEMBERS_DROP_REVISION
+    assert "hypothesis_nodes" not in columns["_tables"]
+
+    # 再退掉成员表删除（#625）：project_members 按原形状回来，owner 行由
     # projects.owner_id 反向回填（老代码的可见性判据读成员表，没有它课题全隐身）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
@@ -895,6 +917,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "owner_id" in columns["llm_providers"]
     assert "llm_self_managed" not in columns["users"]  # head 已删（#621）
     assert "project_members" not in columns["_tables"]  # head 已删（#625）
+    assert "hypothesis_nodes" in columns["_tables"]  # 假设树表回归（#637）
     assert not {"feedback", "feedback_images"} & columns["_tables"]  # head 已删（#617）
     # P9a 列在重新 upgrade 后回归
     assert "library_id" in columns["voyage_runs"]
