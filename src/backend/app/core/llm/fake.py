@@ -73,6 +73,10 @@ _REVIEW_SUPPORT_MARKER = "POLARIS_REVIEW_SUPPORT"  # 引用支撑性判定
 _REVIEW_META_MARKER = "POLARIS_REVIEW_META"  # meta-review 总结
 _REVIEW_FACTCHECK_MARKER = "POLARIS_REVIEW_FACTCHECK"  # claim 抽查
 # Idea 2.0 深耕（actions_proposal.py 的 system prompt 对齐，docs/api-idea2.md）
+# discovery 树搜索（actions_discovery.py 三个 system prompt 对齐，#642）
+_DISCOVERY_SEED_MARKER = "POLARIS_DISCOVERY_SEED"
+_DISCOVERY_EXPAND_MARKER = "POLARIS_DISCOVERY_EXPAND"
+_DISCOVERY_SUMMARY_MARKER = "POLARIS_DISCOVERY_SUMMARY"
 _GOAL_EXPLORE_MARKER = "POLARIS_GOAL_EXPLORE"  # 目标构建工具循环
 _GOAL_REFINE_MARKER = "POLARIS_GOAL_REFINE"  # 审批意见并入目标
 _PROPOSAL_RELATED_MARKER = "POLARIS_PROPOSAL_RELATED"  # 相关工作（工具循环）
@@ -371,6 +375,16 @@ class FakeProvider(LLMProvider):
             return FakeProvider._respond_review_factcheck(full_text)
         if _PAPER_REVIEWER_MARKER in full_text:
             return FakeProvider._respond_paper_reviewer(full_text)
+        # discovery 树搜索三 marker：user prompt 内嵌方向/假设文本，先于通用 marker
+        if _DISCOVERY_SEED_MARKER in full_text:
+            return FakeProvider._respond_discovery_seed(full_text)
+        if _DISCOVERY_EXPAND_MARKER in full_text:
+            return FakeProvider._respond_discovery_expand(full_text)
+        if _DISCOVERY_SUMMARY_MARKER in full_text:
+            return (
+                "（fake discovery 总结）本次探索围绕研究方向展开：根假设已扩展出子分支，"
+                "无分支被剪除（fake）；最有希望的方向见评分最高的 open 节点。"
+            )
         # Idea 2.0 深耕 marker：prompt 内嵌 goal JSON / wiki 摘录 / 检索结果
         # （会撞 "score"、"out_of_scope"、TL;DR 等通用 marker），须先于它们判断
         if _GOAL_EXPLORE_MARKER in full_text:
@@ -1011,6 +1025,47 @@ class FakeProvider(LLMProvider):
         )
 
     # ---- Idea 2.0 深耕（actions_proposal.py 的 system prompt 对齐，docs/api-idea2.md） ----
+
+    # ---- discovery 树搜索（actions_discovery.py 对齐，#642） ----
+
+    @staticmethod
+    def _respond_discovery_seed(full_text: str) -> str:
+        """播种：回显研究方向的确定性根假设（骨架 run 端到端可重放）。"""
+        m = re.search(r"研究方向：(.+)", full_text)
+        direction = m.group(1).strip() if m else "研究方向（fake）"
+        return json.dumps(
+            {
+                "statement": f"围绕「{direction}」的核心假设（fake root）",
+                "rationale": "fake-seed：确定性根假设",
+                "score": 0.8,
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_discovery_expand(full_text: str) -> str:
+        """扩展：固定两个子假设（A 分高于 B → best_open_node 下一轮选 A，确定性）；
+        prune 恒为空——fake 路径不触发剪枝，骨架 run 的树形状可精确断言。"""
+        m = re.search(r"父假设：(.+)", full_text)
+        parent = m.group(1).strip() if m else "父假设（fake）"
+        return json.dumps(
+            {
+                "children": [
+                    {
+                        "statement": f"{parent[:60]} → 子假设 A（fake）",
+                        "rationale": "fake-expand：路线 A",
+                        "score": 0.7,
+                    },
+                    {
+                        "statement": f"{parent[:60]} → 子假设 B（fake）",
+                        "rationale": "fake-expand：路线 B",
+                        "score": 0.6,
+                    },
+                ],
+                "prune": [],
+            },
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _respond_goal_explore(full_text: str) -> str:

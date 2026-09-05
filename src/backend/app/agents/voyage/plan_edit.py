@@ -199,6 +199,71 @@ def experiment_signal_edits(
     return None
 
 
+
+def discovery_expand_node(round_no: int) -> dict:
+    """一轮假设扩展节点（discovery，docs 设计报告 §8.2）。"""
+    return {
+        "title": f"第 {round_no} 轮扩展假设",
+        "action": "hypothesis.expand",
+        "params": {"round": round_no},
+        "acceptance": "最优 open 节点已扩展出子假设（或按树状态判定本轮无需扩展）",
+        "checks": [{"kind": "no_error"}],
+        "requires_gate": None,
+    }
+
+
+def discovery_summarize_node() -> dict:
+    """汇总收尾节点：标 wrapup——预算耗尽也放行，把已长出的树变成产物。"""
+    return {
+        "title": "汇总假设树",
+        "action": "discovery.summarize",
+        "params": {},
+        "acceptance": "整树（含被剪分支）已汇总为 run 产物",
+        "checks": [{"kind": "no_error"}],
+        "requires_gate": None,
+        "wrapup": True,
+    }
+
+
+def discovery_signal_edits(
+    signal: dict[str, Any], active_rows: list[Any]
+) -> dict[str, Any] | None:
+    """hypothesis.seed / hypothesis.expand 的 plan_signal → 追加下一步（幂等）。
+
+    discovery 不预排线性计划：每轮扩展结束后按树状态给信号，这里只做确定性
+    展开——expand 继续长一轮、summarize 进入收尾。幂等同 experiment 分支表：
+    待办的同类节点已存在则返回 None（防 resume 重放重复追加）。
+    """
+    pending_actions = {r.action for r in active_rows if r.status != "passed"}
+    decision = str(signal.get("decision") or "")
+    if decision == "expand":
+        if "hypothesis.expand" in pending_actions:
+            return None
+        next_round = int(signal.get("next_round") or 0)
+        return {
+            "finish": False,
+            "reason": f"树上仍有可扩展的 open 节点：第 {next_round} 轮扩展",
+            "edits": [
+                {
+                    "op": "add_nodes",
+                    "insert_after": None,
+                    "nodes": [discovery_expand_node(next_round)],
+                }
+            ],
+        }
+    if decision == "summarize":
+        if "discovery.summarize" in pending_actions:
+            return None
+        return {
+            "finish": False,
+            "reason": str(signal.get("reason") or "") or "扩展结束，汇总假设树",
+            "edits": [
+                {"op": "add_nodes", "insert_after": None, "nodes": [discovery_summarize_node()]}
+            ],
+        }
+    return None
+
+
 def review_match_node(index: int) -> dict[str, Any]:
     return {
         "title": f"第 {index + 1} 场辩论",
@@ -241,4 +306,5 @@ def review_signal_edits(signal: dict[str, Any], active_rows: list[Any]) -> dict[
 SIGNAL_TABLES: dict[str, Callable[[dict[str, Any], list[Any]], dict[str, Any] | None]] = {
     "experiment": experiment_signal_edits,
     "idea_review": review_signal_edits,
+    "discovery": discovery_signal_edits,
 }

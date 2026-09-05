@@ -75,6 +75,7 @@ STAGES = (
     "proposal",
     "proposal_review",
     "debate",
+    "discovery_plan",
     "experiment",
     "writing",
     "review",
@@ -180,7 +181,7 @@ _LONG_CALL_STAGES = STREAM_STAGES | frozenset({"digest", "forge_generate"})
 # 中档用于多轮代理和较长的结构化生成。一次调用比短 JSON 长得多，但**不能**
 # 直接塞进长档：那是 300s × 4 尝试，最坏 20 分钟攥着一个 HTTP 连接不放，而对话是同步的，
 # 用户早走了。180s × 2 是"够想完一轮、又不至于把连接耗死"的折中。
-_MEDIUM_CALL_STAGES = frozenset({"agent", "goal_explore", "proposal_review"})
+_MEDIUM_CALL_STAGES = frozenset({"agent", "discovery_plan", "goal_explore", "proposal_review"})
 
 
 def call_profile(stage: str) -> tuple[float, int]:

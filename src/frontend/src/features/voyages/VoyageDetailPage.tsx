@@ -18,6 +18,7 @@ import {
   type VoyageStepRead,
 } from '../../lib/api';
 import { KindBadge } from './VoyagesPage';
+import { DiscoveryTreeCard } from './discovery';
 import { ActivityBar } from './shared/ActivityBar';
 import { PlanEventCard, StepCard } from './shared/StepCard';
 import {
@@ -281,6 +282,9 @@ export function VoyageDetailPage() {
 
       {/* 文献任务：本次同步结果汇总 */}
       {WIKI_RUN_KINDS.has(voyage.kind) && <WikiRunSummary steps={steps} />}
+
+      {/* 假设探索：节点列表（树是任务的一等产物，逐轮长出来） */}
+      {voyage.kind === 'discovery' && <DiscoveryTreeCard voyage={voyage} />}
 
       {/* 本次任务使用的技能（启动时快照，中途改技能不影响） */}
       {(voyage.skills ?? []).length > 0 && (
