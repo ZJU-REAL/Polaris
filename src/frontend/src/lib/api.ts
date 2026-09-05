@@ -470,6 +470,23 @@ export interface VoyageStepRead {
   finished_at: string | null;
 }
 
+/** 假设树节点（discovery 任务的资产，#640；树整体可视化归后续里程碑）。 */
+export interface HypothesisNodeRead {
+  id: string;
+  run_id: string;
+  /** null = 树根 */
+  parent_id: string | null;
+  kind: string; // hypothesis | experiment | analysis
+  statement: string;
+  grounding: unknown[] | null;
+  novelty_report: Record<string, unknown> | null;
+  feasibility: Record<string, unknown> | null;
+  score: number | null;
+  status: string; // open | expanded | pruned | validated | refuted
+  created_at: string;
+  updated_at: string;
+}
+
 export interface VoyageRead {
   id: string;
   kind: string;
@@ -617,6 +634,7 @@ export const LLM_STAGES = [
   'proposal',
   'proposal_review',
   'debate',
+  'discovery_plan',
   'experiment',
   'writing',
   'review',
@@ -3421,6 +3439,15 @@ export const api = {
   },
 
   // —— Voyages ——
+  /** 通用创建入口（demo / discovery）。discovery 的 params 需含 direction（研究方向）。 */
+  createVoyage(input: {
+    kind: 'demo' | 'discovery';
+    project_id: string;
+    goal: string;
+    params?: Record<string, unknown>;
+  }): Promise<VoyageRead> {
+    return requestJson<VoyageRead>('/voyages', 'POST', input);
+  },
   listVoyages(projectId?: string): Promise<VoyageRead[]> {
     const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
     return request<VoyageRead[]>(`/voyages${qs}`);
@@ -3459,6 +3486,10 @@ export const api = {
     answer: { text?: string; choice?: string; payload?: Record<string, unknown> },
   ): Promise<VoyageMessageRead> {
     return requestJson<VoyageMessageRead>(`/voyages/${id}/asks/${messageId}/answer`, 'POST', answer);
+  },
+  /** discovery 任务的假设树（拉平列表，父子按 parent_id 拼装；只读）。 */
+  listHypothesisTree(voyageId: string): Promise<HypothesisNodeRead[]> {
+    return request<HypothesisNodeRead[]>(`/voyages/${voyageId}/hypothesis-tree`);
   },
 
   // —— Gates ——

@@ -9,6 +9,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { useProject } from '../../app/project';
 import { api, LIBRARY_TASK_KINDS, VOYAGE_TERMINAL, type VoyageRead } from '../../lib/api';
 import { VoyageActions } from '../../components/ui/VoyageActions';
+import { DiscoveryCreateButton } from './discovery';
 import { fmtDuration, fmtFullTime, fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 
@@ -64,6 +65,7 @@ export const KIND_META: Record<string, KindMeta> = {
   paper_writing: { zh: '论文起草', en: 'Draft writing', icon: 'pen', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
   paper_review: { zh: '论文评审', en: 'Paper review', icon: 'check', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
   presentation: { zh: '论文分享', en: 'Paper slides', icon: 'chart', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
+  discovery: { zh: '假设探索', en: 'Hypothesis discovery', icon: 'compass', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
   custom: { zh: '流程技能', en: 'Workflow skill', icon: 'sparkle', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
   demo: { zh: '演示', en: 'Demo', icon: 'play', bg: 'var(--surface-3)', tx: 'var(--text-2)' },
   daily_feed_sync: { zh: '每日新论文', en: 'Daily paper sync', icon: 'refresh', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
@@ -254,19 +256,19 @@ export function VoyagesList({
                 <option key={k} value={k}>{tr(KIND_META[k]?.zh ?? k, KIND_META[k]?.en)}</option>
               ))}
             </select>
+            <div style={{ flex: 1 }} />
             {showScopeSwitch && (
-              <>
-                <div style={{ flex: 1 }} />
-                <Segmented
-                  options={[
-                    { v: 'current' as const, label: tr('当前课题', 'Current topic') },
-                    { v: 'all' as const, label: tr('全部课题', 'All topics') },
-                  ]}
-                  value={scope}
-                  onChange={setScope}
-                />
-              </>
+              <Segmented
+                options={[
+                  { v: 'current' as const, label: tr('当前课题', 'Current topic') },
+                  { v: 'all' as const, label: tr('全部课题', 'All topics') },
+                ]}
+                value={scope}
+                onChange={setScope}
+              />
             )}
+            {/* 新建假设探索（#642）：目前唯一从任务列表直接发起的任务类型 */}
+            <DiscoveryCreateButton projectId={currentProjectId ?? null} />
           </div>
 
           {isLoading ? (

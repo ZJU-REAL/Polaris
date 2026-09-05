@@ -386,6 +386,11 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
 # voyage 级完成标准（docs/voyage-loop.md §5.4）：engine 在规划时写入 run.done_criteria。
 # experiment 防"过早宣告完成"：迭代必须有明确终止判定、报告必须已生成
 _DONE_CRITERIA_BY_KIND: dict[str, dict[str, Any]] = {
+    # discovery：汇总产物（全部节点+状态+统计）必须已落 checkpoint——树长了一半
+    # 没收尾不算完成；被剪分支也在产物里留痕（§8.2 防择优汇报）
+    "discovery": {
+        "checks": [{"kind": "artifact_exists", "key": "artifacts.discovery-summary.json"}]
+    },
     "experiment": {
         "checks": [
             # 至少有一轮真的跑出了主指标。原来只查「停止原因」+「报告已生成」，
@@ -522,6 +527,27 @@ def paper_review_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "on_failure": "fail",
         }
         for title, action, acceptance in steps
+    ]
+
+
+
+def discovery_plan(run: VoyageRun) -> list[dict[str, Any]]:
+    """discovery 启动计划（#642，设计报告 §8.2，mode=loop）：**只有播种一步**。
+
+    树搜索不预排线性清单：seed/expand 每轮结束后按树状态（best_open_node +
+    checkpoint 轮次账本）给出 plan_signal，由 plan_edit.discovery_signal_edits
+    确定性追加下一步（继续扩展 / 汇总收尾）——计划是树探索过程的「已走轨迹」，
+    真源在 hypothesis_nodes。
+    """
+    return [
+        {
+            "title": "生成根假设",
+            "action": "hypothesis.seed",
+            "params": {},
+            "acceptance": "根假设已入树（断点重放时复用已有根）",
+            "checks": [{"kind": "no_error"}],
+            "requires_gate": None,
+        }
     ]
 
 
@@ -740,6 +766,8 @@ class Navigator:
             return paper_review_plan(run)
         if run.kind == "presentation":
             return presentation_plan(run)
+        if run.kind == "discovery":
+            return discovery_plan(run)
         system = PLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
         workflows = skill_workflows(run.checkpoint or {})
         if workflows:

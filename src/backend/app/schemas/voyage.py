@@ -4,10 +4,14 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# M1 仅开放 demo 航程；后续里程碑扩展 ingest/forge/experiment/writing
-VoyageKind = Literal["demo"]
+# 通用创建入口开放的 kind：demo（M1 演示）+ discovery（#642 树搜索探索）。
+# 其余 kind（experiment/writing/…）各有业务入口与专属校验，不走这里。
+VoyageKind = Literal["demo", "discovery"]
+
+# discovery 每轮扩展是一次 LLM 调用 + 2-3 个新节点，上限防手滑填个大数烧钱
+MAX_DISCOVERY_EXPANSIONS = 10
 
 
 class VoyageCreate(BaseModel):
@@ -15,6 +19,28 @@ class VoyageCreate(BaseModel):
     project_id: uuid.UUID
     goal: str = Field(min_length=1)
     params: dict[str, Any] | None = None  # 可含 {"budget": {"max_tokens": ...}}
+
+    @model_validator(mode="after")
+    def _normalize_discovery_params(self) -> "VoyageCreate":
+        """discovery 的参数在创建时就定形（引擎只读 checkpoint.params，不再兜底）：
+        direction 必填；max_expansions 默认 3（0..MAX，整数）；tournament 默认
+        False——锦标赛式对比是后续里程碑，先存档位不实现。"""
+        if self.kind != "discovery":
+            return self
+        params = dict(self.params or {})
+        direction = str(params.get("direction") or "").strip()
+        if not direction:
+            raise ValueError("discovery 任务需要 params.direction（研究方向）")
+        params["direction"] = direction
+        raw = params.get("max_expansions", 3)
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            raise ValueError("max_expansions 必须是整数")
+        if not 0 <= raw <= MAX_DISCOVERY_EXPANSIONS:
+            raise ValueError(f"max_expansions 必须在 0..{MAX_DISCOVERY_EXPANSIONS} 之间")
+        params["max_expansions"] = raw
+        params["tournament"] = bool(params.get("tournament", False))
+        self.params = params
+        return self
 
 
 class VoyageStepRead(BaseModel):
