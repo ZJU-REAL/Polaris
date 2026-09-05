@@ -620,6 +620,7 @@ export const LLM_STAGES = [
   'experiment',
   'writing',
   'review',
+  'citation_intent',
 ] as const;
 
 export interface LlmProviderRead {
@@ -1629,6 +1630,38 @@ export interface PaperIndexStatus {
   has_fulltext: boolean;
   /** fulltext=按 PDF 全文切 | abstract=无全文时的标题+摘要兜底块 | null=还没分段 */
   chunk_source: 'fulltext' | 'abstract' | null;
+}
+
+// ============================================================
+// 引文意图（#639）：详情页按意图分组的引文列表
+// ============================================================
+
+export type CitationIntent = 'background' | 'method' | 'comparison' | 'support' | 'contrast';
+
+export interface PaperCitationItem {
+  id: string;
+  /** 参考文献序号（1 起） */
+  ref_index: number;
+  /** 参考文献条目原文（被引论文不在库里时它就是全部信息） */
+  cited_ref_raw: string;
+  /** 正文引用上下文句；解析不到为 null */
+  context: string | null;
+  intent: CitationIntent | null;
+  confidence: number | null;
+  /** 被引论文恰好也在内容池时给 id/标题（可跳转） */
+  cited_paper_id: string | null;
+  cited_paper_title: string | null;
+}
+
+export interface PaperCitationGroup {
+  /** null = 还没分类那组（殿后） */
+  intent: CitationIntent | null;
+  items: PaperCitationItem[];
+}
+
+export interface PaperCitations {
+  total: number;
+  groups: PaperCitationGroup[];
 }
 
 // ============================================================
@@ -3606,6 +3639,10 @@ export const api = {
   /** 这篇论文的两种向量各自建没建、何时建的、用的哪个模型（只读，权限同看论文）。 */
   getPaperIndexStatus(id: string): Promise<PaperIndexStatus> {
     return request<PaperIndexStatus>(`/papers/${id}/index-status`);
+  },
+  /** 按意图分组的引文列表（#639）；没建过边时 total=0、groups=[] */
+  getPaperCitations(id: string): Promise<PaperCitations> {
+    return request<PaperCitations>(`/papers/${id}/citations`);
   },
   /** 手动重建这篇论文的向量（有就覆盖，没有就新建）；同步返回重建后的状态。需大模型使用权限。 */
   rebuildPaperIndex(

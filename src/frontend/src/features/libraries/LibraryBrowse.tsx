@@ -32,6 +32,7 @@ import {
   PaperMyMetaRow,
   PaperMyTagChips,
   PaperMyTagsRow,
+  PaperCitationsSection,
   PaperNotesSection,
   WikiHeaderActions,
 } from '../shared/PaperDetailBlocks';
@@ -452,6 +453,9 @@ function PaperDetailPane({
 
       {/* —— 我的笔记（个人维度，只读浏览也能写） —— */}
       <PaperNotesSection paperId={paper.id} noteCount={paper.note_count ?? 0} invalidateKeys={noteKeys} />
+
+      {/* —— 引文（按意图分组，#639） —— */}
+      <PaperCitationsSection paperId={paper.id} />
 
       {/* —— 重要图片画廊（只读：不给提取/重新提取入口，那是管理员操作） —— */}
       <FiguresSection paper={paper} readOnly defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)} />

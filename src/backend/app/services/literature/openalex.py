@@ -6,9 +6,12 @@ import httpx
 from redis.asyncio import Redis
 
 from app.core.config import get_settings
-from app.services.literature.cache import ResponseCache, cache_key
+from app.services.literature.cache import ResponseCache, TokenBucket, cache_key
 
 API_BASE = "https://api.openalex.org"
+
+# polite pool 名义上限 10 req/s；批量对齐会连续打，按一半留余量
+_POLITE_RATE = 5.0
 
 # arXiv 论文的 DataCite DOI 前缀
 ARXIV_DOI_TEMPLATE = "10.48550/arXiv.{arxiv_id}"
@@ -85,6 +88,7 @@ class OpenAlexClient:
         redis: Redis | None = None,
         mailto: str | None = None,
         api_key: str | None = None,
+        rate: float = _POLITE_RATE,
     ) -> None:
         self._client = client or httpx.AsyncClient(
             proxy=get_settings().outbound_proxy or None, timeout=30.0
@@ -92,6 +96,8 @@ class OpenAlexClient:
         self._cache = ResponseCache(redis)
         self._mailto = mailto if mailto is not None else get_settings().openalex_mailto
         self._api_key = api_key
+        # 令牌桶限流（#639 批量对齐补上；容量=rate*2 允许零星调用不等待）
+        self._bucket = TokenBucket(rate=rate, capacity=max(1.0, rate * 2))
 
     async def _get(
         self, path: str, extra_params: dict[str, Any] | None = None
@@ -104,6 +110,7 @@ class OpenAlexClient:
         key = cache_key("openalex", path, params)
         if (cached := await self._cache.get(key)) is not None:
             return cached or None  # 缓存的 {} 表示 404
+        await self._bucket.acquire()  # 限流只管真实出网；缓存命中不占令牌
         resp = await self._client.get(f"{API_BASE}{path}", params=params)
         if resp.status_code == 404:
             await self._cache.set(key, {})

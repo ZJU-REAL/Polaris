@@ -121,6 +121,33 @@ class PaperDetail(PaperRead):
         return v or []
 
 
+class PaperCitationItem(BaseModel):
+    """一条引文边（详情页引文列表项）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    ref_index: int
+    cited_ref_raw: str
+    context: str | None = None
+    intent: str | None = None  # background|method|comparison|support|contrast；未分类为 null
+    confidence: float | None = None
+    cited_paper_id: uuid.UUID | None = None  # 池内对齐命中时给（前端可跳转）
+    cited_paper_title: str | None = None
+
+
+class PaperCitationGroup(BaseModel):
+    intent: str | None  # null = 还没分类那组
+    items: list[PaperCitationItem]
+
+
+class PaperCitationsRead(BaseModel):
+    """按意图分组的引文列表（#639；分组聚合在后端做，前端拿来即渲染）。"""
+
+    total: int
+    groups: list[PaperCitationGroup]
+
+
 class VectorStatusRead(BaseModel):
     """一种向量的状态（前端红绿点 + 悬浮显示构建时间与模型名）。
 
