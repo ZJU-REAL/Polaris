@@ -56,6 +56,7 @@ import { paperDragProps } from '../assistant/paperDrag';
 import { clampLines } from '../../lib/clamp';
 import { splitPaperInput } from './paperInput';
 import { ExtensionBatchHistoryModal } from './ExtensionBatchHistoryModal';
+import { ComparisonModal } from './ComparisonModal';
 
 /* ============================================================
    论文库 Tab：左列表（过滤/搜索/排序/加载更多 + 添加文献/导出）
@@ -1352,6 +1353,8 @@ export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSel
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [trashOpen, setTrashOpen] = useState(false);
+  // 对比表（#669）：多选 2..10 篇后从底栏打开；paperIds 用勾选顺序（就是列序）
+  const [compareOpen, setCompareOpen] = useState(false);
   const [extensionHistoryOpen, setExtensionHistoryOpen] = useState(false);
   const queryClient = useQueryClient();
 
@@ -1849,6 +1852,21 @@ export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSel
                 disabled={selected.size === 0}
                 items={citationExportItems((format) => bulkExportMutation.mutate(format))}
               />
+              {libraryId && selected.size >= 2 && (
+                <button
+                  className="btn btn-soft sm"
+                  disabled={selected.size > 10}
+                  title={
+                    selected.size > 10
+                      ? tr('一次最多对比 10 篇', 'Compare at most 10 papers at once')
+                      : tr('按抽取字段并排对比所选论文', 'Compare the selected papers field by field')
+                  }
+                  onClick={() => setCompareOpen(true)}
+                >
+                  <Icon name="grid" size={12} />
+                  {tr('对比', 'Compare')}
+                </button>
+              )}
               {libraryId && canManage && (
                 <button
                   className="btn btn-soft sm"
@@ -1913,6 +1931,16 @@ export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSel
           libraryId={libraryId}
           open={extensionHistoryOpen}
           onClose={() => setExtensionHistoryOpen(false)}
+        />
+      )}
+
+      {/* —— 论文对比表（#669） —— */}
+      {libraryId && (
+        <ComparisonModal
+          libraryId={libraryId}
+          paperIds={[...selected]}
+          open={compareOpen}
+          onClose={() => setCompareOpen(false)}
         />
       )}
     </div>

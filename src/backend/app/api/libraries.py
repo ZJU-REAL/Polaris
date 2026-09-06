@@ -35,6 +35,8 @@ from app.models.user import User
 from app.schemas.graph import GraphResponse, UnconnectedConceptPair
 from app.schemas.ingest import DigestGenerateRead, IngestRequest, IngestStateRead
 from app.schemas.libraries import (
+    ComparisonRequest,
+    ComparisonTableRead,
     DirectionLibraryDetail,
     DirectionLibrarySummary,
     DirectionLibraryUpdate,
@@ -76,6 +78,7 @@ from app.schemas.paper import (
 from app.schemas.voyage import VoyageRead
 from app.services import chunks as chunks_service
 from app.services import citations as citations_service
+from app.services import comparison as comparison_service
 from app.services import concept_fuels as concept_fuels_service
 from app.services import concepts as concepts_service
 from app.services import gap_ledger as gap_ledger_service
@@ -662,6 +665,33 @@ async def list_library_gaps(
             for pair in pairs
         ],
     )
+
+
+@router.post("/libraries/{library_id}/comparison", response_model=ComparisonTableRead)
+async def build_library_comparison(
+    library_id: uuid.UUID,
+    data: ComparisonRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ComparisonTableRead:
+    """论文对比表（#669）：行 = skeleton/method 抽取字段，列 = 所选论文（2..10 篇）。
+
+    纯读存量抽取产物，零 LLM（见 services/comparison.py）。POST 而非 GET 是因为
+    paper_ids 列表进 URL 会顶到长度上限，且本端点无副作用、无需缓存。
+    条数越界由 body 校验挡（422）；所选论文不属本库按 404——与库不可见同一
+    口径，不泄漏内容池里该论文是否存在。
+    """
+    library = await _get_visible_library(session, library_id, user)
+    try:
+        table = await comparison_service.build_comparison(session, library.id, data.paper_ids)
+    except comparison_service.PaperNotInLibraryError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND") from exc
+    except ValueError as exc:
+        # body 校验已挡 >10；这里兜底服务层帽子（防未来有内部调用绕开校验）
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="TOO_MANY_PAPERS"
+        ) from exc
+    return ComparisonTableRead.model_validate(table, from_attributes=True)
 
 
 @router.get("/libraries/{library_id}/search", response_model=SearchResponse)

@@ -1,4 +1,5 @@
 import { tr } from './i18n';
+import type { ComparisonTable } from './comparison';
 import { apiBase, serverOrigin } from './endpoint';
 import { readToken, writeToken } from './token-store';
 import { LocalUnavailable, noteLocalFailure, resolveLocalHandler } from './local-routes';
@@ -1602,6 +1603,9 @@ export interface LibraryBudgetRead {
   /** true = 本月预算已用尽（同步任务会被拒绝启动） */
   exhausted: boolean;
 }
+
+/** 论文对比表（#669）：类型与 CSV 纯函数同源（lib/comparison.ts），这里转出口给取数方 */
+export type { ComparisonCell, ComparisonPaper, ComparisonRow, ComparisonTable } from './comparison';
 
 /** 缺口台账条目种类（#665）：别人没解决的 / 相互矛盾的 / 不确定的 / 失败的尝试 / 自述局限 */
 export type GapKind = 'gap' | 'contradiction' | 'uncertainty' | 'negative_result' | 'limitation';
@@ -4222,6 +4226,12 @@ export const api = {
     if (opts.top) params.set('top', String(opts.top));
     const qs = params.toString();
     return request<LibraryGapsRead>(`/libraries/${id}/gaps${qs ? `?${qs}` : ''}`);
+  },
+  /** 论文对比表（#669）：行 = 抽取字段，列 = 所选论文（2..10 篇，顺序即列序）。 */
+  buildLibraryComparison(id: string, paperIds: string[]): Promise<ComparisonTable> {
+    return requestJson<ComparisonTable>(`/libraries/${id}/comparison`, 'POST', {
+      paper_ids: paperIds,
+    });
   },
   searchLibrary(
     id: string,

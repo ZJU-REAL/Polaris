@@ -319,3 +319,51 @@ class LibraryGapsRead(BaseModel):
     entries: list[LibraryGapEntryRead] = []
     # 矛盾对在返回的 entries 范围内配（kind 筛选时对子也跟着窄）
     pairs: list[LibraryGapPairRead] = []
+
+
+# ---- 论文对比表（#669，设计报告 §10 ④层） ----
+
+
+class ComparisonRequest(BaseModel):
+    """对比请求：paper_ids 的顺序就是表的列序（前端勾选顺序）。
+
+    条数在 body 校验层夹住（2..10 → 越界直接 422）：少于 2 篇没有「对比」可言，
+    多于 10 篇属于综述场景，本批次刻意不做（services/comparison.py）。
+    """
+
+    paper_ids: list[uuid.UUID] = Field(min_length=2, max_length=10)
+
+
+class ComparisonCellRead(BaseModel):
+    """一个格子：present=False 时前端显示「未抽取」而非空白（缺口要可见）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    value: str | None = None
+    present: bool = False
+    # 溯源：该格出自哪个抽取 schema、何时抽的（没抽过为 None）
+    schema_id: str
+    extracted_at: datetime | None = None
+
+
+class ComparisonRowRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    field: str  # skeleton/method 的字段名（problem/method/…/protocol）
+    schema_id: str
+    cells: list[ComparisonCellRead] = []
+
+
+class ComparisonPaperRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    paper_id: uuid.UUID
+    title: str
+    year: int | None = None
+
+
+class ComparisonTableRead(BaseModel):
+    """行 = 抽取字段，列 = 论文；cells 与 papers 同序同长。"""
+
+    papers: list[ComparisonPaperRead] = []
+    rows: list[ComparisonRowRead] = []
