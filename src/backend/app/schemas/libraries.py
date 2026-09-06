@@ -260,3 +260,32 @@ class LibraryQaResponse(BaseModel):
     evidence: list[LibraryQaEvidence] = []
     # 实际执行过的检索查询（小库直通时为空表——没有检索这一步）
     queries: list[str] = []
+
+
+# ---- 方法库（#663）：purpose–mechanism 双索引 ----
+
+
+class MethodCardRead(BaseModel):
+    """一张方法卡：method@1 抽取产物的五元组 + 检索时的双轴相似度。
+
+    similarity 是 purpose 轴与查询的相似度（列表视图为 None）；
+    mechanism_similarity 只在语义检索且该论文有机制轴向量时给出——
+    「找异类机制」模式下它越低排得越前。
+    """
+
+    paper_id: uuid.UUID
+    title: str
+    purpose: str | None = None
+    mechanism: str | None = None
+    baseline: list[str] = []
+    dataset: list[str] = []
+    protocol: str | None = None
+    similarity: float | None = None
+    mechanism_similarity: float | None = None
+
+
+class MethodSearchResponse(BaseModel):
+    items: list[MethodCardRead]
+    mode: str
+    # semantic = 双轴向量检索；keyword = 嵌入不可用时的确定性关键词降级
+    mode_used: str

@@ -45,6 +45,8 @@ from app.schemas.libraries import (
     LibraryDigestSummary,
     LibraryQaRequest,
     LibraryQaResponse,
+    MethodCardRead,
+    MethodSearchResponse,
     PaperMergeRequest,
     PaperMergeResult,
     StatementInterviewQuestion,
@@ -77,6 +79,7 @@ from app.services import ingest as ingest_service
 from app.services import libraries as libraries_service
 from app.services import library_chat as library_chat_service
 from app.services import library_rag as library_rag_service
+from app.services import method_index as method_index_service
 from app.services import notes as notes_service
 from app.services import paper_enrich as paper_enrich_service
 from app.services import paper_import as paper_import_service
@@ -581,6 +584,41 @@ async def list_library_concepts(
         )
         for concept, count in rows
     ]
+
+
+@router.get("/libraries/{library_id}/methods", response_model=list[MethodCardRead])
+async def list_library_methods(
+    library_id: uuid.UUID,
+    limit: int = Query(default=100, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[MethodCardRead]:
+    """方法库列表（#663）：库内已抽出方法卡的论文，按入库时间倒序。"""
+    library = await _get_visible_library(session, library_id, user)
+    cards = await method_index_service.list_methods(session, library.id, limit=limit)
+    return [MethodCardRead.model_validate(card) for card in cards]
+
+
+@router.get("/libraries/{library_id}/methods/search", response_model=MethodSearchResponse)
+async def search_library_methods(
+    library_id: uuid.UUID,
+    q: str = Query(min_length=1),
+    mode: str = Query(default="same_purpose", pattern="^(same_purpose|different_mechanism)$"),
+    limit: int = Query(default=20, ge=1, le=100),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> MethodSearchResponse:
+    """方法检索（#663）：same_purpose 找同类做法；different_mechanism 找「目的相近、
+    机制不同」的类比做法。嵌入不可用时降级关键词匹配，mode_used 如实上报。"""
+    library = await _get_visible_library(session, library_id, user)
+    items, mode_used = await method_index_service.search_methods(
+        session, library.id, q, mode=mode, limit=limit, user_id=user.id
+    )
+    return MethodSearchResponse(
+        items=[MethodCardRead.model_validate(card) for card in items],
+        mode=mode,
+        mode_used=mode_used,
+    )
 
 
 @router.get("/libraries/{library_id}/search", response_model=SearchResponse)

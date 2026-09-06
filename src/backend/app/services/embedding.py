@@ -24,7 +24,7 @@ from app.core.embedding_space import (
     set_active_space,
 )
 from app.models.base import utcnow
-from app.models.vectors import IdeaVector, PaperChunkVector, PaperVector
+from app.models.vectors import IdeaVector, MethodVector, PaperChunkVector, PaperVector
 
 EMBEDDING_STAGE = "embedding"
 
@@ -168,6 +168,29 @@ async def upsert_idea_vector(
     await _upsert(session, IdeaVector, IdeaVector.idea_id, idea_id, vector, space)
 
 
+async def upsert_method_vector(
+    session: AsyncSession,
+    paper_id: uuid.UUID,
+    axis: str,
+    vector: list[float],
+    space: EmbeddingSpace,
+) -> None:
+    """写入/覆盖方法卡某根轴的向量（#663，调用方负责 commit）。
+
+    主键多了一段 axis，故经 ``extra_key`` 走同一个真 upsert 路径——方法卡重抽与
+    多库并发同步会撞同一 (paper_id, axis, space)，「先查后插」在这里同样会炸。
+    """
+    await _upsert(
+        session,
+        MethodVector,
+        MethodVector.paper_id,
+        paper_id,
+        vector,
+        space,
+        extra_key={"axis": axis},
+    )
+
+
 async def _upsert(
     session: AsyncSession,
     model_class: type,
@@ -175,6 +198,8 @@ async def _upsert(
     key: uuid.UUID,
     vector: list[float],
     space: EmbeddingSpace,
+    *,
+    extra_key: dict[str, str] | None = None,
 ) -> None:
     """原子写入/覆盖向量（调用方负责 commit）。
 
@@ -188,8 +213,10 @@ async def _upsert(
         raise EmbeddingSpaceMismatchError(
             f"refusing to store a {len(vector)}-dim vector in space {space}"
         )
+    extra_key = extra_key or {}
     values = {
         key_column.key: key,
+        **extra_key,
         "space": space.key,
         "dim": space.dim,
         "embedding": vector,
@@ -197,19 +224,21 @@ async def _upsert(
         "text_version": TEXT_VERSION,
         "built_at": utcnow(),
     }
+    # 冲突键 = 完整主键（owner 外键 + 可选的附加主键段 + space）
+    key_names = [key_column.key, *extra_key, "space"]
     dialect = session.get_bind().dialect.name
     if dialect == "postgresql":
         from sqlalchemy.dialects.postgresql import insert as _insert
     elif dialect == "sqlite":
         from sqlalchemy.dialects.sqlite import insert as _insert
     else:  # 其余方言没有 ON CONFLICT，退回先查后插（单机开发场景没有并发问题）
+        conditions = [key_column == key, model_class.space == space.key]
+        conditions += [getattr(model_class, name) == v for name, v in extra_key.items()]
         row = (
-            await session.execute(
-                select(model_class).where(key_column == key, model_class.space == space.key)
-            )
+            await session.execute(select(model_class).where(*conditions))
         ).scalar_one_or_none()
         if row is None:
-            row = model_class(**{key_column.key: key, "space": space.key})
+            row = model_class(**{key_column.key: key, **extra_key, "space": space.key})
             session.add(row)
         for field, value in values.items():
             setattr(row, field, value)
@@ -218,12 +247,12 @@ async def _upsert(
     stmt = _insert(model_class).values(**values)
     await session.execute(
         stmt.on_conflict_do_update(
-            index_elements=[key_column.key, "space"],
-            set_={k: v for k, v in values.items() if k not in (key_column.key, "space")},
+            index_elements=key_names,
+            set_={k: v for k, v in values.items() if k not in key_names},
         )
     )
     # 该行可能已在 identity map 里且被这条 INSERT 绕过了，过期它免得读到旧向量
-    existing = await session.get(model_class, (key, space.key))
+    existing = await session.get(model_class, (key, *extra_key.values(), space.key))
     if existing is not None:
         await session.refresh(existing)
 

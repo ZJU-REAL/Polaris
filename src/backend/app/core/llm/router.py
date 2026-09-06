@@ -83,6 +83,9 @@ STAGES = (
     "citation_intent",
     # schema 引导的论文骨架抽取（#661）：整篇正文进、结构化 JSON 出
     "extract_skeleton",
+    # 方法卡抽取（#663）：与骨架同形态（整篇正文进、短 JSON 出），单列环节是
+    # 为了让管理员可以给方法卡配不同模型（它比骨架更吃「拆目的/机制」的判断力）
+    "extract_method",
     # 库级 agentic RAG 三环节（#644）：扩展/重排是短 JSON，作答是中档长生成
     "rag_expand",
     "rag_rerank",
@@ -218,6 +221,7 @@ _MEDIUM_CALL_STAGES = frozenset(
         # 重得多（extract 短档喂的是单页级片段），但也没有长档 20 分钟的理由：
         # enrich 链逐篇串行，卡死一篇就堵住整条补全队列
         "extract_skeleton",
+        "extract_method",  # 方法卡抽取（#663）：与骨架同一负载形态，同档
     }
 )
 

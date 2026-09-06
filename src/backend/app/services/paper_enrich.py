@@ -297,27 +297,52 @@ async def enrich_paper(
         logger.warning("enrich citation intents failed for paper %s", paper_id, exc_info=True)
         paper = await _rollback_and_reload()
 
-    # 骨架抽取（#661，增量钩子）：全文就位后按通用骨架 schema 抽 problem/method/
-    # findings/limitations 落 paper_extractions。非独立进度阶段（STAGES 不变）、
-    # best-effort；runtime 对无全文论文如实 skip、不调 LLM——bibtex 导入等
-    # golden 链路因此零输出零副作用。
-    try:
-        from app.services.extraction.runtime import extract_paper
+    # 结构化抽取（#661 骨架 + #663 方法卡，增量钩子）：全文就位后把注册表里的每个
+    # schema 都抽一遍落 paper_extractions。非独立进度阶段（STAGES 不变）、逐 schema
+    # best-effort（一个 schema 失败不拖垮其余）；runtime 对无全文论文如实 skip、
+    # 不调 LLM——bibtex 导入等 golden 链路因此零输出零副作用。
+    from app.services.extraction.runtime import extract_paper
+    from app.services.extraction.schemas import list_schemas
+    from app.services.method_index import METHOD_SCHEMA_ID, refresh_paper_method_index
 
-        outcome = await extract_paper(
-            session,
-            paper,
-            user_id=user_id,
-            project_id=project_id,
-            library_id=target_id,
-        )
-        if outcome.status == "extracted":
-            await session.commit()
-    except asyncio.CancelledError:
-        raise
-    except Exception:  # noqa: BLE001
-        logger.warning("enrich skeleton extraction failed for %s", paper_id, exc_info=True)
-        paper = await _rollback_and_reload()
+    method_extracted = False
+    for schema in sorted(list_schemas(), key=lambda item: item.id):
+        try:
+            outcome = await extract_paper(
+                session,
+                paper,
+                schema_id=schema.id,
+                user_id=user_id,
+                project_id=project_id,
+                library_id=target_id,
+            )
+            if outcome.status == "extracted":
+                await session.commit()
+                if schema.id == METHOD_SCHEMA_ID:
+                    method_extracted = True
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "enrich %s extraction failed for %s", schema.id, paper_id, exc_info=True
+            )
+            paper = await _rollback_and_reload()
+
+    # 方法库双轴索引（#663）：方法卡落表后同步刷 purpose/mechanism 向量。
+    # best-effort；provider 不支持嵌入按 skipped 处理（与 embed 阶段同口径）。
+    if method_extracted:
+        try:
+            if await refresh_paper_method_index(
+                session, paper, user_id=user_id, project_id=project_id, library_id=target_id
+            ):
+                await session.commit()
+        except asyncio.CancelledError:
+            raise
+        except NotImplementedError:
+            paper = await _rollback_and_reload()
+        except Exception:  # noqa: BLE001
+            logger.warning("enrich method index failed for %s", paper_id, exc_info=True)
+            paper = await _rollback_and_reload()
 
     # OpenAlex 对齐（#639，增量钩子）：缺 OpenAlex id 的记录按 DOI/arXiv 精确、
     # 标题+年份模糊补 id 并回填空元数据。这是真实出网调用，受设置开关控制

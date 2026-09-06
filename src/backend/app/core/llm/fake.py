@@ -38,6 +38,7 @@ _FAKE_FIGURE_REF_RE = re.compile(r"^(?:fig|figure|tab|table|eq)\s*[:：]", re.IG
 _AFFILIATIONS_MARKER = "POLARIS_AUTHOR_AFFIL"  # 逐位作者机构解析（affiliations.py 专门调用）
 _CITATION_INTENT_MARKER = "POLARIS_CITATION_INTENT"  # 引文意图批量分类（citation_graph.py）
 _EXTRACT_SKELETON_MARKER = "POLARIS_EXTRACT_SKELETON"  # 骨架抽取（services/extraction/）
+_EXTRACT_METHOD_MARKER = "POLARIS_EXTRACT_METHOD"  # 方法卡抽取（services/extraction/，#663）
 # 库级 agentic RAG 三环节（services/library_rag.py，#644）
 _RAG_EXPAND_MARKER = "POLARIS_RAG_EXPAND"
 _RAG_RERANK_MARKER = "POLARIS_RAG_RERANK"
@@ -448,9 +449,11 @@ class FakeProvider(LLMProvider):
         # 引文意图分类：user prompt 内嵌论文正文原句（可能撞任意通用 marker），须先判断
         if _CITATION_INTENT_MARKER in full_text:
             return FakeProvider._respond_citation_intent(last_user)
-        # 骨架抽取：user prompt 内嵌整篇正文（同样可能撞通用 marker），须先判断
+        # 骨架/方法卡抽取：user prompt 内嵌整篇正文（同样可能撞通用 marker），须先判断
         if _EXTRACT_SKELETON_MARKER in full_text:
             return FakeProvider._respond_extract_skeleton(last_user)
+        if _EXTRACT_METHOD_MARKER in full_text:
+            return FakeProvider._respond_extract_method(last_user)
         # 发表机构解析（专门调用）：system prompt 带 POLARIS_AUTHOR_AFFIL，user prompt 内嵌
         # 标题页文本（可能含 TL;DR 等其他 marker），须先于通用 marker 判断；返回逐位作者映射
         if _AFFILIATIONS_MARKER in full_text:
@@ -642,6 +645,29 @@ class FakeProvider(LLMProvider):
                     "发现二：消融验证各组件必要（fake）",
                 ],
                 "limitations": ["局限一：评测范围有限（fake）"],
+                "confidence": 0.9,
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_extract_method(last_user: str) -> str:
+        """方法卡抽取（services/extraction/schemas.py 的 method@1 对齐，#663）。
+
+        purpose 回显标题的前半段——测试用它控制 purpose 轴的词袋向量（标题相近的
+        论文 purpose 就相近），其余字段固定。测试要的是「抽取会落库、双轴会建向量、
+        检索排序语义成立」这条链路，不是抽得多准。"""
+        m = re.search(r"标题：(.+)", last_user)
+        title = m.group(1).strip() if m else "未知论文"
+        words = title.split()
+        half = " ".join(words[: max(1, (len(words) + 1) // 2)]) if words else title
+        return json.dumps(
+            {
+                "purpose": f"目的：{half}（fake extraction）",
+                "mechanism": "机制：用确定性替身流程达成目标（fake extraction）",
+                "baseline": ["基线方法一（fake）"],
+                "dataset": ["数据集一（fake）"],
+                "protocol": "流程：准备数据、跑替身方法、对比指标（fake extraction）",
                 "confidence": 0.9,
             },
             ensure_ascii=False,

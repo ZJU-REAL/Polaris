@@ -70,6 +70,23 @@ class PaperChunkVector(_VectorColumns, Base):
     )
 
 
+class MethodVector(_VectorColumns, Base):
+    """方法卡双轴向量（#663）：每篇论文的 method@1 产物按 purpose / mechanism 两根轴
+    各建一条。轴分开存不是冗余——「同目的异机制」检索要在 purpose 轴找近邻、再按
+    mechanism 轴排远近，两根轴必须独立可查。与 paper_extractions 同口径不带
+    library_id：论文是全平台共享的内容池，库的边界在检索时经 library_papers 圈定。
+    """
+
+    __tablename__ = "method_vectors"
+    __table_args__ = (Index("ix_method_vectors_space", "space"),)
+
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("papers.id", ondelete="CASCADE"), primary_key=True
+    )
+    # "purpose" | "mechanism"（services/method_index.py 的 AXES）
+    axis: Mapped[str] = mapped_column(String(16), primary_key=True)
+
+
 class IdeaVector(_VectorColumns, Base):
     """想法向量，想法语义去重用。"""
 

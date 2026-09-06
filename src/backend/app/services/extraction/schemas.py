@@ -4,7 +4,9 @@ schema 决定三件事：抽哪些字段（白名单）、每个字段长什么�
 怎么向模型要（prompt 模板）。运行时（runtime.py）对着 schema 做归一化——模型输出
 里不在白名单的键直接丢弃，超长截断，空串置空。
 
-内置只有通用骨架 skeleton@1（问题-方法-发现-局限，ORKG contribution 思路）；
+内置两个通用 schema：骨架 skeleton@1（问题-方法-发现-局限，ORKG contribution
+思路）与方法卡 method@1（目的-机制-基线-数据集-流程，#663 方法库的原料，
+purpose 与 mechanism 各自建向量做双轴检索，见 services/method_index.py）。
 学科 schema（PICO / 任务-数据集-指标 / 合成配方…）按设计报告属后续批次，本模块
 只留 ``register_schema`` 这道缝，不预埋任何学科内容。
 
@@ -81,6 +83,37 @@ SKELETON_SCHEMA = ExtractionSchema(
     ),
 )
 
+# 方法卡（#663）：把一篇论文的做法拆成「要达成什么（purpose）」与「靠什么机制
+# 达成（mechanism）」两根轴，外加复现要素（基线/数据集/流程）。拆成两根轴不是
+# 分类洁癖——方法库的「同目的异机制」类比检索靠它：purpose 轴找目的相近的论文，
+# 再按 mechanism 轴的距离把「换了个思路」的排到前面。字段短帽（400/600 字）是
+# 有意的：进向量的文本要一句话说清一根轴，长篇大论会把两根轴搅成一团。
+# prompt 首行的 POLARIS_EXTRACT_METHOD 是 fake provider 的识别标记（core/llm/fake.py）。
+METHOD_SCHEMA = ExtractionSchema(
+    id="method",
+    version=1,
+    fields=(
+        SchemaField("purpose", "text", max_len=400),
+        SchemaField("mechanism", "text", max_len=400),
+        SchemaField("baseline", "list", max_len=200, max_items=5),
+        SchemaField("dataset", "list", max_len=200, max_items=5),
+        SchemaField("protocol", "text", max_len=600),
+    ),
+    prompt_template=(
+        "POLARIS_EXTRACT_METHOD\n"
+        "你是论文方法卡抽取器。根据给定论文的标题与正文，把它的做法拆成方法卡，"
+        "全部字段用中文表述（专有名词保留原文）：\n"
+        "{fields_spec}\n"
+        "其中 \"purpose\" 只写这个方法要达成的目标（不写怎么做），"
+        "\"mechanism\" 只写达成目标的核心机制（不复述目标）；"
+        "\"baseline\" 是对比的基线方法名，\"dataset\" 是用到的数据集名，"
+        "\"protocol\" 是实验流程的一段概述。"
+        '只输出一个 JSON 对象，键为上述字段名，另加 "confidence"（0 到 1，'
+        "你对整份抽取的把握）。只依据原文，不引入外部知识。"
+    ),
+    stage="extract_method",
+)
+
 _REGISTRY: dict[str, ExtractionSchema] = {}
 
 
@@ -101,3 +134,4 @@ def list_schemas() -> list[ExtractionSchema]:
 
 
 register_schema(SKELETON_SCHEMA)
+register_schema(METHOD_SCHEMA)

@@ -13,6 +13,7 @@ import { LibraryChatTab } from './LibraryChatTab';
 import { LibraryQaTab } from './LibraryQaTab';
 import { IngestTab } from './IngestTab';
 import { NotesTab } from './NotesTab';
+import { MethodsTab } from './MethodsTab';
 import { GovernanceTab } from './GovernanceTab';
 import { LiteratureDiscoveryPanel } from '../libraries/LiteratureDiscoveryPage';
 
@@ -33,7 +34,7 @@ const PresentationModal = lazy(() =>
    从哪个课题建的，如今仅用来决定要不要显示课题域的 PPT。
    ============================================================ */
 
-type WikiTab = 'discover' | 'papers' | 'concepts' | 'graph' | 'digest' | 'chat' | 'qa' | 'ingest' | 'notes' | 'govern';
+type WikiTab = 'discover' | 'papers' | 'concepts' | 'methods' | 'graph' | 'digest' | 'chat' | 'qa' | 'ingest' | 'notes' | 'govern';
 
 export function WikiWorkbench({
   pid,
@@ -103,7 +104,7 @@ export function WikiWorkbench({
         seq: (old?.seq ?? 0) + 1,
       }));
       setTab('papers');
-    } else if (tabParam && ['discover', 'papers', 'concepts', 'graph', 'digest', 'chat', 'qa', 'ingest', 'notes', 'govern'].includes(tabParam)) {
+    } else if (tabParam && ['discover', 'papers', 'concepts', 'methods', 'graph', 'digest', 'chat', 'qa', 'ingest', 'notes', 'govern'].includes(tabParam)) {
       setTab(tabParam as WikiTab);
     }
     setSearchParams({}, { replace: true });
@@ -169,6 +170,8 @@ export function WikiWorkbench({
             ...(libraryId ? [{ v: 'discover' as const, label: tr('发现文献', 'Discover') }] : []),
             { v: 'papers', label: `${tr('论文库', 'Papers')}${total !== undefined ? ` · ${total}` : ''}` },
             { v: 'concepts', label: tr('概念库', 'Concepts') },
+            // 方法库走 /libraries/{id}/methods，只有库作用域有这个端点
+            ...(libraryId ? [{ v: 'methods' as const, label: tr('方法库', 'Methods') }] : []),
             { v: 'graph', label: tr('图谱', 'Graph') },
             ...(libraryId ? [{ v: 'digest' as const, label: tr('每日简报', 'Daily digest') }] : []),
             { v: 'chat', label: tr('文献对话', 'Chat') },
@@ -245,6 +248,8 @@ export function WikiWorkbench({
             onOpenPaper={goPaper}
             onWikiLink={onWikiLink}
           />
+        ) : tab === 'methods' && libraryId ? (
+          <MethodsTab libraryId={libraryId} onOpenPaper={goPaper} />
         ) : tab === 'graph' ? (
           <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
             <GraphTab pid={pid} libraryId={tabLibraryId} onOpenPaper={goPaper} onOpenConcept={goConcept} />

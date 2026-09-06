@@ -671,6 +671,7 @@ export const LLM_STAGES = [
   'review',
   'citation_intent',
   'extract_skeleton',
+  'extract_method',
   'rag_expand',
   'rag_rerank',
   'rag_answer',
@@ -1675,6 +1676,32 @@ export interface LibraryQaResponse {
   evidence: LibraryQaEvidence[];
   /** 实际执行过的检索查询（小库直通时为空） */
   queries: string[];
+}
+
+// —— 方法库（#663）：purpose–mechanism 双索引 ——
+
+export type MethodSearchMode = 'same_purpose' | 'different_mechanism';
+
+/** 一张方法卡：method@1 抽取产物的五元组 + 检索时的双轴相似度。 */
+export interface MethodCard {
+  paper_id: string;
+  title: string;
+  purpose: string | null;
+  mechanism: string | null;
+  baseline: string[];
+  dataset: string[];
+  protocol: string | null;
+  /** purpose 轴与查询的相似度（列表视图为 null） */
+  similarity: number | null;
+  /** mechanism 轴与查询的相似度（「找异类机制」下越低排得越前） */
+  mechanism_similarity: number | null;
+}
+
+export interface MethodSearchResponse {
+  items: MethodCard[];
+  mode: MethodSearchMode | string;
+  /** semantic = 双轴向量检索；keyword = 嵌入不可用时的确定性关键词降级 */
+  mode_used: 'semantic' | 'keyword' | string;
 }
 
 /** 异步建索引端点（相关研究 / 个人库）的返回：入队总数 + 有全文可索引 / 无全文跳过 篇数。 */
@@ -4145,6 +4172,25 @@ export const api = {
     if (opts.mode) params.set('mode', opts.mode);
     if (opts.limit) params.set('limit', String(opts.limit));
     return request<SearchResult>(`/libraries/${id}/search?${params.toString()}`);
+  },
+
+  // —— 方法库（#663）：purpose–mechanism 双索引 ——
+  /** 方法库列表：库内已抽出方法卡的论文（五元组卡）。 */
+  listLibraryMethods(id: string, opts: { limit?: number } = {}): Promise<MethodCard[]> {
+    const params = new URLSearchParams();
+    if (opts.limit) params.set('limit', String(opts.limit));
+    const qs = params.toString();
+    return request<MethodCard[]>(`/libraries/${id}/methods${qs ? `?${qs}` : ''}`);
+  },
+  /** 方法检索：same_purpose 找同类做法；different_mechanism 找「目的相近、机制不同」。 */
+  searchLibraryMethods(
+    id: string,
+    opts: { q: string; mode?: MethodSearchMode; limit?: number },
+  ): Promise<MethodSearchResponse> {
+    const params = new URLSearchParams({ q: opts.q });
+    if (opts.mode) params.set('mode', opts.mode);
+    if (opts.limit) params.set('limit', String(opts.limit));
+    return request<MethodSearchResponse>(`/libraries/${id}/methods/search?${params.toString()}`);
   },
 
   // —— P9d · 独立库文献管理台（镜像 project 作用域的集合端点） ——

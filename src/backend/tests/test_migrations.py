@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "58b0bc2d809d"  # Paper skeleton extractions (#661)
+HEAD_REVISION = "e867fcbae4ea"  # Method purpose/mechanism vectors (#663)
+EXTRACTIONS_REVISION = "58b0bc2d809d"  # Paper skeleton extractions (#661)
 CITATIONS_REVISION = "57543f6328a1"  # Paper citation edges (#639)
 HYPOTHESIS_TREE_REVISION = "7e2b9f4c1a86"  # Hypothesis/experiment tree nodes (#637)
 MEMBERS_DROP_REVISION = "b0dd1709e2a1"  # Drop project_members (#625)
@@ -113,6 +114,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "concepts",
                     "paper_chunks",
                     "paper_vectors",
+                    "method_vectors",  # head 新增（#663）；downgrade 后不存在，列检查自动跳过
                     "paper_wikis",
                     "library_papers",
                     "daily_feed_entries",
@@ -554,7 +556,21 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "ix_paper_citations_cited_paper_id",
     } <= _index_names(db_path, "paper_citations")
 
-    # 本分支新增：结构化抽取产物表（#661）
+    # 本分支新增：方法卡双轴向量表（#663）
+    assert "method_vectors" in columns["_tables"]
+    assert {
+        "paper_id",
+        "axis",
+        "space",
+        "dim",
+        "embedding",
+        "model",
+        "text_version",
+        "built_at",
+    } <= columns["method_vectors"]
+    assert "ix_method_vectors_space" in _index_names(db_path, "method_vectors")
+
+    # 结构化抽取产物表（#661）
     assert "paper_extractions" in columns["_tables"]
     assert {
         "paper_id",
@@ -567,7 +583,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["paper_extractions"]
     assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
 
-    # 先退掉抽取产物表（#661）：引文边表不受影响。
+    # 先退掉方法向量表（#663）：抽取产物表不受影响。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == EXTRACTIONS_REVISION
+    assert "method_vectors" not in columns["_tables"]
+    assert "paper_extractions" in columns["_tables"]
+
+    # 再退掉抽取产物表（#661）：引文边表不受影响。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == CITATIONS_REVISION

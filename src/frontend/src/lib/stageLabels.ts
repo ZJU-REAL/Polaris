@@ -30,6 +30,7 @@ export const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   review: { zh: '论文评审', en: 'Paper review' },
   citation_intent: { zh: '引文意图分类', en: 'Citation intent classification' },
   extract_skeleton: { zh: '结构化摘要抽取', en: 'Structured summary extraction' },
+  extract_method: { zh: '方法卡抽取', en: 'Method card extraction' },
   rag_expand: { zh: '库问答·查询扩展', en: 'Library Q&A · query expansion' },
   rag_rerank: { zh: '库问答·重排摘要', en: 'Library Q&A · rerank & summarize' },
   rag_answer: { zh: '库问答·作答', en: 'Library Q&A · answering' },
