@@ -14,10 +14,13 @@ import uuid
 
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
-from app.models.paper import PaperChunk
+from app.models.library_direction import DirectionLibrary
+from app.models.paper import Paper, PaperChunk
 from app.models.paper_citation import PaperCitation
+from app.models.paper_extraction import PaperExtraction
 from app.services import hypothesis_pipeline as pipeline
-from tests.conftest import add_paper, make_project_with_library, register_and_login
+from app.services.method_index import refresh_paper_method_index
+from tests.conftest import add_concept, add_paper, make_project_with_library, register_and_login
 
 DIRECTION = "agent planning verification"
 
@@ -181,6 +184,116 @@ async def test_generate_returns_deduped_candidates_with_usage(client):
     assert len(statements) == 2  # fake 固定两候选，措辞差异大、不被折叠
     assert all(DIRECTION[:20] in s for s in statements)
     assert result["usage"]["prompt_tokens"] > 0
+    # 无燃料（本库没有方法卡/概念/缺口产物）：燃料留痕三键恒在且全空，
+    # 且没有燃料回显候选——行为与 #670 之前的纯检索路一致
+    assert result["trace"]["fuels"] == {"methods": [], "concept_pairs": [], "gaps": []}
+    assert not any("燃料组合假设" in s for s in statements)
+
+
+# ---- 燃料喂养（#670，P2.5 F6）：燃料存在与否改变候选 + 静默降级 ----
+
+
+async def _seed_fuels(session, library_id, ids):
+    """给库埋齐三路燃料：A/M 的方法卡（purpose 含方向词、机制互异）、
+    alpha–bridge–gamma 的未连接概念对、B 的缺口条目。"""
+    project_id = (await session.get(DirectionLibrary, library_id)).project_id
+    # 燃料 1：方法卡 + 双轴索引（fake 词袋嵌入：purpose 用词与方向重叠即相近）
+    session.add(
+        PaperExtraction(
+            paper_id=ids["A"],
+            schema_id="method",
+            payload={
+                "purpose": "agent planning verification purpose",
+                "mechanism": "tree search rollout mechanism",
+            },
+        )
+    )
+    session.add(
+        PaperExtraction(
+            paper_id=ids["M"],
+            schema_id="method",
+            payload={
+                "purpose": "agent planning verification purpose",
+                "mechanism": "reinforcement fine-tuning mechanism",
+            },
+        )
+    )
+    await session.commit()
+    for key in ("A", "M"):
+        await refresh_paper_method_index(session, await session.get(Paper, ids[key]))
+    # 燃料 2：alpha–bridge、bridge–gamma 共现，alpha–gamma 从未同篇 → 未连接对
+    alpha = await add_concept(session, project_id=project_id, name="alpha", slug="hyp-alpha")
+    bridge = await add_concept(session, project_id=project_id, name="bridge", slug="hyp-bridge")
+    gamma = await add_concept(session, project_id=project_id, name="gamma", slug="hyp-gamma")
+    await add_paper(
+        session, project_id=project_id, title="Fuel Pair One",
+        status="included", concepts=[alpha, bridge],
+    )
+    await add_paper(
+        session, project_id=project_id, title="Fuel Pair Two",
+        status="included", concepts=[bridge, gamma],
+    )
+    # 燃料 3：B 的缺口台账条目
+    session.add(
+        PaperExtraction(
+            paper_id=ids["B"],
+            schema_id="gaps",
+            payload={
+                "entries": [
+                    {
+                        "kind": "gap",
+                        "statement": "跨域泛化仍未解决（fuel gap）",
+                        "source_span": "cross-domain generalization remains open",
+                    }
+                ]
+            },
+        )
+    )
+    await session.commit()
+
+
+async def test_generate_fuels_change_candidates_and_trace(client):
+    """P2.5 F6 出口判据：同一方向，燃料存在 → fake 多产一条回显「燃料节 +
+    条目数」的候选（与无燃料时可断言地不同），trace.fuels 记齐消费清单。"""
+    library_id, ids = await _setup(client)
+    async with get_sessionmaker()() as session:
+        await _seed_fuels(session, library_id, ids)
+        result = await pipeline.generate(
+            session, LLMRouter(), library_id=library_id, direction=DIRECTION, n_candidates=3
+        )
+    statements = [c["statement"] for c in result["candidates"]]
+    assert len(statements) == 3  # 纯检索路只有 2 条：燃料确实改变了候选
+    fuel_echo = statements[2]
+    # fake 回显收到的燃料节（按节名排序）与条目数：三路都被喂进了 prompt
+    assert "method_analogies=2 open_gaps=1 unconnected_pairs=1" in fuel_echo
+    fuels = result["trace"]["fuels"]
+    assert set(fuels["methods"]) == {str(ids["A"]), str(ids["M"])}
+    assert fuels["gaps"] == [str(ids["B"])]
+    # 概念对的 a/c 取 uuid 规范序（随机 uuid 下方向不定），按名字集合断言
+    assert [
+        sorted((p["concept_a"], p["concept_c"])) for p in fuels["concept_pairs"]
+    ] == [["alpha", "gamma"]]
+
+
+async def test_generate_fuel_service_failure_degrades_silently(client, monkeypatch):
+    """三路燃料服务全炸也不许拖垮 generate：静默降级为空、行为等同纯检索路。"""
+    library_id, ids = await _setup(client)
+    async with get_sessionmaker()() as session:
+        await _seed_fuels(session, library_id, ids)  # 数据在，但服务炸了
+
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("fuel service down")
+
+        monkeypatch.setattr(pipeline.method_index, "search_methods", _boom)
+        monkeypatch.setattr(pipeline.concept_fuels, "mine_unconnected_pairs", _boom)
+        monkeypatch.setattr(pipeline.gap_ledger, "library_gaps", _boom)
+        result = await pipeline.generate(
+            session, LLMRouter(), library_id=library_id, direction=DIRECTION, n_candidates=3
+        )
+    statements = [c["statement"] for c in result["candidates"]]
+    assert len(statements) == 2  # 与纯检索路相同的两条 fake 候选
+    assert not any("燃料组合假设" in s for s in statements)
+    assert result["trace"]["fuels"] == {"methods": [], "concept_pairs": [], "gaps": []}
 
 
 # ---- 接地 / 查新 / 可行性（fake 端到端） ----

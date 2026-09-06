@@ -1215,23 +1215,37 @@ class FakeProvider(LLMProvider):
     @staticmethod
     def _respond_hyp_generate(last_user: str) -> str:
         """生成：固定两个回显 direction 的候选。两条措辞刻意差异大——去重折叠
-        （SequenceMatcher>0.85）不该吃掉它们，完整 run 的树形状才可精确断言。"""
-        direction = str(FakeProvider._payload_of(last_user).get("direction") or "")[:40]
-        return json.dumps(
+        （SequenceMatcher>0.85）不该吃掉它们，完整 run 的树形状才可精确断言。
+
+        payload 带非空 fuels 节（#670）时**多产一条**回显「收到了哪些燃料节、
+        各几条」的候选：确定性、且让「燃料存在与否改变候选」在 fake 路径上
+        可直接断言——这正是 P2.5 F6 的出口判据。无燃料时输出与从前逐字节一致。"""
+        payload = FakeProvider._payload_of(last_user)
+        direction = str(payload.get("direction") or "")[:40]
+        candidates = [
             {
-                "candidates": [
-                    {
-                        "statement": f"机制假设（fake A）：{direction} 依赖显式规划机制",
-                        "rationale": "fake-generate：语义近邻灵感组合",
-                    },
-                    {
-                        "statement": f"证据闭环假设（fake B）：{direction} 需要检索增强验证",
-                        "rationale": "fake-generate：引文远端灵感组合",
-                    },
-                ]
+                "statement": f"机制假设（fake A）：{direction} 依赖显式规划机制",
+                "rationale": "fake-generate：语义近邻灵感组合",
             },
-            ensure_ascii=False,
-        )
+            {
+                "statement": f"证据闭环假设（fake B）：{direction} 需要检索增强验证",
+                "rationale": "fake-generate：引文远端灵感组合",
+            },
+        ]
+        fuels = payload.get("fuels")
+        if isinstance(fuels, dict) and fuels:
+            # 节名排序 + 逐节条目数：同样的燃料永远同样的回显（可精确断言）
+            summary = " ".join(
+                f"{name}={len(fuels[name]) if isinstance(fuels[name], list) else 0}"
+                for name in sorted(fuels)
+            )
+            candidates.append(
+                {
+                    "statement": f"燃料组合假设（fake F）：{summary} 融入 {direction}",
+                    "rationale": "fake-generate：回显收到的燃料节与条目数（确定性替身）",
+                }
+            )
+        return json.dumps({"candidates": candidates}, ensure_ascii=False)
 
     @staticmethod
     def _respond_hyp_ground(last_user: str) -> str:

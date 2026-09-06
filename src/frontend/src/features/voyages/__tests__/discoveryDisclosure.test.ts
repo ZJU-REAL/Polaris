@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  fuelClueCount,
   parseDisclosure,
   pruneRecordsOf,
   prunedBranches,
@@ -17,10 +18,15 @@ const ARTIFACT = {
     { round: 1, phase: 'novelty', node_id: 'a', query: 'q-n1', paper_ids: ['p2'] },
     { round: 2, phase: 'ground', node_id: 'b', query: 'q-g2', paper_ids: [] },
   ],
+  fuels: {
+    methods: ['p3'],
+    concept_pairs: [{ concept_a: 'alpha', concept_c: 'gamma' }],
+    gaps: ['p4'],
+  },
   papers: {
-    retrieved: ['p1', 'p2', 'p3'],
+    retrieved: ['p1', 'p2', 'p3', 'p4'],
     cited: ['p1', 'p2'],
-    retrieved_not_cited: ['p3'],
+    retrieved_not_cited: ['p3', 'p4'],
     cited_not_retrieved: [],
   },
   branches: [
@@ -74,7 +80,14 @@ describe('parseDisclosure', () => {
       query: 'q-gen',
       paperIds: ['p1', 'p2'],
     });
-    expect(d.papers.retrievedNotCited).toEqual(['p3']);
+    expect(d.papers.retrievedNotCited).toEqual(['p3', 'p4']);
+    // 燃料小节（#670）：方法卡/概念对/缺口出处解析成干净类型
+    expect(d.fuels).toEqual({
+      methods: ['p3'],
+      conceptPairs: [{ a: 'alpha', c: 'gamma' }],
+      gaps: ['p4'],
+    });
+    expect(fuelClueCount(d.fuels!)).toBe(3);
     expect(d.branches.map((b) => b.nodeId)).toEqual(['root', 'b', 'ba']);
     expect(d.warnings).toEqual([{ code: 'round_without_trace' }]);
     expect(d.totalTokens).toEqual({ prompt: 17, completion: 8 });
@@ -97,6 +110,21 @@ describe('parseDisclosure', () => {
     expect(d.warnings).toEqual([{ code: 'k' }]);
     expect(d.totalTokens).toBeNull();
     expect(d.papers.retrieved).toEqual([]);
+    // 旧产物没有 fuels 节 → null（小节整体不渲染）
+    expect(d.fuels).toBeNull();
+  });
+
+  it('燃料节容错：脏概念对丢弃、空节数得出 0', () => {
+    const d = parseDisclosure({
+      fuels: {
+        methods: ['m1', 7],
+        concept_pairs: [{ concept_a: 'a', concept_c: 'c' }, { concept_a: 'x' }, 'junk'],
+        gaps: [],
+      },
+    })!;
+    expect(d.fuels).toEqual({ methods: ['m1'], conceptPairs: [{ a: 'a', c: 'c' }], gaps: [] });
+    const empty = parseDisclosure({ fuels: { methods: [], concept_pairs: [], gaps: [] } })!;
+    expect(fuelClueCount(empty.fuels!)).toBe(0);
   });
 });
 

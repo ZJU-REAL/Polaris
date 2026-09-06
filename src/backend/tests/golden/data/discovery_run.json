@@ -146,12 +146,12 @@
           },
           "<uuid-8>": {
             "completion_tokens": 91,
-            "prompt_tokens": 433
+            "prompt_tokens": 492
           }
         },
         "total": {
           "completion_tokens": 321,
-          "prompt_tokens": 2107
+          "prompt_tokens": 2166
         }
       },
       "branches": [
@@ -199,6 +199,11 @@
           ]
         }
       ],
+      "fuels": {
+        "concept_pairs": [],
+        "gaps": [],
+        "methods": []
+      },
       "invariants": {
         "cited_subset_of_retrieved": true,
         "pruned_have_reasons": true
@@ -641,13 +646,13 @@
               "round": 1,
               "usage": {
                 "completion_tokens": 294,
-                "prompt_tokens": 2055
+                "prompt_tokens": 2114
               }
             },
             "started_at": "<ts>",
             "tokens": {
               "completion_tokens": 294,
-              "prompt_tokens": 2055
+              "prompt_tokens": 2114
             },
             "verdict": {
               "passed": true,
@@ -670,7 +675,7 @@
           "round": 1,
           "usage": {
             "completion_tokens": 294,
-            "prompt_tokens": 2055
+            "prompt_tokens": 2114
           }
         },
         "params": {
@@ -687,7 +692,7 @@
         "title": "第 1 轮扩展假设",
         "tokens": {
           "completion_tokens": 294,
-          "prompt_tokens": 2055
+          "prompt_tokens": 2114
         },
         "verdict": {
           "passed": true,
@@ -768,8 +773,8 @@
     "updated_at": "<ts>",
     "usage": {
       "completion_tokens": 340,
-      "prompt_tokens": 2202,
-      "total_tokens": 2542
+      "prompt_tokens": 2261,
+      "total_tokens": 2601
     }
   }
 }

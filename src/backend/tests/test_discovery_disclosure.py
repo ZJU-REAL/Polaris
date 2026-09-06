@@ -31,7 +31,7 @@ from tests.conftest import (
 # ---- 纯函数：伪造一次两轮探索的完整现场 ----
 
 ROOT, CHILD_A, CHILD_B, GRANDCHILD = "n-root", "n-a", "n-b", "n-ba"
-P1, P2, P3, P4 = "p1", "p2", "p3", "p4"
+P1, P2, P3, P4, P5 = "p1", "p2", "p3", "p4", "p5"
 
 
 def _node(node_id, parent_id, status, *, score=0.5, grounding=None, novelty=None):
@@ -51,6 +51,8 @@ def _fixture():
 
     检索留痕：generate 捞到 P1/P2（灵感另含 P3），A 的接地查询捞 P1、查新捞
     P2；实引 = A 的 grounding 引 P1 + 查新引 P2 → P3 是「检了没用」差集。
+    燃料留痕（#670）：方法类比消费 P3（与灵感重叠，retrieved 不重复计）、
+    缺口消费 P5（只有燃料读过它）、外加一个概念对。
     """
     nodes = [
         _node(ROOT, None, "expanded", score=0.8),
@@ -102,6 +104,11 @@ def _fixture():
                         "citation_far": [P3],
                         "diverse": [],
                     },
+                    "fuels": {
+                        "methods": [P3],
+                        "concept_pairs": [{"concept_a": "alpha", "concept_c": "gamma"}],
+                        "gaps": [P5],
+                    },
                 },
             },
             "decisions": [
@@ -138,11 +145,19 @@ def test_build_disclosure_full_fixture():
     ]
     assert d["queries"][0]["paper_ids"] == [P1, P2]
 
-    # papers：retrieved = 查询命中 ∪ 灵感论文；cited = 接地立场引用 + 查新引用
-    assert d["papers"]["retrieved"] == [P1, P2, P3]
+    # papers：retrieved = 查询命中 ∪ 灵感论文 ∪ 燃料论文（方法卡/缺口的原文
+    # 进了 prompt，同样算读过）；cited = 接地立场引用 + 查新引用
+    assert d["papers"]["retrieved"] == [P1, P2, P3, P5]
     assert d["papers"]["cited"] == [P1, P2]
-    assert d["papers"]["retrieved_not_cited"] == [P3]
+    assert d["papers"]["retrieved_not_cited"] == [P3, P5]
     assert d["papers"]["cited_not_retrieved"] == []
+
+    # fuels（#670）：跨轮聚合的燃料消费账，概念对原样归档
+    assert d["fuels"] == {
+        "methods": [P3],
+        "concept_pairs": [{"concept_a": "alpha", "concept_c": "gamma"}],
+        "gaps": [P5],
+    }
 
     # branches：根第 0 轮出生、第 1 轮被扩展；B 有直接剪枝原因；
     # B 的孩子无决策 → 反查到级联来源 B
@@ -210,6 +225,8 @@ def test_build_disclosure_tolerates_empty_run():
     d = build_disclosure({}, [])
     assert d["queries"] == [] and d["branches"] == []
     assert d["papers"]["retrieved"] == [] and d["papers"]["cited"] == []
+    # 燃料节恒在（#670）：旧 run / 无燃料 run 如实报「什么都没消费」
+    assert d["fuels"] == {"methods": [], "concept_pairs": [], "gaps": []}
     assert d["invariants"] == {
         "cited_subset_of_retrieved": True,
         "pruned_have_reasons": True,
@@ -288,6 +305,8 @@ async def test_disclosure_artifact_written_and_served(client, queue_stub):
         "pruned_have_reasons": True,
     }
     assert d["warnings"] == []
+    # 燃料节恒在（#670）：本库没有抽取产物/概念 → 三路燃料如实为空
+    assert d["fuels"] == {"methods": [], "concept_pairs": [], "gaps": []}
     # 检索留痕齐全：generate 1 条 + 每子假设接地 2 条/查新 1 条（fake 确定性形状）
     phases = [q["phase"] for q in d["queries"]]
     assert phases == [

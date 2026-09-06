@@ -29,6 +29,7 @@ import {
   type Stance,
 } from './discoveryEvidence';
 import {
+  fuelClueCount,
   parseDisclosure,
   pruneRecordsOf,
   prunedBranches,
@@ -800,12 +801,18 @@ function DisclosureSection({ title, children }: { title: string; children: React
 
 function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | null; active: boolean }) {
   const pruned = disclosure ? prunedBranches(disclosure) : [];
-  // 差集论文解析标题（读了没引用 + 引了没检到两侧都要能点开看）
+  // 差集论文 + 燃料出处论文都要解析标题（差集两侧与「参考了哪些线索」小节
+  // 的芯片都要能点开看）
   const diffIds = useMemo(() => {
     if (!disclosure) return [];
     const seen = new Set<string>();
     const out: string[] = [];
-    for (const id of [...disclosure.papers.retrievedNotCited, ...disclosure.papers.citedNotRetrieved]) {
+    for (const id of [
+      ...disclosure.papers.retrievedNotCited,
+      ...disclosure.papers.citedNotRetrieved,
+      ...(disclosure.fuels?.methods ?? []),
+      ...(disclosure.fuels?.gaps ?? []),
+    ]) {
       if (!seen.has(id)) {
         seen.add(id);
         out.push(id);
@@ -850,6 +857,58 @@ function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | n
             );
           })}
         </div>
+      )}
+
+      {/* 参考了哪些线索（#670 燃料）：生成假设前喂进去的预计算线索。
+          旧产物没有这一节（fuels 为 null）时小节整体不渲染。 */}
+      {disclosure.fuels && (
+        <DisclosureSection title={tr('参考了哪些线索', 'What clues were consulted')}>
+          {fuelClueCount(disclosure.fuels) === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+              {tr(
+                '这次没有额外线索可参考（库里还没有方法卡、概念或未解问题的数据），只靠检索。',
+                'No extra clues were available (the library has no method cards, concepts, or open-problem data yet), so only searches were used.',
+              )}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {disclosure.fuels.methods.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 4 }}>
+                    {tr('换个做法的论文（目的相近、路子不同）：', 'Papers that reach a similar goal a different way:')}
+                  </div>
+                  <PaperChips ids={disclosure.fuels.methods} titles={titles} />
+                </div>
+              )}
+              {disclosure.fuels.conceptPairs.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 4 }}>
+                    {tr('还没被放到一起研究的概念组合：', 'Concept pairs never studied together yet:')}
+                  </div>
+                  <span className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+                    {disclosure.fuels.conceptPairs.map((pair, i) => (
+                      <span
+                        key={i}
+                        className="pill sm"
+                        style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}
+                      >
+                        {pair.a} × {pair.c}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+              )}
+              {disclosure.fuels.gaps.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 4 }}>
+                    {tr('文献自己指出的未解问题，出自：', 'Open problems the literature itself points out, from:')}
+                  </div>
+                  <PaperChips ids={disclosure.fuels.gaps} titles={titles} />
+                </div>
+              )}
+            </div>
+          )}
+        </DisclosureSection>
       )}
 
       {/* 检索了什么：查询全录，按阶段分组 */}

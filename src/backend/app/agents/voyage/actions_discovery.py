@@ -513,6 +513,9 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                     # 检索留痕（D6 披露 #655）：本轮查询全录 + 三路灵感的论文集合
                     "queries": round_queries,
                     "inspiration_paper_ids": gen["trace"]["inspiration_paper_ids"],
+                    # 燃料留痕（#670）：本轮 generate 消费了哪些方法卡/概念对/
+                    # 缺口条目（全空 = 没有燃料可用），随账本进 D6 披露
+                    "fuels": gen["trace"]["fuels"],
                 }
                 why = (
                     f"第 {round_no} 轮：扩展最优 open 节点，管线产出 "

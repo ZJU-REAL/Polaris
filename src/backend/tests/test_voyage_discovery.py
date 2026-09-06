@@ -381,6 +381,10 @@ async def test_discovery_low_score_children_auto_pruned(client, queue_stub):
     assert {d["node_id"] for d in pruned_decisions} == pruned_ids
     assert all("自动剪枝" in d["why"] for d in pruned_decisions)
     assert set(state["rounds"]["1"]["pruned"]) == pruned_ids
+    # 燃料留痕（#670）：轮次账本三键恒在；本库无抽取产物/概念 → 如实全空
+    assert state["rounds"]["1"]["fuels"] == {
+        "methods": [], "concept_pairs": [], "gaps": [],
+    }
     # 汇总产物：方案主体只剩根，附录如实收录被剪分支及原因
     async with get_sessionmaker()() as session:
         run = await session.get(VoyageRun, run_id)

@@ -9,9 +9,14 @@ LLM 只负责五件判断性的事——组合灵感成假设、拆子命题、�
 1. **generate**：三路灵感确定性取材——语义近邻（direction 直接检索）、引文图
    远端（命中论文沿引文边走 2 跳、只取非直接邻居：图距离远的实体更可能带来
    跨域组合，MOOSE-Chem「假设 ≈ 背景 + 灵感组合」）、多样窗（未被覆盖论文的
-   等距片段窗口，替代随机采样以保证可重放）→ ``hyp_generate`` 一次调用组合出
-   n 个候选 → SequenceMatcher 相似度 >0.85 折叠去重（Stanford 100+ 研究者盲评：
-   LLM 假设多样性坍缩严重，大量采样后去重是必要步骤，§12）。
+   等距片段窗口，替代随机采样以保证可重放）；#670（P2.5 F6）起再喂三路**预计算
+   燃料**——方法类比（同目的异机制的做法，#666）、未连接概念对（Swanson ABC
+   候选，#667）、开放缺口（文献自己指出的未解问题，#668）。燃料同样是确定性
+   取材，且**任何一路失败都静默降级为空**：燃料是加分项，供不上不该拖垮生成
+   （库刚建、还没有抽取产物时三路燃料天然为空，行为与纯检索路完全一致）。
+   → ``hyp_generate`` 一次调用组合出 n 个候选 → SequenceMatcher 相似度 >0.85
+   折叠去重（Stanford 100+ 研究者盲评：LLM 假设多样性坍缩严重，大量采样后
+   去重是必要步骤，§12）。
 2. **ground**：``hyp_ground`` 拆子命题（≤5）→ 逐子命题确定性检索 top-5 →
    同环节第二次调用只允许从检索结果里**选择** paper_id + 立场（support/refute）
    或判 speculation；后处理校验所选 id ∈ 检索集，越界一律降为 speculation——
@@ -29,6 +34,7 @@ score = novel 比例 × support 覆盖率。选这个最笨的公式是有意的
 """
 
 import json
+import logging
 import uuid
 from difflib import SequenceMatcher
 from typing import Any
@@ -42,8 +48,10 @@ from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperChunk
 from app.models.paper_citation import PaperCitation
 from app.services import chunks as chunks_service
-from app.services import library_rag
+from app.services import concept_fuels, gap_ledger, library_rag, method_index
 from app.services.papers import PAPER_STATUS_GROUPS
+
+logger = logging.getLogger(__name__)
 
 # 四个 LLM 环节（router.py STAGES / 前端 LLM_STAGES 同步登记）：
 # generate/ground 是较长的结构化生成走中档，novelty/feasibility 是短 JSON 判定走短档
@@ -57,6 +65,7 @@ MAX_SUBCLAIMS = 5  # 子命题上限：多了检索与判定成本线性涨，�
 GROUND_TOP_K = 5  # 每条子命题送给 LLM 挑选的检索结果数
 DEDUP_THRESHOLD = 0.85  # 陈述相似度超过它视为同一假设（去重折叠）
 INSPIRATION_PER_ROUTE = 3  # 引文远端 / 多样窗两路各取几条灵感
+FUEL_PER_ROUTE = 3  # 三路燃料各取几条（#670）：prompt 是稀缺资源，燃料给最强的 top-3
 SNIPPET_CHARS = 300  # 灵感与证据片段的截断长度
 DENSITY_LIMIT = 50  # 相关片段密度统计的计数上限（信号要的是量级，不是全量）
 # expand 后低于此分自动剪枝（actions_discovery 消费）。0.15 = 「不到一半子命题
@@ -68,10 +77,15 @@ _MAX_JSON_ATTEMPTS = 3
 GENERATE_SYSTEM_PROMPT = """\
 POLARIS_HYP_GENERATE
 你是研究假设生成器。输入 JSON 里是研究方向和三路文献灵感（semantic=语义近邻、
-citation_far=引文图远端、diverse=多样窗口片段）。请把方向与灵感**组合**成最多 n 个
-彼此不同、可检验的研究假设（鼓励跨片段组合，而不是逐条改写）。
+citation_far=引文图远端、diverse=多样窗口片段）。输入可能还带 fuels 节——从库里
+预计算的三类燃料，每条都带来源（paper_id / 概念名）：
+- method_analogies：同目的异机制的做法（purpose 相近、mechanism 不同的方法卡）；
+- unconnected_pairs：尚未被共同研究的概念组合（经桥概念间接相连的 A、C）；
+- open_gaps：文献指出的未解问题（gap/矛盾/负结果的原文归纳）。
+请把方向与灵感/燃料**组合**成最多 n 个彼此不同、可检验的研究假设（鼓励跨片段、
+跨燃料组合，而不是逐条改写；有燃料时优先消费燃料——它们是库里最值得下注的线索）。
 只输出 JSON：{"candidates": [{"statement": "假设陈述（一句话，可检验）", \
-"rationale": "一句话依据（引用了哪路灵感）"}]}"""
+"rationale": "一句话依据（引用了哪路灵感或燃料）"}]}"""
 
 GROUND_SPLIT_SYSTEM_PROMPT = """\
 POLARIS_HYP_GROUND
@@ -327,6 +341,92 @@ async def _diverse_window_chunks(
     return pool[::stride][:INSPIRATION_PER_ROUTE]
 
 
+async def _gather_fuels(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    direction: str,
+    user_id: uuid.UUID | None,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
+    """三路燃料确定性取材（#670）：返回 (prompt 的 fuels 节, trace 的 fuels 节)。
+
+    prompt 节只收**非空**的路——空路进 prompt 只是噪音，且「无任何燃料时 payload
+    与纯检索路完全一致」是行为判据（golden 场景靠它保证等价）。trace 节三个键
+    恒在（哪怕全空）：披露报告要能如实说「这次没消费任何燃料」。
+
+    每一路独立 try/except **静默降级为空**：燃料服务依赖抽取产物/概念/向量等
+    可选设施，任何一路坏了都不该把整个 generate 拖下水——没有燃料的生成是
+    降级，不是失败。
+    """
+    sections: dict[str, list[dict[str, Any]]] = {}
+    trace: dict[str, Any] = {"methods": [], "concept_pairs": [], "gaps": []}
+
+    # 燃料 1：方法类比——同目的异机制（#666）。带 purpose/mechanism 原文与出处，
+    # LLM 才能据此做「换个机制达成同一目的」的类比组合
+    try:
+        cards, _mode = await method_index.search_methods(
+            session,
+            library_id,
+            direction,
+            mode="different_mechanism",
+            limit=FUEL_PER_ROUTE,
+            user_id=user_id,
+        )
+    except Exception:  # noqa: BLE001 — 燃料失败静默降级（见 docstring）
+        logger.warning("method analogy fuel unavailable", exc_info=True)
+        cards = []
+    if cards:
+        sections["method_analogies"] = [
+            {
+                "paper_id": str(c["paper_id"]),
+                "title": c["title"],
+                "purpose": c["purpose"],
+                "mechanism": c["mechanism"],
+            }
+            for c in cards
+        ]
+        trace["methods"] = list(dict.fromkeys(str(c["paper_id"]) for c in cards))
+
+    # 燃料 2：未连接概念对（#667）。A、C 与桥概念一起给：桥是「为什么值得把
+    # 它们放在一起想」的可解释依据
+    try:
+        pairs = await concept_fuels.mine_unconnected_pairs(
+            session, library_id=library_id, top_n=FUEL_PER_ROUTE
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("unconnected pair fuel unavailable", exc_info=True)
+        pairs = []
+    if pairs:
+        sections["unconnected_pairs"] = [
+            {
+                "concept_a": p["concept_a"]["name"],
+                "concept_c": p["concept_c"]["name"],
+                "bridges": [b["name"] for b in p["bridges"]],
+            }
+            for p in pairs
+        ]
+        trace["concept_pairs"] = [
+            {"concept_a": p["concept_a"]["name"], "concept_c": p["concept_c"]["name"]}
+            for p in pairs
+        ]
+
+    # 燃料 3：开放缺口（#668）。kind 不限：gap/contradiction 优先已由台账的
+    # 排序权重保证，这里只管取 top
+    try:
+        gaps = await gap_ledger.library_gaps(session, library_id, top=FUEL_PER_ROUTE)
+    except Exception:  # noqa: BLE001
+        logger.warning("open gap fuel unavailable", exc_info=True)
+        gaps = []
+    if gaps:
+        sections["open_gaps"] = [
+            {"paper_id": str(g.paper_id), "kind": g.kind, "statement": g.statement}
+            for g in gaps
+        ]
+        trace["gaps"] = list(dict.fromkeys(str(g.paper_id) for g in gaps))
+
+    return sections, trace
+
+
 def _norm_statement(text: str) -> str:
     return " ".join(str(text).lower().split())
 
@@ -411,6 +511,10 @@ async def generate(
     )
     all_ids = list({c.paper_id for c in semantic_chunks + far_chunks + diverse_chunks})
     titles = await _paper_titles(session, all_ids)
+    # 三路燃料（#670）：方法类比 / 未连接概念对 / 开放缺口，失败静默降级为空
+    fuel_sections, fuel_trace = await _gather_fuels(
+        session, library_id=library_id, direction=direction, user_id=user_id
+    )
     payload = {
         "direction": direction,
         "n": n_candidates,
@@ -420,6 +524,9 @@ async def generate(
             "diverse": [_chunk_entry(c, titles) for c in diverse_chunks],
         },
     }
+    if fuel_sections:
+        # 全空时不加键：无燃料的 payload 与纯检索路逐字节一致（行为等价判据）
+        payload["fuels"] = fuel_sections
     raw = await _complete_json(
         llm,
         GENERATE_STAGE,
@@ -446,6 +553,9 @@ async def generate(
                 "citation_far": _ordered_paper_ids(far_chunks),
                 "diverse": _ordered_paper_ids(diverse_chunks),
             },
+            # 燃料留痕（#670）：消费了哪些方法卡/概念对/缺口条目，三键恒在
+            # （全空 = 这次没有燃料可用），供轮次账本与 D6 披露归档
+            "fuels": fuel_trace,
         },
     }
 

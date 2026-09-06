@@ -42,6 +42,16 @@ export interface DisclosureWarning {
   code: string;
 }
 
+/** 燃料消费账（#670）：生成假设时参考了哪些方法卡 / 概念组合 / 缺口条目。 */
+export interface DisclosureFuels {
+  /** 方法类比消费的论文（同目的异机制的方法卡出处） */
+  methods: string[];
+  /** 尚未被共同研究的概念组合（概念名对） */
+  conceptPairs: { a: string; c: string }[];
+  /** 开放缺口条目的论文出处 */
+  gaps: string[];
+}
+
 export interface DisclosureData {
   queries: DisclosureQuery[];
   papers: {
@@ -51,6 +61,8 @@ export interface DisclosureData {
     citedNotRetrieved: string[];
   };
   branches: DisclosureBranch[];
+  /** 燃料消费账；旧产物（#670 之前）没有这一节，为 null（小节整体不渲染） */
+  fuels: DisclosureFuels | null;
   warnings: DisclosureWarning[];
   /** 全 run token 总量（accounting.total；缺失为 null） */
   totalTokens: { prompt: number; completion: number } | null;
@@ -113,6 +125,26 @@ function parseBranch(raw: unknown): DisclosureBranch | null {
   };
 }
 
+function parseFuels(raw: unknown): DisclosureFuels | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const rec = raw as Record<string, unknown>;
+  const conceptPairs: { a: string; c: string }[] = [];
+  if (Array.isArray(rec.concept_pairs)) {
+    for (const pair of rec.concept_pairs) {
+      if (typeof pair !== 'object' || pair === null) continue;
+      const pr = pair as Record<string, unknown>;
+      if (typeof pr.concept_a === 'string' && typeof pr.concept_c === 'string') {
+        conceptPairs.push({ a: pr.concept_a, c: pr.concept_c });
+      }
+    }
+  }
+  return {
+    methods: asStringArray(rec.methods),
+    conceptPairs,
+    gaps: asStringArray(rec.gaps),
+  };
+}
+
 /** 产物 JSON → 干净结构；根本不是对象（旧产物/坏数据）返回 null，组件降级。 */
 export function parseDisclosure(raw: unknown): DisclosureData | null {
   if (typeof raw !== 'object' || raw === null) return null;
@@ -142,6 +174,7 @@ export function parseDisclosure(raw: unknown): DisclosureData | null {
     branches: Array.isArray(rec.branches)
       ? rec.branches.map(parseBranch).filter((b): b is DisclosureBranch => b !== null)
       : [],
+    fuels: parseFuels(rec.fuels),
     warnings: Array.isArray(rec.warnings)
       ? rec.warnings
           .filter(
@@ -199,4 +232,9 @@ export function pruneRecordsOf(disclosure: DisclosureData): Map<string, PruneRec
 /** 被剪分支列表（时间线视图用）：保持产物顺序（＝建树顺序）。 */
 export function prunedBranches(disclosure: DisclosureData): DisclosureBranch[] {
   return disclosure.branches.filter((b) => b.status === 'pruned');
+}
+
+/** 燃料小节的条目总数（#670）：为 0 表示「这次没有额外线索可参考」。 */
+export function fuelClueCount(fuels: DisclosureFuels): number {
+  return fuels.methods.length + fuels.conceptPairs.length + fuels.gaps.length;
 }

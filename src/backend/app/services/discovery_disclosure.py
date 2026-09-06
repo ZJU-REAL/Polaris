@@ -11,6 +11,7 @@
       "version": 1,
       "queries":  [{round, phase: generate|ground|novelty, node_id, query,
                     paper_ids}],                       # 检索了什么（全录）
+      "fuels":    {methods, concept_pairs, gaps},      # 消费了哪些燃料（#670）
       "papers":   {retrieved, cited, retrieved_not_cited, cited_not_retrieved},
       "branches": [{node_id, parent_id, statement, status, score,
                     timeline: [{event: created|expanded|pruned, round,
@@ -78,6 +79,9 @@ def build_disclosure(checkpoint: dict[str, Any], nodes: Sequence[Any]) -> dict[s
     # ---- queries：轮次账本里的检索留痕拉平（按轮序，轮内保持记录顺序） ----
     queries: list[dict[str, Any]] = []
     retrieved: list[str] = []
+    # 燃料账（#670）：各轮消费的燃料条目跨轮去重聚合。三个键恒在——「这次
+    # 没消费任何燃料」也是要如实说出口的事实（golden 场景就是全空）
+    fuels: dict[str, list[Any]] = {"methods": [], "concept_pairs": [], "gaps": []}
     for round_no, record in _sorted_rounds(rounds):
         for raw in record.get("queries") or []:
             if not isinstance(raw, dict):
@@ -104,6 +108,17 @@ def build_disclosure(checkpoint: dict[str, Any], nodes: Sequence[Any]) -> dict[s
         ):
             # 真扩展过却没有检索留痕：旧版本 run（#655 之前）或脏账，如实标注
             warnings.append({"code": "round_without_trace", "round": round_no})
+        fuel_rec = record.get("fuels")
+        if isinstance(fuel_rec, dict):
+            # 方法卡/缺口条目的原文进了 generate 的 prompt——这些论文同样被
+            # 读过，计入 retrieved（概念对没有单一论文出处，只记概念名对）
+            _add_unique(fuels["methods"], fuel_rec.get("methods") or [])
+            _add_unique(fuels["gaps"], fuel_rec.get("gaps") or [])
+            _add_unique(retrieved, fuel_rec.get("methods") or [])
+            _add_unique(retrieved, fuel_rec.get("gaps") or [])
+            for pair in fuel_rec.get("concept_pairs") or []:
+                if isinstance(pair, dict) and pair not in fuels["concept_pairs"]:
+                    fuels["concept_pairs"].append(pair)
 
     # ---- papers：retrieved 全集 vs 实引（grounding 立场引用 + 查新引用） ----
     cited: list[str] = []
@@ -217,6 +232,7 @@ def build_disclosure(checkpoint: dict[str, Any], nodes: Sequence[Any]) -> dict[s
     return {
         "version": 1,
         "queries": queries,
+        "fuels": fuels,
         "papers": papers,
         "branches": branches,
         "tournament": {

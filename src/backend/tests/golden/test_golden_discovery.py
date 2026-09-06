@@ -174,6 +174,10 @@ async def test_discovery_chain_matches_golden(client, queue_stub):
     }
     assert disclosure["warnings"] == []
     assert disclosure["queries"], "披露里必须有检索留痕"
+    # 燃料节（#670）：golden 的两篇 bibtex 论文没有全文 → 没有抽取产物/概念 →
+    # 三路燃料合法为空，generate 行为与纯检索路等价（有燃料的差异走常规测试）。
+    # 断言「节存在且为空」钉住这条降级路径本身。
+    assert disclosure["fuels"] == {"methods": [], "concept_pairs": [], "gaps": []}
 
     rendered = json.dumps(transcript, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if os.environ.get("POLARIS_GOLDEN") == "record":
