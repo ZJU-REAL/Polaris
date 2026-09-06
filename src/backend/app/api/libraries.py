@@ -43,6 +43,8 @@ from app.schemas.libraries import (
     LibraryCreate,
     LibraryDigestRead,
     LibraryDigestSummary,
+    LibraryQaRequest,
+    LibraryQaResponse,
     PaperMergeRequest,
     PaperMergeResult,
     StatementInterviewQuestion,
@@ -74,6 +76,7 @@ from app.services import graph as graph_service
 from app.services import ingest as ingest_service
 from app.services import libraries as libraries_service
 from app.services import library_chat as library_chat_service
+from app.services import library_rag as library_rag_service
 from app.services import notes as notes_service
 from app.services import paper_enrich as paper_enrich_service
 from app.services import paper_import as paper_import_service
@@ -1082,6 +1085,36 @@ async def chat_with_library(
     return chat_stream_response(
         messages, sources, user_id=user_id, project_id=project_id, log_label="library chat"
     )
+
+
+@router.post("/libraries/{library_id}/qa", response_model=LibraryQaResponse)
+async def library_qa(
+    library_id: uuid.UUID,
+    data: LibraryQaRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> LibraryQaResponse:
+    """库级深度问答（agentic RAG，#644）：证据先行的一问一答，非流式。
+
+    与 ``/chat``（单趟检索 + 流式闲聊）互补：这里跑完整的四件套流水线（查询扩展 →
+    引文图补召回 → 重排 → 证据先行作答），返回结构化证据集，每条引用都可回溯到
+    库内片段。按库可见性可读，费用记个人。
+    """
+    library = await _get_visible_library(session, library_id, user)
+    try:
+        result = await library_rag_service.answer(
+            session,
+            library.id,
+            data.question,
+            user_id=user.id,
+            max_rounds=data.max_rounds,
+        )
+    except ProgrammingError as e:  # paper_chunks 表还没迁移
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="DB_MIGRATION_REQUIRED: 请先执行数据库迁移（make migrate）",
+        ) from e
+    return LibraryQaResponse(**result)
 
 
 # ---- P6 治理：重复论文合并 ----

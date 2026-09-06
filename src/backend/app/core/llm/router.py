@@ -81,6 +81,10 @@ STAGES = (
     "review",
     "reading",
     "citation_intent",
+    # 库级 agentic RAG 三环节（#644）：扩展/重排是短 JSON，作答是中档长生成
+    "rag_expand",
+    "rag_rerank",
+    "rag_answer",
 )
 
 _ROUTE_CACHE_TTL = 60.0
@@ -168,6 +172,8 @@ _SHORT_CALL_STAGES = frozenset(
         "forge_signal",
         "reading",
         "citation_intent",  # 引文意图批量分类：短 JSON、便宜模型（#639）
+        "rag_expand",  # 库问答查询扩展：短 JSON（#644）
+        "rag_rerank",  # 库问答重排+摘要：短 JSON（#644）
     }
 )
 
@@ -181,7 +187,11 @@ _LONG_CALL_STAGES = STREAM_STAGES | frozenset({"digest", "forge_generate"})
 # 中档用于多轮代理和较长的结构化生成。一次调用比短 JSON 长得多，但**不能**
 # 直接塞进长档：那是 300s × 4 尝试，最坏 20 分钟攥着一个 HTTP 连接不放，而对话是同步的，
 # 用户早走了。180s × 2 是"够想完一轮、又不至于把连接耗死"的折中。
-_MEDIUM_CALL_STAGES = frozenset({"agent", "discovery_plan", "goal_explore", "proposal_review"})
+# rag_answer 是同步问答里的长生成（证据集大、要逐句挂引用），60s 短档会掐死它，
+# 但它又是用户干等着的请求，不能给长档 20 分钟的耐心——与 agent 同档。
+_MEDIUM_CALL_STAGES = frozenset(
+    {"agent", "discovery_plan", "goal_explore", "proposal_review", "rag_answer"}
+)
 
 
 def call_profile(stage: str) -> tuple[float, int]:

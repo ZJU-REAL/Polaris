@@ -233,3 +233,30 @@ class StatementInterviewResponse(BaseModel):
     total: int
     question: StatementInterviewQuestion | None = None
     statement: str | None = None
+
+
+# ---- 库级 agentic RAG 问答（#644） ----
+
+
+class LibraryQaRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    # 检索轮数上限（首轮 + 扩展轮）；界面暂不暴露，留给调用方调
+    max_rounds: int = Field(default=2, ge=1, le=4)
+
+
+class LibraryQaEvidence(BaseModel):
+    """一条证据：via 标注它怎么进的证据集（vector/expansion/citation/direct）。"""
+
+    paper_id: uuid.UUID
+    chunk_id: uuid.UUID | None = None
+    title: str = ""
+    snippet: str = ""
+    score: float | None = None
+    via: str = "vector"
+
+
+class LibraryQaResponse(BaseModel):
+    answer: str
+    evidence: list[LibraryQaEvidence] = []
+    # 实际执行过的检索查询（小库直通时为空表——没有检索这一步）
+    queries: list[str] = []

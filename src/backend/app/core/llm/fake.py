@@ -37,6 +37,10 @@ _CONCEPTS_MARKER = "概念列表："
 _FAKE_FIGURE_REF_RE = re.compile(r"^(?:fig|figure|tab|table|eq)\s*[:：]", re.IGNORECASE)
 _AFFILIATIONS_MARKER = "POLARIS_AUTHOR_AFFIL"  # 逐位作者机构解析（affiliations.py 专门调用）
 _CITATION_INTENT_MARKER = "POLARIS_CITATION_INTENT"  # 引文意图批量分类（citation_graph.py）
+# 库级 agentic RAG 三环节（services/library_rag.py，#644）
+_RAG_EXPAND_MARKER = "POLARIS_RAG_EXPAND"
+_RAG_RERANK_MARKER = "POLARIS_RAG_RERANK"
+_RAG_ANSWER_MARKER = "POLARIS_RAG_ANSWER"
 _AFFIL_COMPILE_MARKER = "POLARIS_AFFILIATIONS"  # on_compile 折叠进 wiki 编译的机构定界块请求
 # on_compile 模式下 librarian 编译输出附带的确定性机构定界块（与 FULL_TEXT 对齐）
 _FAKE_AFFIL_BLOCK = (
@@ -415,6 +419,13 @@ class FakeProvider(LLMProvider):
                 },
                 ensure_ascii=False,
             )
+        # 库级 RAG 三环节：user prompt 内嵌检索片段（可能撞任意通用 marker），须先判断
+        if _RAG_EXPAND_MARKER in full_text:
+            return FakeProvider._respond_rag_expand()
+        if _RAG_RERANK_MARKER in full_text:
+            return FakeProvider._respond_rag_rerank(last_user)
+        if _RAG_ANSWER_MARKER in full_text:
+            return FakeProvider._respond_rag_answer(last_user)
         # 引文意图分类：user prompt 内嵌论文正文原句（可能撞任意通用 marker），须先判断
         if _CITATION_INTENT_MARKER in full_text:
             return FakeProvider._respond_citation_intent(last_user)
@@ -591,6 +602,51 @@ class FakeProvider(LLMProvider):
                     break
             out.append({"index": item["index"], "intent": intent, "confidence": confidence})
         return json.dumps({"items": out}, ensure_ascii=False)
+
+    # ---- 库级 agentic RAG（services/library_rag.py 的三个 system prompt 对齐，#644） ----
+
+    @staticmethod
+    def _respond_rag_expand() -> str:
+        """查询扩展：固定回一条补充查询（确定性；测试语料据此埋「expansion probe」）。"""
+        return json.dumps({"queries": ["expansion probe query (fake)"]}, ensure_ascii=False)
+
+    @staticmethod
+    def _respond_rag_rerank(last_user: str) -> str:
+        """重排+摘要：恒序回传（按输入顺序给递减分），每条配确定性假摘要。"""
+        start = last_user.find("{")
+        try:
+            payload = json.loads(last_user[start:]) if start != -1 else {}
+        except json.JSONDecodeError:
+            payload = {}
+        out = []
+        for i, item in enumerate(payload.get("items") or []):
+            if not isinstance(item, dict) or "id" not in item:
+                continue
+            out.append(
+                {
+                    "id": item["id"],
+                    "score": round(max(0.0, 1.0 - 0.05 * i), 2),
+                    "summary": f"（fake 摘要）{str(item.get('text') or '')[:40]}",
+                }
+            )
+        return json.dumps({"items": out}, ensure_ascii=False)
+
+    @staticmethod
+    def _respond_rag_answer(last_user: str) -> str:
+        """证据先行作答：回显问题 + 引用首条证据的 paper_id（确定性、可校验）。"""
+        start = last_user.find("{")
+        try:
+            payload = json.loads(last_user[start:]) if start != -1 else {}
+        except json.JSONDecodeError:
+            payload = {}
+        question = str(payload.get("question") or "")[:200]
+        evidence = [e for e in (payload.get("evidence") or []) if isinstance(e, dict)]
+        first_id = str(evidence[0].get("paper_id")) if evidence else ""
+        cite = f" [{first_id}]" if first_id else ""
+        return (
+            f"（fake RAG 作答）关于「{question}」：综合证据集，核心结论成立{cite}。"
+            "证据集之外的内容，我无法确定。"
+        )
 
     @staticmethod
     def _respond_daily_digest(last_user: str) -> str:

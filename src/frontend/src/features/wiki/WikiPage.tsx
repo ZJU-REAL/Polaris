@@ -10,6 +10,7 @@ import { ExportMenu, PapersTab, type AdvSearchSeed } from './PapersTab';
 import { ConceptsTab } from './ConceptsTab';
 import { pickConceptByName } from './shared';
 import { LibraryChatTab } from './LibraryChatTab';
+import { LibraryQaTab } from './LibraryQaTab';
 import { IngestTab } from './IngestTab';
 import { NotesTab } from './NotesTab';
 import { GovernanceTab } from './GovernanceTab';
@@ -32,7 +33,7 @@ const PresentationModal = lazy(() =>
    从哪个课题建的，如今仅用来决定要不要显示课题域的 PPT。
    ============================================================ */
 
-type WikiTab = 'discover' | 'papers' | 'concepts' | 'graph' | 'digest' | 'chat' | 'ingest' | 'notes' | 'govern';
+type WikiTab = 'discover' | 'papers' | 'concepts' | 'graph' | 'digest' | 'chat' | 'qa' | 'ingest' | 'notes' | 'govern';
 
 export function WikiWorkbench({
   pid,
@@ -102,7 +103,7 @@ export function WikiWorkbench({
         seq: (old?.seq ?? 0) + 1,
       }));
       setTab('papers');
-    } else if (tabParam && ['discover', 'papers', 'concepts', 'graph', 'digest', 'chat', 'ingest', 'notes', 'govern'].includes(tabParam)) {
+    } else if (tabParam && ['discover', 'papers', 'concepts', 'graph', 'digest', 'chat', 'qa', 'ingest', 'notes', 'govern'].includes(tabParam)) {
       setTab(tabParam as WikiTab);
     }
     setSearchParams({}, { replace: true });
@@ -171,6 +172,8 @@ export function WikiWorkbench({
             { v: 'graph', label: tr('图谱', 'Graph') },
             ...(libraryId ? [{ v: 'digest' as const, label: tr('每日简报', 'Daily digest') }] : []),
             { v: 'chat', label: tr('文献对话', 'Chat') },
+            // 深度问答走 /libraries/{id}/qa，只有库作用域有这个端点
+            ...(libraryId ? [{ v: 'qa' as const, label: tr('深度问答', 'Deep Q&A') }] : []),
             { v: 'notes', label: tr('笔记', 'Notes') },
             ...(libraryId ? [{ v: 'govern' as const, label: tr('文献库配置', 'Library config') }] : []),
             // 建库与同步放到最后一个标签
@@ -265,6 +268,8 @@ export function WikiWorkbench({
             onOpenPaper={goPaper}
             onWikiLink={onWikiLink}
           />
+        ) : tab === 'qa' && libraryId ? (
+          <LibraryQaTab libraryId={libraryId} onOpenPaper={goPaper} />
         ) : tab === 'ingest' ? (
           <IngestTab
             pid={pid}

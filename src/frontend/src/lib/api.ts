@@ -639,6 +639,9 @@ export const LLM_STAGES = [
   'writing',
   'review',
   'citation_intent',
+  'rag_expand',
+  'rag_rerank',
+  'rag_answer',
 ] as const;
 
 export interface LlmProviderRead {
@@ -1618,6 +1621,23 @@ export interface RebuildIndexResult {
   embedded: number;
   embed_error: string | null;
   total_chunks: number;
+}
+
+/** 深度问答证据卡：via 标注证据怎么来的（vector/expansion/citation/direct）。 */
+export interface LibraryQaEvidence {
+  paper_id: string;
+  chunk_id: string | null;
+  title: string;
+  snippet: string;
+  score: number | null;
+  via: 'vector' | 'expansion' | 'citation' | 'direct' | string;
+}
+
+export interface LibraryQaResponse {
+  answer: string;
+  evidence: LibraryQaEvidence[];
+  /** 实际执行过的检索查询（小库直通时为空） */
+  queries: string[];
 }
 
 /** 异步建索引端点（相关研究 / 个人库）的返回：入队总数 + 有全文可索引 / 无全文跳过 篇数。 */
@@ -4262,6 +4282,10 @@ export const api = {
   /** 库作用域全文索引重建（独立库也可用；需该库管理权限）。 */
   rebuildLibraryFulltextIndex(libraryId: string): Promise<RebuildIndexResult> {
     return request<RebuildIndexResult>(`/libraries/${libraryId}/index/rebuild`, { method: 'POST' });
+  },
+  /** 库级深度问答（agentic RAG，#644）：证据先行的一问一答，非流式。 */
+  libraryQa(libraryId: string, question: string): Promise<LibraryQaResponse> {
+    return requestJson<LibraryQaResponse>(`/libraries/${libraryId}/qa`, 'POST', { question });
   },
   /** 可选全文索引：为本课题「相关研究」这批论文异步建全文索引（设置关时后端 409 INDEXING_DISABLED）。 */
   buildShelfIndex(projectId: string): Promise<QueuedIndexResult> {
