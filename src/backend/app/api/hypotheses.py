@@ -1,10 +1,11 @@
-"""假设/实验树读路由（#637）：树整体 + 单节点详情。
+"""假设/实验树读路由（#637）：树整体 + 单节点详情 + run 产物只读（#655）。
 
 只读——树由 discovery 引擎写（D2/D3），用户不直接编辑节点。可见性完全
 复用任务口径（services.voyages.get_voyage 内部的 can_view_voyage）：
 树是 run 的资产，能看任务就能看树，无权限一律 404（不泄露存在性）。
 """
 
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,6 +21,11 @@ from app.services import hypothesis_tree as tree_service
 from app.services import voyages as voyages_service
 
 router = APIRouter(prefix="/voyages", tags=["hypotheses"])
+
+# 可外露的产物白名单（#655）：checkpoint["artifacts"] 里还混着内部状态的余地，
+# 只放行明确面向用户的两份 discovery 产物；名单外一律 404（与不存在同口径，
+# 不泄露「有没有这个键」）。后续 kind 的产物要外露时在这里登记。
+ARTIFACT_WHITELIST = frozenset({"discovery-summary.json", "discovery-disclosure.json"})
 
 
 async def _viewable_run(
@@ -62,6 +68,28 @@ async def get_hypothesis_tournament(
         "matches": state.get("matches") or [],
         "nodes": state.get("nodes") or {},
     }
+
+
+@router.get("/{voyage_id}/artifacts/{name}")
+async def get_voyage_artifact(
+    voyage_id: uuid.UUID,
+    name: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict:
+    """run 产物只读（#655，补 D5 标注的缺口：研究方案/披露报告此前无端点）。
+
+    产物存在 checkpoint["artifacts"]（值是 JSON 字符串），这里解析后返回——
+    前端不必自己 loads。可见性同树端点：能看任务就能看产物，无权限/名单外/
+    尚未产出一律 404。
+    """
+    run = await _viewable_run(session, voyage_id, user)
+    if name not in ARTIFACT_WHITELIST:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ARTIFACT_NOT_FOUND")
+    raw = ((run.checkpoint or {}).get("artifacts") or {}).get(name)
+    if raw is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ARTIFACT_NOT_FOUND")
+    return {"name": name, "content": json.loads(raw) if isinstance(raw, str) else raw}
 
 
 @router.get(

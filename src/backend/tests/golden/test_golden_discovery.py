@@ -1,5 +1,5 @@
 """Golden transcript：注册 → 建库 → 建课题 → 两篇 bibtex 论文 → 库索引 →
-建 discovery 任务 → 引擎跑完 → 任务详情 + 假设树。
+建 discovery 任务 → 引擎跑完 → 任务详情 + 假设树 + 披露产物。
 
 D3（#648）的回归闸门：四段假设管线（generate → ground → novelty → feasibility →
 score）在 fake provider + sqlite 上确定性运行——树的形状、每个节点的 grounding /
@@ -155,6 +155,25 @@ async def test_discovery_chain_matches_golden(client, queue_stub):
         await client.get(f"/api/voyages/{run['id']}/hypothesis-tree", headers=headers),
         200,
     )
+    # 披露产物（#655 D6）：检索/阅读/剪枝/记账全录，经通用产物只读端点取回。
+    # 归一化前先做不变量自检——golden 链是「行为没变」的闸门，披露自洽
+    # （实引 ⊆ 检索集、被剪皆有因、零警告）是行为的一部分，必须常绿。
+    disclosure = (
+        await step(
+            "discovery_disclosure",
+            await client.get(
+                f"/api/voyages/{run['id']}/artifacts/discovery-disclosure.json",
+                headers=headers,
+            ),
+            200,
+        )
+    )["content"]
+    assert disclosure["invariants"] == {
+        "cited_subset_of_retrieved": True,
+        "pruned_have_reasons": True,
+    }
+    assert disclosure["warnings"] == []
+    assert disclosure["queries"], "披露里必须有检索留痕"
 
     rendered = json.dumps(transcript, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if os.environ.get("POLARIS_GOLDEN") == "record":

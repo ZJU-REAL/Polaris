@@ -1,7 +1,8 @@
 """Golden transcript 归一化：把响应里的易变值替换成稳定占位符。
 
 规则（顺序敏感，UUID 按首见顺序编号，跨步骤稳定）：
-- UUID 字符串 → ``<uuid-N>``
+- UUID 字符串 → ``<uuid-N>``（dict 的**键**也归一化——披露产物的
+  node_usage/终榜按节点 id 作键，#655 起进 transcript）
 - ISO 时间戳 → ``<ts>``
 - JWT（三段 base64url）→ ``<token>``
 - 临时目录绝对路径 → ``<path>``
@@ -30,7 +31,12 @@ class Normalizer:
 
     def normalize(self, obj: Any) -> Any:
         if isinstance(obj, dict):
-            return {k: self.normalize(v) for k, v in obj.items()}
+            return {
+                (self._uuid(k) if isinstance(k, str) and _UUID_RE.match(k) else k): (
+                    self.normalize(v)
+                )
+                for k, v in obj.items()
+            }
         if isinstance(obj, list):
             return [self.normalize(v) for v in obj]
         if isinstance(obj, str):

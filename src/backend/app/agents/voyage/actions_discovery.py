@@ -35,6 +35,7 @@ from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
 from app.models.hypothesis import HypothesisNode
 from app.models.voyage import VoyageRun
+from app.services import discovery_disclosure
 from app.services import hypothesis_pipeline as pipeline
 from app.services import hypothesis_tournament as tournament_service
 from app.services import hypothesis_tree as tree_service
@@ -398,6 +399,12 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 if not candidates:
                     raise ValueError("hyp_generate 未产出任何候选假设（去重后为空）")
                 usage = dict(gen["usage"])
+                # 检索留痕（D6 披露 #655）：本轮发出的全部查询按阶段收进轮次账本。
+                # generate 的查询归到被扩展的父节点头上（子节点还没出生）
+                round_queries: list[dict[str, Any]] = [
+                    {"phase": "generate", "node_id": str(target.id), **q}
+                    for q in gen["trace"]["queries"]
+                ]
                 # 先算后写：每个候选把 ground/novelty/feasibility/score 全部算完，
                 # 再统一落库——管线再长，树的被杀窗口也不随之变宽（见函数 docstring）
                 computed: list[dict[str, Any]] = []
@@ -443,6 +450,16 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                                 grounded["grounding"], nov["report"]
                             ),
                             "usage": child_usage,
+                            # 接地/查新的查询此刻还没有节点 id 可挂（先算后写），
+                            # 落库后再补上归属
+                            "queries": [
+                                {"phase": "ground", **q}
+                                for q in grounded["trace"]["queries"]
+                            ]
+                            + [
+                                {"phase": "novelty", **q}
+                                for q in nov["trace"]["queries"]
+                            ],
                         }
                     )
                 pruned_children: list[str] = []
@@ -459,6 +476,9 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                         score=item["score"],
                     )
                     children_ids.append(str(node.id))
+                    # 检索留痕补归属：这个子假设的接地/查新查询记它头上
+                    for q in item["queries"]:
+                        round_queries.append({**q, "node_id": str(node.id)})
                     # 每节点记账：这个子假设的接地/查新/可行性花的 token 记它头上
                     _account_node_usage(ctx, str(node.id), item["usage"])
                     usage["prompt_tokens"] += item["usage"]["prompt_tokens"]
@@ -490,6 +510,9 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                     "node_id": target_id,
                     "children": children_ids,
                     "pruned": pruned_children,
+                    # 检索留痕（D6 披露 #655）：本轮查询全录 + 三路灵感的论文集合
+                    "queries": round_queries,
+                    "inspiration_paper_ids": gen["trace"]["inspiration_paper_ids"],
                 }
                 why = (
                     f"第 {round_no} 轮：扩展最优 open 节点，管线产出 "
@@ -580,7 +603,9 @@ async def discovery_summarize(ctx: ActionContext, params: dict[str, Any]) -> dic
     """整树汇总为**研究方案**产物（#648）：direction + 存活假设（按 score 降序，
     携带 grounding/novelty/feasibility 三类证据卡数据）+ 被剪分支附录（§8.2
     防择优汇报：放弃的路径和原因也是产物的一部分）+ 全节点快照与统计。
-    产物写进 checkpoint["artifacts"]，voyage 完成标准查它。"""
+    产物写进 checkpoint["artifacts"]，voyage 完成标准查它。同时确定性组装
+    披露报告 artifacts["discovery-disclosure.json"]（#655 D6：检索/阅读/剪枝/
+    对阵/记账全录，services/discovery_disclosure.py）。"""
     state = _state(ctx)
     async with get_sessionmaker()() as session:
         nodes = await tree_service.tree_for_run(session, ctx.run.id)
@@ -687,6 +712,10 @@ async def discovery_summarize(ctx: ActionContext, params: dict[str, Any]) -> dic
     }
     artifacts = dict(ctx.checkpoint.get("artifacts") or {})
     artifacts["discovery-summary.json"] = json.dumps(artifact, ensure_ascii=False)
+    # 披露报告（#655，§8.2）：与研究方案同刻落盘。纯确定性组装（零 LLM），
+    # 数据源是 ctx.checkpoint（run.checkpoint 此刻还是旧账，engine 结束后才回写）
+    disclosure = discovery_disclosure.build_disclosure(ctx.checkpoint, nodes)
+    artifacts["discovery-disclosure.json"] = json.dumps(disclosure, ensure_ascii=False)
     ctx.checkpoint["artifacts"] = artifacts
     _record_decision(
         ctx,

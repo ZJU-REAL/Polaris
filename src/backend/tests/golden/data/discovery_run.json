@@ -132,6 +132,171 @@
     "status": "active",
     "updated_at": "<ts>"
   },
+  "discovery_disclosure": {
+    "content": {
+      "accounting": {
+        "node_usage": {
+          "<uuid-10>": {
+            "completion_tokens": 115,
+            "prompt_tokens": 835
+          },
+          "<uuid-11>": {
+            "completion_tokens": 115,
+            "prompt_tokens": 839
+          },
+          "<uuid-8>": {
+            "completion_tokens": 91,
+            "prompt_tokens": 433
+          }
+        },
+        "total": {
+          "completion_tokens": 321,
+          "prompt_tokens": 2107
+        }
+      },
+      "branches": [
+        {
+          "node_id": "<uuid-8>",
+          "parent_id": null,
+          "score": 0.8,
+          "statement": "围绕「structured agent planning」的核心假设（fake root）",
+          "status": "expanded",
+          "timeline": [
+            {
+              "event": "created",
+              "round": 0
+            },
+            {
+              "event": "expanded",
+              "round": 1
+            }
+          ]
+        },
+        {
+          "node_id": "<uuid-10>",
+          "parent_id": "<uuid-8>",
+          "score": 0.25,
+          "statement": "机制假设（fake A）：structured agent planning；父假设：围绕「structu 依赖显式规划机制",
+          "status": "open",
+          "timeline": [
+            {
+              "event": "created",
+              "round": 1
+            }
+          ]
+        },
+        {
+          "node_id": "<uuid-11>",
+          "parent_id": "<uuid-8>",
+          "score": 0.25,
+          "statement": "证据闭环假设（fake B）：structured agent planning；父假设：围绕「structu 需要检索增强验证",
+          "status": "open",
+          "timeline": [
+            {
+              "event": "created",
+              "round": 1
+            }
+          ]
+        }
+      ],
+      "invariants": {
+        "cited_subset_of_retrieved": true,
+        "pruned_have_reasons": true
+      },
+      "papers": {
+        "cited": [
+          "<uuid-4>"
+        ],
+        "cited_not_retrieved": [],
+        "retrieved": [
+          "<uuid-4>",
+          "<uuid-5>"
+        ],
+        "retrieved_not_cited": [
+          "<uuid-5>"
+        ]
+      },
+      "queries": [
+        {
+          "node_id": "<uuid-8>",
+          "paper_ids": [
+            "<uuid-4>",
+            "<uuid-5>"
+          ],
+          "phase": "generate",
+          "query": "structured agent planning；父假设：围绕「structured agent planning」的核心假设（fake root）",
+          "round": 1
+        },
+        {
+          "node_id": "<uuid-10>",
+          "paper_ids": [
+            "<uuid-4>",
+            "<uuid-5>"
+          ],
+          "phase": "ground",
+          "query": "机制假设（fake A）：structured agent planning；父假设：围绕「stru 的机制子命题（fake s1）",
+          "round": 1
+        },
+        {
+          "node_id": "<uuid-10>",
+          "paper_ids": [
+            "<uuid-4>",
+            "<uuid-5>"
+          ],
+          "phase": "ground",
+          "query": "机制假设（fake A）：structured agent planning；父假设：围绕「stru 的边界子命题（fake s2）",
+          "round": 1
+        },
+        {
+          "node_id": "<uuid-10>",
+          "paper_ids": [
+            "<uuid-4>",
+            "<uuid-5>"
+          ],
+          "phase": "novelty",
+          "query": "已有研究 prior work on 机制假设（fake A）：structured agent planning；父假设：围绕「stru 的机制子命题（fake s1）",
+          "round": 1
+        },
+        {
+          "node_id": "<uuid-11>",
+          "paper_ids": [
+            "<uuid-4>",
+            "<uuid-5>"
+          ],
+          "phase": "ground",
+          "query": "证据闭环假设（fake B）：structured agent planning；父假设：围绕「st 的机制子命题（fake s1）",
+          "round": 1
+        },
+        {
+          "node_id": "<uuid-11>",
+          "paper_ids": [
+            "<uuid-4>",
+            "<uuid-5>"
+          ],
+          "phase": "ground",
+          "query": "证据闭环假设（fake B）：structured agent planning；父假设：围绕「st 的边界子命题（fake s2）",
+          "round": 1
+        },
+        {
+          "node_id": "<uuid-11>",
+          "paper_ids": [
+            "<uuid-4>",
+            "<uuid-5>"
+          ],
+          "phase": "novelty",
+          "query": "已有研究 prior work on 证据闭环假设（fake B）：structured agent planning；父假设：围绕「st 的机制子命题（fake s1）",
+          "round": 1
+        }
+      ],
+      "tournament": {
+        "matches": [],
+        "nodes": {}
+      },
+      "version": 1,
+      "warnings": []
+    },
+    "name": "discovery-disclosure.json"
+  },
   "hypothesis_tree": [
     {
       "created_at": "<ts>",

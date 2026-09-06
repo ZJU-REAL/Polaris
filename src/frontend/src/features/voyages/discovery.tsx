@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -28,14 +28,26 @@ import {
   type NoveltyEntry,
   type Stance,
 } from './discoveryEvidence';
+import {
+  parseDisclosure,
+  pruneRecordsOf,
+  prunedBranches,
+  queriesByPhase,
+  type DisclosureData,
+  type DisclosurePhase,
+  type PruneRecord,
+} from './discoveryDisclosure';
 
 /* ============================================================
    discovery（假设探索）任务的前端面（#642 → #654）：
    - 新建入口：方向文本 + 文献库 + 高级里的扩展轮数（走通用 POST /voyages）；
-   - 详情页 DiscoveryPanel：树视图（可折叠、点节点看证据卡）与方案报告
-     （存活假设按 score 排序 + 被剪分支附录）两种视图切换。
+   - 详情页 DiscoveryPanel：树视图（可折叠、点节点看证据卡）、方案报告
+     （存活假设按 score 排序 + 被剪分支附录）、过程记录（#655 披露产物：
+     检索了什么 / 读了什么 / 剪了什么）三种视图切换。
    证据卡的数据全部来自只读假设树 API（grounding / novelty_report /
    feasibility 随节点返回）；解析与支持度计算在 ./discoveryEvidence.ts。
+   过程记录来自产物端点 GET /voyages/{id}/artifacts/…，剪枝原因以产物里的
+   真实决策留痕优先，没有产物（run 未跑完/旧 run）再退回 D5 的推断。
    ============================================================ */
 
 const MAX_EXPANSIONS_LIMIT = 10; // 与后端 schemas/voyage.MAX_DISCOVERY_EXPANSIONS 一致
@@ -224,9 +236,18 @@ const SIGNAL_LABELS: Record<string, { zh: string; en: string }> = {
   related_chunk_hits: { zh: '库内相关片段数', en: 'Related chunks in library' },
 };
 
-/** 剪枝原因的界面文案：具体原因文本在后端 checkpoint 里、API 不外露，
-    前端按可观测信号（分数阈值 / 父状态）如实推断三类，不编细节。 */
-function pruneReasonText(node: HypothesisNodeRead, parentStatus: string | null): string {
+/** 剪枝原因的界面文案：披露产物里有决策留痕的原话（#655）就用原话——
+    级联剪枝例外，产物只有来源标注，文案本地化；产物缺失/该节点查无记录时
+    退回 D5 的推断（分数阈值 / 父状态三分类），不编细节。 */
+function pruneReasonText(
+  node: HypothesisNodeRead,
+  parentStatus: string | null,
+  real: PruneRecord | null | undefined,
+): string {
+  if (real) {
+    if (real.cascadeFrom) return tr('父分支被放弃后随之放弃', 'Dropped along with its parent branch');
+    if (real.reason) return real.reason;
+  }
   const kind = pruneReasonKind(node, parentStatus);
   if (kind === 'low_score') {
     return tr(
@@ -499,10 +520,13 @@ function NodeDetailPanel({ node, pruneReason, style }: { node: HypothesisNodeRea
 function TreeView({
   nodes,
   standings,
+  pruneRecords,
 }: {
   nodes: HypothesisNodeRead[];
   /** 锦标赛终榜（#653 深度模式）：node_id → 战绩；基础模式为空对象 */
   standings: Record<string, HypothesisTournamentStanding>;
+  /** 披露产物里的真实剪枝原因（#655）；产物没到手时为 null，退回推断 */
+  pruneRecords: Map<string, PruneRecord> | null;
 }) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -524,7 +548,11 @@ function TreeView({
         const m = NODE_STATUS_META[node.status] ?? OPEN_META;
         const pruned = node.status === 'pruned';
         const reason = pruned
-          ? pruneReasonText(node, node.parent_id ? statusById.get(node.parent_id) ?? null : null)
+          ? pruneReasonText(
+              node,
+              node.parent_id ? statusById.get(node.parent_id) ?? null : null,
+              pruneRecords?.get(node.id),
+            )
           : null;
         const ratio = supportRatio(parseGrounding(node.grounding));
         const selected = node.id === selectedId;
@@ -633,13 +661,21 @@ function TreeView({
 }
 
 // —— 方案报告视图 ——
-// 后端 discovery.summarize 把研究方案产物写在 run.checkpoint["artifacts"]，
-// 现有 API 不外露；树端点已含证据卡全部结构化数据，这里按后端同一排序规则
-// （score 降序、未评分垫底、同分按创建时间）就地重建报告——任务没跑完也能
-// 预览当前排序。LLM 的叙述性总结文本只存在于产物里，等后端开放产物读取
-// 接口后再补一段「AI 总结」。
+// 树端点已含证据卡全部结构化数据，这里按后端同一排序规则（score 降序、
+// 未评分垫底、同分按创建时间）就地重建报告——任务没跑完也能预览当前排序。
+// 剪枝原因：披露产物（#655）里的真实决策留痕优先，产物没到手再推断。
+// LLM 的叙述性总结文本在 discovery-summary.json 产物里（artifacts 端点
+// 已可读），「AI 总结」段落留给后续需要时再补。
 
-function ReportView({ nodes, active }: { nodes: HypothesisNodeRead[]; active: boolean }) {
+function ReportView({
+  nodes,
+  active,
+  pruneRecords,
+}: {
+  nodes: HypothesisNodeRead[];
+  active: boolean;
+  pruneRecords: Map<string, PruneRecord> | null;
+}) {
   const { alive, pruned } = useMemo(() => buildReport(nodes), [nodes]);
   const statusById = useMemo(() => new Map(nodes.map((n) => [n.id, n.status])), [nodes]);
   return (
@@ -713,7 +749,11 @@ function ReportView({ nodes, active }: { nodes: HypothesisNodeRead[]; active: bo
                 <div style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{n.statement}</div>
                 <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>
                   {n.score != null && <span className="mono">score {n.score.toFixed(2)} · </span>}
-                  {pruneReasonText(n, n.parent_id ? statusById.get(n.parent_id) ?? null : null)}
+                  {pruneReasonText(
+                    n,
+                    n.parent_id ? statusById.get(n.parent_id) ?? null : null,
+                    pruneRecords?.get(n.id),
+                  )}
                 </div>
               </div>
             ))}
@@ -724,11 +764,209 @@ function ReportView({ nodes, active }: { nodes: HypothesisNodeRead[]; active: bo
   );
 }
 
-// —— 详情页入口卡：树视图 / 方案报告 切换 ——
+// —— 过程记录视图（#655 披露产物：检索了什么 / 读了什么 / 剪了什么） ——
+
+const PHASE_META: Record<DisclosurePhase, { zh: string; en: string }> = {
+  generate: { zh: '找灵感（生成假设前）', en: 'Finding inspiration (before generating)' },
+  ground: { zh: '找证据（逐子命题接地）', en: 'Finding evidence (grounding subclaims)' },
+  novelty: { zh: '查新（换措辞复检）', en: 'Novelty check (re-searched with new wording)' },
+  other: { zh: '其他检索', en: 'Other searches' },
+};
+
+/** 自检警告的大白话文案：产物 warnings 只有 code，细节留在产物 JSON 里。 */
+const WARNING_META: Record<string, { zh: string; en: string }> = {
+  cited_not_retrieved: {
+    zh: '有引用对不上检索记录（引用只该来自检索结果）',
+    en: 'Some citations have no matching search record (citations should only come from searches)',
+  },
+  pruned_without_reason: {
+    zh: '有被放弃的分支查不到放弃原因',
+    en: 'A dropped branch has no recorded reason',
+  },
+  round_without_trace: {
+    zh: '有一轮扩展没有留下检索记录（可能是旧版本跑的或中途重启过）',
+    en: 'An expansion round left no search records (older version or mid-run restart)',
+  },
+};
+
+function DisclosureSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div style={{ border: '0.5px solid var(--border-2)', borderRadius: 10, padding: '10px 14px' }}>
+      <div style={{ fontSize: 12.5, fontWeight: 650, color: 'var(--text-2)', marginBottom: 8 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | null; active: boolean }) {
+  const pruned = disclosure ? prunedBranches(disclosure) : [];
+  // 差集论文解析标题（读了没引用 + 引了没检到两侧都要能点开看）
+  const diffIds = useMemo(() => {
+    if (!disclosure) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const id of [...disclosure.papers.retrievedNotCited, ...disclosure.papers.citedNotRetrieved]) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        out.push(id);
+      }
+    }
+    return out;
+  }, [disclosure]);
+  const titles = usePaperTitles(diffIds);
+
+  if (!disclosure) {
+    return (
+      <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
+        {active
+          ? tr('任务跑完后这里会有完整的过程记录：检索了什么、读了什么、剪掉了什么。', 'Once the run finishes, the full process log appears here: what was searched, what was read, what was dropped.')
+          : tr('这次任务没有留下过程记录（可能是旧版本跑的）。', 'This run left no process log (it may predate this feature).')}
+      </div>
+    );
+  }
+
+  const { papers } = disclosure;
+  const groups = queriesByPhase(disclosure.queries);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {/* 自检警告：产物组装时发现的数据伤口，如实亮出来（§8.2） */}
+      {disclosure.warnings.length > 0 && (
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--warn-tx)',
+            background: 'var(--warn-bg)',
+            borderRadius: 8,
+            padding: '8px 12px',
+          }}
+        >
+          {disclosure.warnings.map((w, i) => {
+            const meta = WARNING_META[w.code];
+            return (
+              <div key={i} className="row gap6">
+                <Icon name="shield" size={12} style={{ flexShrink: 0 }} />
+                {meta ? tr(meta.zh, meta.en) : w.code}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 检索了什么：查询全录，按阶段分组 */}
+      <DisclosureSection title={tr(`检索了什么（${disclosure.queries.length} 次）`, `What was searched (${disclosure.queries.length} queries)`)}>
+        {groups.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+            {tr('没有检索记录。', 'No search records.')}
+          </div>
+        ) : (
+          groups.map(({ phase, items }) => (
+            <div key={phase} style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--accent-text)', marginBottom: 4 }}>
+                {tr(PHASE_META[phase].zh, PHASE_META[phase].en)}
+                <span className="mono" style={{ fontWeight: 400, color: 'var(--text-4)', marginLeft: 6 }}>×{items.length}</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {items.map((q, i) => (
+                  <div key={i} className="row gap6" style={{ alignItems: 'baseline' }}>
+                    {q.round !== null && (
+                      <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)', flexShrink: 0 }}>
+                        {tr(`第 ${q.round} 轮`, `Round ${q.round}`)}
+                      </span>
+                    )}
+                    <span style={{ fontSize: 12, color: 'var(--text-2)', minWidth: 0, overflowWrap: 'anywhere' }}>{q.query}</span>
+                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', flexShrink: 0, marginLeft: 'auto' }}>
+                      {tr(`${q.paperIds.length} 篇`, `${q.paperIds.length} papers`)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </DisclosureSection>
+
+      {/* 读了什么：检索全集 vs 实际引用 + 差集 */}
+      <DisclosureSection
+        title={tr(
+          `读了什么（检索到 ${papers.retrieved.length} 篇，引用了 ${papers.cited.length} 篇）`,
+          `What was read (${papers.retrieved.length} retrieved, ${papers.cited.length} cited)`,
+        )}
+      >
+        {papers.retrievedNotCited.length > 0 && (
+          <div style={{ marginBottom: 6 }}>
+            <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 4 }}>
+              {tr('检索到但最终没引用：', 'Retrieved but never cited:')}
+            </div>
+            <PaperChips ids={papers.retrievedNotCited} titles={titles} />
+          </div>
+        )}
+        {papers.retrievedNotCited.length === 0 && papers.retrieved.length > 0 && (
+          <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+            {tr('检索到的论文全部被引用了。', 'Every retrieved paper ended up cited.')}
+          </div>
+        )}
+        {/* 引了却没检索到：不该发生（引用只能来自检索结果），有就如实标红 */}
+        {papers.citedNotRetrieved.length > 0 && (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: 11.5, color: 'var(--danger-tx)', marginBottom: 4 }}>
+              {tr('引用了但检索记录里找不到（数据有伤，见上方警告）：', 'Cited but missing from search records (data gap, see warning above):')}
+            </div>
+            <PaperChips ids={papers.citedNotRetrieved} titles={titles} />
+          </div>
+        )}
+      </DisclosureSection>
+
+      {/* 剪了什么：被放弃分支的时间线与真实原因 */}
+      <DisclosureSection title={tr(`剪了什么（${pruned.length} 个分支）`, `What was dropped (${pruned.length} branches)`)}>
+        {pruned.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+            {tr('没有分支被放弃。', 'No branch was dropped.')}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {pruned.map((b) => {
+              const createdRound = b.timeline.find((e) => e.event === 'created')?.round ?? null;
+              const prunedEvent = b.timeline.find((e) => e.event === 'pruned');
+              const prunedRound = prunedEvent?.round ?? null;
+              return (
+                <div key={b.nodeId}>
+                  <div style={{ fontSize: 12.5, color: 'var(--text-2)', textDecoration: 'line-through' }}>{b.statement}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>
+                    {createdRound !== null && (
+                      <span>{tr(`第 ${createdRound} 轮产生 · `, `Born round ${createdRound} · `)}</span>
+                    )}
+                    {prunedRound !== null && (
+                      <span>{tr(`第 ${prunedRound} 轮放弃 · `, `Dropped round ${prunedRound} · `)}</span>
+                    )}
+                    {b.score !== null && <span className="mono">score {b.score.toFixed(2)} · </span>}
+                    {prunedEvent?.cascadeFrom
+                      ? tr('父分支被放弃后随之放弃', 'Dropped along with its parent branch')
+                      : prunedEvent?.reason ?? tr('原因未记录（见上方警告）', 'No reason recorded (see warning above)')}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </DisclosureSection>
+
+      {disclosure.totalTokens && (
+        <div className="mono" style={{ fontSize: 11, color: 'var(--text-4)' }}>
+          {tr(
+            `全程 token：输入 ${disclosure.totalTokens.prompt} · 输出 ${disclosure.totalTokens.completion}`,
+            `Run tokens: ${disclosure.totalTokens.prompt} in · ${disclosure.totalTokens.completion} out`,
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// —— 详情页入口卡：树视图 / 方案报告 / 过程记录 切换 ——
 
 export function DiscoveryPanel({ voyage }: { voyage: VoyageRead }) {
   const active = !VOYAGE_TERMINAL.has(voyage.status);
-  const [view, setView] = useState<'tree' | 'report'>('tree');
+  const [view, setView] = useState<'tree' | 'report' | 'disclosure'>('tree');
   const { data } = useQuery({
     queryKey: ['hypothesis-tree', voyage.id],
     queryFn: () => api.listHypothesisTree(voyage.id),
@@ -745,6 +983,16 @@ export function DiscoveryPanel({ voyage }: { voyage: VoyageRead }) {
     refetchInterval: active ? 10_000 : false,
   });
   const standings = tournament?.nodes ?? {};
+  // 披露产物（#655）：汇总时才落盘，在那之前 404 是常态（retry 关掉、
+  // 任务在跑时低频轮询等它出现）；三个视图都吃它——剪枝原因产物优先
+  const { data: artifact } = useQuery({
+    queryKey: ['voyage-artifact', voyage.id, 'discovery-disclosure.json'],
+    queryFn: () => api.getVoyageArtifact(voyage.id, 'discovery-disclosure.json'),
+    retry: false,
+    refetchInterval: active ? 15_000 : false,
+  });
+  const disclosure = useMemo(() => (artifact ? parseDisclosure(artifact.content) : null), [artifact]);
+  const pruneRecords = useMemo(() => (disclosure ? pruneRecordsOf(disclosure) : null), [disclosure]);
 
   return (
     <div className="card card-pad" style={{ marginBottom: 20 }}>
@@ -763,22 +1011,25 @@ export function DiscoveryPanel({ voyage }: { voyage: VoyageRead }) {
             options={[
               { v: 'tree' as const, label: tr('树视图', 'Tree') },
               { v: 'report' as const, label: tr('方案报告', 'Report') },
+              { v: 'disclosure' as const, label: tr('过程记录', 'Process log') },
             ]}
             value={view}
             onChange={setView}
           />
         </span>
       </div>
-      {nodes.length === 0 ? (
+      {view === 'disclosure' ? (
+        <DisclosureView disclosure={disclosure} active={active} />
+      ) : nodes.length === 0 ? (
         <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
           {active
             ? tr('树还没长出来：AI 正在生成根假设…', 'No tree yet — the AI is seeding the root hypothesis…')
             : tr('这次任务没有留下假设树。', 'This run left no hypothesis tree.')}
         </div>
       ) : view === 'tree' ? (
-        <TreeView nodes={nodes} standings={standings} />
+        <TreeView nodes={nodes} standings={standings} pruneRecords={pruneRecords} />
       ) : (
-        <ReportView nodes={nodes} active={active} />
+        <ReportView nodes={nodes} active={active} pruneRecords={pruneRecords} />
       )}
     </div>
   );

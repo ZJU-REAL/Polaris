@@ -171,9 +171,9 @@ export function flattenTree(
 }
 
 // ---- 方案报告的排序（与后端 discovery.summarize 同一规则就地重建） ----
-// 后端把研究方案产物写在 checkpoint["artifacts"]，现有 API 不外露；
-// 树端点已含存活假设 + 三块证据数据，报告页按同一排序规则重建即可，
-// 不需要后端加接口（LLM 的叙述性总结文本除外，见 ReportView 的说明）。
+// 树端点已含存活假设 + 三块证据数据，报告页按同一排序规则重建即可——
+// 任务没跑完也能预览当前排序（产物要等 summarize）。研究方案/过程记录
+// 产物自 #655 起可经 GET /voyages/{id}/artifacts/{name} 只读取回。
 
 export interface DiscoveryReport {
   /** 存活假设：score 降序（未评分排最后），同分按创建时间稳定排序 */
@@ -194,9 +194,10 @@ export function buildReport(nodes: HypothesisNodeRead[]): DiscoveryReport {
   return { alive, pruned: nodes.filter((n) => n.status === 'pruned') };
 }
 
-// ---- 剪枝原因推断 ----
-// 具体原因文本记录在后端 checkpoint 的决策留痕里（API 不外露），
-// 前端按可观测信号如实分三类，文案由组件层 tr() 渲染：
+// ---- 剪枝原因推断（降级路径） ----
+// 真实原因自 #655 起随披露产物外露（./discoveryDisclosure.ts），组件层
+// 产物优先；这里只服务「产物还没落盘 / 旧 run 没有产物」的降级场景——
+// 按可观测信号如实分三类，文案由组件层 tr() 渲染：
 // - low_score：score 低于自动剪枝阈值 → 扩展时被当场剪掉；
 // - cascade：父分支被剪，随父级联；
 // - decided：AI 显式判定不值得继续（细节见任务运行日志）。

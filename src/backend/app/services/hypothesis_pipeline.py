@@ -158,6 +158,16 @@ async def _complete_json(
     raise ValueError(f"{stage} 连续输出非法 JSON：{last_error}")
 
 
+def _ordered_paper_ids(chunks: list[PaperChunk]) -> list[str]:
+    """片段列表 → 去重保序的 paper_id 字符串列表（检索留痕用，D6 披露 #655）。"""
+    out: list[str] = []
+    for chunk in chunks:
+        pid = str(chunk.paper_id)
+        if pid not in out:
+            out.append(pid)
+    return out
+
+
 async def _paper_titles(
     session: AsyncSession, paper_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, str]:
@@ -374,8 +384,9 @@ async def generate(
 ) -> dict[str, Any]:
     """三路灵感 → 一次 LLM 组合出 n 个候选 → 去重。
 
-    返回 {"candidates": [{statement, rationale}], "usage": {...}}；
-    candidates 已去重，数量 ≤ n_candidates（可能因折叠更少）。
+    返回 {"candidates": [{statement, rationale}], "usage": {...}, "trace": {...}}；
+    candidates 已去重，数量 ≤ n_candidates（可能因折叠更少）。trace 是确定性
+    检索留痕（查询 + 捞回的 paper_ids），供 expand 记进轮次账本、D6 披露消费。
     """
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
     semantic_chunks = await _retrieve(
@@ -421,7 +432,22 @@ async def generate(
         library_id=library_id,
         voyage_id=voyage_id,
     )
-    return {"candidates": dedup_candidates(raw[:n_candidates]), "usage": usage}
+    return {
+        "candidates": dedup_candidates(raw[:n_candidates]),
+        "usage": usage,
+        # 检索留痕（确定性数据，D6 披露 #655）：发出过什么查询、捞回了哪些论文。
+        # 三路灵感只有语义路有查询文本；引文远端/多样窗按路记论文集合。
+        "trace": {
+            "queries": [
+                {"query": direction, "paper_ids": _ordered_paper_ids(semantic_chunks)}
+            ],
+            "inspiration_paper_ids": {
+                "semantic": _ordered_paper_ids(semantic_chunks),
+                "citation_far": _ordered_paper_ids(far_chunks),
+                "diverse": _ordered_paper_ids(diverse_chunks),
+            },
+        },
+    }
 
 
 # ---- 2) 文献接地：拆子命题 → 确定性检索 → 只许从检索集内选 ----
@@ -507,6 +533,7 @@ async def ground(
         **identity,
     )
     retrieved: list[list[dict[str, Any]]] = []
+    trace_queries: list[dict[str, Any]] = []
     for subclaim in subclaims:
         chunks = await _retrieve(
             session,
@@ -518,6 +545,8 @@ async def ground(
         )
         titles = await _paper_titles(session, list({c.paper_id for c in chunks}))
         retrieved.append([_chunk_entry(c, titles) for c in chunks])
+        # 检索留痕（D6 披露 #655）：接地的查询就是子命题本身
+        trace_queries.append({"query": subclaim, "paper_ids": _ordered_paper_ids(chunks)})
     items = await _complete_json(
         llm,
         GROUND_STAGE,
@@ -533,7 +562,11 @@ async def ground(
         usage=usage,
         **identity,
     )
-    return {"grounding": sanitize_grounding(subclaims, retrieved, items), "usage": usage}
+    return {
+        "grounding": sanitize_grounding(subclaims, retrieved, items),
+        "usage": usage,
+        "trace": {"queries": trace_queries},
+    }
 
 
 # ---- 3) 查新：换措辞再检索 → 逐子命题 judge ----
@@ -577,17 +610,21 @@ async def novelty(
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
     judged_indices = [i for i, e in enumerate(grounding) if e.get("stance") != "speculation"]
     evidence_by_index: dict[int, list[dict[str, Any]]] = {}
+    trace_queries: list[dict[str, Any]] = []
     for i in judged_indices:
+        query = f"{_NOVELTY_QUERY_PREFIX} {grounding[i]['subclaim']}"
         chunks = await _retrieve(
             session,
             library_id=library_id,
-            query=f"{_NOVELTY_QUERY_PREFIX} {grounding[i]['subclaim']}",
+            query=query,
             user_id=user_id,
             project_id=project_id,
             limit=GROUND_TOP_K,
         )
         titles = await _paper_titles(session, list({c.paper_id for c in chunks}))
         evidence_by_index[i] = [_chunk_entry(c, titles) for c in chunks]
+        # 检索留痕（D6 披露 #655）：查新用的是换措辞后的查询，如实记换后的
+        trace_queries.append({"query": query, "paper_ids": _ordered_paper_ids(chunks)})
     verdicts: dict[int, tuple[str, list[str]]] = {}
     if judged_indices:
         try:
@@ -636,7 +673,11 @@ async def novelty(
                 "judged": i in verdicts,
             }
         )
-    return {"report": {"subclaims": subclaim_reports}, "usage": usage}
+    return {
+        "report": {"subclaims": subclaim_reports},
+        "usage": usage,
+        "trace": {"queries": trace_queries},
+    }
 
 
 # ---- 4) 可行性：确定性资源信号 + LLM 只写风险论证 ----

@@ -511,6 +511,13 @@ export interface HypothesisTournamentRead {
   nodes: Record<string, HypothesisTournamentStanding>;
 }
 
+/** run 产物只读（GET /voyages/{id}/artifacts/{name}，#655）：
+    content 是后端已解析好的产物 JSON（白名单内的产物都是 JSON）。 */
+export interface VoyageArtifactRead {
+  name: string;
+  content: unknown;
+}
+
 export interface VoyageRead {
   id: string;
   kind: string;
@@ -3543,6 +3550,11 @@ export const api = {
   /** 锦标赛披露（#653）：基础模式（tournament=False）返回空结构。 */
   getHypothesisTournament(voyageId: string): Promise<HypothesisTournamentRead> {
     return request<HypothesisTournamentRead>(`/voyages/${voyageId}/tournament`);
+  },
+
+  /** run 产物只读（#655）：白名单外/未产出/无权限一律 404。 */
+  getVoyageArtifact(voyageId: string, name: string): Promise<VoyageArtifactRead> {
+    return request<VoyageArtifactRead>(`/voyages/${voyageId}/artifacts/${encodeURIComponent(name)}`);
   },
 
   // —— Gates ——
