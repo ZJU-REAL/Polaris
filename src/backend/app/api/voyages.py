@@ -32,6 +32,7 @@ from app.schemas.voyage import (
     VoyageTerminalLogRead,
 )
 from app.services import experiments as experiments_service
+from app.services import libraries as libraries_service
 from app.services import projects as projects_service
 from app.services import voyage_messages as messages_service
 from app.services import voyages as voyages_service
@@ -64,6 +65,14 @@ async def create_voyage(
     )
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    if data.kind == "discovery":
+        # 假设管线的检索边界（#648）：库必须存在且对请求者可见；不可见按不存在
+        # 处理（404），与库只读端点同口径——不经 id 泄漏个人库的存在性
+        library = await libraries_service.get_library(
+            session, uuid.UUID(str((data.params or {})["library_id"]))
+        )
+        if library is None or not libraries_service.library_visible_to(library, user):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
     run = await voyages_service.create_voyage(session, created_by=user.id, data=data)
     await queue.enqueue("run_voyage", str(run.id))
     return VoyageRead.model_validate(run)

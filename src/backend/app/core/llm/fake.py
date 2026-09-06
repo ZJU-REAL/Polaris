@@ -79,8 +79,13 @@ _REVIEW_FACTCHECK_MARKER = "POLARIS_REVIEW_FACTCHECK"  # claim 抽查
 # Idea 2.0 深耕（actions_proposal.py 的 system prompt 对齐，docs/api-idea2.md）
 # discovery 树搜索（actions_discovery.py 三个 system prompt 对齐，#642）
 _DISCOVERY_SEED_MARKER = "POLARIS_DISCOVERY_SEED"
-_DISCOVERY_EXPAND_MARKER = "POLARIS_DISCOVERY_EXPAND"
 _DISCOVERY_SUMMARY_MARKER = "POLARIS_DISCOVERY_SUMMARY"
+# 文献→假设四段管线（services/hypothesis_pipeline.py，#648）。ground 的拆分与
+# 选证据两次调用共用一个 marker，靠 user payload 里有无 "retrieved" 区分。
+_HYP_GENERATE_MARKER = "POLARIS_HYP_GENERATE"
+_HYP_GROUND_MARKER = "POLARIS_HYP_GROUND"
+_HYP_NOVELTY_MARKER = "POLARIS_HYP_NOVELTY"
+_HYP_FEASIBILITY_MARKER = "POLARIS_HYP_FEASIBILITY"
 _GOAL_EXPLORE_MARKER = "POLARIS_GOAL_EXPLORE"  # 目标构建工具循环
 _GOAL_REFINE_MARKER = "POLARIS_GOAL_REFINE"  # 审批意见并入目标
 _PROPOSAL_RELATED_MARKER = "POLARIS_PROPOSAL_RELATED"  # 相关工作（工具循环）
@@ -379,11 +384,19 @@ class FakeProvider(LLMProvider):
             return FakeProvider._respond_review_factcheck(full_text)
         if _PAPER_REVIEWER_MARKER in full_text:
             return FakeProvider._respond_paper_reviewer(full_text)
-        # discovery 树搜索三 marker：user prompt 内嵌方向/假设文本，先于通用 marker
+        # 假设管线四 marker（#648）：user payload 内嵌检索片段（可能撞任意通用
+        # marker），须先于通用 marker 判断
+        if _HYP_GENERATE_MARKER in full_text:
+            return FakeProvider._respond_hyp_generate(last_user)
+        if _HYP_GROUND_MARKER in full_text:
+            return FakeProvider._respond_hyp_ground(last_user)
+        if _HYP_NOVELTY_MARKER in full_text:
+            return FakeProvider._respond_hyp_novelty(last_user)
+        if _HYP_FEASIBILITY_MARKER in full_text:
+            return FakeProvider._respond_hyp_feasibility()
+        # discovery 树搜索 marker：user prompt 内嵌方向/假设文本，先于通用 marker
         if _DISCOVERY_SEED_MARKER in full_text:
             return FakeProvider._respond_discovery_seed(full_text)
-        if _DISCOVERY_EXPAND_MARKER in full_text:
-            return FakeProvider._respond_discovery_expand(full_text)
         if _DISCOVERY_SUMMARY_MARKER in full_text:
             return (
                 "（fake discovery 总结）本次探索围绕研究方向展开：根假设已扩展出子分支，"
@@ -1098,28 +1111,99 @@ class FakeProvider(LLMProvider):
             ensure_ascii=False,
         )
 
+    # ---- 文献→假设四段管线（services/hypothesis_pipeline.py 对齐，#648） ----
+
     @staticmethod
-    def _respond_discovery_expand(full_text: str) -> str:
-        """扩展：固定两个子假设（A 分高于 B → best_open_node 下一轮选 A，确定性）；
-        prune 恒为空——fake 路径不触发剪枝，骨架 run 的树形状可精确断言。"""
-        m = re.search(r"父假设：(.+)", full_text)
-        parent = m.group(1).strip() if m else "父假设（fake）"
+    def _payload_of(last_user: str) -> dict:
+        """user prompt 是 JSON payload 的环节统一解析入口；解析失败返回 {}。"""
+        start = last_user.find("{")
+        try:
+            payload = json.loads(last_user[start:]) if start != -1 else {}
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _respond_hyp_generate(last_user: str) -> str:
+        """生成：固定两个回显 direction 的候选。两条措辞刻意差异大——去重折叠
+        （SequenceMatcher>0.85）不该吃掉它们，完整 run 的树形状才可精确断言。"""
+        direction = str(FakeProvider._payload_of(last_user).get("direction") or "")[:40]
         return json.dumps(
             {
-                "children": [
+                "candidates": [
                     {
-                        "statement": f"{parent[:60]} → 子假设 A（fake）",
-                        "rationale": "fake-expand：路线 A",
-                        "score": 0.7,
+                        "statement": f"机制假设（fake A）：{direction} 依赖显式规划机制",
+                        "rationale": "fake-generate：语义近邻灵感组合",
                     },
                     {
-                        "statement": f"{parent[:60]} → 子假设 B（fake）",
-                        "rationale": "fake-expand：路线 B",
-                        "score": 0.6,
+                        "statement": f"证据闭环假设（fake B）：{direction} 需要检索增强验证",
+                        "rationale": "fake-generate：引文远端灵感组合",
                     },
-                ],
-                "prune": [],
+                ]
             },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_hyp_ground(last_user: str) -> str:
+        """接地：拆分调用（payload 无 "items"）固定拆 2 条回显 statement 的子命题；
+        选证据调用（payload 带 retrieved）第一条选检索首 id 表 support、其余一律
+        speculation——保证 score=0.25 的确定性中间态（novel½ × support½）。"""
+        payload = FakeProvider._payload_of(last_user)
+        if not isinstance(payload.get("items"), list):
+            statement = str(payload.get("statement") or "")[:50]
+            return json.dumps(
+                {
+                    "subclaims": [
+                        f"{statement} 的机制子命题（fake s1）",
+                        f"{statement} 的边界子命题（fake s2）",
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        out = []
+        for i, item in enumerate(payload["items"]):
+            if not isinstance(item, dict):
+                continue
+            retrieved = [r for r in (item.get("retrieved") or []) if isinstance(r, dict)]
+            if i == 0 and retrieved:
+                out.append(
+                    {
+                        "index": item.get("index"),
+                        "stance": "support",
+                        "paper_ids": [str(retrieved[0].get("paper_id"))],
+                    }
+                )
+            else:
+                out.append(
+                    {"index": item.get("index"), "stance": "speculation", "paper_ids": []}
+                )
+        return json.dumps({"items": out}, ensure_ascii=False)
+
+    @staticmethod
+    def _respond_hyp_novelty(last_user: str) -> str:
+        """查新：第一条 novel（引证据首 id）、其余 uncertain（确定性）。"""
+        payload = FakeProvider._payload_of(last_user)
+        out = []
+        for i, item in enumerate(payload.get("items") or []):
+            if not isinstance(item, dict):
+                continue
+            evidence = [e for e in (item.get("evidence") or []) if isinstance(e, dict)]
+            novel = i == 0
+            out.append(
+                {
+                    "index": item.get("index"),
+                    "verdict": "novel" if novel else "uncertain",
+                    "paper_ids": [str(evidence[0].get("paper_id"))] if novel and evidence else [],
+                }
+            )
+        return json.dumps({"items": out}, ensure_ascii=False)
+
+    @staticmethod
+    def _respond_hyp_feasibility() -> str:
+        """可行性：固定风险论证段（信号本身由代码确定性统计，fake 不碰）。"""
+        return json.dumps(
+            {"risk_note": "（fake 可行性）库内证据规模有限，验证前需扩充语料复核（fake）。"},
             ensure_ascii=False,
         )
 

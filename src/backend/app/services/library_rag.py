@@ -147,6 +147,13 @@ async def _search_round(
         return []
 
 
+# D3 假设管线（services/hypothesis_pipeline.py，#648）复用的确定性检索原语别名：
+# 一轮检索 = 向量优先、关键词降级、失败不上抛。公开命名以示这是稳定的复用面；
+# answer() 完整流水线里的 LLM 环节（查询扩展/重排/作答）**不在**此复用面之内——
+# 接地与查新要的是「同样输入永远同样证据集」，不能混进判断性环节。
+retrieve_round = _search_round
+
+
 def _merge_hits(
     candidates: dict[uuid.UUID, _Candidate],
     rows: list[tuple[PaperChunk, float]],

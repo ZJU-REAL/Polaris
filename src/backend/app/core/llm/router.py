@@ -85,6 +85,12 @@ STAGES = (
     "rag_expand",
     "rag_rerank",
     "rag_answer",
+    # 文献→假设四段管线（#648）：generate/ground 是较长的结构化生成（中档），
+    # novelty/feasibility 是短 JSON 判定（短档）
+    "hyp_generate",
+    "hyp_ground",
+    "hyp_novelty",
+    "hyp_feasibility",
 )
 
 _ROUTE_CACHE_TTL = 60.0
@@ -174,6 +180,8 @@ _SHORT_CALL_STAGES = frozenset(
         "citation_intent",  # 引文意图批量分类：短 JSON、便宜模型（#639）
         "rag_expand",  # 库问答查询扩展：短 JSON（#644）
         "rag_rerank",  # 库问答重排+摘要：短 JSON（#644）
+        "hyp_novelty",  # 假设查新逐条判定：短 JSON（#648）
+        "hyp_feasibility",  # 假设可行性风险论证：短 JSON（#648）
     }
 )
 
@@ -189,8 +197,19 @@ _LONG_CALL_STAGES = STREAM_STAGES | frozenset({"digest", "forge_generate"})
 # 用户早走了。180s × 2 是"够想完一轮、又不至于把连接耗死"的折中。
 # rag_answer 是同步问答里的长生成（证据集大、要逐句挂引用），60s 短档会掐死它，
 # 但它又是用户干等着的请求，不能给长档 20 分钟的耐心——与 agent 同档。
+# hyp_generate / hyp_ground 同理：一次要组合多路灵感 / 拆解并逐条选证据，
+# 输出比短 JSON 长得多，但 discovery 是逐候选串行调用，长档 20 分钟的耐心
+# 会让一轮扩展的最坏时长完全失控。
 _MEDIUM_CALL_STAGES = frozenset(
-    {"agent", "discovery_plan", "goal_explore", "proposal_review", "rag_answer"}
+    {
+        "agent",
+        "discovery_plan",
+        "goal_explore",
+        "proposal_review",
+        "rag_answer",
+        "hyp_generate",
+        "hyp_ground",
+    }
 )
 
 

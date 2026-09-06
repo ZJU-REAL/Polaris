@@ -3,9 +3,11 @@
 四个动作围绕假设树（services/hypothesis_tree.py，#640）展开：
 
 - ``hypothesis.seed``：树空时按研究方向生成根假设入树；
-- ``hypothesis.expand``：对当前最优 open 节点生成 2-3 个子假设、父节点转 expanded；
-- ``hypothesis.prune``：LLM 判某分支不值得继续时写 score 并级联剪枝（留痕不删）；
-- ``discovery.summarize``：把整棵树（含被剪分支）汇总成 run 产物后收束。
+- ``hypothesis.expand``：对当前最优 open 节点跑四段假设管线（#648，
+  services/hypothesis_pipeline.py）：generate 产 2-3 个子候选，逐个
+  ground → novelty → feasibility → score 写进节点，低分自动剪枝；
+- ``hypothesis.prune``：显式剪枝入口，写 score 并级联剪枝（留痕不删）；
+- ``discovery.summarize``：把整棵树（含被剪分支）汇总成研究方案产物后收束。
 
 **计划不是线性清单**：初始计划只有播种一步，之后每一轮由动作按树状态给出
 plan_signal（expand / summarize），经 plan_edit.discovery_signal_edits 确定性
@@ -28,14 +30,15 @@ from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
 from app.models.hypothesis import HypothesisNode
 from app.models.voyage import VoyageRun
+from app.services import hypothesis_pipeline as pipeline
 from app.services import hypothesis_tree as tree_service
 
 # LLM 环节：结构化 JSON 生成，走中档耐心（core/llm/router.py 的 _MEDIUM_CALL_STAGES）
 _STAGE = "discovery_plan"
 
 _MAX_JSON_ATTEMPTS = 3
-# 每轮扩展的子假设数量区间：LLM 多给截断、少给（<2）视为非法输出重试
-_MIN_CHILDREN, _MAX_CHILDREN = 2, 3
+# 每轮扩展的子候选上限：管线 generate 按它要候选，多给截断（去重后可能更少）
+_MAX_CHILDREN = 3
 
 SEED_SYSTEM_PROMPT = """\
 POLARIS_DISCOVERY_SEED
@@ -43,16 +46,6 @@ POLARIS_DISCOVERY_SEED
 可检验的核心研究假设。只输出一个 JSON 对象，不要输出任何其他文字：
 {"statement": "假设陈述（一句话，可检验）", "rationale": "一句话依据", \
 "score": 0 到 1 的先验看好程度}
-"""
-
-EXPAND_SYSTEM_PROMPT = """\
-POLARIS_DISCOVERY_EXPAND
-你是 Navigator，负责在假设树上扩展一个节点：把父假设细化/分叉成 2-3 个更具体、
-彼此不同的子假设。若你判断树上某个分支已明显不值得继续，可在 prune 里给出
-（不确定时给空数组）。只输出一个 JSON 对象，不要输出任何其他文字：
-{"children": [{"statement": "子假设陈述", "rationale": "一句话依据", \
-"score": 0 到 1 的看好程度}],
- "prune": [{"node_id": "要剪掉的节点 id", "score": 0 到 1, "reason": "为什么放弃"}]}
 """
 
 SUMMARY_SYSTEM_PROMPT = """\
@@ -94,6 +87,22 @@ def _max_expansions(ctx: ActionContext) -> int:
 
 def _direction(ctx: ActionContext) -> str:
     return str(_params_of(ctx).get("direction") or ctx.run.goal or "").strip()
+
+
+def _require_library_id(ctx: ActionContext) -> uuid.UUID:
+    """discovery 的库关联（#648 起 params.library_id 必填，创建入口已校验可见性）。
+
+    优先 run.library_id（创建时落列，费用记账与可见性都按它走）；直建的存量/
+    测试 run 兜底读 params。两处都没有直接报错——四段管线的检索边界就是这个库，
+    没有库关联的 discovery 无从接地。
+    """
+    if ctx.run.library_id is not None:
+        return ctx.run.library_id
+    raw = _params_of(ctx).get("library_id")
+    try:
+        return uuid.UUID(str(raw))
+    except (TypeError, ValueError):
+        raise ValueError("discovery 任务缺少文献库关联（params.library_id）") from None
 
 
 def _record_decision(
@@ -183,34 +192,6 @@ def _validate_seed(data: Any) -> dict[str, Any]:
         "statement": str(data["statement"]).strip(),
         "score": _clamp_score(data.get("score")),
     }
-
-
-def _validate_expand(data: Any) -> dict[str, Any]:
-    if not isinstance(data, dict) or not isinstance(data.get("children"), list):
-        raise ValueError('expand 输出需含 "children" 列表')
-    children = []
-    for raw in data["children"][:_MAX_CHILDREN]:
-        if not isinstance(raw, dict) or not str(raw.get("statement") or "").strip():
-            raise ValueError("child 需含非空 statement")
-        children.append(
-            {
-                "statement": str(raw["statement"]).strip(),
-                "score": _clamp_score(raw.get("score")),
-            }
-        )
-    if len(children) < _MIN_CHILDREN:
-        raise ValueError(f"expand 至少要给出 {_MIN_CHILDREN} 个子假设")
-    prune = []
-    for raw in data.get("prune") or []:
-        if isinstance(raw, dict) and raw.get("node_id"):
-            prune.append(
-                {
-                    "node_id": str(raw["node_id"]),
-                    "score": _clamp_score(raw.get("score")),
-                    "reason": str(raw.get("reason") or ""),
-                }
-            )
-    return {"children": children, "prune": prune}
 
 
 # ---- 树状态 → 下一步信号（决策的唯一出口，seed/expand 共用） ----
@@ -346,7 +327,10 @@ async def _apply_prune(session, ctx: ActionContext, entry: dict[str, Any]) -> st
 
 @register("hypothesis.expand")
 async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
-    """对当前最优 open 节点扩展一轮：生成 2-3 个子假设、父节点转 expanded。
+    """对当前最优 open 节点扩展一轮（#648 起走四段管线）：generate 产 2-3 个
+    子候选，逐个 ground → novelty → feasibility → score 全部算完后一次性落库，
+    低于 pipeline.MIN_VIABLE_SCORE 的子节点当场剪枝（级联、留痕不删），父节点
+    转 expanded。
 
     恢复语义（确定性重建 = checkpoint 轮次账本 + best_open_node）：
     - 本轮已在账本里 → 纯重放，不再动树；
@@ -354,6 +338,8 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
       checkpoint 回写之前被杀）→ 补记账本、不重复扩；
     - 否则正常扩展：目标节点取 best_open_node（score 降序、同分取先建的，
       对同一棵树是确定性的，所以「杀在扩展之前」的重启会选中同一个节点）。
+      管线的全部 LLM/检索都发生在动树**之前**（先算后写）：被杀在管线中途时
+    树还没动，重启就是干净重跑，「落库了一半」的窗口没有因为管线变长而变宽。
     """
     round_no = int(params.get("round") or 0)
     state = _state(ctx)
@@ -378,38 +364,126 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 state["rounds"][str(round_no)] = {"node_id": None, "no_open": True}
                 why = f"第 {round_no} 轮无 open 节点可扩展"
             else:
-                expansion, usage = await _complete_json_with_usage(
-                    ctx,
-                    system=EXPAND_SYSTEM_PROMPT,
-                    user=(
-                        f"研究方向：{_direction(ctx)}\n"
-                        f"父假设：{target.statement}\n"
-                        f"父假设节点 id：{target.id}"
-                    ),
-                    validate=_validate_expand,
+                library_id = _require_library_id(ctx)
+                identity: dict[str, Any] = {
+                    "user_id": ctx.run.created_by,
+                    "project_id": ctx.run.project_id,
+                    "voyage_id": ctx.run.id,
+                }
+                # 方向语境 = run 方向 + 被扩展节点的陈述：候选要围绕这个分支细化
+                gen = await pipeline.generate(
+                    session,
+                    ctx.llm,
+                    library_id=library_id,
+                    direction=f"{_direction(ctx)}；父假设：{target.statement}",
+                    n_candidates=_MAX_CHILDREN,
+                    **identity,
                 )
-                for child in expansion["children"]:
+                candidates = gen["candidates"][:_MAX_CHILDREN]
+                if not candidates:
+                    raise ValueError("hyp_generate 未产出任何候选假设（去重后为空）")
+                usage = dict(gen["usage"])
+                # 先算后写：每个候选把 ground/novelty/feasibility/score 全部算完，
+                # 再统一落库——管线再长，树的被杀窗口也不随之变宽（见函数 docstring）
+                computed: list[dict[str, Any]] = []
+                for cand in candidates:
+                    grounded = await pipeline.ground(
+                        session,
+                        ctx.llm,
+                        library_id=library_id,
+                        statement=cand["statement"],
+                        **identity,
+                    )
+                    nov = await pipeline.novelty(
+                        session,
+                        ctx.llm,
+                        library_id=library_id,
+                        statement=cand["statement"],
+                        grounding=grounded["grounding"],
+                        **identity,
+                    )
+                    feas = await pipeline.feasibility(
+                        session,
+                        ctx.llm,
+                        library_id=library_id,
+                        statement=cand["statement"],
+                        grounding=grounded["grounding"],
+                        **identity,
+                    )
+                    child_usage = {"prompt_tokens": 0, "completion_tokens": 0}
+                    for part in (grounded, nov, feas):
+                        child_usage["prompt_tokens"] += int(
+                            part["usage"].get("prompt_tokens", 0) or 0
+                        )
+                        child_usage["completion_tokens"] += int(
+                            part["usage"].get("completion_tokens", 0) or 0
+                        )
+                    computed.append(
+                        {
+                            "statement": cand["statement"],
+                            "grounding": grounded["grounding"],
+                            "novelty_report": nov["report"],
+                            "feasibility": feas["feasibility"],
+                            "score": pipeline.score_hypothesis(
+                                grounded["grounding"], nov["report"]
+                            ),
+                            "usage": child_usage,
+                        }
+                    )
+                pruned_children: list[str] = []
+                for item in computed:
                     node = await tree_service.create_node(
                         session,
                         run,
                         parent_id=target.id,
                         kind="hypothesis",
-                        statement=child["statement"],
-                        score=child["score"],
+                        statement=item["statement"],
+                        grounding=item["grounding"],
+                        novelty_report=item["novelty_report"],
+                        feasibility=item["feasibility"],
+                        score=item["score"],
                     )
                     children_ids.append(str(node.id))
+                    # 每节点记账：这个子假设的接地/查新/可行性花的 token 记它头上
+                    _account_node_usage(ctx, str(node.id), item["usage"])
+                    usage["prompt_tokens"] += item["usage"]["prompt_tokens"]
+                    usage["completion_tokens"] += item["usage"]["completion_tokens"]
+                    if item["score"] < pipeline.MIN_VIABLE_SCORE:
+                        # 低分自动剪枝：与 hypothesis.prune 同一状态机语义
+                        # （级联、留痕不删），分数与依据都留在节点行里可复查
+                        await tree_service.transition(session, node, "pruned")
+                        pruned_children.append(str(node.id))
+                        _record_decision(
+                            ctx,
+                            action="hypothesis.prune",
+                            decision="pruned",
+                            node_id=str(node.id),
+                            why=(
+                                f"score={item['score']} 低于阈值 "
+                                f"{pipeline.MIN_VIABLE_SCORE}，自动剪枝"
+                            ),
+                            round_no=round_no,
+                        )
+                        await ctx.log(
+                            f"低分剪枝：{item['statement'][:80]}（score={item['score']}）"
+                        )
                 await tree_service.transition(session, target, "expanded")
-                _account_node_usage(ctx, str(target.id), usage)
-                for entry in expansion["prune"]:
-                    await _apply_prune(session, ctx, entry)
+                # generate 的开销记到被扩展的父节点头上（子节点还没出生）
+                _account_node_usage(ctx, str(target.id), gen["usage"])
                 target_id = str(target.id)
                 state["rounds"][str(round_no)] = {
                     "node_id": target_id,
                     "children": children_ids,
+                    "pruned": pruned_children,
                 }
-                why = f"第 {round_no} 轮：扩展最优 open 节点，生成 {len(children_ids)} 个子假设"
+                why = (
+                    f"第 {round_no} 轮：扩展最优 open 节点，管线产出 "
+                    f"{len(children_ids)} 个子假设"
+                    + (f"（{len(pruned_children)} 个低分被剪）" if pruned_children else "")
+                )
                 await ctx.log(
-                    f"扩展「{target.statement[:80]}」→ {len(children_ids)} 个子假设",
+                    f"扩展「{target.statement[:80]}」→ {len(children_ids)} 个子假设"
+                    + (f"（低分剪枝 {len(pruned_children)} 个）" if pruned_children else ""),
                     level="success",
                 )
         signal, signal_why = await _next_signal(session, ctx)
@@ -451,8 +525,10 @@ async def hypothesis_prune(ctx: ActionContext, params: dict[str, Any]) -> dict[s
 
 @register("discovery.summarize")
 async def discovery_summarize(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
-    """整树汇总为 run 产物：全部节点 + 状态 + 统计，被剪分支保留在案（§8.2
-    防择优汇报）。产物写进 checkpoint["artifacts"]，voyage 完成标准查它。"""
+    """整树汇总为**研究方案**产物（#648）：direction + 存活假设（按 score 降序，
+    携带 grounding/novelty/feasibility 三类证据卡数据）+ 被剪分支附录（§8.2
+    防择优汇报：放弃的路径和原因也是产物的一部分）+ 全节点快照与统计。
+    产物写进 checkpoint["artifacts"]，voyage 完成标准查它。"""
     state = _state(ctx)
     async with get_sessionmaker()() as session:
         nodes = await tree_service.tree_for_run(session, ctx.run.id)
@@ -475,10 +551,47 @@ async def discovery_summarize(ctx: ActionContext, params: dict[str, Any]) -> dic
         voyage_id=ctx.run.id,
     )
     usage = dict(result.usage or {})
+    # 被剪节点的剪枝原因：从决策留痕反查（显式/自动剪枝都记了 why）；
+    # 没记到的（随父级联被剪的子孙）如实标注级联
+    prune_reasons = {
+        str(d.get("node_id")): str(d.get("why") or "")
+        for d in state["decisions"]
+        if d.get("decision") == "pruned" and d.get("node_id")
+    }
+    alive = sorted(
+        (n for n in nodes if n.status != "pruned"),
+        # score 降序（未评分的排最后），同分按建立顺序稳定排序
+        key=lambda n: (-(n.score if n.score is not None else -1.0), n.created_at),
+    )
     artifact = {
         "direction": _direction(ctx),
         "summary": result.content,
         "stats": stats,
+        # 研究方案主体：存活假设 + 三类证据卡数据（支持/反驳/推测的 grounding、
+        # 逐子命题查新结论、可行性信号与风险论证），前端/导出直接消费
+        "hypotheses": [
+            {
+                "id": str(n.id),
+                "statement": n.statement,
+                "status": n.status,
+                "score": n.score,
+                "grounding": n.grounding,
+                "novelty_report": n.novelty_report,
+                "feasibility": n.feasibility,
+            }
+            for n in alive
+        ],
+        # 附录：被剪分支及原因（留痕不删的消费端）
+        "pruned_appendix": [
+            {
+                "id": str(n.id),
+                "statement": n.statement,
+                "score": n.score,
+                "reason": prune_reasons.get(str(n.id), "随父分支级联剪枝"),
+            }
+            for n in nodes
+            if n.status == "pruned"
+        ],
         "nodes": [
             {
                 "id": str(n.id),

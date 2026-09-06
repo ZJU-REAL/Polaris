@@ -23,6 +23,12 @@ async def create_voyage(
 ) -> VoyageRun:
     params = data.params or {}
     budget = params.get("budget") if isinstance(params.get("budget"), dict) else None
+    # discovery 的库关联落列（#648）：schema 已定形为合法 UUID 字符串。落在
+    # run.library_id 而不是只留在 params 里——LLM 费用记账、任务列表的库过滤
+    # 都按这一列走，params 只是创建时的原始输入存档。
+    library_id = None
+    if data.kind == "discovery":
+        library_id = uuid.UUID(str(params["library_id"]))
     run = VoyageRun(
         kind=data.kind,
         goal=data.goal,
@@ -31,6 +37,7 @@ async def create_voyage(
         checkpoint={"params": params} if params else None,
         budget=budget,
         project_id=data.project_id,
+        library_id=library_id,
         created_by=created_by,
     )
     session.add(run)

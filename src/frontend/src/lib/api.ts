@@ -642,6 +642,10 @@ export const LLM_STAGES = [
   'rag_expand',
   'rag_rerank',
   'rag_answer',
+  'hyp_generate',
+  'hyp_ground',
+  'hyp_novelty',
+  'hyp_feasibility',
 ] as const;
 
 export interface LlmProviderRead {

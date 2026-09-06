@@ -23,8 +23,10 @@ class VoyageCreate(BaseModel):
     @model_validator(mode="after")
     def _normalize_discovery_params(self) -> "VoyageCreate":
         """discovery 的参数在创建时就定形（引擎只读 checkpoint.params，不再兜底）：
-        direction 必填；max_expansions 默认 3（0..MAX，整数）；tournament 默认
-        False——锦标赛式对比是后续里程碑，先存档位不实现。"""
+        direction 必填；library_id 必填（#648：四段假设管线的检索/接地边界就是
+        这个库，没有库的 discovery 无从接地——可见性由 API 层校验）；
+        max_expansions 默认 3（0..MAX，整数）；tournament 默认 False——锦标赛式
+        对比是后续里程碑，先存档位不实现。"""
         if self.kind != "discovery":
             return self
         params = dict(self.params or {})
@@ -32,6 +34,12 @@ class VoyageCreate(BaseModel):
         if not direction:
             raise ValueError("discovery 任务需要 params.direction（研究方向）")
         params["direction"] = direction
+        try:
+            params["library_id"] = str(uuid.UUID(str(params.get("library_id"))))
+        except (TypeError, ValueError):
+            raise ValueError(
+                "discovery 任务需要 params.library_id（关联文献库）"
+            ) from None
         raw = params.get("max_expansions", 3)
         if isinstance(raw, bool) or not isinstance(raw, int):
             raise ValueError("max_expansions 必须是整数")

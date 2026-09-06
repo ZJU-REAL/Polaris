@@ -1,0 +1,610 @@
+{
+  "add_paper_one": {
+    "abstract": "Synthetic record one: structured agent planning with verifiable checkpoints for the deterministic golden harness.",
+    "affiliations": [],
+    "arxiv_id": null,
+    "authors": [
+      {
+        "affiliations": [],
+        "name": "Probe, Golden"
+      }
+    ],
+    "compiled_at": null,
+    "compiled_by_name": null,
+    "compiled_model": null,
+    "concepts": [],
+    "created_at": "<ts>",
+    "doi": null,
+    "figures": [],
+    "has_wiki": false,
+    "id": "<uuid-4>",
+    "library_id": "<uuid-2>",
+    "my_tags": [],
+    "note_count": 0,
+    "pdf_available": false,
+    "project_id": null,
+    "published_at": null,
+    "reading_status": "unread",
+    "relevance_score": null,
+    "starred": false,
+    "status": "included",
+    "tags": [],
+    "task_id": null,
+    "title": "Structured Agent Planning Probe",
+    "tldr": null,
+    "trash_reason": null,
+    "url": null,
+    "venue": "Journal of Reproducible Plumbing",
+    "wiki_content": null,
+    "year": 2026
+  },
+  "add_paper_two": {
+    "abstract": "Synthetic record two: structured agent planning evidence with grounded citations for the deterministic golden harness.",
+    "affiliations": [],
+    "arxiv_id": null,
+    "authors": [
+      {
+        "affiliations": [],
+        "name": "Chain, Import"
+      }
+    ],
+    "compiled_at": null,
+    "compiled_by_name": null,
+    "compiled_model": null,
+    "concepts": [],
+    "created_at": "<ts>",
+    "doi": null,
+    "figures": [],
+    "has_wiki": false,
+    "id": "<uuid-5>",
+    "library_id": "<uuid-2>",
+    "my_tags": [],
+    "note_count": 0,
+    "pdf_available": false,
+    "project_id": null,
+    "published_at": null,
+    "reading_status": "unread",
+    "relevance_score": null,
+    "starred": false,
+    "status": "included",
+    "tags": [],
+    "task_id": null,
+    "title": "Grounded Hypothesis Evidence Probe",
+    "tldr": null,
+    "trash_reason": null,
+    "url": null,
+    "venue": "Journal of Reproducible Plumbing",
+    "wiki_content": null,
+    "year": 2026
+  },
+  "create_discovery": {
+    "budget": null,
+    "created_at": "<ts>",
+    "created_by": "<uuid-1>",
+    "cursor": 0,
+    "goal": "structured agent planning",
+    "id": "<uuid-6>",
+    "kind": "discovery",
+    "library_id": "<uuid-2>",
+    "mode": "loop",
+    "plan": null,
+    "plan_iteration": 0,
+    "project_id": "<uuid-3>",
+    "status": "planning",
+    "updated_at": "<ts>",
+    "usage": null
+  },
+  "create_library": {
+    "cadence": null,
+    "can_manage": true,
+    "concept_count": 0,
+    "created_at": "<ts>",
+    "definition": {
+      "statement": "Deterministic golden-transcript library for the hypothesis pipeline."
+    },
+    "id": "<uuid-2>",
+    "interdisciplinary_domains": null,
+    "is_mine": false,
+    "is_owner": true,
+    "is_public": false,
+    "last_compiled_at": null,
+    "last_synced_at": null,
+    "library_kind": "standard",
+    "monthly_budget": null,
+    "name": "Discovery Golden Library",
+    "owner_name": "Discovery Golden",
+    "paper_count": 0,
+    "project_id": null,
+    "review_note": null,
+    "statement": "Deterministic golden-transcript library for the hypothesis pipeline.",
+    "status": "active",
+    "submitted_by": "<uuid-1>",
+    "updated_at": "<ts>"
+  },
+  "create_project": {
+    "created_at": "<ts>",
+    "id": "<uuid-3>",
+    "name": "Discovery Golden Project",
+    "owner_id": "<uuid-1>",
+    "research_mode": "conventional",
+    "slug": "discovery-golden-project",
+    "statement": "golden discovery chain",
+    "status": "active",
+    "updated_at": "<ts>"
+  },
+  "hypothesis_tree": [
+    {
+      "created_at": "<ts>",
+      "feasibility": null,
+      "grounding": null,
+      "id": "<uuid-8>",
+      "kind": "hypothesis",
+      "novelty_report": null,
+      "parent_id": null,
+      "run_id": "<uuid-6>",
+      "score": 0.8,
+      "statement": "围绕「structured agent planning」的核心假设（fake root）",
+      "status": "expanded",
+      "updated_at": "<ts>"
+    },
+    {
+      "created_at": "<ts>",
+      "feasibility": {
+        "risk_note": "（fake 可行性）库内证据规模有限，验证前需扩充语料复核（fake）。",
+        "signals": {
+          "grounded_paper_count": 1,
+          "related_chunk_hits": 2,
+          "venues": {
+            "Journal of Reproducible Plumbing": 1
+          },
+          "year_range": [
+            2026,
+            2026
+          ]
+        }
+      },
+      "grounding": [
+        {
+          "paper_ids": [
+            "<uuid-4>"
+          ],
+          "snippets": [
+            "Structured Agent Planning Probe\nProbe, Golden\nSynthetic record one: structured agent planning with verifiable checkpoints for the deterministic golden harness."
+          ],
+          "stance": "support",
+          "subclaim": "机制假设（fake A）：structured agent planning；父假设：围绕「stru 的机制子命题（fake s1）"
+        },
+        {
+          "paper_ids": [],
+          "snippets": [],
+          "stance": "speculation",
+          "subclaim": "机制假设（fake A）：structured agent planning；父假设：围绕「stru 的边界子命题（fake s2）"
+        }
+      ],
+      "id": "<uuid-10>",
+      "kind": "hypothesis",
+      "novelty_report": {
+        "subclaims": [
+          {
+            "judged": true,
+            "paper_ids": [
+              "<uuid-4>"
+            ],
+            "subclaim": "机制假设（fake A）：structured agent planning；父假设：围绕「stru 的机制子命题（fake s1）",
+            "verdict": "novel"
+          },
+          {
+            "judged": false,
+            "paper_ids": [],
+            "subclaim": "机制假设（fake A）：structured agent planning；父假设：围绕「stru 的边界子命题（fake s2）",
+            "verdict": "uncertain"
+          }
+        ]
+      },
+      "parent_id": "<uuid-8>",
+      "run_id": "<uuid-6>",
+      "score": 0.25,
+      "statement": "机制假设（fake A）：structured agent planning；父假设：围绕「structu 依赖显式规划机制",
+      "status": "open",
+      "updated_at": "<ts>"
+    },
+    {
+      "created_at": "<ts>",
+      "feasibility": {
+        "risk_note": "（fake 可行性）库内证据规模有限，验证前需扩充语料复核（fake）。",
+        "signals": {
+          "grounded_paper_count": 1,
+          "related_chunk_hits": 2,
+          "venues": {
+            "Journal of Reproducible Plumbing": 1
+          },
+          "year_range": [
+            2026,
+            2026
+          ]
+        }
+      },
+      "grounding": [
+        {
+          "paper_ids": [
+            "<uuid-4>"
+          ],
+          "snippets": [
+            "Structured Agent Planning Probe\nProbe, Golden\nSynthetic record one: structured agent planning with verifiable checkpoints for the deterministic golden harness."
+          ],
+          "stance": "support",
+          "subclaim": "证据闭环假设（fake B）：structured agent planning；父假设：围绕「st 的机制子命题（fake s1）"
+        },
+        {
+          "paper_ids": [],
+          "snippets": [],
+          "stance": "speculation",
+          "subclaim": "证据闭环假设（fake B）：structured agent planning；父假设：围绕「st 的边界子命题（fake s2）"
+        }
+      ],
+      "id": "<uuid-11>",
+      "kind": "hypothesis",
+      "novelty_report": {
+        "subclaims": [
+          {
+            "judged": true,
+            "paper_ids": [
+              "<uuid-4>"
+            ],
+            "subclaim": "证据闭环假设（fake B）：structured agent planning；父假设：围绕「st 的机制子命题（fake s1）",
+            "verdict": "novel"
+          },
+          {
+            "judged": false,
+            "paper_ids": [],
+            "subclaim": "证据闭环假设（fake B）：structured agent planning；父假设：围绕「st 的边界子命题（fake s2）",
+            "verdict": "uncertain"
+          }
+        ]
+      },
+      "parent_id": "<uuid-8>",
+      "run_id": "<uuid-6>",
+      "score": 0.25,
+      "statement": "证据闭环假设（fake B）：structured agent planning；父假设：围绕「structu 需要检索增强验证",
+      "status": "open",
+      "updated_at": "<ts>"
+    }
+  ],
+  "library_index_rebuild": {
+    "abstract_vectors_copied": 0,
+    "chunks_created": 2,
+    "embed_error": null,
+    "embedded": 0,
+    "papers_indexed": 2,
+    "total_chunks": 2
+  },
+  "login": {
+    "access_token": "<token>",
+    "token_type": "bearer"
+  },
+  "register": {
+    "display_name": "Discovery Golden",
+    "email": "discovery-golden@example.com",
+    "has_avatar": false,
+    "id": "<uuid-1>",
+    "is_active": true,
+    "is_superuser": false,
+    "is_verified": false,
+    "llm_self_managed": false,
+    "settings": null,
+    "username": "discoverygolden",
+    "username_locked": false
+  },
+  "voyage_detail": {
+    "budget": null,
+    "created_at": "<ts>",
+    "created_by": "<uuid-1>",
+    "cursor": 3,
+    "goal": "structured agent planning",
+    "id": "<uuid-6>",
+    "kind": "discovery",
+    "library_id": "<uuid-2>",
+    "mode": "loop",
+    "open_ask": null,
+    "plan": [
+      {
+        "acceptance": "根假设已入树（断点重放时复用已有根）",
+        "action": "hypothesis.seed",
+        "checks": [
+          {
+            "kind": "no_error"
+          }
+        ],
+        "on_failure": null,
+        "params": {},
+        "requires_gate": null,
+        "title": "生成根假设",
+        "wrapup": null
+      },
+      {
+        "acceptance": "最优 open 节点已扩展出子假设（或按树状态判定本轮无需扩展）",
+        "action": "hypothesis.expand",
+        "checks": [
+          {
+            "kind": "no_error"
+          }
+        ],
+        "on_failure": null,
+        "params": {
+          "round": 1
+        },
+        "requires_gate": null,
+        "title": "第 1 轮扩展假设",
+        "wrapup": null
+      },
+      {
+        "acceptance": "整树（含被剪分支）已汇总为 run 产物",
+        "action": "discovery.summarize",
+        "checks": [
+          {
+            "kind": "no_error"
+          }
+        ],
+        "on_failure": null,
+        "params": {},
+        "requires_gate": null,
+        "title": "汇总假设树",
+        "wrapup": true
+      }
+    ],
+    "plan_history": [
+      {
+        "added": 1,
+        "at": "<ts>",
+        "iteration": 1,
+        "obsoleted": 0,
+        "reason": "树上仍有可扩展的 open 节点：第 1 轮扩展",
+        "source": "signal",
+        "trigger_step": "生成根假设"
+      },
+      {
+        "added": 1,
+        "at": "<ts>",
+        "iteration": 2,
+        "obsoleted": 0,
+        "reason": "扩展数已达上限（1/1），转入汇总",
+        "source": "signal",
+        "trigger_step": "第 1 轮扩展假设"
+      }
+    ],
+    "plan_iteration": 2,
+    "project_id": "<uuid-3>",
+    "skills": [],
+    "status": "done",
+    "steps": [
+      {
+        "acceptance": {
+          "checks": [
+            {
+              "kind": "no_error"
+            }
+          ],
+          "text": "根假设已入树（断点重放时复用已有根）"
+        },
+        "action": "hypothesis.seed",
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "finished_at": "<ts>",
+            "observation": {
+              "node_id": "<uuid-8>",
+              "plan_signal": {
+                "decision": "expand",
+                "next_round": 1
+              },
+              "statement": "围绕「structured agent planning」的核心假设（fake root）",
+              "usage": {
+                "completion_tokens": 27,
+                "prompt_tokens": 52
+              }
+            },
+            "started_at": "<ts>",
+            "tokens": {
+              "completion_tokens": 27,
+              "prompt_tokens": 52
+            },
+            "verdict": {
+              "passed": true,
+              "reason": "确定性检查全部通过（no_error）"
+            }
+          }
+        ],
+        "finished_at": "<ts>",
+        "id": "<uuid-7>",
+        "observation": {
+          "node_id": "<uuid-8>",
+          "plan_signal": {
+            "decision": "expand",
+            "next_round": 1
+          },
+          "statement": "围绕「structured agent planning」的核心假设（fake root）",
+          "usage": {
+            "completion_tokens": 27,
+            "prompt_tokens": 52
+          }
+        },
+        "params": {},
+        "provenance": {
+          "plan_iteration": 0
+        },
+        "rank": 0.0,
+        "requires_gate": null,
+        "seq": 0,
+        "started_at": "<ts>",
+        "status": "passed",
+        "title": "生成根假设",
+        "tokens": {
+          "completion_tokens": 27,
+          "prompt_tokens": 52
+        },
+        "verdict": {
+          "passed": true,
+          "reason": "确定性检查全部通过（no_error）"
+        }
+      },
+      {
+        "acceptance": {
+          "checks": [
+            {
+              "kind": "no_error"
+            }
+          ],
+          "text": "最优 open 节点已扩展出子假设（或按树状态判定本轮无需扩展）"
+        },
+        "action": "hypothesis.expand",
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "finished_at": "<ts>",
+            "observation": {
+              "children": [
+                "<uuid-10>",
+                "<uuid-11>"
+              ],
+              "node_id": "<uuid-8>",
+              "plan_signal": {
+                "decision": "summarize",
+                "reason": "扩展数已达上限（1/1），转入汇总"
+              },
+              "round": 1,
+              "usage": {
+                "completion_tokens": 294,
+                "prompt_tokens": 2055
+              }
+            },
+            "started_at": "<ts>",
+            "tokens": {
+              "completion_tokens": 294,
+              "prompt_tokens": 2055
+            },
+            "verdict": {
+              "passed": true,
+              "reason": "确定性检查全部通过（no_error）"
+            }
+          }
+        ],
+        "finished_at": "<ts>",
+        "id": "<uuid-9>",
+        "observation": {
+          "children": [
+            "<uuid-10>",
+            "<uuid-11>"
+          ],
+          "node_id": "<uuid-8>",
+          "plan_signal": {
+            "decision": "summarize",
+            "reason": "扩展数已达上限（1/1），转入汇总"
+          },
+          "round": 1,
+          "usage": {
+            "completion_tokens": 294,
+            "prompt_tokens": 2055
+          }
+        },
+        "params": {
+          "round": 1
+        },
+        "provenance": {
+          "plan_iteration": 0
+        },
+        "rank": 100.0,
+        "requires_gate": null,
+        "seq": 1,
+        "started_at": "<ts>",
+        "status": "passed",
+        "title": "第 1 轮扩展假设",
+        "tokens": {
+          "completion_tokens": 294,
+          "prompt_tokens": 2055
+        },
+        "verdict": {
+          "passed": true,
+          "reason": "确定性检查全部通过（no_error）"
+        }
+      },
+      {
+        "acceptance": {
+          "checks": [
+            {
+              "kind": "no_error"
+            }
+          ],
+          "text": "整树（含被剪分支）已汇总为 run 产物"
+        },
+        "action": "discovery.summarize",
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "finished_at": "<ts>",
+            "observation": {
+              "node_count": 3,
+              "stats": {
+                "expanded": 1,
+                "open": 2
+              },
+              "usage": {
+                "completion_tokens": 19,
+                "prompt_tokens": 95
+              }
+            },
+            "started_at": "<ts>",
+            "tokens": {
+              "completion_tokens": 19,
+              "prompt_tokens": 95
+            },
+            "verdict": {
+              "passed": true,
+              "reason": "确定性检查全部通过（no_error）"
+            }
+          }
+        ],
+        "finished_at": "<ts>",
+        "id": "<uuid-12>",
+        "observation": {
+          "node_count": 3,
+          "stats": {
+            "expanded": 1,
+            "open": 2
+          },
+          "usage": {
+            "completion_tokens": 19,
+            "prompt_tokens": 95
+          }
+        },
+        "params": {},
+        "provenance": {
+          "plan_iteration": 1,
+          "wrapup": true
+        },
+        "rank": 200.0,
+        "requires_gate": null,
+        "seq": 2,
+        "started_at": "<ts>",
+        "status": "passed",
+        "title": "汇总假设树",
+        "tokens": {
+          "completion_tokens": 19,
+          "prompt_tokens": 95
+        },
+        "verdict": {
+          "passed": true,
+          "reason": "确定性检查全部通过（no_error）"
+        }
+      }
+    ],
+    "updated_at": "<ts>",
+    "usage": {
+      "completion_tokens": 340,
+      "prompt_tokens": 2202,
+      "total_tokens": 2542
+    }
+  }
+}
