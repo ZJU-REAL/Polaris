@@ -1308,6 +1308,26 @@ export interface ConceptDetail extends ConceptRead {
   related: { id: string; name: string }[];
 }
 
+/** 未连接概念对（P2.5 F3，Swanson ABC）：两个概念从未同篇出现，但共享共现邻居。 */
+export interface ConceptPairNode {
+  id: string;
+  name: string;
+}
+
+export interface ConceptPairBridge extends ConceptPairNode {
+  /** 这条桥的强度 = min(与 A 的共现数, 与 C 的共现数) */
+  strength: number;
+}
+
+export interface UnconnectedConceptPair {
+  concept_a: ConceptPairNode;
+  concept_c: ConceptPairNode;
+  /** 所有桥强度之和（越大越值得看） */
+  strength: number;
+  /** 最强的 ≤5 个桥概念 */
+  bridges: ConceptPairBridge[];
+}
+
 /** 全库概念补建结果（POST /projects/{id}/concepts/relink）。 */
 export interface ConceptRelinkResult {
   papers: number;
@@ -4163,6 +4183,10 @@ export const api = {
     if (opts.q) params.set('q', opts.q);
     const qs = params.toString();
     return request<ConceptRead[]>(`/libraries/${id}/concepts${qs ? `?${qs}` : ''}`);
+  },
+  /** 未连接概念对：可能有关联但还没在同一篇论文里出现过的概念组合（确定性挖掘）。 */
+  listLibraryConceptPairs(id: string, top = 20): Promise<UnconnectedConceptPair[]> {
+    return request<UnconnectedConceptPair[]>(`/libraries/${id}/concept-pairs?top=${top}`);
   },
   searchLibrary(
     id: string,

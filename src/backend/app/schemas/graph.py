@@ -32,3 +32,26 @@ class GraphResponse(BaseModel):
     edges: list[GraphEdge]
     paper_total: int  # 项目内符合条件的论文总数
     truncated: bool  # 超出上限被截断（按相关度保留 top N）
+
+
+# —— 未连接概念对（P2.5 F3，Swanson ABC；服务见 services/concept_fuels.py） ——
+
+
+class ConceptPairNode(BaseModel):
+    """候选对 / 桥概念的最小引用（uuid 字符串 + 名字，点击跳概念详情够用）。"""
+
+    id: str
+    name: str
+
+
+class ConceptPairBridge(ConceptPairNode):
+    strength: int  # 该桥的 min(w(A,B), w(B,C))
+
+
+class UnconnectedConceptPair(BaseModel):
+    """A–C 从未同篇出现、但经共同邻居相连的概念对；strength = Σ_B min(w(A,B), w(B,C))。"""
+
+    concept_a: ConceptPairNode
+    concept_c: ConceptPairNode  # 规范序：concept_a.id < concept_c.id
+    strength: int
+    bridges: list[ConceptPairBridge]  # 最强的 ≤5 个桥概念，按强度降序

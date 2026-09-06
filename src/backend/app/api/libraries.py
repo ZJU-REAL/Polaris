@@ -32,7 +32,7 @@ from app.core.redis import get_redis_dep
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.project import Project
 from app.models.user import User
-from app.schemas.graph import GraphResponse
+from app.schemas.graph import GraphResponse, UnconnectedConceptPair
 from app.schemas.ingest import DigestGenerateRead, IngestRequest, IngestStateRead
 from app.schemas.libraries import (
     DirectionLibraryDetail,
@@ -73,6 +73,7 @@ from app.schemas.paper import (
 from app.schemas.voyage import VoyageRead
 from app.services import chunks as chunks_service
 from app.services import citations as citations_service
+from app.services import concept_fuels as concept_fuels_service
 from app.services import concepts as concepts_service
 from app.services import graph as graph_service
 from app.services import ingest as ingest_service
@@ -1061,6 +1062,25 @@ async def library_graph(
     library = await _get_visible_library(session, library_id, user)
     data = await graph_service.library_graph(session, library_id=library.id)
     return GraphResponse(**data)
+
+
+@router.get("/libraries/{library_id}/concept-pairs", response_model=list[UnconnectedConceptPair])
+async def list_library_concept_pairs(
+    library_id: uuid.UUID,
+    top: int = Query(default=50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[UnconnectedConceptPair]:
+    """未连接概念对（P2.5 F3，Swanson ABC）：库里「可能有关联但还没人一起研究」的概念组合。
+
+    确定性挖掘（不走 LLM），随读即时计算——数据永远反映当前概念上链结果；
+    鉴权与图谱同口径（按库可见性可读）。
+    """
+    library = await _get_visible_library(session, library_id, user)
+    pairs = await concept_fuels_service.mine_unconnected_pairs(
+        session, library_id=library.id, top_n=top
+    )
+    return [UnconnectedConceptPair(**pair) for pair in pairs]
 
 
 @router.get("/libraries/{library_id}/notes", response_model=NotebookPage)

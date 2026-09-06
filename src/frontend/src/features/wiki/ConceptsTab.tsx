@@ -4,7 +4,7 @@ import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
-import { api, type ConceptCategory, type ConceptRead } from '../../lib/api';
+import { api, type ConceptCategory, type ConceptRead, type UnconnectedConceptPair } from '../../lib/api';
 import { clickable } from '../../lib/a11y';
 import { tr } from '../../lib/i18n';
 import { categoryMeta, CONCEPT_CATEGORY, SearchInput, Section, useDebounced } from './shared';
@@ -79,6 +79,97 @@ function ConceptRow({ c, active, onClick }: { c: ConceptRead; active: boolean; o
           }}
         >
           {c.definition}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 未连接概念对面板（P2.5 F3）：占用右侧详情区，列出「可能有关联但还没人
+    一起研究」的概念组合与牵线的桥概念；点任一概念名跳回该概念详情。 */
+function ConceptPairsPane({
+  libraryId,
+  onOpenConcept,
+  onClose,
+}: {
+  libraryId: string;
+  onOpenConcept: (id: string) => void;
+  onClose: () => void;
+}) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['lib-concept-pairs', libraryId],
+    queryFn: () => api.listLibraryConceptPairs(libraryId),
+    retry: false,
+  });
+  const pairs: UnconnectedConceptPair[] = data ?? [];
+
+  return (
+    <div className="scroll fadeup" style={{ overflowY: 'auto', flex: 1, padding: '26px 32px 60px' }}>
+      <div className="row gap8" style={{ marginBottom: 6 }}>
+        <Icon name="sparkle" size={16} style={{ color: 'var(--accent)' }} />
+        <h1 style={{ fontSize: 18, fontWeight: 680, margin: 0, letterSpacing: '-0.01em', flex: 1 }}>
+          {tr('未连接概念对', 'Unconnected concept pairs')}
+        </h1>
+        <button className="icon-btn" style={{ width: 26, height: 26, borderRadius: 7 }} onClick={onClose}
+          title={tr('返回概念详情', 'Back to concept detail')}>
+          <Icon name="x" size={13} />
+        </button>
+      </div>
+      <p className="muted" style={{ fontSize: 12.5, lineHeight: 1.6, margin: '0 0 18px' }}>
+        {tr(
+          '这些概念组合可能有关联但还没人一起研究：两个概念各自都和同一些「桥」概念一起出现过，但它们俩从没出现在同一篇论文里。分数越高，值得一看的可能性越大。',
+          'Concept combinations that may be related but unexplored: both co-occur with the same “bridge” concepts, yet never appear together in one paper. Higher scores are more promising.',
+        )}
+      </p>
+
+      {isLoading ? (
+        <div className="empty">{tr('挖掘概念对…', 'Mining concept pairs…')}</div>
+      ) : isError ? (
+        <EmptyState
+          compact
+          icon="x"
+          title={tr('无法加载概念对', 'Failed to load concept pairs')}
+          desc={tr('后端不可用，稍后重试。', 'Backend unavailable — try again later.')}
+        />
+      ) : pairs.length === 0 ? (
+        <EmptyState
+          compact
+          icon="layers"
+          title={tr('还挖不出概念对', 'No pairs to mine yet')}
+          desc={tr(
+            '概念多起来之后（多篇论文、多个共同话题）这里才会有结果。',
+            'Results appear once the library has more concepts appearing across papers.',
+          )}
+        />
+      ) : (
+        <div className="col gap8">
+          {pairs.map((p) => (
+            <div key={`${p.concept_a.id}-${p.concept_c.id}`} className="card" style={{ padding: '12px 14px' }}>
+              <div className="row gap8" style={{ flexWrap: 'wrap' }}>
+                <span className="wikilink" style={{ fontWeight: 650 }} {...clickable(() => onOpenConcept(p.concept_a.id))}>
+                  {p.concept_a.name}
+                </span>
+                <Icon name="link" size={12} style={{ color: 'var(--text-4)' }} />
+                <span className="wikilink" style={{ fontWeight: 650 }} {...clickable(() => onOpenConcept(p.concept_c.id))}>
+                  {p.concept_c.name}
+                </span>
+                <span className="mono" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-3)' }}>
+                  {tr(`关联分 ${p.strength}`, `score ${p.strength}`)}
+                </span>
+              </div>
+              {p.bridges.length > 0 && (
+                <div className="row gap6 wrap" style={{ marginTop: 8, alignItems: 'center' }}>
+                  <span className="muted" style={{ fontSize: 11.5 }}>{tr('牵线的概念：', 'Bridged by:')}</span>
+                  {p.bridges.map((b) => (
+                    <span key={b.id} className="chip" {...clickable(() => onOpenConcept(b.id))}>
+                      {b.name}
+                      <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)', marginLeft: 4 }}>×{b.strength}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -208,6 +299,8 @@ export function ConceptsTab({
 }: ConceptsTabProps) {
   const queryClient = useQueryClient();
   const [category, setCategory] = useState<CategoryFilter>('all');
+  // 未连接概念对面板（仅库作用域有此入口；选中概念时自动关掉）
+  const [showPairs, setShowPairs] = useState(false);
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
 
@@ -299,6 +392,24 @@ export function ConceptsTab({
               );
             })}
           </div>
+          {libraryId && (
+            <div
+              className="card hoverable"
+              style={{ marginTop: 10, padding: '9px 12px', background: showPairs ? 'var(--accent-soft)' : 'var(--surface-2)' }}
+              {...clickable(() => setShowPairs(true))}
+            >
+              <div className="row gap8">
+                <Icon name="sparkle" size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 650 }}>{tr('未连接概念对', 'Unconnected concept pairs')}</div>
+                  <div className="muted" style={{ fontSize: 11, marginTop: 1 }}>
+                    {tr('可能有关联但还没人一起研究的概念组合', 'Combos that may be related but unexplored')}
+                  </div>
+                </div>
+                <Icon name="arrow" size={12} style={{ color: 'var(--text-4)', marginLeft: 'auto', flexShrink: 0 }} />
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
@@ -341,14 +452,32 @@ export function ConceptsTab({
             />
           ) : (
             concepts.map((c) => (
-              <ConceptRow key={c.id} c={c} active={c.id === selectedId} onClick={() => onSelect(c.id)} />
+              <ConceptRow
+                key={c.id}
+                c={c}
+                active={c.id === selectedId}
+                // 概念对面板开着时点列表 = 想看这个概念：先关面板再选中
+                onClick={() => {
+                  setShowPairs(false);
+                  onSelect(c.id);
+                }}
+              />
             ))
           )}
         </div>
       </div>
 
       <div className="split-detail">
-        {selectedId ? (
+        {showPairs && libraryId ? (
+          <ConceptPairsPane
+            libraryId={libraryId}
+            onOpenConcept={(id) => {
+              setShowPairs(false);
+              onSelect(id);
+            }}
+            onClose={() => setShowPairs(false)}
+          />
+        ) : selectedId ? (
           <ConceptDetailPane
             conceptId={selectedId}
             libraryId={libraryId}
