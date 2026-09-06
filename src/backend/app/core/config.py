@@ -203,6 +203,19 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("POLARIS_MINERU_CONCURRENCY", "MINERU_CONCURRENCY"),
     )
 
+    # ---- 解析双轨适配器（#650，enrich 链 extract 步骤）----
+    # 自托管 GROBID / MinerU web_api 的服务地址，空 = 该轨不可用（golden 链路不配，
+    # 走纯 PyMuPDF fallback）。注意与上面的 mineru_*（MinerU Cloud 批量接口，版本化
+    # PDF 生命周期用）是两套部署形态，互不复用。
+    grobid_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("POLARIS_GROBID_URL", "GROBID_URL"),
+    )
+    mineru_parse_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("POLARIS_MINERU_URL", "MINERU_URL"),
+    )
+
     # ---- 邮件（密码重置等事务邮件）----
     # smtp_host 为空 = 关闭发信：忘记密码入口在前端自动隐藏（见 /auth/capabilities）。
     smtp_host: str = ""

@@ -201,7 +201,27 @@ async def enrich_paper(
         await emit("extract", "skipped", "no pdf")
     else:
         try:
-            txt_path = await extract_full_text(str(paper_id), Path(paper.pdf_path))
+            # 双轨解析（#650）：配置了 GROBID / MinerU 才走适配器路径（解析→选优→落地
+            # 质检报告与结构化参考文献）；一个都没配时 extract_with_dual_track 内部就是
+            # 原 extract_full_text，行为与旧代码逐字节一致（golden 链路不配 URL）。
+            from app.services.parsing.select import (
+                apply_missing_metadata,
+                dual_track_available,
+                extract_with_dual_track,
+                paper_fallback_metadata,
+            )
+
+            if dual_track_available():
+                outcome = await extract_with_dual_track(
+                    str(paper_id),
+                    Path(paper.pdf_path),
+                    fallback_metadata=paper_fallback_metadata(paper),
+                )
+                txt_path = outcome.txt_path
+                # 只补空字段：resolve 阶段的 arXiv/DOI 权威元数据不被 PDF 解析覆盖
+                apply_missing_metadata(paper, outcome.metadata)
+            else:
+                txt_path = await extract_full_text(str(paper_id), Path(paper.pdf_path))
             paper.full_text_path = str(txt_path)
             await session.commit()
             await emit("extract", "ok")

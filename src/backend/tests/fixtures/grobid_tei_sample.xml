@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <teiHeader>
+    <fileDesc>
+      <titleStmt><title level="a" type="main">Deep Agent Survey</title></titleStmt>
+      <sourceDesc>
+        <biblStruct>
+          <analytic>
+            <author><persName><forename type="first">Alice</forename><surname>Zhang</surname></persName></author>
+            <author><persName><forename type="first">Bob</forename><surname>Li</surname></persName></author>
+            <idno type="DOI">10.1234/agent.survey</idno>
+          </analytic>
+          <monogr>
+            <title level="j">Journal of AI Research</title>
+            <imprint><date type="published" when="2024-05-01"/></imprint>
+          </monogr>
+        </biblStruct>
+      </sourceDesc>
+    </fileDesc>
+    <profileDesc>
+      <abstract><div><p>We survey deep agents and their planning loops.</p></div></abstract>
+    </profileDesc>
+  </teiHeader>
+  <text>
+    <body>
+      <div>
+        <head>Introduction</head>
+        <p>Early systems established the paradigm of tool-augmented reasoning <ref type="bibr" target="#b0">[1]</ref>. We follow the planning method of <ref type="bibr" target="#b1">[2]</ref> to build our agent loop.</p>
+      </div>
+      <div>
+        <head>Experiments</head>
+        <p>Our results are compared against the strong baseline of <ref type="bibr" target="#b2">[3]</ref>. This closing sentence cites nothing.</p>
+      </div>
+    </body>
+    <back>
+      <div type="references">
+        <listBibl>
+          <biblStruct xml:id="b0">
+            <analytic>
+              <title level="a" type="main">Foundations of Tool-Augmented Reasoning Systems</title>
+              <author><persName><forename type="first">Alice</forename><surname>Zhang</surname></persName></author>
+            </analytic>
+            <monogr><title level="j">Journal of AI</title><imprint><date type="published" when="2020"/></imprint></monogr>
+            <note type="raw_reference">Alice Zhang. Foundations of Tool-Augmented Reasoning Systems. Journal of AI, 2020.</note>
+          </biblStruct>
+          <biblStruct xml:id="b1">
+            <analytic>
+              <title level="a" type="main">Planning With Language Models For Agent Tasks</title>
+              <author><persName><forename type="first">Bob</forename><surname>Li</surname></persName></author>
+              <idno type="DOI">10.5555/planning</idno>
+            </analytic>
+            <monogr><title level="m">NeurIPS</title><imprint><date when="2021-12-06"/></imprint></monogr>
+          </biblStruct>
+          <biblStruct xml:id="b2">
+            <monogr>
+              <title level="m">A Strong Baseline For Agent Benchmarks</title>
+              <author><persName><forename type="first">Carol</forename><surname>Wei</surname></persName></author>
+              <imprint><date when="2022"/></imprint>
+            </monogr>
+          </biblStruct>
+        </listBibl>
+      </div>
+    </back>
+  </text>
+</TEI>

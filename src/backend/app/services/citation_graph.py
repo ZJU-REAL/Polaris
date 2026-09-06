@@ -1,7 +1,8 @@
 """引文边构建 + 引文意图分类（#639，设计报告 §10 ③层）。
 
-解析产物就是 pdf_extract 落盘的纯文本全文（没有 GROBID 一类的结构化解析），
-所以这里自带一套确定性的参考文献解析：
+解析产物默认是 pdf_extract 落盘的纯文本全文。#650 起若双轨解析拿到了 GROBID 的
+结构化参考文献（<data_dir>/papers/<id>/references.json，含上下文句），建边优先吃
+它——条目与上下文都比正则可靠；没有该工件时走这里自带的确定性正则解析：
 
 - 定位最后一个 References / Bibliography / 参考文献 标题行，之后是文献表；
 - 编号式（[1] ...）按编号切条目；没有编号则按空行分段兜底；
@@ -141,6 +142,30 @@ def parse_references(full_text: str) -> list[ParsedReference]:
     return refs
 
 
+def _structured_parsed_refs(paper_id: uuid.UUID) -> list[ParsedReference]:
+    """结构化参考文献工件 → ParsedReference 列表（无工件 / 空条目返回 []）。
+
+    序号按工件内顺序 1 起编——GROBID 的条目顺序即文献表顺序，与正则路径的
+    编号语义一致；上下文取首句（建边只存一句，与正则路径同口径）。
+    """
+    from app.services.parsing.select import load_structured_references
+
+    refs: list[ParsedReference] = []
+    for i, entry in enumerate(load_structured_references(str(paper_id)), start=1):
+        raw = " ".join(str(entry.get("raw") or "").split())
+        if not raw:
+            continue
+        contexts = [c for c in entry.get("contexts") or [] if str(c).strip()]
+        refs.append(
+            ParsedReference(
+                index=i,
+                raw=raw[:MAX_REF_RAW_CHARS],
+                context=str(contexts[0])[:MAX_CONTEXT_CHARS] if contexts else None,
+            )
+        )
+    return refs[:MAX_REFERENCES]
+
+
 def _norm_title(text: str) -> str:
     return " ".join(re.sub(r"[^0-9a-z一-鿿]+", " ", text.lower()).split())
 
@@ -181,8 +206,12 @@ async def ensure_citation_edges(
         return 0
     if not paper.full_text_path or not Path(paper.full_text_path).exists():
         return 0
-    full_text = Path(paper.full_text_path).read_text(encoding="utf-8", errors="ignore")
-    refs = parse_references(full_text)
+    # 输入源双轨（#650）：有结构化参考文献工件用它（含上下文句），否则原正则路径。
+    # golden 链路没有该工件，行为不变。
+    refs = _structured_parsed_refs(paper.id)
+    if not refs:
+        full_text = Path(paper.full_text_path).read_text(encoding="utf-8", errors="ignore")
+        refs = parse_references(full_text)
     if not refs:
         return 0
     if existing:
