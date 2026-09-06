@@ -289,3 +289,33 @@ class MethodSearchResponse(BaseModel):
     mode: str
     # semantic = 双轴向量检索；keyword = 嵌入不可用时的确定性关键词降级
     mode_used: str
+
+
+class LibraryGapEntryRead(BaseModel):
+    """缺口台账的一条（#665）：statement 是 LLM 归纳，source_span 是原文摘录锚点。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    paper_id: uuid.UUID
+    paper_title: str
+    kind: str  # gap | contradiction | uncertainty | negative_result | limitation
+    statement: str
+    source_span: str
+    year: int | None = None
+
+
+class LibraryGapPairRead(BaseModel):
+    """疑似矛盾对：两条同概念异立场的条目。heuristic 恒 True——本批次只有
+    启发式配对（共享概念词 + 单侧否定措辞），LLM 细判归后续；前端据此标注
+    「启发式匹配，请核对原文」。"""
+
+    a: LibraryGapEntryRead
+    b: LibraryGapEntryRead
+    shared_terms: list[str] = []
+    heuristic: bool = True
+
+
+class LibraryGapsRead(BaseModel):
+    entries: list[LibraryGapEntryRead] = []
+    # 矛盾对在返回的 entries 范围内配（kind 筛选时对子也跟着窄）
+    pairs: list[LibraryGapPairRead] = []

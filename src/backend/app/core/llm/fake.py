@@ -39,6 +39,7 @@ _AFFILIATIONS_MARKER = "POLARIS_AUTHOR_AFFIL"  # 逐位作者机构解析（affi
 _CITATION_INTENT_MARKER = "POLARIS_CITATION_INTENT"  # 引文意图批量分类（citation_graph.py）
 _EXTRACT_SKELETON_MARKER = "POLARIS_EXTRACT_SKELETON"  # 骨架抽取（services/extraction/）
 _EXTRACT_METHOD_MARKER = "POLARIS_EXTRACT_METHOD"  # 方法卡抽取（services/extraction/，#663）
+_EXTRACT_GAPS_MARKER = "POLARIS_EXTRACT_GAPS"  # 缺口台账抽取（services/extraction/，#665）
 # 库级 agentic RAG 三环节（services/library_rag.py，#644）
 _RAG_EXPAND_MARKER = "POLARIS_RAG_EXPAND"
 _RAG_RERANK_MARKER = "POLARIS_RAG_RERANK"
@@ -454,6 +455,9 @@ class FakeProvider(LLMProvider):
             return FakeProvider._respond_extract_skeleton(last_user)
         if _EXTRACT_METHOD_MARKER in full_text:
             return FakeProvider._respond_extract_method(last_user)
+        # 缺口台账抽取：同上，整篇正文进 user prompt，须先于通用 marker 判断
+        if _EXTRACT_GAPS_MARKER in full_text:
+            return FakeProvider._respond_extract_gaps(last_user)
         # 发表机构解析（专门调用）：system prompt 带 POLARIS_AUTHOR_AFFIL，user prompt 内嵌
         # 标题页文本（可能含 TL;DR 等其他 marker），须先于通用 marker 判断；返回逐位作者映射
         if _AFFILIATIONS_MARKER in full_text:
@@ -669,6 +673,34 @@ class FakeProvider(LLMProvider):
                 "dataset": ["数据集一（fake）"],
                 "protocol": "流程：准备数据、跑替身方法、对比指标（fake extraction）",
                 "confidence": 0.9,
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_extract_gaps(last_user: str) -> str:
+        """缺口台账抽取（services/extraction/schemas.GAPS_SCHEMA 对齐，#665）。
+
+        固定两条：一条 gap（statement 回显标题，测试据此断言 prompt 带对了论文）
+        + 一条 limitation，各带假的原文摘录 source_span——测试要验证的是
+        「条目会归一化、锚定会保留、库级聚合能跑通」这条链路，不是抽得多准。"""
+        m = re.search(r"标题：(.+)", last_user)
+        title = m.group(1).strip() if m else "未知论文"
+        return json.dumps(
+            {
+                "entries": [
+                    {
+                        "kind": "gap",
+                        "statement": f"《{title}》指出跨域泛化仍无人解决（fake gap）",
+                        "source_span": "cross-domain generalization remains open (fake span)",
+                    },
+                    {
+                        "kind": "limitation",
+                        "statement": "作者自述评测只覆盖单一数据集（fake limitation）",
+                        "source_span": "our evaluation is limited to a single dataset (fake span)",
+                    },
+                ],
+                "confidence": 0.8,
             },
             ensure_ascii=False,
         )

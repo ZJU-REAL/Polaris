@@ -297,7 +297,7 @@ async def enrich_paper(
         logger.warning("enrich citation intents failed for paper %s", paper_id, exc_info=True)
         paper = await _rollback_and_reload()
 
-    # 结构化抽取（#661 骨架 + #663 方法卡，增量钩子）：全文就位后把注册表里的每个
+    # 结构化抽取（#661 骨架 + #663 方法卡 + #665 缺口台账，增量钩子）：全文就位后把注册表里的每个
     # schema 都抽一遍落 paper_extractions。非独立进度阶段（STAGES 不变）、逐 schema
     # best-effort（一个 schema 失败不拖垮其余）；runtime 对无全文论文如实 skip、
     # 不调 LLM——bibtex 导入等 golden 链路因此零输出零副作用。

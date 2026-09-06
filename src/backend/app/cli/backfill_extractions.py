@@ -4,6 +4,7 @@
 
     python -m app.cli.backfill_extractions                 # 全部注册 schema，跳过已抽取
     python -m app.cli.backfill_extractions --schema method # 只回填方法卡
+    python -m app.cli.backfill_extractions --schema gaps   # 只回填缺口与负结果台账（#665）
     python -m app.cli.backfill_extractions --limit 100
     python -m app.cli.backfill_extractions --force         # 覆盖重抽（schema 升版后用）
 

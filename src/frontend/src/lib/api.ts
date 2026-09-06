@@ -672,6 +672,7 @@ export const LLM_STAGES = [
   'citation_intent',
   'extract_skeleton',
   'extract_method',
+  'extract_gaps',
   'rag_expand',
   'rag_rerank',
   'rag_answer',
@@ -1600,6 +1601,32 @@ export interface LibraryBudgetRead {
   remaining_tokens: number | null;
   /** true = 本月预算已用尽（同步任务会被拒绝启动） */
   exhausted: boolean;
+}
+
+/** 缺口台账条目种类（#665）：别人没解决的 / 相互矛盾的 / 不确定的 / 失败的尝试 / 自述局限 */
+export type GapKind = 'gap' | 'contradiction' | 'uncertainty' | 'negative_result' | 'limitation';
+
+/** 缺口台账的一条：statement 是 AI 归纳，source_span 是逐字原文摘录（锚定出处）。 */
+export interface LibraryGapEntry {
+  paper_id: string;
+  paper_title: string;
+  kind: GapKind;
+  statement: string;
+  source_span: string;
+  year: number | null;
+}
+
+/** 疑似矛盾对：启发式匹配（heuristic 恒 true），前端须提示用户核对双方原文。 */
+export interface LibraryGapPair {
+  a: LibraryGapEntry;
+  b: LibraryGapEntry;
+  shared_terms: string[];
+  heuristic: boolean;
+}
+
+export interface LibraryGapsRead {
+  entries: LibraryGapEntry[];
+  pairs: LibraryGapPair[];
 }
 
 // ============================================================
@@ -4187,6 +4214,14 @@ export const api = {
   /** 未连接概念对：可能有关联但还没在同一篇论文里出现过的概念组合（确定性挖掘）。 */
   listLibraryConceptPairs(id: string, top = 20): Promise<UnconnectedConceptPair[]> {
     return request<UnconnectedConceptPair[]>(`/libraries/${id}/concept-pairs?top=${top}`);
+  },
+  /** 库级研究缺口台账（#665）：聚合库内论文的缺口/矛盾/负结果条目。 */
+  getLibraryGaps(id: string, opts: { kind?: GapKind; top?: number } = {}): Promise<LibraryGapsRead> {
+    const params = new URLSearchParams();
+    if (opts.kind) params.set('kind', opts.kind);
+    if (opts.top) params.set('top', String(opts.top));
+    const qs = params.toString();
+    return request<LibraryGapsRead>(`/libraries/${id}/gaps${qs ? `?${qs}` : ''}`);
   },
   searchLibrary(
     id: string,

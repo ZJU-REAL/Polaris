@@ -15,6 +15,7 @@ import { IngestTab } from './IngestTab';
 import { NotesTab } from './NotesTab';
 import { MethodsTab } from './MethodsTab';
 import { GovernanceTab } from './GovernanceTab';
+import { GapsTab } from './GapsTab';
 import { LiteratureDiscoveryPanel } from '../libraries/LiteratureDiscoveryPage';
 
 // 图谱与 PPT 弹窗体量大且非默认视图：按需加载
@@ -34,7 +35,7 @@ const PresentationModal = lazy(() =>
    从哪个课题建的，如今仅用来决定要不要显示课题域的 PPT。
    ============================================================ */
 
-type WikiTab = 'discover' | 'papers' | 'concepts' | 'methods' | 'graph' | 'digest' | 'chat' | 'qa' | 'ingest' | 'notes' | 'govern';
+type WikiTab = 'discover' | 'papers' | 'concepts' | 'methods' | 'graph' | 'gaps' | 'digest' | 'chat' | 'qa' | 'ingest' | 'notes' | 'govern';
 
 export function WikiWorkbench({
   pid,
@@ -104,7 +105,7 @@ export function WikiWorkbench({
         seq: (old?.seq ?? 0) + 1,
       }));
       setTab('papers');
-    } else if (tabParam && ['discover', 'papers', 'concepts', 'methods', 'graph', 'digest', 'chat', 'qa', 'ingest', 'notes', 'govern'].includes(tabParam)) {
+    } else if (tabParam && ['discover', 'papers', 'concepts', 'methods', 'graph', 'gaps', 'digest', 'chat', 'qa', 'ingest', 'notes', 'govern'].includes(tabParam)) {
       setTab(tabParam as WikiTab);
     }
     setSearchParams({}, { replace: true });
@@ -173,6 +174,8 @@ export function WikiWorkbench({
             // 方法库走 /libraries/{id}/methods，只有库作用域有这个端点
             ...(libraryId ? [{ v: 'methods' as const, label: tr('方法库', 'Methods') }] : []),
             { v: 'graph', label: tr('图谱', 'Graph') },
+            // 研究缺口台账（#665）走 /libraries/{id}/gaps，只有库作用域有这个端点
+            ...(libraryId ? [{ v: 'gaps' as const, label: tr('研究缺口', 'Research gaps') }] : []),
             ...(libraryId ? [{ v: 'digest' as const, label: tr('每日简报', 'Daily digest') }] : []),
             { v: 'chat', label: tr('文献对话', 'Chat') },
             // 深度问答走 /libraries/{id}/qa，只有库作用域有这个端点
@@ -254,6 +257,8 @@ export function WikiWorkbench({
           <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
             <GraphTab pid={pid} libraryId={tabLibraryId} onOpenPaper={goPaper} onOpenConcept={goConcept} />
           </Suspense>
+        ) : tab === 'gaps' && libraryId ? (
+          <GapsTab libraryId={libraryId} onOpenPaper={goPaper} />
         ) : tab === 'digest' && libraryId ? (
           <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
             <DailyDigestTab

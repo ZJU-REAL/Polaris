@@ -43,6 +43,9 @@ from app.schemas.libraries import (
     LibraryCreate,
     LibraryDigestRead,
     LibraryDigestSummary,
+    LibraryGapEntryRead,
+    LibraryGapPairRead,
+    LibraryGapsRead,
     LibraryQaRequest,
     LibraryQaResponse,
     MethodCardRead,
@@ -75,6 +78,7 @@ from app.services import chunks as chunks_service
 from app.services import citations as citations_service
 from app.services import concept_fuels as concept_fuels_service
 from app.services import concepts as concepts_service
+from app.services import gap_ledger as gap_ledger_service
 from app.services import graph as graph_service
 from app.services import ingest as ingest_service
 from app.services import libraries as libraries_service
@@ -619,6 +623,44 @@ async def search_library_methods(
         items=[MethodCardRead.model_validate(card) for card in items],
         mode=mode,
         mode_used=mode_used,
+    )
+
+
+@router.get("/libraries/{library_id}/gaps", response_model=LibraryGapsRead)
+async def list_library_gaps(
+    library_id: uuid.UUID,
+    kind: str | None = Query(
+        default=None,
+        pattern="^(gap|contradiction|uncertainty|negative_result|limitation)$",
+    ),
+    top: int = Query(default=50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> LibraryGapsRead:
+    """库级缺口与负结果台账（#665）：聚合库内论文的 gaps@1 抽取产物。
+
+    只读端点走库可见性（公共库全员、个人库仅创建者）。没抽过就是空列表不是
+    404——前端「研究缺口」页据此显示「还没有条目」。矛盾对是启发式配对
+    （heuristic 恒 True），语义见 services/gap_ledger.py。
+    """
+    library = await _get_visible_library(session, library_id, user)
+    entries = await gap_ledger_service.library_gaps(session, library.id, kind=kind, top=top)
+    pairs = gap_ledger_service.find_contradiction_pairs(entries)
+
+    def _read(entry: gap_ledger_service.GapEntry) -> LibraryGapEntryRead:
+        return LibraryGapEntryRead.model_validate(entry)
+
+    return LibraryGapsRead(
+        entries=[_read(e) for e in entries],
+        pairs=[
+            LibraryGapPairRead(
+                a=_read(pair["a"]),
+                b=_read(pair["b"]),
+                shared_terms=pair["shared_terms"],
+                heuristic=pair["heuristic"],
+            )
+            for pair in pairs
+        ],
     )
 
 

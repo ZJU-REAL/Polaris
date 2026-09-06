@@ -332,7 +332,8 @@ async def test_enrich_hook_builds_method_index(client, tmp_path):
             .scalars()
             .all()
         )
-    assert sorted(r.schema_id for r in rows) == ["method", "skeleton"]
+    # #665 起注册表里还有缺口台账 gaps：钩子遍历注册表，三个 schema 各一行
+    assert sorted(r.schema_id for r in rows) == ["gaps", "method", "skeleton"]
     assert await _method_vectors_of(paper_id) == ["mechanism", "purpose"]
 
 

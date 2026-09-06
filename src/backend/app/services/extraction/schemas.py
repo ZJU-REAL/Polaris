@@ -5,10 +5,11 @@ schema 决定三件事：抽哪些字段（白名单）、每个字段长什么�
 里不在白名单的键直接丢弃，超长截断，空串置空。
 
 内置两个通用 schema：骨架 skeleton@1（问题-方法-发现-局限，ORKG contribution
-思路）与方法卡 method@1（目的-机制-基线-数据集-流程，#663 方法库的原料，
-purpose 与 mechanism 各自建向量做双轴检索，见 services/method_index.py）。
-学科 schema（PICO / 任务-数据集-指标 / 合成配方…）按设计报告属后续批次，本模块
-只留 ``register_schema`` 这道缝，不预埋任何学科内容。
+思路）、方法卡 method@1（目的-机制-基线-数据集-流程，#663 方法库的原料，
+purpose 与 mechanism 各自建向量做双轴检索，见 services/method_index.py）与
+缺口台账 gaps@1（GAPMAP 式条目列表，#665）。学科 schema（PICO /
+任务-数据集-指标 / 合成配方…）按设计报告属后续批次，本模块只留
+``register_schema`` 这道缝，不预埋任何学科内容。
 
 版本语义：字段集合或含义变了就 +1 并落进 stage_meta.version，读方据此判断
 存量产物是否过期。同一 id 只注册最新版——不做多版本共存，个人平台的量级
@@ -21,13 +22,30 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
-class SchemaField:
-    """一个抽取字段：text = 单段文本；list = 字符串列表（去重去空、条数封顶）。"""
+class EntryKey:
+    """entries 字段里单个条目的一个键：白名单 + 长度帽 + 可选枚举。
+
+    所有声明的键都是必填——entries 型字段的价值在于每条都是完整的结构化记录
+    （比如缺口台账的每条必须带原文出处），缺任何一键整条丢弃，不做半条记录。
+    """
 
     name: str
-    kind: str  # "text" | "list"
-    max_len: int  # text：整段字符帽；list：单条字符帽
-    max_items: int | None = None  # 仅 list：最多保留几条
+    max_len: int
+    # 取值枚举（如缺口条目的 kind）：归一化时先 strip+小写再比对，枚举外整条丢弃
+    choices: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SchemaField:
+    """一个抽取字段：text = 单段文本；list = 字符串列表（去重去空、条数封顶）；
+    entries = 结构化条目列表（每条是白名单键的 dict，见 EntryKey）。"""
+
+    name: str
+    kind: str  # "text" | "list" | "entries"
+    max_len: int  # text：整段字符帽；list：单条字符帽；entries：不使用（帽在 EntryKey 上）
+    max_items: int | None = None  # list / entries：最多保留几条
+    # 仅 entries：条目键的白名单规格；模型输出里不在其中的键直接丢弃
+    entry_keys: tuple[EntryKey, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +63,18 @@ class ExtractionSchema:
         """字段清单的自然语言描述（进 prompt，确定性生成，与 fields 永不漂移）。"""
         lines = []
         for f in self.fields:
-            if f.kind == "list":
+            if f.kind == "entries":
+                keys = []
+                for k in f.entry_keys or ():
+                    if k.choices:
+                        keys.append(f'"{k.name}"（取值限 {" / ".join(k.choices)}）')
+                    else:
+                        keys.append(f'"{k.name}"（不超过 {k.max_len} 字）')
+                lines.append(
+                    f'- "{f.name}"：对象数组，最多 {f.max_items} 条，'
+                    f"每条含且仅含键 {'、'.join(keys)}；没有可靠内容就给空数组"
+                )
+            elif f.kind == "list":
                 lines.append(
                     f'- "{f.name}"：字符串数组，最多 {f.max_items} 条，'
                     f"每条不超过 {f.max_len} 字；没有可靠内容就给空数组"
@@ -114,6 +143,54 @@ METHOD_SCHEMA = ExtractionSchema(
     stage="extract_method",
 )
 
+# 缺口条目的种类枚举（GAPMAP 的证据类型口径，#665）：
+#   gap            还没人解决的开放问题
+#   contradiction  与其他工作相互矛盾的结论
+#   uncertainty    作者明说「尚不确定 / 证据不足」的判断
+#   negative_result 试过但失败/无效的尝试（负结果）
+#   limitation     作者自述的方法/评测局限
+GAP_KINDS = ("gap", "contradiction", "uncertainty", "negative_result", "limitation")
+
+# 缺口与负结果台账（#665，设计报告 §11 燃料 2+4）。
+#
+# 与 skeleton@1 的 limitations 字段的分工：skeleton 的 limitations 是论文自述局限的
+# **粗摘**（几句话概括，无出处，服务于「一眼看懂这篇论文」）；gaps@1 是**逐条挂原文
+# 出处的细粒度台账**——每条必须带 source_span（≤200 字原文摘录）锚定出处，种类也
+# 更细（缺口/矛盾/不确定/负结果/局限五类），服务于库级聚合与后续的假设生成燃料。
+# 两者并存不算重复：粗摘可以无中生有地概括，台账的硬要求是「说得出这句话在原文
+# 哪里」——无出处的条目宁可不要（归一化直接丢弃，见 runtime._normalize_entries）。
+GAPS_SCHEMA = ExtractionSchema(
+    id="gaps",
+    version=1,
+    stage="extract_gaps",
+    fields=(
+        SchemaField(
+            "entries",
+            "entries",
+            max_len=0,  # entries 型不用字段级字符帽，各键的帽在 entry_keys 上
+            max_items=8,
+            entry_keys=(
+                EntryKey("kind", max_len=32, choices=GAP_KINDS),
+                EntryKey("statement", max_len=300),
+                EntryKey("source_span", max_len=200),
+            ),
+        ),
+    ),
+    prompt_template=(
+        "POLARIS_EXTRACT_GAPS\n"
+        "你是论文缺口与负结果记录员。通读给定论文的标题与正文，找出其中明确提到的："
+        "尚未解决的开放问题（gap）、与其他工作矛盾的结论（contradiction）、"
+        "作者明说不确定的判断（uncertainty）、失败或无效的尝试（negative_result）、"
+        "作者自述的局限（limitation）：\n"
+        "{fields_spec}\n"
+        "每条的 statement 用中文归纳（专有名词保留原文）；source_span 必须是"
+        "**逐字摘自正文的原文片段**（保持原语言，不翻译不改写），用于锚定出处——"
+        "找不到可摘录的原文依据的条目不要写。宁缺毋滥，只记论文明确说了的。\n"
+        '只输出一个 JSON 对象，键为上述字段名，另加 "confidence"（0 到 1，'
+        "你对整份抽取的把握）。只依据原文，不引入外部知识。"
+    ),
+)
+
 _REGISTRY: dict[str, ExtractionSchema] = {}
 
 
@@ -135,3 +212,4 @@ def list_schemas() -> list[ExtractionSchema]:
 
 register_schema(SKELETON_SCHEMA)
 register_schema(METHOD_SCHEMA)
+register_schema(GAPS_SCHEMA)

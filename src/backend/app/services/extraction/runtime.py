@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.llm.base import Message
 from app.models.paper import Paper
 from app.models.paper_extraction import PaperExtraction
-from app.services.extraction.schemas import ExtractionSchema, get_schema
+from app.services.extraction.schemas import ExtractionSchema, SchemaField, get_schema
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +108,48 @@ def _normalize_list(value: Any, max_len: int, max_items: int | None) -> list[str
     return items or None
 
 
+def _normalize_entries(value: Any, field: SchemaField) -> list[dict[str, str]] | None:
+    """entries 字段归一化：结构化条目列表，逐条校验、整条取舍。
+
+    与 list 归一化「尽量收下」的姿态不同，entries 是宁缺毋滥：条目不是 dict、
+    白名单键缺失/空串/类型不对、枚举外取值，一律**整条丢弃**而不是修补——
+    缺口台账（gaps@1）的锚定是硬要求，一条没有原文出处（source_span）的记录
+    比没有记录更糟（读者无从核对，聚合层也没法判真伪）。能修的只有超长截断
+    （截断不伤锚定语义）与枚举取值的大小写（模型爱写 "Gap"，统一小写再比对）。
+    条目内不在白名单的键静默丢弃；按全键元组去重（保序）；条数封顶。
+    """
+    if not isinstance(value, list):
+        return None
+    keys = field.entry_keys or ()
+    entries: list[dict[str, str]] = []
+    seen: set[tuple[str, ...]] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        entry: dict[str, str] = {}
+        for key in keys:
+            raw_val = item.get(key.name)
+            if not isinstance(raw_val, str):
+                break
+            text = raw_val.strip()[: key.max_len]
+            if not text:
+                break
+            if key.choices is not None:
+                text = text.lower()
+                if text not in key.choices:
+                    break
+            entry[key.name] = text
+        else:
+            fingerprint = tuple(entry[k.name] for k in keys)
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            entries.append(entry)
+            if field.max_items is not None and len(entries) >= field.max_items:
+                break
+    return entries or None
+
+
 def normalize_payload(
     schema: ExtractionSchema, raw: dict[str, Any]
 ) -> tuple[dict[str, Any], float | None]:
@@ -120,7 +162,9 @@ def normalize_payload(
     """
     payload: dict[str, Any] = {}
     for field in schema.fields:
-        if field.kind == "list":
+        if field.kind == "entries":
+            value: Any = _normalize_entries(raw.get(field.name), field)
+        elif field.kind == "list":
             value = _normalize_list(raw.get(field.name), field.max_len, field.max_items)
         else:
             value = _normalize_text(raw.get(field.name), field.max_len)

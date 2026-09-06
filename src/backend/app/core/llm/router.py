@@ -86,6 +86,8 @@ STAGES = (
     # 方法卡抽取（#663）：与骨架同形态（整篇正文进、短 JSON 出），单列环节是
     # 为了让管理员可以给方法卡配不同模型（它比骨架更吃「拆目的/机制」的判断力）
     "extract_method",
+    # 缺口与负结果台账抽取（#665）：同为整篇正文进、条目列表 JSON 出
+    "extract_gaps",
     # 库级 agentic RAG 三环节（#644）：扩展/重排是短 JSON，作答是中档长生成
     "rag_expand",
     "rag_rerank",
@@ -222,6 +224,9 @@ _MEDIUM_CALL_STAGES = frozenset(
         # enrich 链逐篇串行，卡死一篇就堵住整条补全队列
         "extract_skeleton",
         "extract_method",  # 方法卡抽取（#663）：与骨架同一负载形态，同档
+        # 缺口台账抽取（#665）：输入体量与骨架抽取相同（整篇正文），输出是最多
+        # 8 条带原文摘录的条目列表——同样的「重于短档、不配长档」处境，同档
+        "extract_gaps",
     }
 )
 

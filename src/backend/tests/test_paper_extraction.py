@@ -235,11 +235,12 @@ async def test_enrich_hook_extracts_skeleton(client, tmp_path):
             session, paper, target=None, user_id=None, project_id=None, emit=_noop_emit
         )
 
-    # #663 起钩子把注册表里的每个 schema 都抽一遍：骨架 + 方法卡各一行
+    # #663/#665 起钩子把注册表里的每个 schema 都抽一遍：骨架 + 方法卡 + 缺口台账各一行
     rows = sorted(await _extraction_rows(paper_id), key=lambda r: r.schema_id)
-    assert [r.schema_id for r in rows] == ["method", "skeleton"]
-    assert "Hooked Extraction Paper" in rows[1].payload["problem"]
-    assert rows[0].payload["purpose"]
+    assert [r.schema_id for r in rows] == ["gaps", "method", "skeleton"]
+    assert "Hooked Extraction Paper" in rows[2].payload["problem"]
+    assert rows[1].payload["purpose"]
+    assert rows[0].payload["entries"]
 
 
 async def test_enrich_hook_zero_output_without_fulltext(client):
