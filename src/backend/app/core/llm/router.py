@@ -91,6 +91,8 @@ STAGES = (
     "hyp_ground",
     "hyp_novelty",
     "hyp_feasibility",
+    # 假设锦标赛两两对比（#653）：短 JSON 判定（短档）
+    "hyp_compare",
 )
 
 _ROUTE_CACHE_TTL = 60.0
@@ -182,6 +184,7 @@ _SHORT_CALL_STAGES = frozenset(
         "rag_rerank",  # 库问答重排+摘要：短 JSON（#644）
         "hyp_novelty",  # 假设查新逐条判定：短 JSON（#648）
         "hyp_feasibility",  # 假设可行性风险论证：短 JSON（#648）
+        "hyp_compare",  # 假设锦标赛两两对比：短 JSON（#653）
     }
 )
 

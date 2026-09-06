@@ -45,6 +45,25 @@ async def get_hypothesis_tree(
     return [HypothesisNodeRead.model_validate(n) for n in nodes]
 
 
+@router.get("/{voyage_id}/tournament")
+async def get_hypothesis_tournament(
+    voyage_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict:
+    """锦标赛披露（#653，深度模式）：对阵全记录 + 参赛节点终榜。
+
+    数据在 run 的 checkpoint 轮次账本里（不动 hypothesis_nodes 表结构），所以走
+    独立端点而不是并进树节点响应；基础模式（tournament=False）如实返回空结构。
+    """
+    run = await _viewable_run(session, voyage_id, user)
+    state = ((run.checkpoint or {}).get("discovery") or {}).get("tournament") or {}
+    return {
+        "matches": state.get("matches") or [],
+        "nodes": state.get("nodes") or {},
+    }
+
+
 @router.get(
     "/{voyage_id}/hypothesis-tree/{node_id}", response_model=HypothesisNodeRead
 )

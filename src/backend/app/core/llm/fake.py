@@ -86,6 +86,9 @@ _HYP_GENERATE_MARKER = "POLARIS_HYP_GENERATE"
 _HYP_GROUND_MARKER = "POLARIS_HYP_GROUND"
 _HYP_NOVELTY_MARKER = "POLARIS_HYP_NOVELTY"
 _HYP_FEASIBILITY_MARKER = "POLARIS_HYP_FEASIBILITY"
+# 锦标赛两两对比（services/hypothesis_tournament.py，#653）。system prompt 里有
+# "winner" 字样，会撞 debate 裁判的 _JUDGE_MARKER——必须先于它判断
+_HYP_COMPARE_MARKER = "POLARIS_HYP_COMPARE"
 _GOAL_EXPLORE_MARKER = "POLARIS_GOAL_EXPLORE"  # 目标构建工具循环
 _GOAL_REFINE_MARKER = "POLARIS_GOAL_REFINE"  # 审批意见并入目标
 _PROPOSAL_RELATED_MARKER = "POLARIS_PROPOSAL_RELATED"  # 相关工作（工具循环）
@@ -394,6 +397,8 @@ class FakeProvider(LLMProvider):
             return FakeProvider._respond_hyp_novelty(last_user)
         if _HYP_FEASIBILITY_MARKER in full_text:
             return FakeProvider._respond_hyp_feasibility()
+        if _HYP_COMPARE_MARKER in full_text:
+            return FakeProvider._respond_hyp_compare(last_user)
         # discovery 树搜索 marker：user prompt 内嵌方向/假设文本，先于通用 marker
         if _DISCOVERY_SEED_MARKER in full_text:
             return FakeProvider._respond_discovery_seed(full_text)
@@ -1198,6 +1203,39 @@ class FakeProvider(LLMProvider):
                 }
             )
         return json.dumps({"items": out}, ensure_ascii=False)
+
+    @staticmethod
+    def _respond_hyp_compare(last_user: str) -> str:
+        """锦标赛对比：陈述字典序小者胜、同串判 tie（确定性 → 排序可精确断言）。
+
+        rationale 写明这是替身规则：真模型判的是研究价值，fake 只保证「同一对
+        假设永远同一结果」——测试与断点重放要的都是这个。
+        """
+        payload = FakeProvider._payload_of(last_user)
+        a_side = payload.get("a") if isinstance(payload.get("a"), dict) else {}
+        b_side = payload.get("b") if isinstance(payload.get("b"), dict) else {}
+        a = str(a_side.get("statement") or "")
+        b = str(b_side.get("statement") or "")
+        if a == b:
+            return json.dumps(
+                {
+                    "winner": "tie",
+                    "rationale": "fake-compare：两假设陈述相同，判平局（确定性替身规则）",
+                },
+                ensure_ascii=False,
+            )
+        winner = "a" if a < b else "b"
+        chosen = a if winner == "a" else b
+        return json.dumps(
+            {
+                "winner": winner,
+                "rationale": (
+                    "fake-compare：按陈述字典序取小者胜（可重放的确定性替身规则），"
+                    f"「{chosen[:40]}」胜出"
+                ),
+            },
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _respond_hyp_feasibility() -> str:

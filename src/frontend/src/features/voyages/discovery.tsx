@@ -6,7 +6,13 @@ import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
-import { api, VOYAGE_TERMINAL, type HypothesisNodeRead, type VoyageRead } from '../../lib/api';
+import {
+  api,
+  VOYAGE_TERMINAL,
+  type HypothesisNodeRead,
+  type HypothesisTournamentStanding,
+  type VoyageRead,
+} from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import {
   buildReport,
@@ -41,6 +47,7 @@ export function DiscoveryCreateButton({ projectId }: { projectId: string | null 
   const [direction, setDirection] = useState('');
   const [libraryId, setLibraryId] = useState('');
   const [maxExpansions, setMaxExpansions] = useState(3);
+  const [tournament, setTournament] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   // 文献库必选（#648）：四段假设管线的检索/接地边界就是这个库
@@ -56,7 +63,12 @@ export function DiscoveryCreateButton({ projectId }: { projectId: string | null 
         kind: 'discovery',
         project_id: projectId!,
         goal: direction.trim(),
-        params: { direction: direction.trim(), max_expansions: maxExpansions, library_id: libraryId },
+        params: {
+          direction: direction.trim(),
+          max_expansions: maxExpansions,
+          library_id: libraryId,
+          tournament,
+        },
       }),
     onSuccess: (run) => {
       setOpen(false);
@@ -154,6 +166,24 @@ export function DiscoveryCreateButton({ projectId }: { projectId: string | null 
                 }}
                 style={{ width: 120 }}
               />
+            </FormField>
+            <FormField
+              label="深度对比排位"
+              en="Deep comparison ranking"
+              hint={tr(
+                '每轮扩展后让最有希望的假设两两对比，按胜率重新排位（更准，也更花 token）',
+                'After each round, pit the top hypotheses against each other pairwise and re-rank by win rate (more accurate, costs more tokens)',
+              )}
+              style={{ marginTop: 10 }}
+            >
+              <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer', userSelect: 'none' }}>
+                <input
+                  type="checkbox"
+                  checked={tournament}
+                  onChange={(e) => setTournament(e.target.checked)}
+                />
+                {tr('让假设两两比一比再排名', 'Pit hypotheses against each other before ranking')}
+              </label>
             </FormField>
           </details>
         </div>
@@ -466,7 +496,14 @@ function NodeDetailPanel({ node, pruneReason, style }: { node: HypothesisNodeRea
 
 // —— 树视图（可折叠 + 点节点展开证据卡） ——
 
-function TreeView({ nodes }: { nodes: HypothesisNodeRead[] }) {
+function TreeView({
+  nodes,
+  standings,
+}: {
+  nodes: HypothesisNodeRead[];
+  /** 锦标赛终榜（#653 深度模式）：node_id → 战绩；基础模式为空对象 */
+  standings: Record<string, HypothesisTournamentStanding>;
+}) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const entries = useMemo(() => flattenTree(nodes, collapsed), [nodes, collapsed]);
@@ -560,6 +597,18 @@ function TreeView({ nodes }: { nodes: HypothesisNodeRead[] }) {
                 {ratio !== null && (
                   <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
                     {tr('支持', 'sup')} {Math.round(ratio * 100)}%
+                  </span>
+                )}
+                {standings[node.id] && (
+                  <span
+                    className="pill sm"
+                    title={tr(
+                      `深度对比：${standings[node.id]!.matches} 场两两对比的胜率（平局各记半场）`,
+                      `Deep comparison: win rate over ${standings[node.id]!.matches} pairwise matches (ties count as half)`,
+                    )}
+                    style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
+                  >
+                    {tr('胜率', 'wins')} {Math.round(standings[node.id]!.win_rate * 100)}%
                   </span>
                 )}
                 {node.score != null && (
@@ -688,6 +737,14 @@ export function DiscoveryPanel({ voyage }: { voyage: VoyageRead }) {
     refetchInterval: active ? 10_000 : false,
   });
   const nodes = data ?? [];
+  // 锦标赛终榜（#653）：基础模式返回空结构，树视图的胜率徽章自然不渲染
+  const { data: tournament } = useQuery({
+    queryKey: ['hypothesis-tournament', voyage.id],
+    queryFn: () => api.getHypothesisTournament(voyage.id),
+    retry: false,
+    refetchInterval: active ? 10_000 : false,
+  });
+  const standings = tournament?.nodes ?? {};
 
   return (
     <div className="card card-pad" style={{ marginBottom: 20 }}>
@@ -719,7 +776,7 @@ export function DiscoveryPanel({ voyage }: { voyage: VoyageRead }) {
             : tr('这次任务没有留下假设树。', 'This run left no hypothesis tree.')}
         </div>
       ) : view === 'tree' ? (
-        <TreeView nodes={nodes} />
+        <TreeView nodes={nodes} standings={standings} />
       ) : (
         <ReportView nodes={nodes} active={active} />
       )}

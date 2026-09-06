@@ -487,6 +487,30 @@ export interface HypothesisNodeRead {
   updated_at: string;
 }
 
+/** 锦标赛终榜里一个参赛假设的战绩（#653，深度模式）。 */
+export interface HypothesisTournamentStanding {
+  /** 胜率（tie 各记半场），0-1 */
+  win_rate: number;
+  /** 参赛场数 */
+  matches: number;
+  /** 参赛前的管线绝对分（混合 score 的另一半来源） */
+  pipeline_score: number | null;
+  /** 混合后的新 score（已写回节点） */
+  score: number;
+}
+
+/** 锦标赛披露（GET /voyages/{id}/tournament）：对阵记录 + 参赛节点终榜。 */
+export interface HypothesisTournamentRead {
+  matches: {
+    round: number | null;
+    a: string;
+    b: string;
+    winner: 'a' | 'b' | 'tie';
+    rationale: string;
+  }[];
+  nodes: Record<string, HypothesisTournamentStanding>;
+}
+
 export interface VoyageRead {
   id: string;
   kind: string;
@@ -646,6 +670,7 @@ export const LLM_STAGES = [
   'hyp_ground',
   'hyp_novelty',
   'hyp_feasibility',
+  'hyp_compare',
 ] as const;
 
 export interface LlmProviderRead {
@@ -3514,6 +3539,10 @@ export const api = {
   /** discovery 任务的假设树（拉平列表，父子按 parent_id 拼装；只读）。 */
   listHypothesisTree(voyageId: string): Promise<HypothesisNodeRead[]> {
     return request<HypothesisNodeRead[]>(`/voyages/${voyageId}/hypothesis-tree`);
+  },
+  /** 锦标赛披露（#653）：基础模式（tournament=False）返回空结构。 */
+  getHypothesisTournament(voyageId: string): Promise<HypothesisTournamentRead> {
+    return request<HypothesisTournamentRead>(`/voyages/${voyageId}/tournament`);
   },
 
   // —— Gates ——

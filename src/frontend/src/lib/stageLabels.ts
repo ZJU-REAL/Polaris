@@ -36,4 +36,5 @@ export const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   hyp_ground: { zh: '假设·文献接地', en: 'Hypothesis · grounding' },
   hyp_novelty: { zh: '假设·查新判定', en: 'Hypothesis · novelty check' },
   hyp_feasibility: { zh: '假设·可行性论证', en: 'Hypothesis · feasibility' },
+  hyp_compare: { zh: '假设·两两对比', en: 'Hypothesis · pairwise compare' },
 };

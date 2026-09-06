@@ -25,8 +25,9 @@ class VoyageCreate(BaseModel):
         """discovery 的参数在创建时就定形（引擎只读 checkpoint.params，不再兜底）：
         direction 必填；library_id 必填（#648：四段假设管线的检索/接地边界就是
         这个库，没有库的 discovery 无从接地——可见性由 API 层校验）；
-        max_expansions 默认 3（0..MAX，整数）；tournament 默认 False——锦标赛式
-        对比是后续里程碑，先存档位不实现。"""
+        max_expansions 默认 3（0..MAX，整数）；tournament 默认 False——True 时
+        每轮扩展后对头部假设跑两两对比锦标赛、按胜率混合重排 score（#653），
+        深度换成本，默认关。"""
         if self.kind != "discovery":
             return self
         params = dict(self.params or {})

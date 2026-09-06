@@ -9,6 +9,11 @@
 - ``hypothesis.prune``：显式剪枝入口，写 score 并级联剪枝（留痕不删）；
 - ``discovery.summarize``：把整棵树（含被剪分支）汇总成研究方案产物后收束。
 
+params.tournament=True 时是深度模式（#653）：每轮扩展落库后跑一场锦标赛
+（services/hypothesis_tournament.py）——score 前 6 的 open|expanded 假设两两
+对比、win-rate 与 pipeline score 对半混成新 score 写回节点，比较记录进
+checkpoint["discovery"]["tournament"]（供 D6 披露、API /tournament 消费）。
+
 **计划不是线性清单**：初始计划只有播种一步，之后每一轮由动作按树状态给出
 plan_signal（expand / summarize），经 plan_edit.discovery_signal_edits 确定性
 分支表追加下一个节点——树才是真源，决策与所选节点 id 记入
@@ -31,6 +36,7 @@ from app.core.llm.base import Message
 from app.models.hypothesis import HypothesisNode
 from app.models.voyage import VoyageRun
 from app.services import hypothesis_pipeline as pipeline
+from app.services import hypothesis_tournament as tournament_service
 from app.services import hypothesis_tree as tree_service
 
 # LLM 环节：结构化 JSON 生成，走中档耐心（core/llm/router.py 的 _MEDIUM_CALL_STAGES）
@@ -83,6 +89,10 @@ def _max_expansions(ctx: ActionContext) -> int:
         return max(0, int(_params_of(ctx).get("max_expansions", 3)))
     except (TypeError, ValueError):
         return 3
+
+
+def _tournament_enabled(ctx: ActionContext) -> bool:
+    return bool(_params_of(ctx).get("tournament"))
 
 
 def _direction(ctx: ActionContext) -> str:
@@ -340,6 +350,11 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
       对同一棵树是确定性的，所以「杀在扩展之前」的重启会选中同一个节点）。
       管线的全部 LLM/检索都发生在动树**之前**（先算后写）：被杀在管线中途时
     树还没动，重启就是干净重跑，「落库了一半」的窗口没有因为管线变长而变宽。
+
+    锦标赛（params.tournament=True，#653）跑在本轮树落库**之后**：它只改分数
+    （set_score 幂等），不建删节点，被杀窗口不因它变宽。已知降级：杀在锦标赛
+    中途时，重启走「树上扩展数已覆盖本轮」的补记路径、该轮锦标赛不补跑——
+    参赛节点保持 pipeline 分，排序退化为基础模式，宁可少赛一轮也不重复扣费。
     """
     round_no = int(params.get("round") or 0)
     state = _state(ctx)
@@ -486,6 +501,43 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                     + (f"（低分剪枝 {len(pruned_children)} 个）" if pruned_children else ""),
                     level="success",
                 )
+                if _tournament_enabled(ctx):
+                    # 深度模式：本轮树已落库，跑一场锦标赛给存活假设重新排位。
+                    # prior = 各节点首赛留档的 pipeline 分（防止上一轮的混合分
+                    # 被当成绝对分再混一次，见 tournament 模块 docstring）
+                    t_state = state.setdefault("tournament", {"matches": [], "nodes": {}})
+                    outcome = await tournament_service.run_tournament(
+                        session,
+                        ctx.llm,
+                        run=run,
+                        nodes=await tree_service.tree_for_run(session, ctx.run.id),
+                        prior_pipeline_scores={
+                            nid: entry.get("pipeline_score")
+                            for nid, entry in t_state["nodes"].items()
+                        },
+                        round_no=round_no,
+                        user_id=ctx.run.created_by,
+                        project_id=ctx.run.project_id,
+                        library_id=library_id,
+                    )
+                    # 对阵记录累加、终榜整体覆盖（榜单永远是最新一场之后的排位）
+                    t_state["matches"].extend(outcome["matches"])
+                    t_state["nodes"].update(outcome["nodes"])
+                    state["rounds"][str(round_no)]["tournament_matches"] = len(
+                        outcome["matches"]
+                    )
+                    # 记账：总账并入本步 usage，每场的 token 对半记到参赛双方头上
+                    for key in ("prompt_tokens", "completion_tokens"):
+                        usage[key] += outcome["usage"][key]
+                    for nid, node_usage in outcome["node_usage"].items():
+                        _account_node_usage(ctx, nid, node_usage)
+                    if outcome["matches"]:
+                        # 终端播报用大白话（界面不讲「锦标赛」行话，代码标识符除外）
+                        await ctx.log(
+                            f"深度对比：{len(outcome['nodes'])} 个假设两两比了 "
+                            f"{len(outcome['matches'])} 场，score 已按胜率混合更新",
+                            level="success",
+                        )
         signal, signal_why = await _next_signal(session, ctx)
     _record_decision(
         ctx,
@@ -558,10 +610,48 @@ async def discovery_summarize(ctx: ActionContext, params: dict[str, Any]) -> dic
         for d in state["decisions"]
         if d.get("decision") == "pruned" and d.get("node_id")
     }
+    # 锦标赛终榜（深度模式 #653；基础模式为空 dict，下面所有分支都退化为原行为，
+    # golden 链因此逐字节不变）
+    standings = (state.get("tournament") or {}).get("nodes") or {}
+
+    def _pipeline_score_of(n: HypothesisNode) -> float:
+        """排序破平用的 pipeline 分：参赛节点取首赛留档，其余就是自身 score。"""
+        entry = standings.get(str(n.id)) or {}
+        if entry.get("pipeline_score") is not None:
+            return float(entry["pipeline_score"])
+        return n.score if n.score is not None else -1.0
+
+    def _tournament_of(n: HypothesisNode) -> dict[str, Any] | None:
+        entry = standings.get(str(n.id))
+        if not isinstance(entry, dict):
+            return None
+        return {"win_rate": entry.get("win_rate"), "matches": entry.get("matches")}
+
+    def _hypothesis_entry(n: HypothesisNode) -> dict[str, Any]:
+        entry: dict[str, Any] = {
+            "id": str(n.id),
+            "statement": n.statement,
+            "status": n.status,
+            "score": n.score,
+            "grounding": n.grounding,
+            "novelty_report": n.novelty_report,
+            "feasibility": n.feasibility,
+        }
+        # 参赛节点才带 tournament 字段：混合分的来路要在方案里说得清（D6 披露）
+        tournament = _tournament_of(n)
+        if tournament is not None:
+            entry["tournament"] = tournament
+        return entry
+
     alive = sorted(
         (n for n in nodes if n.status != "pruned"),
-        # score 降序（未评分的排最后），同分按建立顺序稳定排序
-        key=lambda n: (-(n.score if n.score is not None else -1.0), n.created_at),
+        # score 降序（未评分的排最后）；混合分同分按 pipeline 分破（绝对证据分
+        # 高者靠前——胜率并列时让「文献说了什么」拍板）；再按建立顺序稳定排序
+        key=lambda n: (
+            -(n.score if n.score is not None else -1.0),
+            -_pipeline_score_of(n),
+            n.created_at,
+        ),
     )
     artifact = {
         "direction": _direction(ctx),
@@ -569,18 +659,7 @@ async def discovery_summarize(ctx: ActionContext, params: dict[str, Any]) -> dic
         "stats": stats,
         # 研究方案主体：存活假设 + 三类证据卡数据（支持/反驳/推测的 grounding、
         # 逐子命题查新结论、可行性信号与风险论证），前端/导出直接消费
-        "hypotheses": [
-            {
-                "id": str(n.id),
-                "statement": n.statement,
-                "status": n.status,
-                "score": n.score,
-                "grounding": n.grounding,
-                "novelty_report": n.novelty_report,
-                "feasibility": n.feasibility,
-            }
-            for n in alive
-        ],
+        "hypotheses": [_hypothesis_entry(n) for n in alive],
         # 附录：被剪分支及原因（留痕不删的消费端）
         "pruned_appendix": [
             {
