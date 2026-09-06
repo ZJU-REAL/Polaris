@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "57543f6328a1"  # Paper citation edges (#639)
+HEAD_REVISION = "58b0bc2d809d"  # Paper skeleton extractions (#661)
+CITATIONS_REVISION = "57543f6328a1"  # Paper citation edges (#639)
 HYPOTHESIS_TREE_REVISION = "7e2b9f4c1a86"  # Hypothesis/experiment tree nodes (#637)
 MEMBERS_DROP_REVISION = "b0dd1709e2a1"  # Drop project_members (#625)
 LLM_MERGE_REVISION = "dd572a7f063c"  # Merge LLM config tracks: drop users.llm_self_managed (#621)
@@ -147,6 +148,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "paper_content_chunk_vectors",
                     "paper_evidence_anchors",
                     "paper_citations",
+                    "paper_extractions",
                     "download_api_keys",
                     "download_batches",
                     "download_batch_items",
@@ -552,7 +554,27 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "ix_paper_citations_cited_paper_id",
     } <= _index_names(db_path, "paper_citations")
 
-    # 先退掉引文边表（#639）：假设树表不受影响。
+    # 本分支新增：结构化抽取产物表（#661）
+    assert "paper_extractions" in columns["_tables"]
+    assert {
+        "paper_id",
+        "schema_id",
+        "payload",
+        "confidence",
+        "stage_meta",
+        "created_at",
+        "updated_at",
+    } <= columns["paper_extractions"]
+    assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
+
+    # 先退掉抽取产物表（#661）：引文边表不受影响。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == CITATIONS_REVISION
+    assert "paper_extractions" not in columns["_tables"]
+    assert "paper_citations" in columns["_tables"]
+
+    # 再退掉引文边表（#639）：假设树表不受影响。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == HYPOTHESIS_TREE_REVISION
@@ -927,6 +949,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
+    assert "paper_extractions" in columns["_tables"]  # 抽取产物表回归（#661）
     assert "paper_citations" in columns["_tables"]  # 引文边表回归（#639）
     assert "effort" in columns["model_routes"]
     assert "chat_bot_configs" in columns["_tables"]

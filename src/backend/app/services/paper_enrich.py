@@ -297,6 +297,28 @@ async def enrich_paper(
         logger.warning("enrich citation intents failed for paper %s", paper_id, exc_info=True)
         paper = await _rollback_and_reload()
 
+    # 骨架抽取（#661，增量钩子）：全文就位后按通用骨架 schema 抽 problem/method/
+    # findings/limitations 落 paper_extractions。非独立进度阶段（STAGES 不变）、
+    # best-effort；runtime 对无全文论文如实 skip、不调 LLM——bibtex 导入等
+    # golden 链路因此零输出零副作用。
+    try:
+        from app.services.extraction.runtime import extract_paper
+
+        outcome = await extract_paper(
+            session,
+            paper,
+            user_id=user_id,
+            project_id=project_id,
+            library_id=target_id,
+        )
+        if outcome.status == "extracted":
+            await session.commit()
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.warning("enrich skeleton extraction failed for %s", paper_id, exc_info=True)
+        paper = await _rollback_and_reload()
+
     # OpenAlex 对齐（#639，增量钩子）：缺 OpenAlex id 的记录按 DOI/arXiv 精确、
     # 标题+年份模糊补 id 并回填空元数据。这是真实出网调用，受设置开关控制
     # （测试套件默认关，见 core/config.py）；best-effort，不发进度事件。

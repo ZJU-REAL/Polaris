@@ -670,6 +670,7 @@ export const LLM_STAGES = [
   'writing',
   'review',
   'citation_intent',
+  'extract_skeleton',
   'rag_expand',
   'rag_rerank',
   'rag_answer',
@@ -1736,6 +1737,21 @@ export interface PaperCitationGroup {
 export interface PaperCitations {
   total: number;
   groups: PaperCitationGroup[];
+}
+
+// ============================================================
+// 结构化抽取（#661）：详情页「结构化摘要」折叠区
+// ============================================================
+
+export interface PaperExtraction {
+  /** 抽取 schema 标识；通用骨架为 'skeleton' */
+  schema_id: string;
+  /** 归一化后的抽取结果：只含抽到的字段（空字段不带键，直接不渲染） */
+  payload: Record<string, string | string[]>;
+  confidence: number | null;
+  /** 产物溯源：{ model, stage, version } */
+  stage_meta: Record<string, unknown> | null;
+  updated_at: string;
 }
 
 // ============================================================
@@ -3739,6 +3755,10 @@ export const api = {
   /** 按意图分组的引文列表（#639）；没建过边时 total=0、groups=[] */
   getPaperCitations(id: string): Promise<PaperCitations> {
     return request<PaperCitations>(`/papers/${id}/citations`);
+  },
+  /** 结构化抽取产物（#661），每 schema 一条；没抽过是空列表而非 404 */
+  getPaperExtractions(id: string): Promise<PaperExtraction[]> {
+    return request<PaperExtraction[]>(`/papers/${id}/extractions`);
   },
   /** 手动重建这篇论文的向量（有就覆盖，没有就新建）；同步返回重建后的状态。需大模型使用权限。 */
   rebuildPaperIndex(

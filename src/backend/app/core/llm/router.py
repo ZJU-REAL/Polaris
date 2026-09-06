@@ -81,6 +81,8 @@ STAGES = (
     "review",
     "reading",
     "citation_intent",
+    # schema 引导的论文骨架抽取（#661）：整篇正文进、结构化 JSON 出
+    "extract_skeleton",
     # 库级 agentic RAG 三环节（#644）：扩展/重排是短 JSON，作答是中档长生成
     "rag_expand",
     "rag_rerank",
@@ -212,6 +214,10 @@ _MEDIUM_CALL_STAGES = frozenset(
         "rag_answer",
         "hyp_generate",
         "hyp_ground",
+        # 骨架抽取（#661）：一次吃约 2.4 万字正文、产四字段 JSON——比短 JSON 环节
+        # 重得多（extract 短档喂的是单页级片段），但也没有长档 20 分钟的理由：
+        # enrich 链逐篇串行，卡死一篇就堵住整条补全队列
+        "extract_skeleton",
     }
 )
 

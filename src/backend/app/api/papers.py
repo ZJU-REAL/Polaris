@@ -32,6 +32,7 @@ from app.schemas.paper import (
     PaperCitationItem,
     PaperCitationsRead,
     PaperDetail,
+    PaperExtractionRead,
     PaperFigure,
     PaperFiguresResponse,
     PaperIndexRebuild,
@@ -874,6 +875,24 @@ async def get_paper_citations(
         if by_intent.get(intent)
     ]
     return PaperCitationsRead(total=len(rows), groups=groups)
+
+
+@router.get("/papers/{paper_id}/extractions", response_model=list[PaperExtractionRead])
+async def get_paper_extractions(
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[PaperExtractionRead]:
+    """这篇论文的结构化抽取产物（#661），每 schema 一条。
+
+    独立子端点而非并进 PaperDetail：详情是热路径且被 golden 逐字节锁着，
+    抽取产物只有展开「结构化摘要」时才需要。没抽过就是空列表，不是 404。
+    """
+    from app.services.extraction.runtime import list_extractions
+
+    await _get_member_paper(session, paper_id, user, include_pool=True)
+    rows = await list_extractions(session, paper_id)
+    return [PaperExtractionRead.model_validate(row) for row in rows]
 
 
 @router.get("/papers/{paper_id}/index-status", response_model=PaperIndexStatusRead)

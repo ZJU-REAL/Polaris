@@ -58,6 +58,7 @@ from app.models.paper_content import (
     PaperContentVersion,
     PaperContentVersionVector,
 )
+from app.models.paper_extraction import PaperExtraction
 from app.models.project import Project
 from app.models.publication import UserAuthorProfile, UserPublication
 from app.models.research_digest import LibraryResearchDigest
@@ -123,6 +124,7 @@ __all__ = [
     "CITATION_INTENTS",
     "PaperAsset",
     "PaperCitation",
+    "PaperExtraction",
     "AssetGrant",
     "PaperChunk",
     "PaperChunkVector",

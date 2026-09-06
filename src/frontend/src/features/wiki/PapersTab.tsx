@@ -48,7 +48,7 @@ import {
   useDebounced,
 } from './shared';
 import { READING_STATUS, ReadingDot } from '../reading/shared';
-import { PaperCitationsSection, PaperMyTagChips, PaperMyTagsRow, PaperNotesSection } from '../shared/PaperDetailBlocks';
+import { PaperCitationsSection, PaperExtractionsSection, PaperMyTagChips, PaperMyTagsRow, PaperNotesSection } from '../shared/PaperDetailBlocks';
 import { TrashModal, type TrashItemView } from '../shared/TrashModal';
 import { AddToButton } from '../library/AddToPopover';
 import { PaperBatchProgressModal } from '../library/PaperBatchProgressModal';
@@ -1184,6 +1184,9 @@ function PaperDetailPane({
         noteCount={paper.note_count ?? 0}
         invalidateKeys={[['papers'], ['paper', paper.id]]}
       />
+
+      {/* —— 结构化摘要（骨架抽取，#661）：展开才拉数据的折叠卡 —— */}
+      <PaperExtractionsSection paperId={paper.id} />
 
       {/* —— 引文（按意图分组，#639）：展开才拉数据的简单列表 —— */}
       <PaperCitationsSection paperId={paper.id} />

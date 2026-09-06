@@ -582,3 +582,112 @@ export function PaperCitationsSection({ paperId }: { paperId: string }) {
   );
 }
 
+/* ---------------- 结构化摘要（schema 引导抽取，#661） ---------------- */
+
+/** 通用骨架四字段的大白话名字与展示顺序（模块级常量只存 zh/en，渲染处再 tr()）。 */
+const SKELETON_FIELDS: { key: string; zh: string; en: string }[] = [
+  { key: 'problem', zh: '研究问题', en: 'Problem' },
+  { key: 'method', zh: '方法', en: 'Method' },
+  { key: 'findings', zh: '主要发现', en: 'Findings' },
+  { key: 'limitations', zh: '局限', en: 'Limitations' },
+];
+
+/** 单个抽取字段：text 渲染成段落，list 渲染成条目；空字段（缺键）由调用方跳过。 */
+function ExtractionField({ label, value }: { label: string; value: string | string[] }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 11, fontWeight: 650, color: 'var(--text-3)', marginBottom: 3 }}>{label}</div>
+      {Array.isArray(value) ? (
+        <ul style={{ margin: 0, paddingLeft: 18 }}>
+          {value.map((item, i) => (
+            <li key={i} style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--text-2)', overflowWrap: 'break-word' }}>
+              {item}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: 'var(--text-2)', overflowWrap: 'break-word' }}>
+          {value}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 论文详情的结构化摘要折叠区（#661）：通用骨架 schema 的 problem/method/findings/
+ * limitations 四段，空字段不显示。折叠卡：展开才拉数据（与引文分组同一理由）。
+ */
+export function PaperExtractionsSection({ paperId }: { paperId: string }) {
+  const [open, setOpen] = useState(false);
+  const extractionsQuery = useQuery({
+    queryKey: ['paper-extractions', paperId],
+    queryFn: () => api.getPaperExtractions(paperId),
+    enabled: open,
+    retry: false,
+  });
+  const extractions = extractionsQuery.data ?? [];
+
+  return (
+    <div className="card" style={{ marginTop: 18, overflow: 'hidden' }}>
+      <div
+        className="row"
+        onClick={() => setOpen((o) => !o)}
+        style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
+      >
+        <span className="row gap6" style={{ fontSize: 12.5, fontWeight: 650 }}>
+          <Icon name="layers" size={12} style={{ color: 'var(--text-3)' }} />
+          {tr('结构化摘要', 'Structured summary')}
+        </span>
+        <Icon
+          name="chevDown"
+          size={13}
+          style={{ color: 'var(--text-3)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
+        />
+      </div>
+      {open && (
+        <div style={{ padding: '0 16px 14px' }}>
+          {extractionsQuery.isLoading ? (
+            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+              {tr('加载结构化摘要…', 'Loading structured summary…')}
+            </p>
+          ) : extractionsQuery.isError ? (
+            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+              {tr('结构化摘要加载失败。', 'Failed to load the structured summary.')}
+            </p>
+          ) : extractions.length === 0 ? (
+            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+              {tr(
+                '还没有结构化摘要——需要先有 PDF 全文，抽取会在论文补全时自动进行。',
+                'No structured summary yet — it is extracted automatically once the full text is available.',
+              )}
+            </p>
+          ) : (
+            extractions.map((extraction) => {
+              /* 已知骨架字段按固定顺序渲染；将来学科 schema 的额外字段按 payload 键序兜底展示 */
+              const known = SKELETON_FIELDS.filter((f) => extraction.payload[f.key] != null);
+              const knownKeys = new Set(SKELETON_FIELDS.map((f) => f.key));
+              const extra = Object.keys(extraction.payload).filter((k) => !knownKeys.has(k));
+              return (
+                <div key={extraction.schema_id} style={{ marginTop: 8 }}>
+                  {known.map((f) => (
+                    <ExtractionField key={f.key} label={tr(f.zh, f.en)} value={extraction.payload[f.key]!} />
+                  ))}
+                  {extra.map((key) => (
+                    <ExtractionField key={key} label={key} value={extraction.payload[key]!} />
+                  ))}
+                  {typeof extraction.confidence === 'number' && (
+                    <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+                      {tr('抽取置信度', 'Extraction confidence')} {Math.round(extraction.confidence * 100)}%
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+

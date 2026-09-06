@@ -148,6 +148,21 @@ class PaperCitationsRead(BaseModel):
     groups: list[PaperCitationGroup]
 
 
+class PaperExtractionRead(BaseModel):
+    """一份结构化抽取产物（#661；详情页「结构化摘要」折叠区的数据）。
+
+    payload 只含抽到的字段（空字段不带键，前端据此不渲染空段落）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    schema_id: str
+    payload: dict[str, Any]
+    confidence: float | None = None
+    # {"model", "stage", "version"}：产物溯源（哪个模型、哪个环节、schema 第几版）
+    stage_meta: dict[str, Any] | None = None
+    updated_at: datetime
+
+
 class VectorStatusRead(BaseModel):
     """一种向量的状态（前端红绿点 + 悬浮显示构建时间与模型名）。
 

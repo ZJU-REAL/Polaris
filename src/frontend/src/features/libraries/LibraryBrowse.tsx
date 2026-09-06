@@ -33,6 +33,7 @@ import {
   PaperMyTagChips,
   PaperMyTagsRow,
   PaperCitationsSection,
+  PaperExtractionsSection,
   PaperNotesSection,
   WikiHeaderActions,
 } from '../shared/PaperDetailBlocks';
@@ -453,6 +454,9 @@ function PaperDetailPane({
 
       {/* —— 我的笔记（个人维度，只读浏览也能写） —— */}
       <PaperNotesSection paperId={paper.id} noteCount={paper.note_count ?? 0} invalidateKeys={noteKeys} />
+
+      {/* —— 结构化摘要（骨架抽取，#661） —— */}
+      <PaperExtractionsSection paperId={paper.id} />
 
       {/* —— 引文（按意图分组，#639） —— */}
       <PaperCitationsSection paperId={paper.id} />

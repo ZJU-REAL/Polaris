@@ -37,6 +37,7 @@ _CONCEPTS_MARKER = "概念列表："
 _FAKE_FIGURE_REF_RE = re.compile(r"^(?:fig|figure|tab|table|eq)\s*[:：]", re.IGNORECASE)
 _AFFILIATIONS_MARKER = "POLARIS_AUTHOR_AFFIL"  # 逐位作者机构解析（affiliations.py 专门调用）
 _CITATION_INTENT_MARKER = "POLARIS_CITATION_INTENT"  # 引文意图批量分类（citation_graph.py）
+_EXTRACT_SKELETON_MARKER = "POLARIS_EXTRACT_SKELETON"  # 骨架抽取（services/extraction/）
 # 库级 agentic RAG 三环节（services/library_rag.py，#644）
 _RAG_EXPAND_MARKER = "POLARIS_RAG_EXPAND"
 _RAG_RERANK_MARKER = "POLARIS_RAG_RERANK"
@@ -447,6 +448,9 @@ class FakeProvider(LLMProvider):
         # 引文意图分类：user prompt 内嵌论文正文原句（可能撞任意通用 marker），须先判断
         if _CITATION_INTENT_MARKER in full_text:
             return FakeProvider._respond_citation_intent(last_user)
+        # 骨架抽取：user prompt 内嵌整篇正文（同样可能撞通用 marker），须先判断
+        if _EXTRACT_SKELETON_MARKER in full_text:
+            return FakeProvider._respond_extract_skeleton(last_user)
         # 发表机构解析（专门调用）：system prompt 带 POLARIS_AUTHOR_AFFIL，user prompt 内嵌
         # 标题页文本（可能含 TL;DR 等其他 marker），须先于通用 marker 判断；返回逐位作者映射
         if _AFFILIATIONS_MARKER in full_text:
@@ -620,6 +624,28 @@ class FakeProvider(LLMProvider):
                     break
             out.append({"index": item["index"], "intent": intent, "confidence": confidence})
         return json.dumps({"items": out}, ensure_ascii=False)
+
+    @staticmethod
+    def _respond_extract_skeleton(last_user: str) -> str:
+        """骨架抽取（services/extraction/runtime.py 对齐，#661）：确定性四字段 JSON。
+
+        problem 回显标题（测试据此断言 prompt 里带对了论文），其余固定——
+        测试要的是「抽取会归一化、会落库、会展示」这条链路，不是抽得多准。"""
+        m = re.search(r"标题：(.+)", last_user)
+        title = m.group(1).strip() if m else "未知论文"
+        return json.dumps(
+            {
+                "problem": f"《{title}》要解决的核心问题（fake extraction）",
+                "method": "提出确定性替身方法并给出流程（fake extraction）",
+                "findings": [
+                    "发现一：替身指标优于基线（fake）",
+                    "发现二：消融验证各组件必要（fake）",
+                ],
+                "limitations": ["局限一：评测范围有限（fake）"],
+                "confidence": 0.9,
+            },
+            ensure_ascii=False,
+        )
 
     # ---- 库级 agentic RAG（services/library_rag.py 的三个 system prompt 对齐，#644） ----
 
