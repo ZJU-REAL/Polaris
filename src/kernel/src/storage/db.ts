@@ -11,8 +11,8 @@
    down-migration）、按版本号有序执行、事务内落表并记账，重跑天然无操作。
    ============================================================ */
 
-import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 export interface Migration {
@@ -99,4 +99,94 @@ export function migrate(db: DatabaseSync, migrations: Migration[] = MIGRATIONS):
       throw error
     }
   }
+}
+
+/* ---------- 迁移前快照 + 失败回滚（#694） ----------
+   迁移器只前向不回滚，但「迁移把库改坏」这种事故必须可撤销：每次
+   migrate 前把库文件按原样复制到 snapshots/<时间戳>/ 下，失败就整组
+   文件复制回来——文件级还原比 SQL 级 down-migration 简单且绝对可靠。
+   与桌面引擎侧（engine-bootstrap 启动器里的 alembic 守卫）语义对齐。 */
+
+/** 快照要带上的 SQLite 伴生文件后缀。WAL 模式下 -wal 里可能有未合并
+    的写入，只拷主文件会丢数据；-shm 是共享内存索引，跟着拷保持成组。 */
+const DB_FILE_SUFFIXES = ['', '-wal', '-shm'] as const
+
+/** 成功迁移后保留的快照份数，更旧的删除。 */
+export const SNAPSHOT_KEEP = 3
+
+/** 库文件旁边的快照根目录：<库所在目录>/snapshots。 */
+function snapshotRoot(path: string): string {
+  return join(dirname(path), 'snapshots')
+}
+
+/**
+ * 把库文件（含 -wal/-shm 若存在）复制成一份快照，返回快照目录。
+ * 空库或不存在（首启）返回 null——没有可保护的数据就不留空快照。
+ * 必须在库被打开之前调用：无打开句柄时磁盘上的文件组才保证自洽。
+ */
+export function snapshotDatabase(path: string): string | null {
+  if (!existsSync(path) || statSync(path).size === 0) return null
+  // 冒号在 Windows 文件名里非法，换成横线；同毫秒重入时用 -2/-3 后缀
+  // 避让（后缀名字典序仍排在原名之后，prune 的排序不乱）。
+  const stamp = new Date().toISOString().replace(/:/g, '-')
+  const root = snapshotRoot(path)
+  let dir = join(root, stamp)
+  for (let n = 2; existsSync(dir); n++) dir = join(root, `${stamp}-${n}`)
+  mkdirSync(dir, { recursive: true })
+  for (const suffix of DB_FILE_SUFFIXES) {
+    if (existsSync(path + suffix)) copyFileSync(path + suffix, join(dir, basename(path) + suffix))
+  }
+  return dir
+}
+
+/**
+ * 用快照覆盖回库文件。快照里没有的伴生文件要把现场的删掉：失败的
+ * 迁移可能留下一个新 -wal，主文件还原后再被它重放就又脏了。
+ * 必须在库句柄关闭之后调用。
+ */
+export function restoreSnapshot(path: string, snapshotDir: string): void {
+  for (const suffix of DB_FILE_SUFFIXES) {
+    const saved = join(snapshotDir, basename(path) + suffix)
+    if (existsSync(saved)) copyFileSync(saved, path + suffix)
+    else rmSync(path + suffix, { force: true })
+  }
+}
+
+/** 按名字（即时间戳）排序，删掉最旧的、只留 keep 份。 */
+export function pruneSnapshots(path: string, keep: number = SNAPSHOT_KEEP): void {
+  const root = snapshotRoot(path)
+  if (!existsSync(root)) return
+  const dirs = readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+  for (const name of dirs.slice(0, Math.max(0, dirs.length - keep))) {
+    rmSync(join(root, name), { recursive: true, force: true })
+  }
+}
+
+/**
+ * 打开并迁移，整个过程被快照守护：迁移抛错 → 关句柄 → 文件还原 →
+ * 原错误照抛（调用方按「迁移失败」处理，库保证停在迁移前的状态）；
+ * 成功才修剪旧快照——失败现场的快照永远留着供人排查。
+ */
+export function openStorageWithMigrations(
+  path: string,
+  migrations: Migration[] = MIGRATIONS,
+): DatabaseSync {
+  const snapshot = snapshotDatabase(path)
+  const db = openStorage(path)
+  try {
+    migrate(db, migrations)
+  } catch (error) {
+    try {
+      db.close()
+    } catch {
+      // 还原优先：句柄关不上也要把文件抢救回去
+    }
+    if (snapshot) restoreSnapshot(path, snapshot)
+    throw error
+  }
+  if (snapshot) pruneSnapshots(path)
+  return db
 }

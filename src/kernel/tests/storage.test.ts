@@ -184,6 +184,8 @@ describe('storage plugin', () => {
     const reloaded = kernel.ctx.get('storage') as StorageService
     expect(reloaded.pluginMeta.get('probe')).toEqual({ 值: 1 })
     expect(await reloaded.configTree.load()).toEqual(sampleTree())
+    // 重装走的是快照守护路径（#694）：非空库在迁移前留下了一份快照
+    expect(existsSync(join(dir, 'nested', 'deeper', 'snapshots'))).toBe(true)
 
     await kernel.stop()
     expect(() => reloaded.db.prepare('SELECT 1')).toThrow()

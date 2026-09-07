@@ -17,7 +17,17 @@ export {
   legacyEngine,
   type LegacyEngineService,
 } from './plugins/legacy-engine.ts'
-export { MIGRATIONS, migrate, openStorage, type Migration } from './storage/db.ts'
+export {
+  MIGRATIONS,
+  SNAPSHOT_KEEP,
+  migrate,
+  openStorage,
+  openStorageWithMigrations,
+  pruneSnapshots,
+  restoreSnapshot,
+  snapshotDatabase,
+  type Migration,
+} from './storage/db.ts'
 export { PluginMetaStore, SqliteConfigTreeStore } from './storage/store.ts'
 export { StorageConfig, storage, type StorageService } from './plugins/storage.ts'
 export {

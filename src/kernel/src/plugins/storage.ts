@@ -13,7 +13,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import Schema from '@deepseek-ai/schemastery'
 import type { Context } from '@deepseek-ai/cordis'
-import { migrate, openStorage } from '../storage/db.ts'
+import { openStorageWithMigrations } from '../storage/db.ts'
 import { PluginMetaStore, SqliteConfigTreeStore } from '../storage/store.ts'
 
 export interface StorageConfig {
@@ -44,8 +44,10 @@ export const storage = {
   apply(ctx: Context, config: StorageConfig): void {
     let db!: DatabaseSync
     ctx.effect(() => {
-      db = openStorage(config.path)
-      migrate(db)
+      // 打开即迁移，且被快照守护（#694）：非空库先复制到旁边的
+      // snapshots/<时间戳>/，迁移失败就还原文件再把错误抛给装载方——
+      // 插件装载失败，但库保证完好停在迁移前；成功则只保留最近几份。
+      db = openStorageWithMigrations(config.path)
       return () => {
         try {
           db.close()

@@ -190,6 +190,7 @@ export async function bootstrapEngine(opts: BootstrapOptions): Promise<EngineCom
  */
 function buildEngineCommand(venvPython: string, backendDir: string, engineDir: string): string[] {
   const dbPath = join(engineDir, 'polaris.db').split('\\').join('/');
+  const snapshotRoot = join(engineDir, 'snapshots').split('\\').join('/');
   // JSON.stringify 产出的字符串字面量对 Python 同样合法（转义子集兼容），
   // 借它安全嵌入含空格/反斜杠/非 ASCII 的路径
   const launcher = [
@@ -199,10 +200,63 @@ function buildEngineCommand(venvPython: string, backendDir: string, engineDir: s
     "os.environ.setdefault('POLARIS_PROFILE', 'desktop')",
     `os.environ['POLARIS_DATABASE_URL'] = ${JSON.stringify(`sqlite+aiosqlite:///${dbPath}`)}`,
     `os.chdir(${JSON.stringify(backendDir)})`,
-    "subprocess.run([sys.executable, '-m', 'alembic', 'upgrade', 'head'], check=True)",
+    ...buildMigrationGuard(dbPath, snapshotRoot, "[sys.executable, '-m', 'alembic', 'upgrade', 'head']"),
     'import uvicorn',
     `uvicorn.run('app.main:app', host='127.0.0.1', port=${ENGINE_PORT})`,
   ].join('\n');
   // -X utf8：启动器自身的解释器也走 UTF-8 模式（env 对已启动的进程无效）
   return [venvPython, '-X', 'utf8', '-c', launcher];
+}
+
+/**
+ * 迁移守卫的 Python 片段（#694）：跑迁移命令前把非空库快照到
+ * snapshots/<时间戳>/，命令失败（check=True 抛 CalledProcessError）先把
+ * 快照复制回原位再重新抛出——引擎照现有流程失败退出/回落，但库保证
+ * 停在迁移前；成功则只保留最近 3 份快照。
+ *
+ * 为什么放在启动器 Python 串里而不是 TS 侧：bootstrapEngine 有哨兵，
+ * 后端没变化的启动整段跳过，而 alembic 是引擎每次 spawn 都会跑的——
+ * 快照必须与 alembic 同进程同时机，TS 侧根本不知道它何时执行。
+ * 纯 stdlib（os/shutil/datetime/subprocess），不给后端加任何依赖。
+ *
+ * `migrateArgv` 是一个 Python 表达式字符串（如
+ * "[sys.executable, '-m', 'alembic', 'upgrade', 'head']"），原样嵌进
+ * subprocess.run(...)；表达式形态让 bootstrap-smoke 能塞入伪造的失败
+ * 命令单独验证「还原快照」路径。片段自带 import，可独立喂给 python -c。
+ */
+export function buildMigrationGuard(dbPath: string, snapshotRoot: string, migrateArgv: string): string[] {
+  return [
+    'import datetime, os, shutil, subprocess, sys',
+    `_db = ${JSON.stringify(dbPath)}`,
+    `_snap_root = ${JSON.stringify(snapshotRoot)}`,
+    // -wal 里可能有未合并的写入，只拷主文件会丢数据；三个文件成组进退
+    "_sfx = ('', '-wal', '-shm')",
+    '_snap = None',
+    // 空库/不存在（首启）不快照：没有可保护的数据就不留空目录
+    'if os.path.exists(_db) and os.path.getsize(_db) > 0:',
+    // 冒号在 Windows 文件名里非法；%f（微秒）让同秒重启也不撞名
+    "    _stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H-%M-%S.%fZ')",
+    '    _snap = os.path.join(_snap_root, _stamp)',
+    '    os.makedirs(_snap, exist_ok=True)',
+    '    for _s in _sfx:',
+    '        if os.path.exists(_db + _s):',
+    '            shutil.copy2(_db + _s, os.path.join(_snap, os.path.basename(_db) + _s))',
+    'try:',
+    `    subprocess.run(${migrateArgv}, check=True)`,
+    'except BaseException:',
+    '    if _snap is not None:',
+    '        for _s in _sfx:',
+    '            _saved = os.path.join(_snap, os.path.basename(_db) + _s)',
+    '            if os.path.exists(_saved):',
+    '                shutil.copy2(_saved, _db + _s)',
+    // 快照里没有的伴生文件要删掉现场的：失败迁移留下的新 -wal
+    // 会在还原后的主文件上重放，等于又把库弄脏
+    '            elif os.path.exists(_db + _s):',
+    '                os.remove(_db + _s)',
+    '    raise',
+    'if _snap is not None:',
+    '    _dirs = sorted(_d for _d in os.listdir(_snap_root) if os.path.isdir(os.path.join(_snap_root, _d)))',
+    '    for _old in _dirs[:-3]:',
+    '        shutil.rmtree(os.path.join(_snap_root, _old), ignore_errors=True)',
+  ];
 }
