@@ -69,8 +69,10 @@ function waitExit(child: ChildProcess, ms: number): Promise<boolean> {
 
 /** 拉起引擎 argv，轮询 /api/health 到 200，然后回收进程。 */
 async function runEngineOnce(config: EngineCommand): Promise<void> {
-  // 与 legacy-engine 插件 command 模式相同的 spawn 环境（它注入的两个变量
-  // 这里照抄；引导器返回的 argv 自带 chdir 与数据库地址，见 engine-bootstrap）
+  // 与 legacy-engine 插件 command 模式相同的 spawn 环境：POLARIS_PROFILE
+  // 照抄插件注入；POLARIS_LLM_FAKE_FALLBACK 则是本冒烟自己的显式 opt-in——
+  // 插件不再代设（#717），测试要确定性 fake 就得在这里明说。
+  // （引导器返回的 argv 自带 chdir 与数据库地址，见 engine-bootstrap）
   const child = spawn(config.command[0]!, config.command.slice(1), {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, POLARIS_PROFILE: 'desktop', POLARIS_LLM_FAKE_FALLBACK: '1' },

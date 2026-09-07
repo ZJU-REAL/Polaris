@@ -81,6 +81,9 @@ function launchEnv(overrides: Record<string, string>): Record<string, string> {
   delete env.POLARIS_DESKTOP_ENGINE;
   delete env.POLARIS_DESKTOP_ENGINE_CONTAINER;
   delete env.POLARIS_DESKTOP_ENGINE_PORT;
+  // fake LLM 回退是严格显式 opt-in（#717）：基线环境必须干净，需要它的组
+  // （组 A）在 overrides 里显式声明，其余组证明「不设就没有」。
+  delete env.POLARIS_LLM_FAKE_FALLBACK;
   // 内部分发机器可能设了默认服务器：会让「未配置服务器」的断言失真
   delete env.POLARIS_DEFAULT_SERVER_URL;
   return { ...env, ...overrides };
@@ -159,6 +162,9 @@ async function groupEngine(): Promise<void> {
         POLARIS_DESKTOP_ENGINE_CONTAINER: container,
         POLARIS_DESKTOP_ENGINE_PORT: String(port),
         POLARIS_USER_DATA_DIR: userData,
+        // 显式 opt-in：插件不再代设 fake 回退（#717），引擎容器经 docker 的
+        // 无值 -e 透传拿到它——测试确定性由这里声明，而不是产品替我们开
+        POLARIS_LLM_FAKE_FALLBACK: '1',
       }),
     );
     app = r.app;

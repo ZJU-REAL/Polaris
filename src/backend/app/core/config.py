@@ -67,9 +67,14 @@ class Settings(BaseSettings):
     # 服务商与密钥在管理页配置、存 DB（services/llm_admin.py）；这里只有 openai_compat
     # 路由未填 base_url 时的兜底地址。密钥类环境变量从未有读取点，已删（#629）。
     openai_compat_base_url: str = "https://api.deepseek.com/v1"
-    # 未配置任何 LLM 路由时是否回退内置 fake provider（仅测试/无 key 演示用）。
-    # 默认关闭：未配置时 AI 功能返回 LLM_NOT_CONFIGURED，而不是产出演示假内容。
-    # 生产（env=prod）下无论如何都强制关闭，见下方 _prod_forbids_fake_llm。
+    # 未配置任何 LLM 路由时是否回退内置 fake provider——**严格显式 opt-in**（#717）。
+    # 任何档位、任何 env：不显式设 POLARIS_LLM_FAKE_FALLBACK=1 就绝不回退，
+    # 未配置时 AI 功能返回 LLM_NOT_CONFIGURED，而不是产出演示假内容。
+    # 依据设计报告 §18 的信任设计：AI 输出必须真实可溯源，拿不出真结果就明说
+    # ——把编造内容当真话发给用户是对信任的根本破坏。产品自身（含桌面端
+    # legacy-engine 插件）永远不设这个变量；只有测试套件与无 key 演示会显式开。
+    # 不再按 env 分支强关：曾经的 prod-only 守卫在 desktop 档（与 prod 互斥）
+    # 永不触发，等于形同虚设；与其靠猜环境，不如统一信任「显式设置」这一个来源。
     llm_fake_fallback: bool = False
     #: 全局助手（Claude Code 式工具循环）。默认关：它每轮都要重发历史与工具 schema，
     #: 成本与现有一次性对话不是一个量级，先按部署开。
@@ -257,15 +262,6 @@ class Settings(BaseSettings):
             logger.warning("忽略非法配置值（疑似注释混入）：%r", v[:40])
             return ""
         return v
-
-    @model_validator(mode="after")
-    def _prod_forbids_fake_llm(self) -> "Settings":
-        """生产环境结构性禁用 fake provider 回退：即便误设 POLARIS_LLM_FAKE_FALLBACK=1
-        也一律钉死为 False，杜绝把演示假内容当成真实 AI 输出发给用户。"""
-        if self.env == "prod" and self.llm_fake_fallback:
-            logger.warning("env=prod：忽略 POLARIS_LLM_FAKE_FALLBACK=1，生产禁止 fake LLM 回退")
-            object.__setattr__(self, "llm_fake_fallback", False)
-        return self
 
     @model_validator(mode="after")
     def _desktop_forbids_prod(self) -> "Settings":

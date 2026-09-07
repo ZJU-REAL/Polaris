@@ -244,7 +244,15 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
       convId,
       (handlers) =>
         cfg.stream({ question, history: history10, context: payload.context }, handlers),
-      (detail) => toast(`${tr('对话出错：', 'Chat error: ')}${detail}`, 'error'),
+      // LLM_NOT_CONFIGURED 是无 key 用户最常撞到的错误码，裸露代码太生硬，
+      // 翻译成一句能行动的大白话；其余错误原样透出，别把排错线索吃掉。
+      (detail) =>
+        toast(
+          detail === 'LLM_NOT_CONFIGURED'
+            ? tr('还没配可用的模型，去设置里配一个。', 'No usable model is configured yet — set one up in settings.')
+            : `${tr('对话出错：', 'Chat error: ')}${detail}`,
+          'error',
+        ),
     );
   };
 

@@ -769,6 +769,9 @@ void app.whenReady().then(async () => {
     // __dirname = src/desktop/dist，后端源码在仓库的 src/backend
     const backendDir = join(__dirname, '..', '..', 'backend');
     process.env.POLARIS_DESKTOP_ENGINE = `docker:${ENGINE_IMAGE}:${backendDir}`;
+    // fake LLM 回退是严格显式 opt-in（#717）：插件不再代设，测试确定性由
+    // 这里显式声明——legacy-engine 的 docker 无值 -e 透传会把它带进容器。
+    process.env.POLARIS_LLM_FAKE_FALLBACK = '1';
     try {
       // 上面主流程已 stopKernel（单例清空），这里起的是全新实例；
       // startKernel 会等到引擎健康或失败才返回（首启跑全部迁移，最长 120s）。
@@ -782,6 +785,7 @@ void app.whenReady().then(async () => {
     } finally {
       await stopKernel();
       delete process.env.POLARIS_DESKTOP_ENGINE;
+      delete process.env.POLARIS_LLM_FAKE_FALLBACK;
     }
     const running = (() => {
       try {

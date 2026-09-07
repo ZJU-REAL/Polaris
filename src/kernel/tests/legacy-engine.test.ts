@@ -29,8 +29,9 @@ function fakeEngineScript(port: number): string {
     "console.log('pid=' + process.pid);",
     'const srv = http.createServer((req, res) => {',
     "  res.setHeader('content-type', 'application/json');",
-    // 顺带回显 profile：断言 command 模式也注入了 POLARIS_PROFILE=desktop
-    "  res.end(JSON.stringify({ status: 'ok', profile: process.env.POLARIS_PROFILE || '' }));",
+    // 顺带回显 profile 与 fake 回退开关：断言 command 模式注入了
+    // POLARIS_PROFILE=desktop，且**没有**代设 POLARIS_LLM_FAKE_FALLBACK（#717）
+    "  res.end(JSON.stringify({ status: 'ok', profile: process.env.POLARIS_PROFILE || '', fake: process.env.POLARIS_LLM_FAKE_FALLBACK || '' }));",
     '});',
     `srv.listen(${port}, '127.0.0.1');`,
   ].join('\n')
@@ -38,6 +39,9 @@ function fakeEngineScript(port: number): string {
 
 describe('legacy-engine plugin (command mode)', () => {
   it('provides the legacy service once healthy and kills the process on dispose', async () => {
+    // 开发者 shell 里若设过该变量会经 ...process.env 泄漏进假引擎，先清掉，
+    // 保证「插件不代设」的断言测的是插件而不是运行环境
+    delete process.env.POLARIS_LLM_FAKE_FALLBACK
     const port = 21000 + Math.floor(Math.random() * 9000)
     const kernel = createKernel({ name: 'engine-test' })
     await kernel.start()
@@ -55,9 +59,12 @@ describe('legacy-engine plugin (command mode)', () => {
 
     const res = await fetch(`${legacy!.baseUrl}/api/health`)
     expect(res.ok).toBe(true)
-    const body = (await res.json()) as { status: string; profile: string }
+    const body = (await res.json()) as { status: string; profile: string; fake: string }
     expect(body.status).toBe('ok')
     expect(body.profile).toBe('desktop')
+    // fake LLM 回退是严格显式 opt-in：插件绝不代设（#717）。本测试进程没设
+    // 该变量，引擎子进程里也必须不存在。
+    expect(body.fake).toBe('')
 
     // stdout 是异步管道，pid 行可能晚于 health 就绪一拍
     await until(() => /pid=\d+/.test(legacy!.logTail()))
@@ -106,6 +113,13 @@ describe('legacy-engine buildEngineArgv (docker mode)', () => {
     expect(argv).toContain('img:tag')
     expect(argv).toContain('/abs/backend:/srv/backend')
     expect(argv).toContain('127.0.0.1:18080:8000')
+  })
+
+  it('never hardcodes the fake LLM fallback; only a valueless pass-through (#717)', () => {
+    const argv = buildEngineArgv(base, 18080)
+    // 无值 -e：宿主显式设了才透传进容器，插件自身永不把回退设成开
+    expect(argv).toContain('POLARIS_LLM_FAKE_FALLBACK')
+    expect(argv.join(' ')).not.toContain('POLARIS_LLM_FAKE_FALLBACK=')
   })
 
   it('honors a custom containerName so parallel instances do not collide', () => {

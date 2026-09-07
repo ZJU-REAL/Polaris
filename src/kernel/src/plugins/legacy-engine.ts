@@ -99,7 +99,11 @@ export function buildEngineArgv(config: LegacyEngineConfig, port: number): strin
     // 只绑回环地址：本地引擎是单机私有服务，绝不能暴露到局域网
     '-p', `127.0.0.1:${port}:8000`,
     '-e', 'POLARIS_PROFILE=desktop',
-    '-e', 'POLARIS_LLM_FAKE_FALLBACK=1',
+    // fake LLM 回退绝不由插件代设（#717，设计报告 §18 信任设计：AI 输出必须
+    // 真实可溯源，编不出来就明说）。这里只做无值透传：宿主进程显式设了
+    // POLARIS_LLM_FAKE_FALLBACK（冒烟/E2E 的显式 opt-in）docker 才带进容器，
+    // 没设则容器内同样不存在——与 command 模式继承宿主 env 的行为对齐。
+    '-e', 'POLARIS_LLM_FAKE_FALLBACK',
     config.image,
     'sh', '-lc',
     // 先迁移后起服务：desktop 档位没有独立 worker 抢跑迁移的问题，串行即可
@@ -134,8 +138,9 @@ export const legacyEngine = {
         stdio: ['ignore', 'pipe', 'pipe'],
         // 两种模式统一注入 desktop 档位环境。docker 模式下真正生效的是
         // 上面的 -e 参数（这里只影响 docker 客户端，无害）；command 模式
-        // 靠它保证裸进程也跑在单进程档位上。
-        env: { ...process.env, POLARIS_PROFILE: 'desktop', POLARIS_LLM_FAKE_FALLBACK: '1' },
+        // 靠它保证裸进程也跑在单进程档位上。fake LLM 回退不在此列：那是
+        // 严格显式 opt-in（#717），只随 ...process.env 自然继承，插件不代设。
+        env: { ...process.env, POLARIS_PROFILE: 'desktop' },
       })
       child.stdout!.on('data', capture)
       child.stderr!.on('data', capture)
