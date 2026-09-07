@@ -6,7 +6,7 @@
   paper_submission 闸门批准前置稿件 review_passed（M5-C），管理员可传
   override=true 跳过；
 - reject：关联航程置 failed；
-- 决策后向 ``notify:project:{project_id}`` 发布 gate.decided。
+- 决策后向 ``notify:user:{user_id}`` 发布 gate.decided（#721 频道按用户组织）。
 """
 
 import uuid
@@ -124,7 +124,7 @@ async def _decide(
                     voyage_id, "status", {"status": run.status, "cursor": run.cursor}
                 )
                 await bus.publish_notify(
-                    run.project_id,
+                    user.id,
                     {
                         "type": "voyage.status",
                         "voyage_id": str(voyage_id),
@@ -135,7 +135,7 @@ async def _decide(
             experiment = await experiments_service.fail_by_voyage(session, voyage_id)
             if experiment is not None:
                 await bus.publish_notify(
-                    experiment.project_id,
+                    user.id,
                     {
                         "type": "experiment.status",
                         "experiment_id": str(experiment.id),
@@ -148,7 +148,7 @@ async def _decide(
         idea = await ideas_service.promote_from_gate(session, gate)
         if idea is not None:
             await bus.publish_notify(
-                gate.project_id,
+                user.id,
                 {"type": "idea.status", "idea_id": str(idea.id), "status": idea.status},
             )
 
@@ -158,7 +158,7 @@ async def _decide(
     )
     if manuscript is not None:
         await bus.publish_notify(
-            manuscript.project_id,
+            user.id,
             {
                 "type": "manuscript.status",
                 "manuscript_id": str(manuscript.id),
@@ -167,7 +167,7 @@ async def _decide(
         )
 
     await bus.publish_notify(
-        gate.project_id,
+        user.id,
         {"type": "gate.decided", "gate": gate_read.model_dump(mode="json")},
     )
     return gate_read

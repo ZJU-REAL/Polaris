@@ -30,10 +30,11 @@ class ActionContext:
     step_id: Any | None = None  # 当前节点 id（动作查自己的闸门等；engine 注入）
 
     async def notify(self, message: dict[str, Any]) -> None:
-        """向项目通知频道发布事件（bus 未注入 / 无起源课题时为 no-op）。"""
-        # P9a：独立库任务无 project_id，无项目通知频道，静默跳过。
-        if self.bus is not None and self.run.project_id is not None:
-            await self.bus.publish_notify(self.run.project_id, message)
+        """向发起人的通知频道发布事件（bus 未注入 / 无发起人时为 no-op）。"""
+        # #721：频道改按用户组织，独立库任务（无 project_id）的通知不再丢失；
+        # created_by 为空只剩 cron 等无人值守场景——没人在听，跳过即可。
+        if self.bus is not None and self.run.created_by is not None:
+            await self.bus.publish_notify(self.run.created_by, message)
 
     async def log(self, message: str, *, level: str = "info") -> None:
         """向本任务日志频道发一条进度日志（任务详情页 terminal 消费）。

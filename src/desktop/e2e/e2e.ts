@@ -96,8 +96,8 @@ async function launch(env: Record<string, string>): Promise<{ app: ElectronAppli
     env,
     timeout: 60_000,
   });
-  // 窗口在 startKernel 之后才创建：docker 引擎首启要跑全部迁移（最长 120s），
-  // 等窗口的超时必须盖过它。
+  // #721 起窗口先于内核创建，几秒内必现；超时保留裕量以防慢 CI。
+  // 引擎启动的等待挪到了页面内（首启等待页），由各组的选择器超时盖住。
   const page = app.windows()[0] ?? ((await app.waitForEvent('window', { timeout: 240_000 })) as Page);
   await page.waitForLoadState('domcontentloaded');
   return { app, page };
@@ -173,7 +173,9 @@ async function groupEngine(): Promise<void> {
     // 免登录（#601）：desktop 档后端 local_session=true，RequireAuth 应静默
     // 换会话直接进工作台。等 AppShell 的侧栏出现即视为「进了应用」；
     // 全新数据库没有课题，会被 RequireTopic 送到 /start。
-    await page.waitForSelector('.sidebar', { timeout: 60_000 });
+    // #721 起窗口先起：docker 引擎首启的迁移（最长 120s）发生在首启等待页
+    // 期间，等待页就绪后整页 reload 再进应用，这条超时必须盖过全程。
+    await page.waitForSelector('.sidebar', { timeout: 240_000 });
     await page.waitForSelector('text=/选择或创建课题|Pick or create a topic/', { timeout: 30_000 });
     check('免登录直达工作台（侧栏 + /start 落地页）', true);
 
@@ -350,6 +352,13 @@ async function groupMarket(): Promise<void> {
     app = r.app;
     const { page } = r;
     await page.waitForFunction('typeof window.polaris?.invoke === "function"', undefined, { timeout: 30_000 });
+    // #721 起内核在窗口之后后台启动：plugins.* 依赖配置树就绪，先等内核
+    // 真正 started 再开始驱动，否则会撞上 ERR_CAPABILITY_UNAVAILABLE。
+    await page.waitForFunction(
+      `window.polaris.invoke('kernel.status').then((s) => s.started === true).catch(() => false)`,
+      undefined,
+      { timeout: 60_000 },
+    );
 
     // 安装引擎固定打 https://registry.npmjs.org：在主进程的全局 fetch 外
     // 包一层，把该域名重定向到本地替身。只改本次 e2e 会话的运行时全局，

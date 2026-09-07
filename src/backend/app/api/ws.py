@@ -1,9 +1,9 @@
 """WebSocket 端点。
 
 - ``WS /ws/notifications?token=<jwt>``（docs/api-m1.md §5）：手动校验 JWT（复用
-  fastapi-users JWTStrategy.read_token），订阅用户所在全部项目的
-  ``notify:project:{id}`` 频道并转发（gate.created / gate.decided / voyage.status /
-  manuscript.status）；
+  fastapi-users JWTStrategy.read_token），订阅当前用户自己的
+  ``notify:user:{id}`` 频道并转发（gate.created / gate.decided / voyage.status /
+  manuscript.status）；库级任务（无起源课题）的通知也走这条频道（#721）；
 - ``WS /ws/manuscripts/{file_id}?token=<jwt>``（docs/api-m5-b.md §6）：pycrdt CRDT
   协同房间（y-websocket 二进制协议，房间名 = file id）。on_connect 校验
   JWT + 课题归属 + 文件存在且非 readonly，失败分别以 4401 / 4404 / 4403 关闭。
@@ -19,13 +19,11 @@ import uuid
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from redis.asyncio import Redis
-from sqlalchemy import select
 
 from app.api.auth import UserManager, get_jwt_strategy
 from app.core.db import get_sessionmaker
 from app.core.events import notify_channel
 from app.core.redis import get_redis
-from app.models.project import Project
 from app.models.user import User
 from app.services import manuscripts as manuscripts_service
 from app.services import runner_ws as runner_ws_service
@@ -48,12 +46,6 @@ async def authenticate_ws_token(token: str | None) -> User | None:
     return user
 
 
-async def _user_project_ids(user_id: uuid.UUID) -> list[uuid.UUID]:
-    async with get_sessionmaker()() as session:
-        stmt = select(Project.id).where(Project.owner_id == user_id)
-        return [pid for (pid,) in (await session.execute(stmt)).all()]
-
-
 @router.websocket("/ws/notifications")
 async def notifications_ws(
     websocket: WebSocket,
@@ -66,18 +58,14 @@ async def notifications_ws(
         return
     await websocket.accept()
 
-    project_ids = await _user_project_ids(user.id)
+    # 频道按用户组织（#721）：每人恒有且只有一条自己的频道，连课题都没有的
+    # 用户也能收到库级任务的通知，不再需要查课题清单。
     redis: Redis = get_redis()
     pubsub = redis.pubsub()
-    channels = [notify_channel(pid) for pid in project_ids]
-    if channels:
-        await pubsub.subscribe(*channels)
+    channel = notify_channel(user.id)
+    await pubsub.subscribe(channel)
 
     async def forward() -> None:
-        if not channels:
-            # 用户暂无项目：没有频道可订阅（未 subscribe 时 get_message 会抛
-            # RuntimeError），挂起等 watch_disconnect 感知断开即可
-            await asyncio.Event().wait()
         while True:
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=5.0)
             if message is None:
@@ -106,8 +94,7 @@ async def notifications_ws(
     finally:
         for task in tasks:
             task.cancel()
-        if channels:
-            await pubsub.unsubscribe(*channels)
+        await pubsub.unsubscribe(channel)
         await pubsub.aclose()
 
 

@@ -101,12 +101,33 @@ export interface LocalBackendInfo {
 
 /**
  * 问主进程要本地引擎地址；web 端返回 null（无桥，零请求）。
- * 只被 endpoint.ts 的启动探测调用，业务代码不要直接用。
+ * 只被 endpoint.ts 的启动探测与首启等待页调用，业务代码不要直接用。
  */
 export async function kernelLocalBackend(): Promise<LocalBackendInfo | null> {
   const b = bridge();
   if (!b) return null;
   return (await b.invoke('kernel.localBackend')) as LocalBackendInfo;
+}
+
+/** 内嵌引擎引导进度（contract.ts 的 EngineBootstrapStatus 镜像）。 */
+export interface EngineBootstrapStatus {
+  phase: string;
+  done: boolean;
+}
+
+/**
+ * 内嵌引擎引导进度；web 端返回 null。窗口先于内核创建（#721），首启
+ * 等待页靠轮询它决定何时放行进应用。invoke 失败（旧宿主/桥故障）也折叠
+ * 成 null——按「无引导流程」处理，宁可回落远端也不卡死首屏。
+ */
+export async function engineBootstrapStatus(): Promise<EngineBootstrapStatus | null> {
+  const b = bridge();
+  if (!b) return null;
+  try {
+    return (await b.invoke('kernel.engineBootstrapStatus')) as EngineBootstrapStatus;
+  } catch {
+    return null;
+  }
 }
 
 /* —— 能力清单 ——

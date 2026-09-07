@@ -6,14 +6,18 @@ import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../components/ui/Toast';
 import { api } from '../../lib/api';
 import { copyText } from '../../lib/clipboard';
-import { portalUrl } from '../../lib/endpoint';
+import { localOrigin, portalUrl } from '../../lib/endpoint';
 import { tr } from '../../lib/i18n';
 
 export function ExtensionApiKeySettings() {
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [keyPrefix, setKeyPrefix] = useState<string | null>(null);
   const [revokeOpen, setRevokeOpen] = useState(false);
-  const baseUrl = portalUrl();
+  // 浏览器扩展跑在同一台电脑上：本地模式（无门户地址）给本机引擎地址
+  // 一样能用，只是别的机器访问不到——附一行说明（#721）。
+  const portal = portalUrl();
+  const isLocalBase = portal == null && localOrigin() != null;
+  const baseUrl = portal ?? localOrigin() ?? '';
 
   const rotateMutation = useMutation({
     mutationFn: () => api.rotateDownloadApiKey(),
@@ -116,6 +120,14 @@ export function ExtensionApiKeySettings() {
               </button>
             </div>
           </FormField>
+          {isLocalBase && (
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>
+              {tr(
+                '这是本机引擎的地址，仅这台电脑上的浏览器扩展可以使用。',
+                'This is your local engine address — only browser extensions on this computer can use it.',
+              )}
+            </div>
+          )}
         </div>
 
         {apiKey ? (

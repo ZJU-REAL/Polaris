@@ -134,6 +134,8 @@ export function ChatPanel({ paperId, pid }: { paperId: string; pid: string }) {
     [paperId],
   );
 
+  // 本地模式（桌面端未配置服务器）没有别人打得开的门户地址：readLink 为
+  // null 时 ChatSurface 分享照常走、只是不附阅读链接（推荐语也不再提链接）。
   const readLink = portalUrl(`/papers/${paperId}/read`);
 
   return (

@@ -61,11 +61,16 @@ export function marketPluginsDir(): string {
 }
 
 /**
- * 内嵌引擎引导进度，kernel.engineBootstrapStatus 直接读它。
- * idle = 没走内嵌路径（开发态 / 显式 env）；failed = 引导失败已回落远端。
- * 渲染层的进度条二期再接，这里先把契约与状态源立起来。
+ * 内嵌引擎引导进度，kernel.engineBootstrapStatus 直接读它（#721 起窗口先于
+ * 内核创建，渲染层的首启等待页轮询这个状态）。
+ * - starting：内核启动中，还不知道走不走内嵌路径（初始态）
+ * - check/python/venv/install：内嵌引导各阶段（见 engine-bootstrap.ts）
+ * - engine：环境已装好，引擎进程启动中（首启迁移可能要一会儿）
+ * - ready + done：引擎已健康，本地地址可用
+ * - idle + done：没走内嵌路径（开发态 / 显式 env / 无引擎），按远端流程走
+ * - failed + done：内嵌引导或引擎启动失败，已回落远端流程
  */
-let bootstrapStatus: EngineBootstrapStatus = { phase: 'idle', done: false };
+let bootstrapStatus: EngineBootstrapStatus = { phase: 'starting', done: false };
 
 /**
  * 首启种子树。只在 store 完全为空时写入：树是用户状态的真相，任何非空
@@ -124,11 +129,14 @@ async function bootstrapPackagedEngine(): Promise<LegacyEngineConfig | null> {
       dataDir: app.getPath('userData'),
       onProgress: ({ phase, line }) => {
         bootstrapStatus = { phase, done: false };
-        // 首启会下载 Python 工具链，日志是唯一的可观测面（进度条二期接）
+        // 首启会下载 Python 工具链，日志与首启等待页是仅有的可观测面
         if (line) console.log(`[engine-bootstrap] ${line}`);
       },
     });
-    bootstrapStatus = { phase: 'ready', done: true };
+    // 环境装好 ≠ 可用：引擎进程还要跑迁移并通过健康检查（下方 entry.update
+    // 才等它），done 必须等引擎真的健康——否则首启等待页会提前放行，
+    // 前端探测拿到 null 又回落远端，等待整段白等。
+    bootstrapStatus = { phase: 'engine', done: false };
     return config;
   } catch (err) {
     bootstrapStatus = { phase: 'failed', done: true };
@@ -137,9 +145,22 @@ async function bootstrapPackagedEngine(): Promise<LegacyEngineConfig | null> {
   }
 }
 
-/** 幂等启动：重复调用返回同一实例（app ready 与 smoke 都可能触发）。 */
+let startingKernel: Promise<Kernel> | null = null;
+
+/** 幂等启动：重复调用返回同一实例（app ready 与 smoke 都可能触发）。
+    #721 起启动在窗口之后台进行，启动中的并发调用共享同一个 Promise。 */
 export async function startKernel(): Promise<Kernel> {
   if (kernel) return kernel;
+  startingKernel ??= doStartKernel().finally(() => {
+    startingKernel = null;
+  });
+  return startingKernel;
+}
+
+async function doStartKernel(): Promise<Kernel> {
+  // smoke 等场景会 stop 后再次 start：进度回到初始态，别让上一轮的
+  // ready/failed 冒充本轮结论
+  bootstrapStatus = { phase: 'starting', done: false };
   const instance = createKernel({ name: 'polaris-desktop' });
 
   // 持久层先于 loader 直挂：配置树就存在这里。失败不阻断启动——树退化
@@ -230,8 +251,8 @@ export async function startKernel(): Promise<Kernel> {
     // 改内存态并同步拉起 fiber，磁盘上始终是 disabled 占位——树保存用户
     // 意图（要不要这个插件），引擎参数每次启动现算注入。
     // entry.update 内部 init → fiber.await()：resolve 返回时引擎已健康或
-    // 已抛错。窗口在 startKernel 之后才创建，所以 kernel.localBackend 与
-    // CSP 在首个页面请求时就已是最终答案（与旧直挂语义一致）。
+    // 已抛错。#721 起窗口先于内核创建：首个文档的 CSP 可能没放行本地引擎，
+    // 前端首启等待页在 bootstrapStatus done 后 reload 拿到最终 CSP 与地址。
     const entry = configTree.store['legacy-engine'];
     if (entry) {
       try {
@@ -251,6 +272,17 @@ export async function startKernel(): Promise<Kernel> {
 
   await instance.start();
   kernel = instance;
+  // 引导进度收尾：走了内嵌路径的（engine 阶段）以引擎服务是否真挂出为准；
+  // 没走内嵌路径的（starting 一路没变过：开发态 / 显式 env / 无引擎）标成
+  // idle——env 引擎的健康等待已在上方 entry.update 完成，前端拿 done 后
+  // 探测 localBackend 即得最终答案。failed（引导抛错）保持原样不覆盖。
+  if (bootstrapStatus.phase === 'engine') {
+    bootstrapStatus = localBackend().baseUrl
+      ? { phase: 'ready', done: true }
+      : { phase: 'failed', done: true };
+  } else if (bootstrapStatus.phase === 'starting') {
+    bootstrapStatus = { phase: 'idle', done: true };
+  }
   return instance;
 }
 
@@ -261,6 +293,9 @@ export async function startKernel(): Promise<Kernel> {
  * 关库排在其后，不需要在这里显式 flush。
  */
 export async function stopKernel(): Promise<void> {
+  // 启动进行中（窗口先起后用户立刻退出）：等启动收尾再停，否则 kernel
+  // 还没赋值、stop 变 no-op，引导中拉起的引擎子进程/容器就漏掉了。
+  if (startingKernel) await startingKernel.catch(() => undefined);
   const instance = kernel;
   kernel = null;
   if (instance) await instance.stop();

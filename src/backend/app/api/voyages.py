@@ -328,15 +328,16 @@ async def answer_voyage_ask(
         await bus.publish_voyage_event(
             run.id, "status", {"status": run.status, "cursor": run.cursor}
         )
-        if run.project_id is not None:
-            await bus.publish_notify(
-                run.project_id,
-                {"type": "voyage.status", "voyage_id": str(run.id), "status": run.status},
-            )
+        # #721：频道按用户组织，库级 run（无起源课题）也照发；收件人是当前
+        # 操作者——个人化定位下 run 的归属人就是他。
+        await bus.publish_notify(
+            user.id,
+            {"type": "voyage.status", "voyage_id": str(run.id), "status": run.status},
+        )
         experiment = await experiments_service.fail_by_voyage(session, run.id)
         if experiment is not None:
             await bus.publish_notify(
-                experiment.project_id,
+                user.id,
                 {
                     "type": "experiment.status",
                     "experiment_id": str(experiment.id),
@@ -372,7 +373,7 @@ async def answer_voyage_ask(
     experiment = await experiments_service.resume_from_waiting_by_voyage(session, run.id)
     if experiment is not None:
         await bus.publish_notify(
-            experiment.project_id,
+            user.id,
             {
                 "type": "experiment.status",
                 "experiment_id": str(experiment.id),

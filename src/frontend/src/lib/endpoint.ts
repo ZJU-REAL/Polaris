@@ -66,6 +66,20 @@ function remoteOrigin(): string {
 }
 
 /**
+ * 用户配置的远端服务器地址（桌面端；web 端与未配置时为 ''）。
+ * 服务器配置页用它回填输入框——serverOrigin() 在本地引擎活跃时返回
+ * 127.0.0.1，拿去回填会把本地引擎地址当成「已配置的服务器」展示。
+ */
+export function remoteServerOrigin(): string {
+  return remoteOrigin();
+}
+
+/** 本地引擎 origin（如 http://127.0.0.1:18080）；未探测到时为 null。 */
+export function localOrigin(): string | null {
+  return localBase;
+}
+
+/**
  * 服务器 origin：web 端为 ''（同源，走相对路径），桌面端为配置的地址（已去尾斜杠）；
  * 探测到本地引擎时本地优先。
  * 故意做成函数而非模块级常量：避免依赖「注入早于本模块求值」这一隐式时序。
@@ -91,12 +105,19 @@ export function wsUrl(path: string): string {
 }
 
 /**
- * 面向「别人也能打开」的链接：邀请/分享链接、给外部 MCP 客户端的服务端点。
- * 收件人多数用浏览器打开，所以桌面端要指向服务器上的 web 门户，而不是 app:// 本地页面。
+ * 面向「别人也能打开」的链接：分享链接、给外部客户端的服务端点。
+ * 收件人多数用浏览器打开，所以桌面端要指向服务器上的 web 门户，而不是
+ * app:// 本地页面。桌面端未配置远端服务器时返回 null（#721）：以前回落
+ * window.location.origin 会产出 app://polaris/... 这种别人根本打不开的
+ * 链接，各消费点必须自己决定「隐藏入口」还是「换成本机地址 + 说明」。
  */
-export function portalUrl(path = ''): string {
-  // 刻意用 remoteOrigin 而不是 serverOrigin：分享/邀请链接给别人打开，
+export function portalUrl(path = ''): string | null {
+  // 刻意用 remoteOrigin 而不是 serverOrigin：分享链接给别人打开，
   // 指向本机 127.0.0.1 的本地引擎对收件人毫无意义。
-  const origin = remoteOrigin() || (typeof window === 'undefined' ? '' : window.location.origin);
-  return `${origin}${path}`;
+  if (isDesktop()) {
+    const origin = remoteOrigin();
+    return origin ? `${origin}${path}` : null;
+  }
+  // web 端保持原行为：同源相对场景下 location.origin 就是真实门户地址
+  return `${typeof window === 'undefined' ? '' : window.location.origin}${path}`;
 }

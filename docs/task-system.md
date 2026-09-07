@@ -539,9 +539,10 @@ So the rule is: the terminal you see live is SSE; the terminal you see after a r
 increments are deliberately not persisted — they would be the bulk of the volume and add nothing once
 the full output is stored.
 
-Run status changes are additionally published to the topic notification channel
-(`notify:project:{project_id}`) as `voyage.status`, and gate creation as `gate.created`. Runs with no
-topic skip this silently — there is no channel to publish to.
+Run status changes are additionally published to the owner's notification channel
+(`notify:user:{user_id}`) as `voyage.status`, and gate creation as `gate.created`. Channels are
+per-user (#721), so library-scoped runs with no originating topic are delivered too; only runs
+without an owner (e.g. cron-initiated) skip this silently.
 
 The task detail endpoint also exposes two derived views built from the checkpoint: `skills` (which
 skill versions this run snapshotted) and `plan_history` (every plan change, in plain language). By

@@ -39,15 +39,19 @@ if (!app.requestSingleInstanceLock()) {
     // 一期不处理跳转目标，只保证协议已注册、不会把 URL 当文件打开
   });
 
-  void app.whenReady().then(async () => {
-    // 内核先于 IPC：installIpc 一装好 renderer 就可能打 kernel.status，
-    // 不能让它读到「还没启动」的假象。start 本身不做 IO，不拖慢首窗。
-    await startKernel();
+  void app.whenReady().then(() => {
     app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
     handleAppProtocol(() => readConfig().serverUrl);
     installIpc();
     installMenu();
+    // 窗口先起、内核后台启动（#721）：打包态首启的内嵌引擎引导要下载
+    // Python 工具链、装依赖，可能长达数分钟——以前 await startKernel 在
+    // createWindow 之前，用户这几分钟连窗口都看不到，像没装上一样。
+    // 现在渲染层经 kernel.engineBootstrapStatus 轮询进度并显示首启等待页；
+    // 期间 kernel.status/localBackend 读到「还没启动」是真实状态而不是假象，
+    // 等待页正是为消化这个窗口期而存在。
     createWindow();
+    void startKernel().catch((err) => console.error('[kernel] start failed:', err));
 
     app.on('activate', () => {
       if (!getWindow()) createWindow();

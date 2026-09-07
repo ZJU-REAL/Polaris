@@ -5,7 +5,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { tr } from '../../lib/i18n';
-import { portalUrl } from '../../lib/endpoint';
+import { localOrigin, portalUrl } from '../../lib/endpoint';
 import { copyText } from '../../lib/clipboard';
 import { useProject } from '../../app/project';
 import { api, getToken, type McpToolCheck, type McpToolInfo } from '../../lib/api';
@@ -203,7 +203,12 @@ export function McpToolsContent() {
   const projectId = pickedProjectId ?? currentProjectId;
   const [includeNetwork, setIncludeNetwork] = useState(false);
 
-  const origin = portalUrl();
+  // 本地模式（桌面端未配置服务器）没有门户地址：端点给出本机引擎的真实
+  // 地址（外部 MCP 客户端与桌面端同机，127.0.0.1 恰好就是对的），并附一行
+  // 「仅本机可访问」说明；以前回落 app://polaris 产出的端点谁都连不上。
+  const portal = portalUrl();
+  const isLocalEndpoint = portal == null && localOrigin() != null;
+  const origin = portal ?? localOrigin() ?? '';
   const httpUrl = `${origin}${data?.endpoint ?? '/mcp'}`;
   const token = getToken() ?? '';
 
@@ -271,6 +276,14 @@ export function McpToolsContent() {
           )}
         </div>
         <CopyRow label={tr('HTTP 端点（Streamable HTTP）', 'HTTP endpoint (Streamable HTTP)')} value={httpUrl} />
+        {isLocalEndpoint && (
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: -8 }}>
+            {tr(
+              '这是本机引擎的地址，仅这台电脑上的程序可以访问。',
+              'This is your local engine address — only apps on this computer can reach it.',
+            )}
+          </div>
+        )}
         <CopyRow label={tr('访问令牌（你的登录 Bearer token）', 'Access token (your bearer token)')} value={token} secret />
         <div style={{ minWidth: 0 }}>
           <div className="h-eyebrow">{tr('客户端配置（Cursor / 支持 HTTP 的客户端）', 'Client config (Cursor / HTTP clients)')}</div>

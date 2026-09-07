@@ -126,6 +126,34 @@ async def test_fatal_step_attended_asks(client, queue_stub):
     assert resp.json()["open_ask"]["id"] == str(ask.id)
 
 
+async def test_fatal_step_library_run_notifies_owner(client, queue_stub):
+    """#721：库级 run（无起源课题）的通知不再静默丢——频道按用户组织。"""
+    await register_and_login(client)
+    async with get_sessionmaker()() as session:
+        owner_id = (
+            await session.execute(select(User.id).order_by(User.created_at))
+        ).scalars().first()
+        run = VoyageRun(
+            kind="custom",
+            goal="库级 ask 通知",
+            status="planning",
+            cursor=0,
+            plan=FATAL_PLAN,
+            project_id=None,
+            created_by=owner_id,
+        )
+        session.add(run)
+        await session.commit()
+        run_id = run.id
+
+    engine, bus = _engine()
+    await engine.run(run_id)
+
+    # 提问事件送达发起人自己的频道（notify:user:{id}），而不是被 project_id 判空吞掉
+    assert any(m.get("type") == "voyage.ask" for _u, m in bus.notify)
+    assert bus.notify and all(u == str(owner_id) for u, _m in bus.notify)
+
+
 async def test_fatal_step_unattended_degrades_to_paused_error(client, queue_stub):
     project_id, _headers = await _make_project(client)
     run_id = await _run(project_id, plan=FATAL_PLAN, attended=False)

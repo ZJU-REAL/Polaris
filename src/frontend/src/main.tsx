@@ -1,8 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { EngineBootstrapPage } from './features/desktop/EngineBootstrapPage';
+import { bootstrapGate } from './features/desktop/engineBootstrap';
 import { probeLocalBackend } from './lib/endpoint';
-import { hasHost, hostPlatform } from './lib/host';
+import { engineBootstrapStatus, hasHost, hostPlatform } from './lib/host';
 import './styles/global.css';
 
 // 桌面端把平台标在 <html> 上：macOS 的 hiddenInset 标题栏需要页面自己给
@@ -22,18 +24,36 @@ if (!container) {
   throw new Error('#root element not found');
 }
 
-const render = () =>
-  createRoot(container).render(
+const root = createRoot(container);
+const renderApp = () =>
+  root.render(
     <StrictMode>
       <App />
     </StrictMode>,
   );
 
-// 桌面端先问一次本地引擎地址再挂载（一次 IPC 往返，毫秒级）：让首屏请求
-// 就走对地址，而不是发出去之后才发现该走 127.0.0.1。web 端没有宿主桥，
+// 桌面端挂载前的两步探测（各一次 IPC 往返，毫秒级）；web 端没有宿主桥，
 // 保持原来的同步挂载路径，行为一字不变。
+// 1. 内核引导状态（#721）：窗口现在先于内核创建，打包态首启内核还在后台
+//    装环境——此刻探测本地引擎只会得到 null 然后误落远端流程。未就绪就
+//    先进等待页，就绪/失败后由等待页负责重探或给出远程出路。
+// 2. 本地引擎地址：让首屏请求就走对地址，而不是发出去之后才发现该走
+//    127.0.0.1。
 if (hasHost()) {
-  void probeLocalBackend().finally(render);
+  void engineBootstrapStatus().then((status) => {
+    if (status == null || bootstrapGate(status) === 'proceed') {
+      void probeLocalBackend().finally(renderApp);
+      return;
+    }
+    root.render(
+      <StrictMode>
+        <EngineBootstrapPage
+          initialStatus={status}
+          onProceed={() => void probeLocalBackend().finally(renderApp)}
+        />
+      </StrictMode>,
+    );
+  });
 } else {
-  render();
+  renderApp();
 }

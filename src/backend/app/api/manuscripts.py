@@ -1130,11 +1130,11 @@ async def submit_manuscript(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="REVIEW_REQUIRED") from e
     gate_read = GateRead.model_validate(gate)
     await bus.publish_notify(
-        manuscript.project_id,
+        user.id,
         {"type": "gate.created", "gate": gate_read.model_dump(mode="json")},
     )
     await bus.publish_notify(
-        manuscript.project_id,
+        user.id,
         {
             "type": "manuscript.status",
             "manuscript_id": str(manuscript.id),

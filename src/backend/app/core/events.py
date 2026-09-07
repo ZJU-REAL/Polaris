@@ -1,7 +1,7 @@
 """实时事件总线：向 Redis 频道发布 JSON 事件（频道约定见 docs/api-m1.md §6）。
 
 - ``voyage:{id}:events``：voyage 引擎发布，SSE 端点订阅转发
-- ``notify:project:{project_id}``：gate/voyage 状态变化，WS 端点订阅转发
+- ``notify:user:{user_id}``：gate/voyage 状态变化，WS 端点订阅转发
 - ``crdt:stream``：worker（AI 起草）发布分节流式增量，API 进程订阅后代写活跃
   CRDT 房间（跨进程直播 AI 撰写；worker 与 API 是独立容器，房间只在 API 进程）
 """
@@ -20,8 +20,14 @@ def voyage_channel(voyage_id: uuid.UUID | str) -> str:
     return f"voyage:{voyage_id}:events"
 
 
-def notify_channel(project_id: uuid.UUID | str) -> str:
-    return f"notify:project:{project_id}"
+def notify_channel(user_id: uuid.UUID | str) -> str:
+    """按用户组织的通知频道（#721）。
+
+    以前按课题（notify:project:{id}）组织：库级任务没有起源课题，通知只能
+    静默丢掉；个人化定位后课题恒归属单人，按用户组织既覆盖库级任务，又让
+    WS 端只需订阅自己一条频道。pub/sub 无持久化，旧频道没有留存问题。
+    """
+    return f"notify:user:{user_id}"
 
 
 def paper_task_channel(task_id: str) -> str:
@@ -82,9 +88,9 @@ class EventBus:
                 level=data.get("level"),
             )
 
-    async def publish_notify(self, project_id: uuid.UUID | str, message: dict[str, Any]) -> None:
+    async def publish_notify(self, user_id: uuid.UUID | str, message: dict[str, Any]) -> None:
         payload = json.dumps(message, ensure_ascii=False, default=str)
-        await self._redis.publish(notify_channel(project_id), payload)
+        await self._redis.publish(notify_channel(user_id), payload)
 
     async def publish_crdt_stream(self, command: dict[str, Any]) -> None:
         """AI 起草分节流式命令（op=open|delta|replace，含 file_id/section/text）。"""

@@ -183,9 +183,9 @@ async def watch_unanswered_managed_commands(ctx: dict[str, Any]) -> int:
             "ask.updated",
             {"message": event.message, "action": event.action},
         )
-        if event.project_id is not None:
+        if event.user_id is not None:
             await bus.publish_notify(
-                event.project_id,
+                event.user_id,
                 {
                     "type": "voyage.ask.updated",
                     "voyage_id": str(event.voyage_id),

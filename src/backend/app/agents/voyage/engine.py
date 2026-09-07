@@ -218,16 +218,17 @@ class VoyageEngine:
             await self._bus.publish_voyage_event(run_id, event, data)
 
     async def _emit_notify(
-        self, project_id: uuid.UUID | None, message: dict[str, Any]
+        self, user_id: uuid.UUID | None, message: dict[str, Any]
     ) -> None:
-        # P9a：库化任务可能无起源课题（project_id 为空）——无项目通知频道，静默跳过。
-        if project_id is not None and self._bus is not None:
-            await self._bus.publish_notify(project_id, message)
+        # #721：通知频道按用户组织（notify:user:{id}），库化任务（无起源课题）
+        # 一样能送达发起人；user_id 为空只剩 cron 等无人值守场景，静默跳过。
+        if user_id is not None and self._bus is not None:
+            await self._bus.publish_notify(user_id, message)
 
     async def _emit_status(self, run: VoyageRun) -> None:
         await self._emit_voyage(run.id, "status", {"status": run.status, "cursor": run.cursor})
         await self._emit_notify(
-            run.project_id,
+            run.created_by,
             {"type": "voyage.status", "voyage_id": str(run.id), "status": run.status},
         )
 
@@ -346,7 +347,7 @@ class VoyageEngine:
                     {"message": messages_service.serialize_message(message)},
                 )
                 await self._emit_notify(
-                    run.project_id,
+                    run.created_by,
                     {
                         "type": "voyage.ask",
                         "voyage_id": str(run.id),
@@ -363,7 +364,7 @@ class VoyageEngine:
             experiment = await experiments_service.mark_waiting_by_voyage(session, run.id)
             if experiment is not None:
                 await self._emit_notify(
-                    experiment.project_id,
+                    run.created_by,
                     {
                         "type": "experiment.status",
                         "experiment_id": str(experiment.id),
@@ -591,7 +592,7 @@ class VoyageEngine:
             if experiment is not None:
                 # WS 状态联动：原先由报告动作的 _set_status 发，现在终态在这里落定
                 await self._emit_notify(
-                    run.project_id,
+                    run.created_by,
                     {
                         "type": "experiment.status",
                         "experiment_id": str(experiment.id),
@@ -910,7 +911,7 @@ class VoyageEngine:
             run, f"步骤 {node_index} 需要 {gate.kind} 人工审批，任务暂停", level="gate"
         )
         await self._emit_notify(
-            run.project_id,
+            run.created_by,
             {
                 "type": "gate.created",
                 "gate": {

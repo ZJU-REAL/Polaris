@@ -3,7 +3,7 @@ import { Icon } from '../../components/ui/Icon';
 import { LangToggle } from '../../components/ui/LangToggle';
 import { PolarisMark, PolarisWordmark } from '../../components/ui/PolarisLogo';
 import { setToken } from '../../lib/api';
-import { serverOrigin } from '../../lib/endpoint';
+import { localOrigin, remoteServerOrigin } from '../../lib/endpoint';
 import { setServerUrl, testServer, type ServerProbe } from '../../lib/host';
 import { tr, useLang } from '../../lib/i18n';
 
@@ -17,7 +17,12 @@ import { tr, useLang } from '../../lib/i18n';
 export function ServerSetupPage({ onCancel }: { onCancel?: () => void }) {
   // 同登录页：就地重渲染，别把用户正在填的服务器地址和刚探测出的结果冲掉。
   useLang();
-  const [url, setUrl] = useState(serverOrigin());
+  // 回填的是**配置过的远端地址**而不是 serverOrigin()：本地引擎活跃时后者
+  // 是 127.0.0.1，会被误当成「已配置的服务器」填进输入框。
+  const [url, setUrl] = useState(remoteServerOrigin());
+  // 本地引擎活跃：数据在本机、请求走本机，这页填什么当下都不生效——
+  // 如实告诉用户，而不是让「保存后没变化」显得像坏了。
+  const localEngineActive = localOrigin() != null;
   const [probe, setProbe] = useState<ServerProbe | null>(null);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -75,12 +80,21 @@ export function ServerSetupPage({ onCancel }: { onCancel?: () => void }) {
 
       <div className="auth-card fadeup">
         <div className="auth-card-title">{tr('连接到服务器', 'Connect to a server')}</div>
-        <div className="auth-card-sub">
-          {tr(
-            '桌面端本身不存数据，请填写你所在实验室的 Polaris 服务器地址',
-            'The desktop app stores no data of its own — enter your lab’s Polaris server address',
-          )}
-        </div>
+        {localEngineActive ? (
+          <div className="auth-card-sub">
+            {tr(
+              '当前使用本机引擎，数据保存在这台电脑上。服务器地址是可选设置，仅在本机引擎不可用时生效。',
+              'You are using the local engine — your data stays on this computer. A server address is optional and only takes effect when the local engine is unavailable.',
+            )}
+          </div>
+        ) : (
+          <div className="auth-card-sub">
+            {tr(
+              '填写要连接的 Polaris 服务器地址；连接后数据保存在服务器上。',
+              'Enter the address of the Polaris server to connect to; your data will then live on that server.',
+            )}
+          </div>
+        )}
 
         <form onSubmit={(e) => void onSubmit(e)}>
           <div className="auth-field">

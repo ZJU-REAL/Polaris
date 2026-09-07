@@ -557,7 +557,7 @@ async def cancel_experiment(
     except experiments_service.ExperimentAlreadyFinishedError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="EXPERIMENT_ALREADY_FINISHED") from e
     await bus.publish_notify(
-        experiment.project_id,
+        user.id,
         {
             "type": "experiment.status",
             "experiment_id": str(experiment.id),
@@ -566,7 +566,7 @@ async def cancel_experiment(
     )
     if experiment.voyage_id is not None:
         await bus.publish_notify(
-            experiment.project_id,
+            user.id,
             {
                 "type": "voyage.status",
                 "voyage_id": str(experiment.voyage_id),

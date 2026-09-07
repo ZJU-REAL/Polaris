@@ -66,7 +66,9 @@ function check(label: string, ok: boolean, detail = ''): void {
 void app.whenReady().then(async () => {
   handleAppProtocol(() => SERVER_URL);
   installIpc(); // preload 的 sendSync 依赖它，不装就测不到真实注入链路
-  const kernelInstance = await startKernel(); // 与 main/index.ts 同序：内核先于窗口，kernel.status 才是真的
+  // 白盒断言需要内核已就绪：这里显式 await（生产 main/index.ts 自 #721 起
+  // 窗口先起、内核后台启动，渲染层靠首启等待页消化启动窗口期）
+  const kernelInstance = await startKernel();
 
   console.log('CSP');
   const csp = buildCsp(SERVER_URL);

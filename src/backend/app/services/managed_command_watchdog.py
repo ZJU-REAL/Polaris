@@ -36,7 +36,8 @@ RECHECK_MINUTES = 30
 @dataclass(slots=True, frozen=True)
 class WatchdogEvent:
     voyage_id: uuid.UUID
-    project_id: uuid.UUID | None
+    # #721：通知频道按用户组织，这里带的是 run 归属人（created_by）
+    user_id: uuid.UUID | None
     message: dict[str, Any]
     action: str
     used_memory_mib: int = 0
@@ -267,7 +268,7 @@ async def check_unanswered_managed_commands(
             events.append(
                 WatchdogEvent(
                     voyage_id=run.id,
-                    project_id=run.project_id,
+                    user_id=run.created_by,
                     message=messages_service.serialize_message(ask),
                     action=action,
                     used_memory_mib=usage.used_memory_mib if usage is not None else 0,

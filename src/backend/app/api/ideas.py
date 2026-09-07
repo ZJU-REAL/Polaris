@@ -271,7 +271,7 @@ async def update_idea(
     idea = await _member_idea(session, idea_id, user)
     idea = await ideas_service.set_idea_status(session, idea, data.status)
     await bus.publish_notify(
-        idea.project_id,
+        user.id,
         {"type": "idea.status", "idea_id": str(idea.id), "status": idea.status},
     )
     return IdeaRead.model_validate(idea)
@@ -297,7 +297,7 @@ async def promote_idea(
     gate = await ideas_service.create_promotion_gate(session, idea, user)
     gate_read = GateRead.model_validate(gate)
     await bus.publish_notify(
-        idea.project_id, {"type": "gate.created", "gate": gate_read.model_dump(mode="json")}
+        user.id, {"type": "gate.created", "gate": gate_read.model_dump(mode="json")}
     )
     return gate_read
 
@@ -430,14 +430,15 @@ async def post_session_message(
     project_id = await review_service.session_project_id(session, review_session)
     message = await review_service.add_human_message(session, review_session, user, data.content)
     message_read = ReviewMessageRead.model_validate(message)
-    if project_id is not None:
-        await bus.publish_notify(
-            project_id,
-            {
-                "type": "review.message",
-                "session_id": str(review_session.id),
-                "project_id": str(project_id),
-                "message": message_read.model_dump(mode="json"),
-            },
-        )
+    # #721：频道按用户组织，库级评审会话（无起源课题）的消息也照发；
+    # project_id 保留在载荷里给前端按课题过滤，可能为 None。
+    await bus.publish_notify(
+        user.id,
+        {
+            "type": "review.message",
+            "session_id": str(review_session.id),
+            "project_id": str(project_id) if project_id is not None else None,
+            "message": message_read.model_dump(mode="json"),
+        },
+    )
     return message_read

@@ -58,7 +58,7 @@ async def test_demo_voyage_full_loop(client, queue_stub, bus_recorder):
     assert {"status", "step", "log"} <= kinds
     statuses = [e[2]["status"] for e in bus.voyage_events if e[1] == "status"]
     assert "paused_gate" in statuses
-    # gate.created 广播到项目通知频道
+    # gate.created 广播到发起人的通知频道（#721 起按用户组织）
     assert any(m["type"] == "gate.created" for _, m in bus.notify)
 
     # 闸门落库且 payload 关联 voyage
