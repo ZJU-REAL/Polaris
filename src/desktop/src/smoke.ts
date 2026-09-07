@@ -16,19 +16,30 @@
 
 import { BrowserWindow, app } from 'electron';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
-import type { SqliteTree, StorageService } from '@polaris/kernel';
+import type { FetchImpl, SqliteTree, StorageService } from '@polaris/kernel';
 
 import { pingAgent, stopAgent } from './main/agent/supervisor';
-import { localBackend, startKernel, stopKernel } from './main/kernel';
+import { kernelPluginMeta, localBackend, marketPluginsDir, startKernel, stopKernel } from './main/kernel';
 import { capabilityManifest } from './main/capabilities';
 import { installIpc } from './main/ipc/router';
+import {
+  awaitInstallForTesting,
+  marketFetchIndex,
+  marketGetEndpoint,
+  marketInstall,
+  marketSetEndpoint,
+  marketUninstall,
+  setMarketFetchForTesting,
+} from './main/ipc/methods.market';
 import { pluginsDisable, pluginsEnable, pluginsExportTree, pluginsList } from './main/ipc/methods.plugins';
+import { MARKET_ENDPOINT_DEFAULT } from './shared/contract';
 import { extractTarGz } from './main/updates/tar';
 import { compareVersions, stagedSupersedes } from './main/updates/version';
 import { APP_INDEX, buildCsp, handleAppProtocol, registerAppScheme } from './main/protocol';
@@ -444,6 +455,147 @@ void app.whenReady().then(async () => {
     probeEnabled.state === 'active' && tree?.store['desktop-probe']?.fiber != null,
     `state=${probeEnabled.state}`,
   );
+
+  // 插件市场（#708）：源配置持久化 + 全离线的「安装→启用→拒卸→卸载」
+  // 闭环。fetch 换成进程内替身（registry packument + tarball 都是现造的），
+  // 但其余全是真的：真解压落盘到 userData/plugins、真写 PluginMetaStore、
+  // 真在配置树上挂 file:// 条目、启用时真的动态 import——这条断言顺带
+  // 守住 esbuild CJS 打包必须保留原生 import() 的前提（R1 家族）。
+  console.log('\n插件市场（plugins.market.*）');
+  check(
+    '默认索引源为官方 raw URL',
+    marketGetEndpoint().endpoint === MARKET_ENDPOINT_DEFAULT && marketGetEndpoint().isDefault,
+  );
+  marketSetEndpoint('https://mirror.example.edu/market/index.json');
+  check(
+    'setEndpoint 持久化并回读（isDefault=false）',
+    marketGetEndpoint().endpoint === 'https://mirror.example.edu/market/index.json'
+      && !marketGetEndpoint().isDefault,
+  );
+  marketSetEndpoint('');
+  check('空串复位官方默认源', marketGetEndpoint().isDefault);
+
+  // 现造一个合法的 npm 发布包（ustar 头带校验和：市场解包器会验，
+  // 上面更新包用的 tarEntry 不带校验和，不能复用）
+  const marketTar = (name: string, body: string): Buffer => {
+    const data = Buffer.from(body, 'utf8');
+    const header = Buffer.alloc(512);
+    header.write(name, 0, 100, 'utf8');
+    header.write('0000644\0', 100);
+    header.write('0000000\0', 108);
+    header.write('0000000\0', 116);
+    header.write(data.length.toString(8).padStart(11, '0') + '\0', 124);
+    header.write('00000000000\0', 136);
+    header.write('        ', 148);
+    header.write('0', 156);
+    header.write('ustar\0', 257);
+    header.write('00', 263);
+    let sum = 0;
+    for (const byte of header) sum += byte;
+    header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148);
+    const padded = Buffer.alloc(Math.ceil(data.length / 512) * 512);
+    data.copy(padded);
+    return Buffer.concat([header, padded]);
+  };
+  const HELLO = 'polaris-plugin-hello';
+  const helloPkgJson = JSON.stringify({
+    name: HELLO,
+    version: '1.0.0',
+    description: 'A tiny smoke plugin',
+    polaris: { kind: 'panel', entry: 'index.js' },
+  });
+  const helloEntry = "module.exports = { name: 'hello-smoke', apply() {} };\n";
+  const helloTgz = gzipSync(
+    Buffer.concat([
+      marketTar('package/package.json', helloPkgJson),
+      marketTar('package/index.js', helloEntry),
+      Buffer.alloc(1024),
+    ]),
+  );
+  const tarballUrl = `https://registry.npmjs.org/${HELLO}/-/${HELLO}-1.0.0.tgz`;
+  const indexEntry = {
+    name: HELLO,
+    version: '1.0.0',
+    kind: 'panel',
+    description: 'A tiny smoke plugin',
+    publisher: 'polaris',
+    permissions: {},
+    tier: 'bronze',
+    badges: ['official'],
+  };
+  setMarketFetchForTesting((async (input: unknown) => {
+    const url = String(input);
+    if (url === MARKET_ENDPOINT_DEFAULT) {
+      return Response.json({ schemaVersion: 1, plugins: [indexEntry] });
+    }
+    if (url === `https://registry.npmjs.org/${HELLO}`) {
+      return Response.json({
+        name: HELLO,
+        versions: {
+          '1.0.0': {
+            dist: {
+              tarball: tarballUrl,
+              integrity: `sha512-${createHash('sha512').update(helloTgz).digest('base64')}`,
+            },
+          },
+        },
+      });
+    }
+    if (url === tarballUrl) return new Response(new Uint8Array(helloTgz));
+    return new Response('not found', { status: 404 });
+  }) as FetchImpl);
+
+  try {
+    const indexEntries = await marketFetchIndex().catch((err) => `threw: ${String(err)}`);
+    check(
+      'fetchIndex 返回校验后的条目',
+      Array.isArray(indexEntries) && indexEntries.length === 1 && indexEntries[0].name === HELLO,
+      typeof indexEntries === 'string' ? indexEntries : `count=${indexEntries.length}`,
+    );
+
+    const handle = marketInstall(HELLO, '1.0.0');
+    await awaitInstallForTesting(handle.jobId);
+    const meta = kernelPluginMeta();
+    check('安装记录已落 PluginMetaStore', meta?.get(`market:install:${HELLO}`) != null);
+    const installed = tree?.store[HELLO];
+    check(
+      '安装后树条目 = file:// 入口 + disabled（装/启分离）',
+      installed != null
+        && installed.options.name.startsWith('file://')
+        && installed.options.disabled === true
+        && installed.fiber == null,
+      `name=${installed?.options.name} disabled=${installed?.options.disabled}`,
+    );
+    check(
+      'plugins.list 可见安装物且 state=disabled',
+      pluginsList().find((info) => info.id === HELLO)?.state === 'disabled',
+    );
+
+    const helloEnabled = await pluginsEnable(HELLO).catch((err) => `threw: ${String(err)}`);
+    check(
+      '安装物可启用（file:// 动态 import 在打包主进程真实走通）',
+      typeof helloEnabled !== 'string' && helloEnabled.state === 'active',
+      typeof helloEnabled === 'string' ? helloEnabled : `state=${helloEnabled.state}`,
+    );
+
+    const refused = await marketUninstall(HELLO);
+    check(
+      'enabled 状态拒卸（错误作为数据返回）',
+      refused.ok === false && refused.code === 'plugin-enabled',
+      JSON.stringify(refused),
+    );
+
+    await pluginsDisable(HELLO);
+    const removed = await marketUninstall(HELLO);
+    check('禁用后卸载成功', removed.ok === true, JSON.stringify(removed));
+    check(
+      '卸载后树条目与盘面均已清理',
+      tree?.store[HELLO] == null && !existsSync(join(marketPluginsDir(), HELLO)),
+    );
+    check('卸载后安装记录已删', meta?.get(`market:install:${HELLO}`) === undefined);
+  } finally {
+    setMarketFetchForTesting(undefined);
+  }
 
   // storage 持久层（#609）：就绪性经 IPC 可见，数据要真的穿过一次「停机 →
   // 重启」仍然在——这正是配置树持久化存在的意义，光断言服务挂着不够。

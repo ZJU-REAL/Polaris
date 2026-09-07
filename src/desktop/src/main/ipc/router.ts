@@ -25,6 +25,7 @@ import { engineBootstrapStatus, kernelStatus, localBackend } from '../kernel';
 import { applyUpdate, checkForUpdate } from '../updates';
 import * as host from './methods.host';
 import * as local from './methods.local';
+import * as market from './methods.market';
 import * as plugins from './methods.plugins';
 
 function asString(params: unknown, key: string): string {
@@ -128,6 +129,13 @@ const HANDLERS: Record<MethodName, Handler> = {
     plugins.pluginsValidateConfig(asString(p, 'name'), asPluginConfig(p)),
   'plugins.exportTree': () => plugins.pluginsExportTree(),
   'plugins.importTree': (p) => plugins.pluginsImportTree(asPluginTreeExport(p)),
+  // plugins.market.*（#708）：包名/版本的语义校验（合法 npm 名、无路径字符）
+  // 在 kernel 的安装引擎里，这里只做 IPC 形状
+  'plugins.market.fetchIndex': () => market.marketFetchIndex(),
+  'plugins.market.install': (p) => market.marketInstall(asString(p, 'name'), asString(p, 'version')),
+  'plugins.market.uninstall': (p) => market.marketUninstall(asString(p, 'name')),
+  'plugins.market.getEndpoint': () => market.marketGetEndpoint(),
+  'plugins.market.setEndpoint': (p) => market.marketSetEndpoint(asString(p, 'endpoint')),
   // local.* 一期全部走到 agent 再以 ERR_CAPABILITY_UNAVAILABLE 结束（见 methods.local.ts）
   'local.latex.compile': (p) => local.latexCompile(p),
   'local.fs.pickFolder': (p) => local.pickFolder(p),

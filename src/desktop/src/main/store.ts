@@ -8,6 +8,8 @@ import { app } from 'electron';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import { MARKET_ENDPOINT_DEFAULT } from '../shared/contract';
+
 export interface WindowState {
   x?: number;
   y?: number;
@@ -20,12 +22,15 @@ export interface DesktopConfig {
   /** 空串 = 尚未配置，前端进入首启配置页。 */
   serverUrl: string;
   window: WindowState;
+  /** 插件市场索引源（#708）。可换源是一等能力，故进持久配置而不是写死。 */
+  marketEndpoint: string;
 }
 
 /** 内部分发时可用 POLARIS_DEFAULT_SERVER_URL 预填默认服务器，避免把内网地址写死进源码。 */
 const DEFAULTS: DesktopConfig = {
   serverUrl: process.env.POLARIS_DEFAULT_SERVER_URL ?? '',
   window: { width: 1440, height: 900, maximized: false },
+  marketEndpoint: MARKET_ENDPOINT_DEFAULT,
 };
 
 let cache: DesktopConfig | null = null;
@@ -41,6 +46,11 @@ export function readConfig(): DesktopConfig {
     cache = {
       serverUrl: typeof raw.serverUrl === 'string' ? raw.serverUrl : DEFAULTS.serverUrl,
       window: { ...DEFAULTS.window, ...(raw.window ?? {}) },
+      // 空串不保留：历史配置文件没有该键或被清空时一律回官方默认源
+      marketEndpoint:
+        typeof raw.marketEndpoint === 'string' && raw.marketEndpoint
+          ? raw.marketEndpoint
+          : DEFAULTS.marketEndpoint,
     };
   } catch {
     // 首次启动或文件损坏：回默认值，不阻断启动

@@ -30,6 +30,11 @@ import {
 
 export const NPM_REGISTRY = 'https://registry.npmjs.org'
 
+/** 安装阶段（#708）：桌面侧把它翻译成 job.progress 的进度点。
+    前三个由 installPlugin 在各阶段起点回调；register（记录落库 + 树上
+    挂条目）由 lifecycle.ts 的 installAndRegister 回调。 */
+export type InstallPhase = 'download' | 'verify' | 'extract' | 'register'
+
 /* ---------- 极简 tar 解析 ----------
 
    tar 是 512 字节块的序列：每个成员 = 1 个头块 + ceil(size/512) 个
@@ -145,6 +150,8 @@ export interface InstallPluginOptions {
   /** 插件根目录（桌面侧是 userData/plugins），本包不预设位置。 */
   pluginsDir: string
   fetchImpl?: FetchImpl
+  /** 阶段回调（#708）：长任务进度上报用，纯通知、抛错不接。 */
+  onPhase?: (phase: InstallPhase) => void
 }
 
 /** registry packument 里用到的字段。 */
@@ -173,6 +180,7 @@ export async function installPlugin(options: InstallPluginOptions): Promise<Inst
   }
 
   // 1. packument：scoped 包的 / 要转义（registry 的既定形状）
+  options.onPhase?.('download')
   const packumentUrl = `${registryUrl}/${name.replace('/', '%2f')}`
   const metaRes = await fetchImpl(packumentUrl)
   if (!metaRes.ok) {
@@ -207,6 +215,7 @@ export async function installPlugin(options: InstallPluginOptions): Promise<Inst
     throw new MarketError('tarball-http', `tarball download failed with HTTP ${tarballRes.status}: ${tarballUrl}`)
   }
   const tarball = Buffer.from(await tarballRes.arrayBuffer())
+  options.onPhase?.('verify')
   const actualSri = `sha512-${createHash('sha512').update(tarball).digest('base64')}`
   if (actualSri !== expectedSri) {
     throw new MarketError(
@@ -217,6 +226,7 @@ export async function installPlugin(options: InstallPluginOptions): Promise<Inst
 
   // 3. 解压解析（内存中完成全部路径校验，再统一落盘：
   //    路径穿越在写第一个字节之前就会被拒）
+  options.onPhase?.('extract')
   let tar: Buffer
   try {
     tar = gunzipSync(tarball)

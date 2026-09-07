@@ -1,14 +1,12 @@
 /* 市场契约 + 安装引擎（#700）的单元测试：零真网、零预生成二进制。
 
-   fixture tarball 在测试内用 node:zlib + 手写 ustar 头现场生成——
-   比提交 .tgz 二进制可复现（想改 fixture 改代码即可，diff 可读），
-   也顺便当 install.ts 里 tar 解析器的对拍实现。fetch 一律注入替身。 */
+   fixture tarball 在测试内用 node:zlib + 手写 ustar 头现场生成（#708 起
+   抽到 helpers/market-fixture.ts 与生命周期测试共用）。fetch 一律注入替身。 */
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   MarketError,
@@ -22,96 +20,14 @@ import {
   type FetchImpl,
   type MarketErrorCode,
 } from '../src/index.ts'
-
-/* ---------- fixture：手写 ustar 头生成 .tgz ---------- */
-
-interface TarSpec {
-  name: string
-  data?: string
-  /** '0'=文件 '2'=软链 '5'=目录 …；默认文件。 */
-  typeflag?: string
-}
-
-function tarHeader(name: string, size: number, typeflag: string): Buffer {
-  const block = Buffer.alloc(512)
-  block.write(name, 0, 100, 'utf8')
-  block.write('0000644\0', 100) // mode
-  block.write('0000000\0', 108) // uid
-  block.write('0000000\0', 116) // gid
-  block.write(size.toString(8).padStart(11, '0') + '\0', 124)
-  block.write('00000000000\0', 136) // mtime
-  block.write('        ', 148) // chksum 先占 8 个空格参与求和
-  block.write(typeflag, 156)
-  block.write('ustar\0', 257)
-  block.write('00', 263)
-  let sum = 0
-  for (const byte of block) sum += byte
-  block.write(sum.toString(8).padStart(6, '0') + '\0 ', 148)
-  return block
-}
-
-function makeTgz(specs: TarSpec[]): Buffer {
-  const blocks: Buffer[] = []
-  for (const spec of specs) {
-    const data = Buffer.from(spec.data ?? '', 'utf8')
-    const typeflag = spec.typeflag ?? '0'
-    blocks.push(tarHeader(spec.name, typeflag === '0' ? data.length : 0, typeflag))
-    if (typeflag === '0' && data.length) {
-      const padded = Buffer.alloc(Math.ceil(data.length / 512) * 512)
-      data.copy(padded)
-      blocks.push(padded)
-    }
-  }
-  blocks.push(Buffer.alloc(1024)) // 结尾两个零块
-  return gzipSync(Buffer.concat(blocks))
-}
-
-const HELLO_ENTRY = "module.exports = { name: 'hello', apply() {} }\n"
-
-/** polaris=null 表示整个字段省略（manifest-missing 用例）。 */
-function helloPkg(polaris: Record<string, unknown> | null, description = 'A tiny hello plugin') {
-  const pkg: Record<string, unknown> = { name: 'polaris-plugin-hello', version: '1.0.0', description }
-  if (polaris !== null) pkg.polaris = polaris
-  return JSON.stringify(pkg, null, 2)
-}
-
-const GOOD_POLARIS = {
-  kind: 'panel',
-  entry: 'index.js',
-  description: { zh: '示例面板插件', en: 'An example panel plugin' },
-  permissions: { network: false },
-  runtime: 'in-process',
-  locales: ['zh', 'en'],
-}
-
-function helloTgz(overrides: { polaris?: Record<string, unknown> | null; description?: string; specs?: TarSpec[] }) {
-  return makeTgz(
-    overrides.specs ?? [
-      { name: 'package/package.json', data: helloPkg(overrides.polaris === undefined ? GOOD_POLARIS : overrides.polaris, overrides.description) },
-      { name: 'package/index.js', data: HELLO_ENTRY },
-    ],
-  )
-}
-
-/* ---------- fetch 替身：packument JSON + tarball 二进制 ---------- */
-
-const REGISTRY = 'https://registry.test'
-const TARBALL_URL = `${REGISTRY}/polaris-plugin-hello/-/polaris-plugin-hello-1.0.0.tgz`
-
-function registryFetch(tgz: Buffer, opts: { integrity?: string } = {}): FetchImpl {
-  const integrity = opts.integrity ?? `sha512-${createHash('sha512').update(tgz).digest('base64')}`
-  return (async (input: unknown) => {
-    const url = String(input)
-    if (url === `${REGISTRY}/polaris-plugin-hello`) {
-      return Response.json({
-        name: 'polaris-plugin-hello',
-        versions: { '1.0.0': { dist: { tarball: TARBALL_URL, integrity } } },
-      })
-    }
-    if (url === TARBALL_URL) return new Response(new Uint8Array(tgz))
-    return new Response('not found', { status: 404 })
-  }) as FetchImpl
-}
+import {
+  GOOD_POLARIS,
+  HELLO_ENTRY,
+  REGISTRY,
+  helloPkg,
+  helloTgz,
+  registryFetch,
+} from './helpers/market-fixture.ts'
 
 async function expectCode(promise: Promise<unknown>, code: MarketErrorCode): Promise<void> {
   await expect(promise).rejects.toMatchObject({ name: 'MarketError', code })

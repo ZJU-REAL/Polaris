@@ -26,16 +26,20 @@
 
 import { app } from 'electron';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import {
   Loader,
   MemoryConfigTreeStore,
   SqliteTree,
+  createImportGuard,
   createKernel,
   registerBuiltins,
   storage,
+  verifyInstalledEntries,
   type ConfigEntry,
   type ConfigTreeStore,
+  type InstallVerifyIssue,
   type Kernel,
   type LegacyEngineConfig,
   type PluginMetaStore,
@@ -46,6 +50,15 @@ import type { EngineBootstrapStatus, KernelStatus, LocalBackendInfo } from '../s
 import { bootstrapEngine } from './engine-bootstrap';
 
 let kernel: Kernel | null = null;
+
+/**
+ * 市场安装物的落盘根（#708）：userData/plugins/<包名>/<版本>/。刻意在
+ * asar 之外——打包态 asar 内容不可写，且 loader 对三方包走真实的动态
+ * import，必须是文件系统上的普通路径。
+ */
+export function marketPluginsDir(): string {
+  return join(app.getPath('userData'), 'plugins');
+}
 
 /**
  * 内嵌引擎引导进度，kernel.engineBootstrapStatus 直接读它。
@@ -144,14 +157,54 @@ export async function startKernel(): Promise<Kernel> {
   // 工作（首启种子也照种），只是这次会话的改动不落盘。
   const storageSvc = instance.ctx.get('storage') as StorageService | undefined;
   const store: ConfigTreeStore = storageSvc?.configTree ?? new MemoryConfigTreeStore();
+  const pluginMeta = storageSvc?.pluginMeta;
+
+  // 三方插件动态 import 的解析基准（#708）：vendor loader 对相对 specifier
+  // 用 new URL(name, ctx.baseUrl) 解析（也是 internal loader 的 parentURL），
+  // EntryTree 构造时从父 ctx 拷贝，所以必须赶在 Loader/SqliteTree 装载之前
+  // 设到根 ctx 上。市场条目虽然存的是绝对 file:// URL 不依赖它，但这让
+  // 手写的相对条目（开发者本地插件）也有明确语义。尾部斜杠是 URL 基准
+  // 目录的规矩，少了最后一段会被当文件名换掉。
+  instance.ctx.baseUrl = `${pathToFileURL(marketPluginsDir()).href}/`;
+
+  // 装载前哈希复核（#708）主挂点：树装载之前扫一遍安装记录，被篡改的
+  // 安装物在打包态直接改持久树为 disabled——树装载用的是事务化 reconcile，
+  // 单条目 import 抛错会整树回滚，只有装载前改 store 能做到「坏的禁掉、
+  // 其余照常」。开发态仅告警（本地改入口文件是正常开发动作）。
+  let installIssues: InstallVerifyIssue[] = [];
+  if (pluginMeta) {
+    try {
+      installIssues = await verifyInstalledEntries({
+        metaStore: pluginMeta,
+        store,
+        strict: app.isPackaged,
+      });
+      for (const issue of installIssues) console.warn(`[kernel] ${issue.message}`);
+    } catch (err) {
+      console.error('[kernel] 安装记录哈希复核失败（跳过，不阻断启动）：', err);
+    }
+  }
 
   let configTree: SqliteTree | undefined;
   try {
     if ((await store.load()).length === 0) await store.save(SEED_ENTRIES);
     await instance.ctx.plugin(Loader);
     registerBuiltins(instance.ctx.loader);
-    await instance.ctx.plugin(SqliteTree, { store });
+    await instance.ctx.plugin(SqliteTree, {
+      store,
+      // 第二道闸：会话运行中被篡改、用户再点启用时在 import 阶段拒绝
+      //（enable 是单条目 update，失败只回滚它自己，错误经 IPC 给用户）
+      guardImport: pluginMeta
+        ? createImportGuard({
+            metaStore: pluginMeta,
+            strict: app.isPackaged,
+            warn: (message) => console.warn(`[kernel] ${message}`),
+          })
+        : undefined,
+    });
     configTree = instance.ctx.get('configTree') as SqliteTree | undefined;
+    // 扫描结论挂到条目注记上：被强制禁用的条目要在插件列表里说清原因
+    for (const issue of installIssues) configTree?.warnings.set(issue.entryId, issue.message);
   } catch (err) {
     // 树挂不上（数据损坏 / 某条目装载失败整树回滚）只损失插件能力，壳必须
     // 照常起：configTree 留空，引擎注入被跳过，前端按 localBackend=null 回落远端。

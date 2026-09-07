@@ -14,7 +14,7 @@ import { MarketError, validateMarketIndex, type MarketIndexEntry } from './contr
 
 /** 官方索引的 raw URL（主仓 market/index.json）。 */
 export const OFFICIAL_INDEX_URL =
-  'https://raw.githubusercontent.com/tricktreat/Polaris/main/market/index.json'
+  'https://raw.githubusercontent.com/ZJU-REAL/Polaris/main/market/index.json'
 
 const DEFAULT_TIMEOUT_MS = 15_000
 

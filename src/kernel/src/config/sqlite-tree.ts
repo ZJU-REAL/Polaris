@@ -193,6 +193,12 @@ export namespace SqliteTree {
   export interface Config {
     /** 树的持久化后座：SqliteConfigTreeStore（生产）或 Memory（测试）。 */
     store: ConfigTreeStore
+    /**
+     * import 前置闸（#708）：非 cordis: 的 specifier 在真正 import 之前
+     * 先过它，抛错即拒绝装载。市场安装物的哈希复核（createImportGuard）
+     * 挂在这里；树本身不关心闸的语义，保持通用。
+     */
+    guardImport?: (name: string) => void | Promise<void>
   }
 }
 
@@ -208,6 +214,13 @@ export class SqliteTree extends EntryTree {
   #dirty = false
   #writeTask: NodeJS.Timeout | undefined
   #writeQueue: Promise<void> = Promise.resolve()
+
+  /**
+   * 条目级诊断注记（#708）：装载路径之外得出的警告（如启动扫描发现
+   * 安装物哈希不符被强制禁用）。listEntries 把它并进 error 面——条目
+   * 没有 fiber（disabled）时这是唯一能到达前端的解释渠道。
+   */
+  readonly warnings = new Map<string, string>()
 
   constructor(ctx: Context, public config: SqliteTree.Config) {
     super(ctx)
@@ -238,10 +251,20 @@ export class SqliteTree extends EntryTree {
     // 走到 Entry.update「先 dispose 旧 fiber 再 start」之后才炸，回滚只能
     // 重建一个新 fiber。在 import 阶段就抛错，Entry.update 会在动手前
     // 失败——原 fiber 原样活着，这正是坏包回滚想要的语义。
-    if (name.startsWith('cordis:') && !(name.slice(7) in this.ctx.loader.builtins)) {
-      throw new Error(`未知的内置插件 "${name}"（未在 loader.builtins 注册）`)
+    if (name.startsWith('cordis:')) {
+      if (!(name.slice(7) in this.ctx.loader.builtins)) {
+        throw new Error(`未知的内置插件 "${name}"（未在 loader.builtins 注册）`)
+      }
+      return super.import(name, getOuterStack)
     }
-    return super.import(name, getOuterStack)
+    // 非内置 specifier 先过 guardImport（见 Config 注释）：闸抛错发生在
+    // import 阶段，享受与上面同款的「动手前失败、原 fiber 原样活着」语义
+    const guard = this.config.guardImport
+    if (!guard) return super.import(name, getOuterStack)
+    return (async () => {
+      await guard(name)
+      return super.import(name, getOuterStack)
+    })()
   }
 
   /** plugins.list（#705）：树条目 + 运行态的扁平视图。 */
@@ -255,6 +278,11 @@ export class SqliteTree extends EntryTree {
         state,
       }
       if (error !== undefined) info.error = error
+      else {
+        // 无运行时错误才看注记：fiber 真实失败的信息优先级更高
+        const warning = this.warnings.get(entry.id)
+        if (warning !== undefined) info.error = warning
+      }
       // 组条目的 config 是子条目列表（loader 内部表示），不当作插件配置暴露
       if (!entry.options.group && entry.options.config !== undefined) {
         info.config = entry.options.config

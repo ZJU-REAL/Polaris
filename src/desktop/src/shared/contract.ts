@@ -126,7 +126,8 @@ export interface PluginEntryInfo {
   name: string;
   disabled: boolean;
   state: 'active' | 'disabled' | 'error' | 'pending';
-  /** 仅 state='error' 时存在：fiber 记录的失败原因。 */
+  /** state='error' 时是 fiber 记录的失败原因；disabled 条目上也可能携带
+      诊断注记（#708：安装物哈希不符被强制禁用的解释）。 */
   error?: string;
   /** 条目当前配置。组条目（children 容器）不暴露 config。 */
   config?: unknown;
@@ -158,6 +159,39 @@ export interface PluginTreeExport {
   version: 1;
   entries: PluginTreeEntry[];
 }
+
+/* ---- plugins.market.*（#708）：官方插件市场的载荷类型 ---- */
+
+/** 官方市场索引源的默认地址（主仓 market/index.json 的 raw URL）。 */
+export const MARKET_ENDPOINT_DEFAULT =
+  'https://raw.githubusercontent.com/ZJU-REAL/Polaris/main/market/index.json';
+
+/** 市场索引单条目（kernel 侧 MarketIndexEntry 的镜像形状）。 */
+export interface MarketIndexEntry {
+  /** npm 包名（polaris-plugin-* / @scope/polaris-plugin-*）。 */
+  name: string;
+  /** 上架版本；安装时按此精确版本向 registry 解析。 */
+  version: string;
+  kind: 'datasource' | 'record-kind' | 'runner' | 'agent-tool' | 'workflow' | 'discipline' | 'panel';
+  description: string;
+  publisher: string;
+  /** 权限摘要：如实展示，v1 不 enforcement。 */
+  permissions: { network?: boolean; filesystem?: boolean };
+  tier: 'bronze' | 'silver' | 'gold' | 'platinum';
+  /** 治理徽章（official/verified/preview…），开放枚举。 */
+  badges: string[];
+}
+
+/** 当前市场索引源。isDefault 供 UI 显示「官方源/自定义源」。 */
+export interface MarketEndpoint {
+  endpoint: string;
+  isDefault: boolean;
+}
+
+/** 卸载结果作为数据返回：enabled 拒卸是业务分支，不是异常。 */
+export type MarketUninstallResult =
+  | { ok: true }
+  | { ok: false; code: 'plugin-enabled' | 'not-installed'; message: string };
 
 /** 服务器连通性探测结果（打 GET {url}/api/health）。 */
 export type ServerProbe =
@@ -208,6 +242,22 @@ export interface Methods {
   'plugins.exportTree': { params: void; result: PluginTreeExport };
   /** 全量替换整树。导入前 kernel 自动留 last-good 快照，失败回滚。 */
   'plugins.importTree': { params: { tree: PluginTreeExport }; result: void };
+
+  /* ---- plugins.market.*（#708）：官方源市场。能力门槛同上（plugins.manage），
+     且 install/uninstall 还要求持久层在位（安装记录必须落库，否则哈希
+     复核链路断裂）。 ---- */
+
+  /** 拉取并校验市场索引（源地址读 getEndpoint 的持久配置）。 */
+  'plugins.market.fetchIndex': { params: void; result: MarketIndexEntry[] };
+  /** 安装插件：返回 JobHandle，下载/校验/解压/登记四个进度点走 job.* 事件。
+      装/启分离：装完只在树上挂 disabled 条目，代码一行不执行。 */
+  'plugins.market.install': { params: { name: string; version: string }; result: JobHandle };
+  /** 卸载插件。树条目仍启用时拒绝（错误作为数据返回，先禁用再卸）。 */
+  'plugins.market.uninstall': { params: { name: string }; result: MarketUninstallResult };
+  /** 当前索引源。 */
+  'plugins.market.getEndpoint': { params: void; result: MarketEndpoint };
+  /** 设置索引源；空串 = 复位官方默认源。 */
+  'plugins.market.setEndpoint': { params: { endpoint: string }; result: MarketEndpoint };
 
   /* ---- local.*：第二期的本地计算能力 ----
      现在全部声明但不实现（一律抛 ERR_CAPABILITY_UNAVAILABLE），目的是把

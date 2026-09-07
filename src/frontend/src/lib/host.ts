@@ -270,3 +270,69 @@ export async function exportPluginTree(): Promise<PluginTreeExport | null> {
 export async function importPluginTree(tree: PluginTreeExport): Promise<void> {
   await bridge()?.invoke('plugins.importTree', { tree });
 }
+
+/* —— 插件市场（plugins.market.*，#708；contract.ts 的手工镜像）——
+   显隐同样读 plugins.manage 能力位；web 端（无桥）一律 null/no-op。 */
+
+/** 市场索引单条目（desktop contract.ts 的 MarketIndexEntry 镜像）。 */
+export interface MarketIndexEntry {
+  name: string;
+  version: string;
+  kind: 'datasource' | 'record-kind' | 'runner' | 'agent-tool' | 'workflow' | 'discipline' | 'panel';
+  description: string;
+  publisher: string;
+  /** 权限摘要：如实展示，v1 不 enforcement。 */
+  permissions: { network?: boolean; filesystem?: boolean };
+  tier: 'bronze' | 'silver' | 'gold' | 'platinum';
+  badges: string[];
+}
+
+/** 当前市场索引源；isDefault 供 UI 显示「官方源/自定义源」。 */
+export interface MarketEndpoint {
+  endpoint: string;
+  isDefault: boolean;
+}
+
+/** 卸载结果是数据：enabled 拒卸提示用户先禁用，不当异常抛。 */
+export type MarketUninstallResult =
+  | { ok: true }
+  | { ok: false; code: 'plugin-enabled' | 'not-installed'; message: string };
+
+/** 拉取市场索引（源地址是主进程的持久配置）；web 端返回 null。 */
+export async function fetchMarketIndex(): Promise<MarketIndexEntry[] | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('plugins.market.fetchIndex')) as MarketIndexEntry[];
+}
+
+/** 安装插件：返回 JobHandle，下载/校验/解压/登记进度走 job.* 事件。
+    装/启分离：装完是 disabled 条目，用户在插件列表里显式启用。 */
+export async function installMarketPlugin(
+  name: string,
+  version: string,
+): Promise<{ jobId: string } | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('plugins.market.install', { name, version })) as { jobId: string };
+}
+
+/** 卸载插件；条目仍启用时返回 ok:false（先禁用再卸）。 */
+export async function uninstallMarketPlugin(name: string): Promise<MarketUninstallResult | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('plugins.market.uninstall', { name })) as MarketUninstallResult;
+}
+
+/** 当前索引源；web 端返回 null。 */
+export async function getMarketEndpoint(): Promise<MarketEndpoint | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('plugins.market.getEndpoint')) as MarketEndpoint;
+}
+
+/** 设置索引源；空串复位官方默认源。 */
+export async function setMarketEndpoint(endpoint: string): Promise<MarketEndpoint | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('plugins.market.setEndpoint', { endpoint })) as MarketEndpoint;
+}

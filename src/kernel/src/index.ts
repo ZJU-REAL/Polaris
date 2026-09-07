@@ -85,9 +85,28 @@ export {
   parseTar,
   uninstallPlugin,
   verifyEntryHash,
+  type InstallPhase,
   type InstallPluginOptions,
   type UninstallPluginOptions,
 } from './market/install.ts'
+export {
+  INSTALL_RECORD_PREFIX,
+  createImportGuard,
+  entryFileUrl,
+  installAndRegister,
+  installRecordKey,
+  packageEntryId,
+  uninstallAndRemove,
+  verifyInstalledEntries,
+  type ImportGuardOptions,
+  type InstallAndRegisterOptions,
+  type InstallAndRegisterResult,
+  type InstallVerifyIssue,
+  type PluginMetaLike,
+  type UninstallAndRemoveOptions,
+  type UninstallOutcome,
+  type VerifyInstalledOptions,
+} from './market/lifecycle.ts'
 export { Context } from '@deepseek-ai/cordis'
 // 与上一行的 Context 同理：桌面侧建树要 ctx.plugin(Loader)，从 kernel
 // 统一转出，避免 desktop 直接依赖 vendor 包名
