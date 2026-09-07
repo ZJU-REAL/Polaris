@@ -165,6 +165,9 @@ importers:
       '@deepseek-ai/cordis':
         specifier: workspace:*
         version: link:../../vendor/deepseek-cordis/cordis
+      '@deepseek-ai/cordis-plugin-loader':
+        specifier: workspace:*
+        version: link:../../vendor/deepseek-cordis/loader
       '@deepseek-ai/cosmokit':
         specifier: workspace:*
         version: link:../../vendor/deepseek-cordis/cosmokit

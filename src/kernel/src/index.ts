@@ -10,6 +10,8 @@ export {
   type ConfigEntry,
   type ConfigTreeStore,
 } from './config/tree.ts'
+export { SqliteTree } from './config/sqlite-tree.ts'
+export { BUILTIN_PLUGINS, desktopProbe, registerBuiltins } from './plugins/builtins.ts'
 export {
   ENGINE_CONTAINER,
   LegacyEngineConfig,
@@ -79,3 +81,6 @@ export {
   type UninstallPluginOptions,
 } from './market/install.ts'
 export { Context } from '@deepseek-ai/cordis'
+// 与上一行的 Context 同理：桌面侧建树要 ctx.plugin(Loader)，从 kernel
+// 统一转出，避免 desktop 直接依赖 vendor 包名
+export { Loader } from '@deepseek-ai/cordis-plugin-loader'

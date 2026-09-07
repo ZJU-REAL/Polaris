@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@deepseek-ai/cordis": "workspace:*",
+    "@deepseek-ai/cordis-plugin-loader": "workspace:*",
     "@deepseek-ai/cosmokit": "workspace:*",
     "@deepseek-ai/schemastery": "workspace:*"
   },
