@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e867fcbae4ea"  # Method purpose/mechanism vectors (#663)
+HEAD_REVISION = "d2dcfc8b899f"  # Resources, leases, polymorphic credentials (#677)
+METHOD_VECTORS_REVISION = "e867fcbae4ea"  # Method purpose/mechanism vectors (#663)
 EXTRACTIONS_REVISION = "58b0bc2d809d"  # Paper skeleton extractions (#661)
 CITATIONS_REVISION = "57543f6328a1"  # Paper citation edges (#639)
 HYPOTHESIS_TREE_REVISION = "7e2b9f4c1a86"  # Hypothesis/experiment tree nodes (#637)
@@ -161,6 +162,10 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "registration_codes",  # head 已删；仅 downgrade 断言用
                     "project_members",  # head 已删（#625）；仅 downgrade 断言用
                     "hypothesis_nodes",
+                    "connection_credentials",  # head 新增（#677）：ssh_credentials 改名
+                    "ssh_credentials",  # head 已改名（#677）；仅 downgrade 断言用
+                    "resources",
+                    "resource_leases",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -250,8 +255,28 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "payload" in columns["review_sessions"]
     assert "author_name" in columns["review_messages"]
     assert "agent_persona" not in columns["review_messages"]
-    # M4：ssh_credentials 表 + experiments / experiment_runs 新列
-    assert "ssh_credentials" in columns["_tables"]
+    # M4 的 ssh_credentials 在 head 已泛化改名为 connection_credentials（#677）
+    assert "ssh_credentials" not in columns["_tables"]
+    assert "connection_credentials" in columns["_tables"]
+    assert {"kind", "payload_encrypted", "private_key_encrypted", "proxy_url"} <= columns[
+        "connection_credentials"
+    ]
+    assert "ix_connection_credentials_user_id" in _index_names(db_path, "connection_credentials")
+    # R2（#677）：资源登记与租约表
+    assert {"resources", "resource_leases"} <= columns["_tables"]
+    assert {
+        "owner_id",
+        "name",
+        "kind",
+        "capacity",
+        "exclusive",
+        "credential_id",
+        "config",
+    } <= columns["resources"]
+    assert {"resource_id", "run_id", "acquired_at", "released_at", "note"} <= columns[
+        "resource_leases"
+    ]
+    assert "ix_resource_leases_run_id" in _index_names(db_path, "resource_leases")
     assert {"project_id", "voyage_id", "credential_id", "report", "metrics"} <= columns[
         "experiments"
     ]
@@ -583,7 +608,18 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["paper_extractions"]
     assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
 
-    # 先退掉方法向量表（#663）：抽取产物表不受影响。
+    # 先退掉资源/租约与凭据多态化（#677）：ssh_credentials 按原形状回来。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == METHOD_VECTORS_REVISION
+    assert not {"resources", "resource_leases"} & columns["_tables"]
+    assert "connection_credentials" not in columns["_tables"]
+    assert "ssh_credentials" in columns["_tables"]
+    assert not {"kind", "payload_encrypted"} & columns["ssh_credentials"]
+    assert "ix_ssh_credentials_user_id" in _index_names(db_path, "ssh_credentials")
+    assert "method_vectors" in columns["_tables"]  # 只退一步：方法向量表仍在
+
+    # 再退掉方法向量表（#663）：抽取产物表不受影响。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == EXTRACTIONS_REVISION
@@ -972,6 +1008,9 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
+    # 资源/租约/多态凭据回归（#677）
+    assert {"resources", "resource_leases", "connection_credentials"} <= columns["_tables"]
+    assert "ssh_credentials" not in columns["_tables"]
     assert "paper_extractions" in columns["_tables"]  # 抽取产物表回归（#661）
     assert "paper_citations" in columns["_tables"]  # 引文边表回归（#639）
     assert "effort" in columns["model_routes"]

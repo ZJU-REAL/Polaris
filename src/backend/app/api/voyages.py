@@ -301,6 +301,10 @@ async def answer_voyage_ask(
         ask.status = "consumed"
         run.status = "failed"
         await session.commit()
+        # 资源租约兜底释放（R2 #677）：不经引擎 _set_status 的终态写入点之一
+        from app.services import resource_leases as resource_leases_service
+
+        await resource_leases_service.release_for_run(session, run.id)
         await bus.publish_voyage_event(
             run.id, "status", {"status": run.status, "cursor": run.cursor}
         )

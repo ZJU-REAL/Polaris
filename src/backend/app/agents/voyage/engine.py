@@ -576,6 +576,12 @@ class VoyageEngine:
             run.status = await self._current_db_status(session, run.id)
             raise _ExternallyTerminated(run.status)
         run.status = status
+        if status in TERMINAL_STATUSES:
+            # 资源租约兜底释放（R2 #677）：不管以哪种终态落定都不再占资源。
+            # 正常路径由 runner cleanup 显式释放，这里是最后防线（幂等，无租约 no-op）
+            from app.services import resource_leases as resource_leases_service
+
+            await resource_leases_service.release_for_run(session, run.id)
         if status == "done":
             # 终态联动：仍非终态的关联实验随 voyage 落定为 done（报告动作完全不写
             # 终态，用户「接受当前结果」等路径都汇到这里；无关联实验时是 noop）

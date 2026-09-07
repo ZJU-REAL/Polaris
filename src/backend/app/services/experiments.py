@@ -152,7 +152,9 @@ async def create_experiment(
     if idea.status != "promoted":
         raise IdeaNotPromotedError(str(idea.id))
     credential = await session.get(SSHCredential, data.credential_id)
-    if credential is None or credential.user_id != user_id:
+    # kind 校验（#677 凭据多态化后）：实验直跑只吃 ssh 凭据，别的 kind 私钥列为空，
+    # 放进来会在 ssh_exec 解密时炸得不知所云——这里当不存在处理
+    if credential is None or credential.user_id != user_id or credential.kind != "ssh":
         raise CredentialNotFoundError(str(data.credential_id))
 
     params = data.params

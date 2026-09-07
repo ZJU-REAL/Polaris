@@ -191,5 +191,9 @@ async def cancel_voyage(session: AsyncSession, run: VoyageRun) -> VoyageRun:
     await messages_service.supersede_open_asks(session, run.id)
     run.status = "cancelled"
     await session.commit()
+    # 资源租约兜底释放（R2 #677）：取消不走引擎的 _set_status，这里补上同款防线
+    from app.services import resource_leases as resource_leases_service
+
+    await resource_leases_service.release_for_run(session, run.id)
     await session.refresh(run)
     return run

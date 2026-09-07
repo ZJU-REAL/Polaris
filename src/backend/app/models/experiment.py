@@ -42,7 +42,7 @@ class Experiment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("voyage_runs.id", ondelete="SET NULL"), index=True
     )
     credential_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("ssh_credentials.id", ondelete="SET NULL")
+        ForeignKey("connection_credentials.id", ondelete="SET NULL")
     )
     # {"hypotheses": [{text, status}], "repro_strategy", "steps", "budget_estimate"}
     plan: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)

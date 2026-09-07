@@ -62,9 +62,10 @@ from app.models.paper_extraction import PaperExtraction
 from app.models.project import Project
 from app.models.publication import UserAuthorProfile, UserPublication
 from app.models.research_digest import LibraryResearchDigest
+from app.models.resource import Resource, ResourceLease
 from app.models.review import ReviewMessage, ReviewSession
 from app.models.skill import Skill, SkillListing, SkillVersion, UserSkill
-from app.models.ssh_credential import SSHCredential
+from app.models.ssh_credential import ConnectionCredential, SSHCredential
 from app.models.system_setting import SystemSetting
 from app.models.topic_shelf import TopicPaper
 from app.models.user import User
@@ -134,8 +135,11 @@ __all__ = [
     "PaperUserMeta",
     "PaperVector",
     "Project",
+    "ConnectionCredential",
     "ReviewMessage",
     "ReviewSession",
+    "Resource",
+    "ResourceLease",
     "SSHCredential",
     "Skill",
     "SkillListing",

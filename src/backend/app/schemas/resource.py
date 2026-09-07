@@ -1,0 +1,76 @@
+"""资源与连接凭据 schema（R2 #677）。凭据 Read 模型绝不含任何密钥字段。"""
+
+import uuid
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+ResourceKind = Literal["host", "queue", "license_pool", "instrument"]
+CredentialKind = Literal["ssh", "grpc", "visa", "http"]
+
+
+class ResourceCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    kind: ResourceKind
+    capacity: int = Field(default=1, ge=1)
+    exclusive: bool = True
+    credential_id: uuid.UUID | None = None
+    # kind 特定的非敏感配置；必填键在服务层校验（queue 要 queue 名、
+    # license_pool 要 feature），报错才能带上 kind 上下文
+    config: dict[str, Any] | None = None
+
+
+class ResourceUpdate(BaseModel):
+    """PATCH 语义：只更新给了的字段（kind 不可改——改类型等于换资源，重建去）。"""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    capacity: int | None = Field(default=None, ge=1)
+    exclusive: bool | None = None
+    credential_id: uuid.UUID | None = None
+    config: dict[str, Any] | None = None
+
+
+class ResourceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    kind: str
+    capacity: int
+    exclusive: bool
+    credential_id: uuid.UUID | None
+    config: dict[str, Any] | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConnectionCredentialCreate(BaseModel):
+    """通用凭据创建（各 kind 载荷约定见 app/models/ssh_credential.py docstring）。
+
+    ssh 也可以走这里（payload.private_key 必填，落存量专列）；但现有前端
+    继续用 /ssh-credentials 老端点，两条路殊途同归。
+    """
+
+    name: str = Field(min_length=1, max_length=255)
+    kind: CredentialKind
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(default=22, ge=1, le=65535)
+    username: str | None = Field(default=None, max_length=255)
+    # 敏感载荷（整体 Fernet 加密入库，绝不回传）
+    payload: dict[str, Any] = Field(default_factory=dict)
+    proxy_url: str | None = Field(default=None, pattern=r"^https?://[A-Za-z0-9.\-]+(:\d+)?$")
+
+
+class ConnectionCredentialRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    kind: str
+    name: str
+    host: str
+    port: int
+    username: str | None
+    created_at: datetime
+    last_verified_at: datetime | None
+    proxy_url: str | None

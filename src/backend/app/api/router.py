@@ -33,6 +33,7 @@ from app.api import (
     presentations,
     projects,
     publications,
+    resources,
     search,
     shelf,
     skills,
@@ -83,6 +84,8 @@ api_router.include_router(market.router)
 api_router.include_router(mcp_meta.router)
 api_router.include_router(presentations.router)
 api_router.include_router(ssh_credentials.router)
+api_router.include_router(resources.router)
+api_router.include_router(resources.credentials_router)
 api_router.include_router(tts.router)
 api_router.include_router(evidence.router)
 api_router.include_router(experiments.router)

@@ -114,5 +114,9 @@ async def fail_voyage(session: AsyncSession, voyage_id: uuid.UUID) -> VoyageRun 
         return run
     run.status = "failed"
     await session.commit()
+    # 资源租约兜底释放（R2 #677）：驳回失败的 run 不再占资源
+    from app.services import resource_leases as resource_leases_service
+
+    await resource_leases_service.release_for_run(session, run.id)
     await session.refresh(run)
     return run
