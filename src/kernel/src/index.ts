@@ -47,4 +47,35 @@ export {
   type CordisProjectsAdapterOptions,
 } from './sources/cordis-projects.ts'
 export { SourcesConfig, sources, type SourcesService } from './plugins/sources.ts'
+export {
+  MarketError,
+  PLUGIN_KINDS,
+  PLUGIN_RUNTIMES,
+  QUALITY_TIERS,
+  isValidPackageName,
+  lintDescription,
+  validateMarketIndex,
+  validateMarketIndexEntry,
+  validatePolarisManifest,
+  type InstallRecord,
+  type ManifestPermissions,
+  type MarketErrorCode,
+  type MarketIndex,
+  type MarketIndexEntry,
+  type MarketPermissions,
+  type PluginKind,
+  type PluginRuntime,
+  type PolarisManifest,
+  type QualityTier,
+} from './market/contract.ts'
+export { OFFICIAL_INDEX_URL, fetchIndex, type FetchIndexOptions } from './market/index-client.ts'
+export {
+  NPM_REGISTRY,
+  installPlugin,
+  parseTar,
+  uninstallPlugin,
+  verifyEntryHash,
+  type InstallPluginOptions,
+  type UninstallPluginOptions,
+} from './market/install.ts'
 export { Context } from '@deepseek-ai/cordis'
