@@ -73,8 +73,9 @@ export function openExternal(url: string): void {
   }
 }
 
-export function copyText(text: string): boolean {
-  clipboard.writeText(text);
+export async function copyText(text: string): Promise<boolean> {
+  // Electron 44 起 clipboard 对齐 W3C 异步 API，writeText 返回 Promise。
+  await clipboard.writeText(text);
   return true;
 }
 

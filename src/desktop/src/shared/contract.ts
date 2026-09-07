@@ -85,6 +85,8 @@ export interface KernelStatus {
   started: boolean;
   name: string;
   plugins: number;
+  /** SQLite 持久层（#609）是否就绪。false = 本次会话配置树不落盘。 */
+  storage: boolean;
 }
 
 /**

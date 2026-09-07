@@ -222,6 +222,12 @@ async function groupNoEngine(): Promise<void> {
 
     const mounted = (await page.evaluate('document.querySelector("#root")?.childElementCount ?? 0')) as number;
     check('React 应用已挂载', mounted > 0, `children=${mounted}`);
+
+    // storage 持久层（#609）与引擎无关，无引擎时也必须随壳就绪
+    const ks = (await page.evaluate(
+      `window.polaris.invoke('kernel.status').catch(() => null)`,
+    )) as { storage?: boolean } | null;
+    check('kernel storage 持久层就绪', ks?.storage === true, `status=${JSON.stringify(ks)}`);
   } catch (err) {
     check('无引擎回落组执行完成', false, String(err).slice(0, 400));
   } finally {

@@ -68,6 +68,12 @@ jobs:
       - name: Typecheck shell
         run: pnpm --dir src/desktop run lint
 
+      # Electron >= 42 no longer downloads its binary in a postinstall script;
+      # the first run of the electron bin fetches it on demand. Materialize it
+      # explicitly so the chrome-sandbox fix below has a file to operate on.
+      - name: Download Electron binary
+        run: pnpm --dir src/desktop exec install-electron
+
       # Electron aborts at startup unless the SUID sandbox helper is owned by root
       # with mode 4755, which is not how npm installs it. The permissions are
       # corrected rather than passing --no-sandbox, because docs/desktop.md tells

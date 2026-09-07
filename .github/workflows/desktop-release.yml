@@ -120,6 +120,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb libnss3 libgtk-3-0 libasound2t64 || \
           sudo apt-get install -y xvfb libnss3 libgtk-3-0 libasound2
+          # Electron >= 42 downloads its binary on first run, not at install
+          # time; fetch it before fixing the sandbox helper's permissions.
+          pnpm --dir src/desktop exec install-electron
           # Electron aborts unless chrome-sandbox is setuid root; see desktop-build.yml
           sudo chown root:root src/desktop/node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 src/desktop/node_modules/electron/dist/chrome-sandbox

@@ -22,6 +22,8 @@ import { tmpdir } from 'node:os';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
+import type { StorageService } from '@polaris/kernel';
+
 import { pingAgent, stopAgent } from './main/agent/supervisor';
 import { localBackend, startKernel, stopKernel } from './main/kernel';
 import { capabilityManifest } from './main/capabilities';
@@ -32,6 +34,11 @@ import { APP_INDEX, buildCsp, handleAppProtocol, registerAppScheme } from './mai
 
 const SERVER_URL = 'https://polaris.example.edu';
 const problems: string[] = [];
+
+// 全程用一次性 userData：storage 持久层（#609）起来后内核会真的写库，
+// 不能把冒烟数据落进开发者真实的 userData。目录在退出前删除。
+const smokeUserData = mkdtempSync(join(tmpdir(), 'polaris-smoke-'));
+app.setPath('userData', smokeUserData);
 
 registerAppScheme();
 
@@ -47,7 +54,7 @@ function check(label: string, ok: boolean, detail = ''): void {
 void app.whenReady().then(async () => {
   handleAppProtocol(() => SERVER_URL);
   installIpc(); // preload 的 sendSync 依赖它，不装就测不到真实注入链路
-  await startKernel(); // 与 main/index.ts 同序：内核先于窗口，kernel.status 才是真的
+  const kernelInstance = await startKernel(); // 与 main/index.ts 同序：内核先于窗口，kernel.status 才是真的
 
   console.log('CSP');
   const csp = buildCsp(SERVER_URL);
@@ -74,9 +81,8 @@ void app.whenReady().then(async () => {
   });
 
   const consoleErrors: string[] = [];
-  win.webContents.on('console-message', (_e, level, message) => {
-    // level 3 = error
-    if (level >= 2) consoleErrors.push(message);
+  win.webContents.on('console-message', ({ level, message }) => {
+    if (level === 'error' || level === 'warning') consoleErrors.push(message);
   });
 
   console.log('\n协议与资源');
@@ -367,14 +373,44 @@ void app.whenReady().then(async () => {
   console.log('\n内核');
   const kernelState = (await win.webContents.executeJavaScript(
     `window.polaris.invoke('kernel.status').catch(e => ({ error: String(e && e.message || e) }))`,
-  )) as { started?: boolean; name?: string; plugins?: number; error?: string };
+  )) as { started?: boolean; name?: string; plugins?: number; storage?: boolean; error?: string };
   check('kernel.status 经 IPC 往返返回', kernelState.error === undefined, kernelState.error ?? '');
   check('内核已启动（started=true）', kernelState.started === true);
   check('实例名为 polaris-desktop', kernelState.name === 'polaris-desktop', `name=${kernelState.name}`);
   check('探针插件已注册（plugins ≥ 1）', (kernelState.plugins ?? 0) >= 1, `plugins=${kernelState.plugins}`);
 
+  // storage 持久层（#609）：就绪性经 IPC 可见，数据要真的穿过一次「停机 →
+  // 重启」仍然在——这正是配置树持久化存在的意义，光断言服务挂着不够。
+  console.log('\n持久层');
+  check('kernel.status 报告 storage 就绪', kernelState.storage === true);
+  const storageSvc = kernelInstance.ctx.get('storage') as StorageService | undefined;
+  check('storage 服务可从 ctx 读到', storageSvc != null);
+  check(
+    'storage 落在 userData/kernel/ 下',
+    storageSvc?.path.startsWith(join(app.getPath('userData'), 'kernel')) === true,
+    `path=${storageSvc?.path}`,
+  );
+  if (storageSvc) {
+    await storageSvc.configTree.save([
+      { id: 'smoke-entry', name: 'smoke-plugin', config: { touched: true } },
+    ]);
+  }
+
   // smoke 用 app.exit 直接退出、不经过 before-quit，这里手动停机以覆盖
   // stop 路径（fiber.dispose 级联）不抛错。
+  await stopKernel();
+
+  // 重启内核（同一 userData → 同一 db 文件），配置树必须还能读回来
+  const reopened = await startKernel();
+  const reopenedSvc = reopened.ctx.get('storage') as StorageService | undefined;
+  const entries = reopenedSvc ? await reopenedSvc.configTree.load() : [];
+  check(
+    '重启内核后配置树数据仍在',
+    entries.some(
+      (e) => e.id === 'smoke-entry' && (e.config as { touched?: boolean } | undefined)?.touched === true,
+    ),
+    `entries=${JSON.stringify(entries)}`,
+  );
   await stopKernel();
 
   stopAgent();
@@ -521,6 +557,7 @@ void app.whenReady().then(async () => {
     console.log(`\n已截图 → ${process.env.POLARIS_SMOKE_SHOT}`);
   }
 
+  rmSync(smokeUserData, { recursive: true, force: true });
   console.log(problems.length ? `\n${problems.length} 项失败` : '\n全部通过');
   app.exit(problems.length ? 1 : 0);
 });

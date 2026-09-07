@@ -9,6 +9,9 @@
    装载列表：
    - desktop-probe：空探针，存在本身就证明 cordis 插件树被真的建起来了
      （kernel.status 的 plugins 计数由它兜底 ≥ 1）。
+   - storage（#608/#609）：SQLite 持久层，配置树落在 userData/kernel/ 下。
+     插件用的是 Electron 内嵌 Node 的 node:sqlite（要求 Node ≥ 22），这正是
+     Electron 必须升到 44 的原因——33 内嵌 Node 20，装载即 ERR_UNKNOWN_BUILTIN_MODULE。
    - legacy-engine：把 Python 后端作为本地子进程拉起（desktop 档位单进程，
      见 #583）。配置来源按优先级：
        1. POLARIS_DESKTOP_ENGINE 显式指定（开发/调试，行为与从前完全一致）
@@ -18,8 +21,16 @@
    ============================================================ */
 
 import { app } from 'electron';
+import { join } from 'node:path';
 
-import { createKernel, legacyEngine, type Kernel, type LegacyEngineConfig } from '@polaris/kernel';
+import {
+  createKernel,
+  legacyEngine,
+  storage,
+  type Kernel,
+  type LegacyEngineConfig,
+  type StorageService,
+} from '@polaris/kernel';
 
 import type { EngineBootstrapStatus, KernelStatus, LocalBackendInfo } from '../shared/contract';
 import { bootstrapEngine } from './engine-bootstrap';
@@ -105,6 +116,17 @@ export async function startKernel(): Promise<Kernel> {
   const instance = createKernel({ name: 'polaris-desktop' });
   instance.ctx.plugin(desktopProbe);
 
+  // 持久层先于其他插件：后装的插件才能在 apply 里拿到 storage 服务。
+  // 失败不阻断启动——没有持久层壳仍然可用（配置树退化为不落盘），
+  // kernel.status 的 storage=false 会把这件事暴露给渲染层与冒烟测试。
+  try {
+    await instance.ctx.plugin(storage, {
+      path: join(app.getPath('userData'), 'kernel', 'storage.db'),
+    });
+  } catch (err) {
+    console.error('[kernel] storage 持久层挂载失败，本次会话不落盘：', err);
+  }
+
   let engine = parseEngineSpec(process.env.POLARIS_DESKTOP_ENGINE);
   // 并行隔离（壳级 E2E / 同机多实例）：docker 容器名与宿主端口默认是固定值，
   // 两个实例同时跑必然撞名撞端口。这两个 env 只在显式指定引擎的测试/调试
@@ -152,6 +174,9 @@ export function kernelStatus(): KernelStatus {
     started: kernel?.started ?? false,
     name: kernel?.name ?? '',
     plugins: kernel ? kernel.ctx.registry.size : 0,
+    // reflect 读服务：storage 插件 fiber 处于 ACTIVE 时才非空，
+    // 「装了但没起来」与「没装」在这里同样折叠成 false。
+    storage: (kernel?.ctx.get('storage') as StorageService | undefined) != null,
   };
 }
 

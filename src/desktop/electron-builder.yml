@@ -10,6 +10,10 @@ directories:
 
 # 只打主进程/preload 的 esbuild 产物；renderer 走 extraResources 复用
 # src/frontend 的既有 vite 构建，桌面端不引入第二套前端构建配置。
+# node_modules 一个不进包：dist/*.cjs 都是 esbuild 自包含 bundle，运行时不需要
+# 任何包。@polaris/kernel 因此放 devDependencies——electron-builder 26 的 pnpm
+# 收集器会把 production 依赖顺着 workspace 链接整棵拖进 asar，vendor loader 的
+# 可选原生依赖（node-addon-require-builtin）跟着进来，universal 合并直接报错。
 files:
   - dist/**
   - package.json

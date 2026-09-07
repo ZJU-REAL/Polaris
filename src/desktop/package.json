@@ -7,11 +7,11 @@
   "author": "Polaris contributors <polaris@users.noreply.github.com>",
   "main": "dist/main.cjs",
   "scripts": {
-    "build:main": "esbuild src/main/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/main.cjs --external:electron",
-    "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/preload.cjs --external:electron",
-    "build:agent": "esbuild src/agent/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/agent.cjs --external:electron",
-    "build:bootstrap-smoke": "esbuild src/bootstrap-smoke.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/bootstrap-smoke.cjs",
-    "build:smoke": "esbuild src/smoke.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/smoke.cjs --external:electron",
+    "build:main": "esbuild src/main/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/main.cjs --external:electron",
+    "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/preload.cjs --external:electron",
+    "build:agent": "esbuild src/agent/main.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/agent.cjs --external:electron",
+    "build:bootstrap-smoke": "esbuild src/bootstrap-smoke.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/bootstrap-smoke.cjs",
+    "build:smoke": "esbuild src/smoke.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/smoke.cjs --external:electron",
     "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:agent && pnpm run build:bootstrap-smoke",
     "smoke": "pnpm run build:preload && pnpm run build:agent && pnpm run build:smoke && electron dist/smoke.cjs",
     "dev": "pnpm run build && electron .",
@@ -21,18 +21,16 @@
     "dist:mac": "pnpm run stage:resources && pnpm run build && electron-builder --mac --universal",
     "dist:win": "pnpm run stage:resources && pnpm run build && electron-builder --win",
     "dist:linux": "pnpm run stage:resources && pnpm run build && electron-builder --linux",
-    "build:e2e": "esbuild e2e/e2e.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/e2e.cjs --packages=external",
+    "build:e2e": "esbuild e2e/e2e.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/e2e.cjs --packages=external",
     "e2e": "pnpm run build:main && pnpm run build:preload && pnpm run build:agent && pnpm run build:e2e && node dist/e2e.cjs"
   },
-  "dependencies": {
-    "@polaris/kernel": "workspace:*"
-  },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "electron": "^33.0.0",
-    "electron-builder": "^25.0.0",
+    "@polaris/kernel": "workspace:*",
+    "@types/node": "^24.0.0",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.0.0",
     "esbuild": "^0.24.0",
-    "playwright-core": "^1.49.0",
+    "playwright-core": "^1.63.0",
     "typescript": "^5.5.4"
   }
 }
