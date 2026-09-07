@@ -16,6 +16,7 @@ from collections.abc import Callable
 from typing import Any
 
 from app.services.runners.contract import RunnerPlugin
+from app.services.runners.fmu import FMU_BACKEND, FMURunner
 from app.services.runners.ngspice import NGSPICE_BACKEND, NgspiceRunner
 from app.services.runners.openfoam import OPENFOAM_BACKEND, OpenFOAMRunner
 from app.services.runners.python_ml import PYTHON_ML_BACKEND, PythonMLRunner
@@ -80,3 +81,5 @@ def resolve_backend(plan: Any, **substrate: Any) -> RunnerPlugin:
 register(PYTHON_ML_BACKEND, PythonMLRunner.create)
 register(NGSPICE_BACKEND, NgspiceRunner.create)  # R4 零 license 容器后端（#681）
 register(OPENFOAM_BACKEND, OpenFOAMRunner.create)  # 同上：case 目录物料形态的范本
+# fmu 即使没装 fmpy 也注册（validate 报安装指引，比 unknown backend 可诊断，#682）
+register(FMU_BACKEND, FMURunner.create)

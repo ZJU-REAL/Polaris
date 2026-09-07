@@ -37,6 +37,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 仿真后端可选依赖（#682）：fmpy 拖着 numpy/lxml/msgpack，不进主依赖；
+# 没装时 fmu 后端仍注册，validate 报安装指引
+simulation = [
+    "fmpy>=0.3.20",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
