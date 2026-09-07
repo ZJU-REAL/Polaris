@@ -2592,6 +2592,9 @@ export interface CreateExperimentInput {
     extra_notes?: string;
     /** 开题问答（AI 按 idea 生成的问题 + 用户回答；进计划与代码生成 prompt） */
     intake?: ExperimentIntakeQA[];
+    /** 执行后端（Runner v2 分派键，#675）：缺省 python-ml=存量行为。
+     * 单后端阶段创建表单不出选择 UI；接入 openfoam/ngspice 等后端后在此暴露。 */
+    backend?: string;
   };
 }
 

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ExperimentBudget(BaseModel):
@@ -38,6 +38,19 @@ class ExperimentParams(BaseModel):
     # 开题问答（AI 按 idea 生成 ≤5 个整体性问题，用户作答后随创建提交；
     # 原文进 plan 与 codegen prompt——其余不确定点实验中经 ask 机制动态交互）
     intake: list[IntakeQA] | None = None
+    # 执行后端（Runner v2 显式分派键，#675）：默认 python-ml = 存量行为，全兼容。
+    # 单后端阶段前端不出选择 UI（无意义）；R4 接入 openfoam/ngspice 后由创建表单暴露。
+    backend: str = "python-ml"
+
+    @field_validator("backend")
+    @classmethod
+    def _backend_registered(cls, v: str) -> str:
+        # 延迟导入：schema 是叶子模块，别在 import 期拖起整个 runners 包
+        from app.services.runners.registry import known_backends
+
+        if v not in known_backends():
+            raise ValueError(f"unknown runner backend {v!r}; known: {known_backends()}")
+        return v
 
 
 class ExperimentIntakeQuestion(BaseModel):

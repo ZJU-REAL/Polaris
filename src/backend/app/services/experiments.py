@@ -192,6 +192,9 @@ async def create_experiment(
                     if params and params.intake
                     else None
                 ),
+                # 执行后端（Runner v2，#675）：现阶段无读者（动作层仍走旧路），
+                # R4 起 navigator 把它写进 plan.backend 供 resolve_backend 分派
+                "backend": params.backend if params else "python-ml",
             }
         },
         budget=None,
