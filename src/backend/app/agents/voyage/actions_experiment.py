@@ -50,10 +50,12 @@ from app.models.experiment import EXPERIMENT_TERMINAL_STATUSES, Experiment, Expe
 from app.models.idea import Idea
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperWiki
+from app.models.resource import Resource, ResourceLease
 from app.models.ssh_credential import SSHCredential
 from app.models.voyage import VoyageRun, VoyageStep
 from app.services import experiment_settings as experiment_settings_service
 from app.services import experiments as experiments_service
+from app.services import resource_leases as resource_leases_service
 from app.services import ssh_exec
 from app.services import voyage_messages as messages_service
 from app.services.figure_annotate import prepare_image_for_llm
@@ -77,6 +79,8 @@ from app.services.managed_commands import (
     may_apply_recovery_automatically,
 )
 from app.services.managed_ssh import ManagedCommandHandle
+from app.services.runners import registry as runner_registry
+from app.services.runners.contract import RunnerPlugin
 
 RUN_POLL_SECONDS = 30.0  # 正式运行轮询间隔（测试 monkeypatch 为 0）
 MANAGED_COMMAND_POLL_SECONDS = 2.0
@@ -1240,26 +1244,58 @@ def _managed_command_waiting_result(
     }
 
 
-async def _open_executor(
+async def _resolve_runner_plugin(
     session: AsyncSession, ctx: ActionContext, experiment: Experiment
-) -> Runner:
-    """为实验打开执行后端（Runner）。执行细节走 Runner 抽象，实验逻辑不直接依赖 SSH。
+) -> tuple[RunnerPlugin, Runner | None]:
+    """Runner v2 分派点（#716）：backend 从 checkpoint.params 读（#676 创建时已存），
+    经注册表拿插件。这是动作层「获得执行器/子基座」的唯一入口。
 
-    kind 从 plan 里取（预留分派点：以后训练类→ContainerRunner 等），目前所有 kind 都用
-    RemoteHostRunner，行为与之前一致。"""
+    - python-ml（含缺省）：插件绑定的底座就是原 open_runner 的返回物——v2 适配器的
+      生命周期方法委托同一套 v1 原语，动作层继续直连原语（launch_setup/run_smoke/
+      probe_gpu 等未进 v2 生命周期的观测与修复面），语义与直接 open_runner 等价，
+      python-ml 路径行为逐字节不变；
+    - 非 SSH 底座后端（credential_kinds 不含 "ssh"，如 ngspice/openfoam/fmu）：
+      返回未绑底座的插件与 None——分派正确性在此保证；动作层按 v2 生命周期
+      驱动这些后端是后续阶段（R4 余下部分）的事。
+    """
+    raw = str(_params(ctx).get("backend") or "").strip()
+    backend = raw or runner_registry.DEFAULT_BACKEND
+    # 未注册后端在此抛 UnknownBackendError：经 _guarded 留痕后交引擎失败分派（可诊断）
+    manifest = runner_registry.manifest_for(backend)
+    if "ssh" not in manifest.credential_kinds:
+        return runner_registry.get(backend)(), None
     if experiment.credential_id is None:
         raise ValueError("实验缺少 SSH 凭据（credential_id 为空）")
     credential = await session.get(SSHCredential, experiment.credential_id)
     if credential is None:
         raise ValueError("SSH 凭据已删除，无法连接实验服务器")
     plan = experiment.plan if isinstance(experiment.plan, dict) else {}
-    return await open_runner(
+    runner = await open_runner(
         credential=credential,
         exp_id=str(experiment.id),
         project_id=experiment.project_id,
         kind=plan.get("kind"),
         container=plan.get("container"),
     )
+    return runner_registry.get(backend)(runner=runner), runner
+
+
+async def _open_executor(
+    session: AsyncSession, ctx: ActionContext, experiment: Experiment
+) -> Runner:
+    """为实验打开执行后端（Runner）。分派收窄到 _resolve_runner_plugin 一处（#716）。
+
+    本动作层的既有流程（setup/smoke/run/figures 及其修复循环）建立在 19 原语之上，
+    只对 SSH 底座后端成立；非 SSH 后端在这里明确报错（可诊断、进失败分派），
+    绝不拿错底座乱跑。
+    """
+    plugin, runner = await _resolve_runner_plugin(session, ctx, experiment)
+    if runner is None:
+        raise ValueError(
+            f"后端 {plugin.manifest.backend} 不使用 SSH 执行底座，"
+            "实验动作流程尚未接入该后端的执行生命周期"
+        )
+    return runner
 
 
 # ---- 计划 schema 校验 ----
@@ -1940,12 +1976,67 @@ async def _probe_resources(executor: Runner, plan: dict[str, Any]) -> tuple[list
     return resources, warnings
 
 
+# 排队等待 runner 主机席位的上限（秒）：给在跑实验一点收尾腾位的余地，又不让
+# setup 无限悬挂——超时转为可诊断失败，由引擎失败分派决定重试/换方案/问人。
+RESOURCE_LEASE_WAIT_SECONDS = 600.0
+
+
+async def _acquire_resource_lease(ctx: ActionContext) -> None:
+    """备环境前获取 runner 主机租约（#716 接线 #677/#685）。
+
+    checkpoint.params.resource_id 非空 = 用户创建实验时指定了注册的 runner 主机；
+    在 prepare 语义（experiment_setup 连接主机之前）排队拿席位，独占主机上两个
+    实验不再同时开跑。释放不在这里管：voyage run 的四个终态写入点都挂了
+    release_for_run 兜底（engine._set_status / cancel_voyage / gates.fail_voyage /
+    api.voyages 删除路径），不管实验怎么死都不占着资源。
+
+    用独立 session：wait_and_acquire 内部会 commit/rollback，混用调用方 session
+    会把人家已加载的 ORM 对象状态搅乱。
+    """
+    raw = _params(ctx).get("resource_id")
+    if not raw:
+        return
+    async with get_sessionmaker()() as session:
+        resource = await session.get(Resource, uuid.UUID(str(raw)))
+        if resource is None:
+            # 资源被删——转可诊断失败（引擎分派），不是崩溃
+            raise ValueError(f"指定的 runner 主机资源已不存在：{raw}")
+        # 幂等：setup 失败重试/断点续跑会重入本函数，run 已持有该资源的活租约就不叠加
+        held = await session.execute(
+            select(ResourceLease.id).where(
+                ResourceLease.resource_id == resource.id,
+                ResourceLease.run_id == ctx.run.id,
+                ResourceLease.released_at.is_(None),
+            )
+        )
+        if held.first() is not None:
+            return
+        try:
+            await resource_leases_service.wait_and_acquire(
+                session,
+                resource,
+                ctx.run,
+                timeout=RESOURCE_LEASE_WAIT_SECONDS,
+                note="experiment.setup",
+            )
+        except resource_leases_service.ResourceBusyError as e:
+            raise ValueError(
+                f"runner 主机忙：等待 {RESOURCE_LEASE_WAIT_SECONDS:.0f} 秒仍没有空闲席位（{e}）。"
+                "可稍后重试，或换一台注册主机。"
+            ) from e
+    await ctx.log("已获得 runner 主机资源席位")
+
+
 @register("experiment.setup")
 @_guarded
 async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
         experiment = await _get_experiment(session, ctx)
         await _set_status(ctx, session, experiment, "setup")
+
+        # 资源租约（#716）：指定了 runner 主机资源时，备环境前先排队拿席位；
+        # 拿不到转为可诊断失败（引擎失败分派处理），终态释放由 release_for_run 兜底
+        await _acquire_resource_lease(ctx)
 
         # 实验的全局环境设置（管理端「实验设置」里配）：模型/数据集位置、pip 镜像、
         # HF 端点、代理。既写进 env.sh，也**作为事实写进 codegen 提示词**——模型不知道

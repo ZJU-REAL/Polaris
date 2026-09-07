@@ -97,7 +97,16 @@ class ExperimentCreate(BaseModel):
 
     @model_validator(mode="after")
     def _one_of_credential_or_resource(self) -> "ExperimentCreate":
-        if self.credential_id is None and self.resource_id is None:
+        if self.credential_id is not None or self.resource_id is not None:
+            return self
+        # 凭据放宽（#716）：只有自述需要 ssh 凭据的后端（credential_kinds 含 "ssh"，
+        # 今天即 python-ml）才强制二选一；本机底座后端（ngspice/openfoam/fmu）没有
+        # 连接凭据概念，两者都可不给。backend 字段校验先于本校验跑，这里 manifest
+        # 必然可取。
+        backend = self.params.backend if self.params else "python-ml"
+        from app.services.runners.registry import manifest_for  # 延迟导入：同 backend 校验
+
+        if "ssh" in manifest_for(backend).credential_kinds:
             raise ValueError("either credential_id or resource_id is required")
         return self
 

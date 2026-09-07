@@ -171,10 +171,25 @@ async def create_experiment(
         if (resource.config or {}).get("unavailable") or resource.credential_id is None:
             raise RunnerHostUnavailableError(str(data.resource_id))
         credential_id = resource.credential_id
-    credential = await session.get(SSHCredential, credential_id)
-    # kind 校验（#677 凭据多态化后）：实验直跑只吃 ssh 凭据，别的 kind 私钥列为空，
-    # 放进来会在 ssh_exec 解密时炸得不知所云——这里当不存在处理
-    if credential is None or credential.user_id != user_id or credential.kind != "ssh":
+    # 凭据放宽（#716）：是否强制 SSH 凭据由后端 manifest 自述（credential_kinds）。
+    # python-ml 声明 "ssh" → 维持原状（必须给凭据，检查逐字节同前）；本机底座后端
+    # （ngspice/openfoam/fmu，credential_kinds 为空）不吃连接凭据 → credential_id
+    # 可空。给了就照旧校验归属/kind——错的凭据不因后端用不上而放行。
+    # 延迟导入：runners 注册表反向经 python-ml 适配器牵到 voyage 动作层，顶层互 import
+    # 会让 fmu_worker 这类以 runners 为入口的进程死在环上（实测炸过 fmu 子进程测试）
+    from app.services.runners.registry import manifest_for
+
+    backend = data.params.backend if data.params else "python-ml"
+    needs_ssh = "ssh" in manifest_for(backend).credential_kinds
+    credential = None
+    if credential_id is not None:
+        credential = await session.get(SSHCredential, credential_id)
+        # kind 校验（#677 凭据多态化后）：实验直跑只吃 ssh 凭据，别的 kind 私钥列为空，
+        # 放进来会在 ssh_exec 解密时炸得不知所云——这里当不存在处理
+        if credential is None or credential.user_id != user_id or credential.kind != "ssh":
+            raise CredentialNotFoundError(str(credential_id))
+    elif needs_ssh:
+        # schema 的条件校验已挡住这条路；服务层兜底（不走 schema 的直接调用方）
         raise CredentialNotFoundError(str(credential_id))
 
     params = data.params
@@ -185,10 +200,10 @@ async def create_experiment(
     experiment = Experiment(
         project_id=project.id,
         idea_id=idea.id,
-        credential_id=credential.id,
+        credential_id=credential.id if credential is not None else None,
         status="planning",
         budget=budget,
-        server_host=credential.host,
+        server_host=credential.host if credential is not None else None,
     )
     session.add(experiment)
     await session.flush()
@@ -214,13 +229,13 @@ async def create_experiment(
                     if params and params.intake
                     else None
                 ),
-                # 执行后端（Runner v2，#675）：现阶段无读者（动作层仍走旧路），
-                # R4 起 navigator 把它写进 plan.backend 供 resolve_backend 分派
+                # 执行后端（Runner v2，#675/#716）：动作层分派点
+                # （actions_experiment._resolve_runner_plugin）从这里读，经注册表拿插件
                 "backend": params.backend if params else "python-ml",
                 # 流程包（#678）：非空时 navigator 按包生成计划；None = 原路径
                 "process_pack": params.process_pack if params else None,
-                # runner 主机资源（#685）：非空 = 用户指定跑在哪台注册机器上；
-                # 现阶段只作记录（租约获取由 R2 的 prepare 阶段接管时消费）
+                # runner 主机资源（#685/#716）：非空 = 用户指定跑在哪台注册机器上；
+                # experiment_setup 备环境前据此排队获取租约（resource_leases）
                 "resource_id": str(data.resource_id) if data.resource_id else None,
             }
         },

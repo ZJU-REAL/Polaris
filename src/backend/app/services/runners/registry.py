@@ -4,10 +4,11 @@
 默认 `python-ml` 保全兼容——今天所有存量实验不写 backend，走 python-ml，行为不变。
 实验 kind（eval/training/…）退役为科学语义标签，不再暗示执行后端。
 
-分派现状与迁移计划：本阶段（R1）注册表与 python-ml 适配器就位，`resolve_backend`
-可拿到并驱动插件，但 **actions_experiment 仍走旧路**（直接调 open_runner + 19 原语）——
-切换动作层到 v2 分派是 R4 接入第一个非 ML 后端（openfoam/ngspice）时的事：届时
-动作层按 resolve_backend 拿插件，python-ml 的行为因适配器全部委托存量原语而保持逐字节一致。
+分派现状（#716 已翻转）：动作层的执行器获取点（actions_experiment._open_executor）
+经本注册表分派——backend 从 voyage checkpoint.params 读（#676 创建时已存）。
+python-ml（含缺省）的插件绑定的底座就是原 open_runner 的返回物，动作层继续直连
+存量原语，行为逐字节一致；非 SSH 底座后端在分派点拿到各自插件（动作层驱动其
+完整生命周期是后续阶段的事）。
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from app.services.runners.contract import RunnerPlugin
+from app.services.runners.contract import RunnerManifest, RunnerPlugin
 from app.services.runners.fmu import FMU_BACKEND, FMURunner
 from app.services.runners.ngspice import NGSPICE_BACKEND, NgspiceRunner
 from app.services.runners.openfoam import OPENFOAM_BACKEND, OpenFOAMRunner
@@ -54,6 +55,17 @@ def get(backend: str) -> Callable[..., RunnerPlugin]:
     if factory is None:
         raise UnknownBackendError(backend, known_backends())
     return factory
+
+
+def manifest_for(backend: str) -> RunnerManifest:
+    """按 id 取后端自述（不绑底座）。
+
+    约定：所有插件工厂都接受无参调用返回「未绑底座」的探针实例（python-ml 的
+    runner=None、容器后端的 substrate=None、fmu 的 workdir=None），manifest 是
+    实例属性可直接读——凭据放宽（experiments.create_experiment 按
+    credential_kinds 决定是否强制 SSH 凭据）与动作层分派都靠它，无副作用。
+    """
+    return get(backend)().manifest
 
 
 def known_backends() -> list[str]:

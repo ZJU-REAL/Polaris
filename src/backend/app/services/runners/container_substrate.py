@@ -260,10 +260,11 @@ class ContainerBackendBase:
     async def prepare(self, ctx) -> None:
         """备环境 = 建工作目录 + 物料落盘（纯数据通道）。
 
-        TODO(#680 接线)：manifest.resources 已声明 cpu/mem 需求，这里应在落盘前
-        对 docker host 对应的 Resource 走 resource_leases.acquire（wait=True 排队），
-        cleanup 里 release——等动作层切到 v2 分派（R4 后半）连同 run_id 一起接入；
-        本 PR 先把需求声明进 manifest，租约获取暂缺不影响单机语义。
+        资源租约（#680 → #716 已接线）：租约获取不在本底座内做，而在动作层
+        experiment_setup 的备环境之前（resource_leases.wait_and_acquire，按
+        checkpoint.params.resource_id 排队），释放挂在 voyage run 的终态写入点
+        （release_for_run 兜底）——租约的主体是 run，底座不知道 run，放这里
+        只会拿不到 run_id。manifest.resources 的 cpu/mem 需求供调度/预检消费。
         """
         substrate = self._require_substrate()
         if ctx.files:

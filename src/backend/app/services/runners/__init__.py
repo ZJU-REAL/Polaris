@@ -24,6 +24,7 @@ from app.services.runners.registry import (
     DEFAULT_BACKEND,
     UnknownBackendError,
     known_backends,
+    manifest_for,
     resolve_backend,
 )
 
@@ -43,5 +44,6 @@ __all__ = [
     "RunnerPlugin",
     "UnknownBackendError",
     "known_backends",
+    "manifest_for",
     "resolve_backend",
 ]
