@@ -43,7 +43,7 @@ from app.models.manuscript import Manuscript, ManuscriptFile
 from app.services import latex_compile
 from app.services.citations import citation_key_for
 from app.services.crdt_rooms import get_crdt_rooms
-from app.services.literature.semantic_scholar import SemanticScholarClient
+from app.services.literature import get_s2_client
 
 MAX_SECTION_REWRITES = 2  # 静态校验违规重写次数上限
 S2_RELATED_LIMIT = 10  # Related Work 的 S2 title 检索 top-N
@@ -548,13 +548,13 @@ async def writing_section(ctx: ActionContext, params: dict[str, Any]) -> dict[st
 
 async def _s2_candidates(title: str) -> list[dict[str, Any]]:
     """S2 title 检索 top10 → 候选条目（不可达时返回空，降级为仅库内候选）。"""
-    client = SemanticScholarClient()
+    # 单例客户端（共享限速/缓存/注入缝，#720 裸构造修复）；单例不能在这里 aclose——
+    # 关掉的是全进程共用的连接池
+    client = get_s2_client()
     try:
         hits = await client.search_papers(title, limit=S2_RELATED_LIMIT)
     except Exception:  # noqa: BLE001 — 外部 API 失败降级，不阻塞写作
         return []
-    finally:
-        await client.aclose()
     candidates: list[dict[str, Any]] = []
     for hit in hits:
         hit_title = str(hit.get("title") or "").strip()

@@ -1,4 +1,7 @@
-"""外部文献只读工具：库外检索、引文/参考文献、按 id 查元数据（走 arxiv/S2/OpenAlex）。
+"""外部文献只读工具：库外检索、引文/参考文献、按 id 查元数据。
+
+数据源经文献源注册表（services/literature/sources）取适配器，不再直连客户端；
+适配器包的是同一批模块级单例，限速/缓存行为不变。
 
 全部访问外部 HTTP API（``network=True``），带 Redis 缓存 + 限速；失败抛 ``ValueError``
 （内部循环转成回给 LLM 的错误消息，外部 MCP 转成 tool error）。
@@ -9,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.db import get_sessionmaker
-from app.services.literature import get_openalex_client, get_s2_client
+from app.services.literature.sources import require_source
 from app.tools.context import ToolContext
 from app.tools.registry import tool
 from app.tools.scope import readable_paper
@@ -50,12 +53,12 @@ async def external_search(ctx: ToolContext, args: dict[str, Any]) -> dict[str, A
         raise ValueError("external_search 需要非空 query")
     k = min(_MAX_K, max(1, int(args.get("k") or 5)))
     try:
-        rows = await get_s2_client().search_papers(query, limit=k)
+        rows = await require_source("semantic").search_papers(query, limit=k)
         if rows:
             return {"source": "semantic_scholar", "results": [_s2_brief(r) for r in rows]}
     except Exception:  # noqa: BLE001 — S2 不可用则降级 OpenAlex
         rows = []
-    works = await get_openalex_client().search_works(query, limit=k)
+    works = await require_source("openalex").search_works(query, limit=k)
     return {
         "source": "openalex",
         "results": [
@@ -106,7 +109,7 @@ _REF_SCHEMA = {
 )
 async def get_references(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     ref = await _resolve_ref(ctx, args)
-    rows = await get_s2_client().get_references(ref, limit=50)
+    rows = await require_source("semantic").get_references(ref, limit=50)
     return {"paper_ref": ref, "references": [_s2_brief(r) for r in rows]}
 
 
@@ -119,7 +122,7 @@ async def get_references(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
 )
 async def get_citations(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     ref = await _resolve_ref(ctx, args)
-    rows = await get_s2_client().get_citations(ref, limit=50)
+    rows = await require_source("semantic").get_citations(ref, limit=50)
     return {"paper_ref": ref, "citations": [_s2_brief(r) for r in rows]}
 
 
@@ -138,7 +141,7 @@ async def lookup_paper(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]
     doi = str(args.get("doi") or "").strip()
     if not doi:
         raise ValueError("lookup_paper 需要 doi")
-    work = await get_openalex_client().get_by_doi(doi)
+    work = await require_source("openalex").resolve("doi", doi)
     if not work:
         return {"doi": doi, "found": False}
     return {

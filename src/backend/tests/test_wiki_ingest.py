@@ -657,8 +657,15 @@ async def test_concurrent_scoring_failure_isolation(client, queue_stub, wiki_moc
         assert by_status.get("compiled", 0) == 1  # 通过阈值且未失败的那篇成功编译
 
 
-async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks):
-    """稀疏 definition（只有 statement）也能跑通 bootstrap 全链路（默认 cs.* 分类兜底）。"""
+async def test_sparse_definition_bootstrap_skips_search_with_honest_warning(
+    client, queue_stub, wiki_mocks
+):
+    """稀疏 definition（只有 statement）：不再回退默认 cs.* 分类（#720 A4）。
+
+    关键词、分类两头都空时查询会退化成「窗口内全 arXiv」，以前靠 cs.* 兜底把
+    非 CS 的库悄悄变成计算机文献库。现在如实跳过检索并在诊断里讲清楚该配什么；
+    链路照常走完（后续步骤对空候选是幂等的），不留 paused_error。
+    """
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
     project_id, _library_id = await make_project_with_library(
@@ -682,13 +689,14 @@ async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks)
     resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
     detail = resp.json()
     assert detail["status"] == "done", detail
-    assert [s["status"] for s in detail["steps"]] == ["passed"] * 8
-    assert detail["steps"][0]["observation"]["inserted"] == 3  # 默认分类兜底后仍能检索
+    search_obs = detail["steps"][0]["observation"]
+    assert search_obs["found"] == 0 and search_obs["inserted"] == 0
+    assert search_obs["diagnostic_status"] == "warning"
+    assert any("关键词" in message for message in search_obs["diagnostic_messages"])
 
     async with get_sessionmaker()() as session:
         rows = await project_paper_rows(session, project_id=project_id)
-        # 3 候选：2 编译 + 1 淘汰（淘汰的整行删掉；无 rubric 时打分只用 statement）
-        assert sorted(m.status for _, m in rows) == ["compiled", "compiled"]
+        assert rows == []  # 没有检索条件就不该收进任何论文
 
 
 async def test_incremental_pulls_from_daily_feed_without_arxiv(client, queue_stub, wiki_mocks):

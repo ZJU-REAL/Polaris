@@ -10,6 +10,23 @@ from tests.conftest import make_project_with_library, register_and_login
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def _daily_subscription_default(monkeypatch):
+    """订阅分类不再有代码级缺省（#720 A4），但本文件的存量测试都写于「默认
+    cs.AI/cs.CL/cs.CV」时代。为免逐个测试补订阅，这里给**本文件**装回一个
+    测试级缺省：没配过时返回历史三件套，显式 set_categories 的测试不受影响。
+    「没配过就是空 + 提示」的新行为本身在 tests/test_no_cs_defaults.py 单测。"""
+    from app.services import daily_feed
+
+    real = daily_feed.get_categories
+
+    async def with_test_default(session):
+        stored = await real(session)
+        return stored or ["cs.AI", "cs.CL", "cs.CV"]
+
+    monkeypatch.setattr(daily_feed, "get_categories", with_test_default)
+
+
 def _rss_entry(arxiv_id: str, title: str, *, announce: str = "new") -> dict:
     return {
         "arxiv_id": arxiv_id,
@@ -54,6 +71,9 @@ async def _run_sync(monkeypatch, by_category: dict[str, list[dict]]) -> dict:
 
     monkeypatch.setattr(daily_feed, "get_arxiv_client", lambda: _StubArxiv(by_category))
     async with get_sessionmaker()() as session:
+        # 订阅分类不再有代码级缺省（#720）：按替身数据显式订阅（空替身给一个占位分类，
+        # 维持「订阅了但今天没公告」的旧语义）
+        await daily_feed.set_categories(session, list(by_category) or ["cs.AI"])
         return await daily_feed.sync_daily_feed(session)
 
 
@@ -519,6 +539,7 @@ async def test_categories_admin_and_refresh(client, queue_stub):
     mh = {"Authorization": f"Bearer {member}"}
 
     resp = await client.get("/api/daily/categories", headers=mh)
+    # 本文件的 autouse fixture 播种了历史三件套；「没配过就是空」见 test_no_cs_defaults
     assert resp.json()["categories"] == ["cs.AI", "cs.CL", "cs.CV"]
 
     # 任何登录用户都能改分类（admin 治理已随 #614 移除）；非法格式 422

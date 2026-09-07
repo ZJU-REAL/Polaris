@@ -37,8 +37,7 @@ from app.models.review import ReviewMessage, ReviewSession
 from app.services import latex_compile
 from app.services import paper_review as pr
 from app.services.figure_annotate import prepare_image_for_llm
-from app.services.literature.openalex import OpenAlexClient
-from app.services.literature.semantic_scholar import SemanticScholarClient
+from app.services.literature import get_openalex_client, get_s2_client
 from app.services.review import serialize_message
 
 _MAX_JSON_ATTEMPTS = 3  # 首次 + 重试 2 次（评审员 JSON 严格校验）
@@ -258,48 +257,46 @@ async def review_citation_check(ctx: ActionContext, params: dict[str, Any]) -> d
         done = ctx.checkpoint["citation_check"]
         return {"total": done.get("total", 0), "skipped": True}
 
-    s2 = SemanticScholarClient()
-    openalex = OpenAlexClient()
-    try:
-        async with get_sessionmaker()() as session:
-            manuscript = await _get_manuscript(session, ctx)
-            review_session = await _get_review_session(session, ctx)
-            files = await pr.load_tex_files(session, manuscript.id)
-            fact_citations = list(_fact_pack(manuscript).get("citations") or [])
-            cited = pr.extract_citations(files)
-            items = await pr.check_citation_existence(
-                session, cited, fact_citations, s2=s2, openalex=openalex
+    # 同 actions_proposal：单例客户端保共享限速/缓存与测试注入缝（#720 裸构造修复）
+    s2 = get_s2_client()
+    openalex = get_openalex_client()
+    async with get_sessionmaker()() as session:
+        manuscript = await _get_manuscript(session, ctx)
+        review_session = await _get_review_session(session, ctx)
+        files = await pr.load_tex_files(session, manuscript.id)
+        fact_citations = list(_fact_pack(manuscript).get("citations") or [])
+        cited = pr.extract_citations(files)
+        items = await pr.check_citation_existence(
+            session, cited, fact_citations, s2=s2, openalex=openalex
+        )
+
+        # 支撑性（LLM）：fabricated 不判；超出上限标 not_checked
+        by_key = {str(c.get("bibkey")): c for c in fact_citations if c.get("bibkey")}
+        checked = 0
+        for item in items:
+            if item["existence"] == "fabricated" or checked >= MAX_SUPPORT_CHECKS:
+                continue
+            entry = by_key.get(item["bibkey"]) or {}
+            brief = await _cited_paper_brief(session, entry, item["context_snippet"])
+            user = (
+                f"引用语境（\\cite{{{item['bibkey']}}} 前后 2 句）：\n"
+                f"{item['context_snippet']}\n\n被引论文：\n{brief}"
             )
-
-            # 支撑性（LLM）：fabricated 不判；超出上限标 not_checked
-            by_key = {str(c.get("bibkey")): c for c in fact_citations if c.get("bibkey")}
-            checked = 0
-            for item in items:
-                if item["existence"] == "fabricated" or checked >= MAX_SUPPORT_CHECKS:
-                    continue
-                entry = by_key.get(item["bibkey"]) or {}
-                brief = await _cited_paper_brief(session, entry, item["context_snippet"])
-                user = (
-                    f"引用语境（\\cite{{{item['bibkey']}}} 前后 2 句）：\n"
-                    f"{item['context_snippet']}\n\n被引论文：\n{brief}"
+            try:
+                verdict = await _complete_json(
+                    ctx, system=SUPPORT_SYSTEM_PROMPT, user=user, validate=_validate_support
                 )
-                try:
-                    verdict = await _complete_json(
-                        ctx, system=SUPPORT_SYSTEM_PROMPT, user=user, validate=_validate_support
-                    )
-                    item["support"] = verdict["support"]
-                except asyncio.CancelledError:
-                    raise
-                except Exception:  # noqa: BLE001 — 单条支撑性判定失败不打断核验
-                    item["support"] = "not_checked"
-                checked += 1
+                item["support"] = verdict["support"]
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — 单条支撑性判定失败不打断核验
+                item["support"] = "not_checked"
+            checked += 1
 
-            citation_check = {"total": len(items), "items": items}
-            ctx.checkpoint["citation_check"] = citation_check
-            await _merge_payload(session, review_session, {"citation_check": citation_check})
-    finally:
-        await s2.aclose()
-        await openalex.aclose()
+        citation_check = {"total": len(items), "items": items}
+        ctx.checkpoint["citation_check"] = citation_check
+        await _merge_payload(session, review_session, {"citation_check": citation_check})
+    # 单例客户端是全进程共用的连接池，不在这里 aclose（裸构造时代的收尾已退役）
 
     counts: dict[str, int] = {}
     for item in citation_check["items"]:

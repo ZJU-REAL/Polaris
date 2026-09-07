@@ -1199,6 +1199,18 @@ export function DailyPage() {
                   desc={tr('后端不可用或接口尚未就绪，稍后重试。', 'Backend unavailable — try again later.')}
                 />
               ) : items.length === 0 ? (
+                /* 没订阅分类时池子永远是空的——这不是「今天没新论文」，要把原因和去处说清楚 */
+                !filtered && categoriesQuery.data?.categories.length === 0 ? (
+                  <EmptyState
+                    compact
+                    icon="book"
+                    title={tr('还没有订阅分类', 'No subscribed categories yet')}
+                    desc={tr(
+                      '先在 设置 → 每日新论文订阅分类 里添加要跟踪的 arXiv 分类，每日新论文才会进池。',
+                      'Add the arXiv categories you want to follow in Settings → Daily subscribed categories, and new papers will start flowing in.',
+                    )}
+                  />
+                ) : (
                 <EmptyState
                   compact
                   icon="book"
@@ -1212,6 +1224,7 @@ export function DailyPage() {
                         )
                   }
                 />
+                )
               ) : (
                 items.map((p, i) => {
                   // 与上一条日期不同 → 插入粘性日期头。按相关性排时日期是交错的，

@@ -13,10 +13,6 @@ from app.schemas.project import ProjectCreate, ProjectUpdate
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
-# 稀疏 definition 缺 arxiv_categories 时的检索默认分类（actions_wiki 也用）
-DEFAULT_ARXIV_CATEGORIES = ["cs.CL", "cs.AI", "cs.LG"]
-
-
 def slugify(name: str) -> str:
     slug = _SLUG_RE.sub("-", name.lower()).strip("-")
     return slug or uuid.uuid4().hex[:8]

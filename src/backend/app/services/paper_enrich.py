@@ -160,7 +160,7 @@ async def enrich_paper(
     - target 提供时按其 definition 打分（课题/库工作台），个人书架 import 无 target 跳过。
     - 每步 best-effort：抛错发 error 事件但继续；已就绪发 skipped。
     """
-    from app.services.literature import get_arxiv_client
+    from app.services.literature import sources as literature_sources
     from app.services.literature.pdf_extract import extract_full_text, save_pdf
 
     # 先固定 id：rollback 会让 ORM 对象过期，之后再同步读其属性会触发意外 IO
@@ -182,7 +182,9 @@ async def enrich_paper(
         await emit("download", "skipped", "no arxiv id")
     else:
         try:
-            content = await get_arxiv_client().download_pdf(paper.arxiv_id)
+            content = await literature_sources.require_source("arxiv").download_pdf(
+                paper.arxiv_id
+            )
             paper.pdf_path = str(save_pdf(str(paper_id), content))
             await session.commit()
             await emit("download", "ok")

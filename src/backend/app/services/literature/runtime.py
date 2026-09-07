@@ -10,7 +10,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import threading
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -37,9 +36,10 @@ from app.schemas.literature_discovery import (
 from app.services import literature_settings
 from app.services.interdisciplinary_retrieval import rerank_interdisciplinary
 from app.services.literature import discovery_runs
+from app.services.literature import sources as source_registry
 from app.services.literature.discovery import candidate_dedup_key, validate_candidate
 from app.services.literature.discovery_ranking import SCORING_VERSION, rank_candidates
-from app.services.literature.multi_source import MultiSourceClient, ProviderRequestError
+from app.services.literature.multi_source import ProviderRequestError
 from app.services.literature.retrieval_quality import (
     ExecutableQuery,
     QueryGenerationError,
@@ -50,11 +50,24 @@ from app.services.literature.retrieval_quality import (
     model_rerank,
 )
 
+# 内置适配器实现已收拢到 sources.py（#720 注册表）；这里保留同名再导出，
+# 既有测试与外部引用（tests/test_literature_discovery_runtime 等）不随迁移失效。
+from app.services.literature.sources import (  # noqa: F401
+    ArxivAdapter,
+    MultiSourceAdapter,
+    OpenAlexAdapter,
+    RotatingAdapter,
+    SemanticScholarAdapter,
+    _candidate_from_arxiv,
+    _candidate_from_generic,
+    _candidate_from_openalex,
+    _candidate_from_semantic,
+)
+from app.services.literature.sources import credential_pool as _credential_pool_impl
+
 logger = logging.getLogger(__name__)
 _REGISTRY_CACHE: tuple[str, AdapterRegistry] | None = None
 _REGISTRY_LOCK = asyncio.Lock()
-_ROTATION_LOCK = threading.Lock()
-_ROTATION_INDEX: dict[str, int] = {}
 
 
 class SourceExecutionError(RuntimeError):
@@ -79,175 +92,6 @@ class AdapterRegistry:
         return set(self._adapters)
 
 
-class RotatingAdapter:
-    """Select one configured credential without persisting it in a run."""
-
-    def __init__(self, name: str, adapters: Sequence[SourceAdapter]) -> None:
-        if not adapters:
-            raise ValueError("at least one adapter is required")
-        self.name = name
-        self._adapters = tuple(adapters)
-
-    async def search(self, request: SourceSearchRequest) -> SourceSearchPage:
-        with _ROTATION_LOCK:
-            index = _ROTATION_INDEX.get(self.name, 0)
-            _ROTATION_INDEX[self.name] = index + 1
-        return await self._adapters[index % len(self._adapters)].search(request)
-
-
-class OpenAlexAdapter:
-    name = "openalex"
-
-    def __init__(self, client: Any) -> None:
-        self.client = client
-
-    async def search(self, request: SourceSearchRequest) -> SourceSearchPage:
-        rows = await self.client.search_works(
-            request.query,
-            limit=request.limit,
-            start_year=request.start_year,
-            end_year=request.end_year,
-        )
-        return SourceSearchPage(
-            source=self.name,
-            items=[_candidate_from_openalex(row) for row in rows],
-            fetched_count=len(rows),
-        )
-
-
-class SemanticScholarAdapter:
-    name = "semantic"
-
-    def __init__(self, client: Any) -> None:
-        self.client = client
-
-    async def search(self, request: SourceSearchRequest) -> SourceSearchPage:
-        rows = await self.client.search_papers(
-            request.query,
-            limit=request.limit,
-            start_year=request.start_year,
-            end_year=request.end_year,
-        )
-        return SourceSearchPage(
-            source=self.name,
-            items=[_candidate_from_semantic(row) for row in rows],
-            fetched_count=len(rows),
-        )
-
-
-class ArxivAdapter:
-    name = "arxiv"
-
-    def __init__(self, client: Any) -> None:
-        self.client = client
-
-    async def search(self, request: SourceSearchRequest) -> SourceSearchPage:
-        since = datetime(request.start_year, 1, 1, tzinfo=UTC) if request.start_year else None
-        until = datetime(request.end_year, 12, 31, 23, 59, tzinfo=UTC) if request.end_year else None
-        if hasattr(self.client, "search_raw"):
-            rows = await self.client.search_raw(
-                request.query, since=since, until=until, limit=request.limit
-            )
-        else:
-            rows = await self.client.search(
-                keywords=[request.query], since=since, until=until, limit=request.limit
-            )
-        return SourceSearchPage(
-            source=self.name,
-            items=[_candidate_from_arxiv(row) for row in rows],
-            fetched_count=len(rows),
-        )
-
-
-class MultiSourceAdapter:
-    """Adapter for providers that share the normalized YFR-compatible client."""
-
-    def __init__(self, name: str, client: MultiSourceClient) -> None:
-        self.name = name
-        self.client = client
-
-    async def search(self, request: SourceSearchRequest) -> SourceSearchPage:
-        rows = await self.client.search_source(self.name, request)
-        return SourceSearchPage(
-            source=self.name,
-            items=[validate_candidate(_candidate_from_generic(self.name, row)) for row in rows],
-            fetched_count=len(rows),
-        )
-
-
-def _candidate_from_openalex(row: Mapping[str, Any]) -> LiteratureCandidate:
-    return validate_candidate(
-        LiteratureCandidate(
-            source="openalex",
-            title=str(row.get("title") or "Untitled"),
-            abstract=row.get("abstract"),
-            authors=row.get("authors") or [],
-            year=row.get("year"),
-            venue=row.get("venue"),
-            doi=row.get("doi"),
-            url=row.get("url"),
-            citation_count=row.get("cited_by_count"),
-            metadata=dict(row),
-        )
-    )
-
-
-def _candidate_from_semantic(row: Mapping[str, Any]) -> LiteratureCandidate:
-    external = row.get("externalIds") or {}
-    return validate_candidate(
-        LiteratureCandidate(
-            source="semantic",
-            title=str(row.get("title") or "Untitled"),
-            abstract=row.get("abstract"),
-            authors=[a for a in row.get("authors") or [] if isinstance(a, Mapping)],
-            year=row.get("year"),
-            venue=row.get("venue"),
-            doi=external.get("DOI"),
-            arxiv_id=external.get("ArXiv"),
-            semantic_scholar_id=row.get("paperId"),
-            url=row.get("url"),
-            citation_count=row.get("citationCount"),
-            metadata=dict(row),
-        )
-    )
-
-
-def _candidate_from_arxiv(row: Mapping[str, Any]) -> LiteratureCandidate:
-    return validate_candidate(
-        LiteratureCandidate(
-            source="arxiv",
-            title=str(row.get("title") or "Untitled"),
-            abstract=row.get("abstract"),
-            authors=row.get("authors") or [],
-            year=row.get("year"),
-            doi=row.get("doi"),
-            arxiv_id=row.get("arxiv_id"),
-            url=row.get("url"),
-            pdf_url=row.get("pdf_url"),
-            oa_status="oa" if row.get("pdf_url") else None,
-            metadata=dict(row),
-        )
-    )
-
-
-def _candidate_from_generic(source: str, row: Mapping[str, Any]) -> LiteratureCandidate:
-    return LiteratureCandidate(
-        source=source,
-        title=str(row.get("title") or "Untitled"),
-        abstract=row.get("abstract"),
-        authors=row.get("authors") or [],
-        year=row.get("year"),
-        venue=row.get("venue"),
-        doi=row.get("doi"),
-        pmid=row.get("pmid"),
-        url=row.get("url"),
-        pdf_url=row.get("pdf_url"),
-        oa_status=row.get("oa_status"),
-        citation_count=row.get("citation_count"),
-        metadata=dict(row.get("metadata") or row),
-    )
-
-
 def _config_values(run: LiteratureSearchRun) -> tuple[list[str], list[str], dict[str, float]]:
     config = run.source_config if isinstance(run.source_config, dict) else {}
     sources = discovery_runs.enabled_sources(run.source_config, run.query_plan)
@@ -260,15 +104,8 @@ def _config_values(run: LiteratureSearchRun) -> tuple[list[str], list[str], dict
 
 
 def _credential_pool(settings: Mapping[str, Any], source: str, fallback: str = "") -> list[str]:
-    configured = settings.get("provider_keys")
-    # 「这个源没配」和「配了但空（= 管理员停用了）」必须分开：只看池子空不空的话，
-    # 停用等于无效——照样回落到环境变量里的凭据，而且没有任何提示。
-    declared = isinstance(configured, Mapping) and source in configured
-    values = configured.get(source) if declared else None
-    pool = [str(value).strip() for value in values or [] if str(value).strip()]
-    if declared:
-        return pool
-    return [item for value in fallback.replace(";", ",").split(",") if (item := value.strip())]
+    """兼容再导出：实现在 sources.credential_pool（注册表装配也用同一份语义）。"""
+    return _credential_pool_impl(settings, source, fallback)
 
 
 def _registry_fingerprint(settings: Mapping[str, Any]) -> str:
@@ -277,56 +114,24 @@ def _registry_fingerprint(settings: Mapping[str, Any]) -> str:
 
 
 async def build_adapter_registry(runtime_settings: Mapping[str, Any]) -> AdapterRegistry:
-    """Build or reuse adapters from trusted, decrypted administrator settings."""
+    """Build or reuse adapters from trusted, decrypted administrator settings.
+
+    适配器构造从源注册表（sources.register_source）逐项派生，不再硬编码清单；
+    内置三源（arxiv / semantic / openalex）与多源提供方的装配方式与收拢前
+    逐字节一致（key 池、RotatingAdapter 轮转、共享 MultiSourceClient）。
+    """
     global _REGISTRY_CACHE
-    fingerprint = _registry_fingerprint(runtime_settings)
+    # 指纹除设置外并入注册源清单：运行期挂上新源后，旧缓存注册表不能再复用
+    fingerprint = _registry_fingerprint(
+        {"settings": dict(runtime_settings), "sources": list(source_registry.source_ids())}
+    )
     async with _REGISTRY_LOCK:
         if _REGISTRY_CACHE is not None and _REGISTRY_CACHE[0] == fingerprint:
             return _REGISTRY_CACHE[1]
 
-        app_settings = get_settings()
-        openalex_keys = _credential_pool(runtime_settings, "openalex") or [""]
-        semantic_keys = _credential_pool(runtime_settings, "semantic", app_settings.s2_api_key) or [
-            ""
-        ]
-
-        from app.services.literature.arxiv import ArxivClient
-        from app.services.literature.openalex import OpenAlexClient
-        from app.services.literature.semantic_scholar import SemanticScholarClient
-
-        multi_source = MultiSourceClient(
-            provider_keys=runtime_settings.get("provider_keys")
-            if isinstance(runtime_settings.get("provider_keys"), Mapping)
-            else None
-        )
+        context = source_registry.build_context(runtime_settings)
         registry = AdapterRegistry(
-            (
-                RotatingAdapter(
-                    "openalex",
-                    [OpenAlexAdapter(OpenAlexClient(api_key=key or None)) for key in openalex_keys],
-                ),
-                RotatingAdapter(
-                    "semantic",
-                    [
-                        SemanticScholarAdapter(SemanticScholarClient(api_key=key or None))
-                        for key in semantic_keys
-                    ],
-                ),
-                ArxivAdapter(ArxivClient()),
-                *(
-                    MultiSourceAdapter(source, multi_source)
-                    for source in (
-                        "pubmed",
-                        "crossref",
-                        "europepmc",
-                        "hal",
-                        "core",
-                        "base",
-                        "sciverse",
-                        "unpaywall",
-                    )
-                ),
-            )
+            tuple(spec.build(context) for spec in source_registry.specs())
         )
         _REGISTRY_CACHE = (fingerprint, registry)
         return registry

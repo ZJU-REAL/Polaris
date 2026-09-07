@@ -96,7 +96,14 @@ async def fetch(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
             f"{len(failed)} 个分类抓取失败：{'、'.join(failed)}；"
             "当天这些分类的新论文不会进池，请重试"
         )
-    elif categories and fetched == 0:
+    elif not categories:
+        # 一个分类都没订阅：不是故障，但必须说破——池子永远空着，所有文献库都断供
+        result["note"] = (
+            "还没有订阅任何 arXiv 分类，每日池不会有新论文进来；"
+            "请在 设置 → 每日新论文订阅分类 里添加要跟踪的分类。"
+        )
+        await ctx.log(result["note"], level="warning")
+    elif fetched == 0:
         # 全部分类都抓成功但一篇没有：周末/节假日是正常的，仍提示一句便于对照
         result["note"] = "所有订阅分类今天都没有新公告（周末或节假日时属正常）"
     return result

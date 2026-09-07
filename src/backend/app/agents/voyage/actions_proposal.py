@@ -54,8 +54,7 @@ from app.services.libraries import (
     get_source_library_ids,
     member_papers_stmt,
 )
-from app.services.literature.openalex import OpenAlexClient
-from app.services.literature.semantic_scholar import SemanticScholarClient
+from app.services.literature import get_openalex_client, get_s2_client
 from app.services.review import serialize_message
 
 DEFAULT_DEEP_KNOBS: dict[str, Any] = {
@@ -575,41 +574,40 @@ async def _external_search(
     results: list[dict[str, Any]] = []
     seen_titles: set[str] = set()
     ok = True
-    s2 = SemanticScholarClient()
-    openalex = OpenAlexClient()
-    try:
-        for query in queries:
-            rows: list[dict[str, Any]] = []
+    # 用模块级单例而不是裸构造：裸构造的客户端没有共享限速/缓存状态，还绕开
+    # set_clients 注入缝（#720 裸构造修复；进一步凭据轮转经 discovery 注册表）
+    s2 = get_s2_client()
+    openalex = get_openalex_client()
+    for query in queries:
+        rows: list[dict[str, Any]] = []
+        try:
+            rows = await s2.search_papers(query, limit=limit)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — S2 失败走 OpenAlex
             try:
-                rows = await s2.search_papers(query, limit=limit)
+                rows = await openalex.search_works(query, limit=limit)
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 — S2 失败走 OpenAlex
-                try:
-                    rows = await openalex.search_works(query, limit=limit)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:  # noqa: BLE001 — 双通道均失败：降级
-                    ok = False
-            for row in rows:
-                title = str(row.get("title") or "").strip()
-                key = title.lower()
-                if not title or key in seen_titles:
-                    continue
-                seen_titles.add(key)
-                results.append(
-                    {
-                        "title": title,
-                        "year": row.get("year"),
-                        "venue": row.get("venue") or row.get("journal"),
-                        "url": row.get("url"),
-                        "abstract": (str(row.get("abstract") or ""))[:400] or None,
-                    }
-                )
-            await _log(ctx, f"外部检索「{query}」→ 累计 {len(results)} 篇")
-    finally:
-        await s2.aclose()
-        await openalex.aclose()
+            except Exception:  # noqa: BLE001 — 双通道均失败：降级
+                ok = False
+        for row in rows:
+            title = str(row.get("title") or "").strip()
+            key = title.lower()
+            if not title or key in seen_titles:
+                continue
+            seen_titles.add(key)
+            results.append(
+                {
+                    "title": title,
+                    "year": row.get("year"),
+                    "venue": row.get("venue") or row.get("journal"),
+                    "url": row.get("url"),
+                    "abstract": (str(row.get("abstract") or ""))[:400] or None,
+                }
+            )
+        await _log(ctx, f"外部检索「{query}」→ 累计 {len(results)} 篇")
+    # 单例客户端是全进程共用的连接池，不在这里 aclose（裸构造时代的收尾已退役）
     return results[: limit * 2], ok
 
 

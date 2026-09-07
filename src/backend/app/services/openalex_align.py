@@ -19,6 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.paper import Paper
+
+# #720 注册表豁免：书目图对齐是 OpenAlex 语义专属（openalex_id、DataCite DOI、
+# 标题模糊匹配阈值都绑定这一家的数据模型），不存在「换个源也能对齐」的抽象；
+# 经注册表间接一层只会掩盖这种耦合。客户端仍取模块级单例（共享限速/缓存/注入缝）。
 from app.services.literature import get_openalex_client
 from app.services.literature.openalex import OpenAlexClient
 

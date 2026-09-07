@@ -65,12 +65,12 @@ from app.services.libraries import (
     remember_rejected,
 )
 from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
+from app.services.literature import sources as literature_sources
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
 from app.services.paper_enrich import paper_embedding_text
 from app.services.paper_wiki import upsert_wiki
 from app.services.papers import delete_membership_hard
-from app.services.projects import DEFAULT_ARXIV_CATEGORIES
 from app.services.relevance import (
     build_direction_query,
     build_relevance_context,
@@ -502,10 +502,9 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         definition = library_definition(library)
         direction_query = build_direction_query(definition, library.name)
         keywords_def = definition.get("keywords") or {}
-        # 稀疏 definition 容忍：无 arxiv_categories 时回退默认 cs.* 分类
-        categories = list(keywords_def.get("arxiv_categories") or []) or list(
-            DEFAULT_ARXIV_CATEGORIES
-        )
+        # 分类只认库自己的 definition：没配就不带分类过滤，走纯关键词检索。
+        # 以前这里回退默认 cs.* 三件套——非 CS 的库会被静默灌进计算机论文（#720 A4）。
+        categories = list(keywords_def.get("arxiv_categories") or [])
         include = list(keywords_def.get("include") or [])
         # 排除词与包括词不同：包括词配窄了会让库悄无声息收不到东西，所以同步时不拿它筛；
         # 排除词是用户明确说「我不要这个」，漏掉它反而是失职，三条路径一律生效。
@@ -571,6 +570,41 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         params = _params(ctx)
         terms = [t for t in (params.get("query_terms") or []) if str(t).strip()] or include
         days = TIME_RANGE_DAYS.get(str(params.get("time_range") or ""))
+        if not categories and not terms:
+            # 关键词、分类两头都空：查询会退化成「窗口内全 arXiv」的无界抓取，
+            # 那不是用户想要的库，是灾难。如实停下并把该配什么讲清楚。
+            messages = [
+                "文献库没有配置检索关键词，也没有指定 arXiv 分类，本次未执行检索。"
+                "请在收录设置里补充「包括关键词」或分类后重试。"
+            ]
+            window = timedelta(days=days or 30 * int(knobs["months_back"]))
+            window_since = (now - window).isoformat()
+            diagnostics = {
+                "source": "arxiv",
+                "source_fetched": 0,
+                "prescreened": 0,
+                "query_found": 0,
+                "inserted": 0,
+                "window_since": window_since,
+                "source_latest_at": None,
+                "cap_hit": False,
+                "status": "warning",
+                "messages": messages,
+            }
+            ctx.checkpoint["ingest_search_stats"] = diagnostics
+            ctx.checkpoint["watermark_candidate"] = now.isoformat()
+            await ctx.log(messages[0], level="warning")
+            return {
+                "source": "arxiv",
+                "found": 0,
+                "inserted": 0,
+                "new_papers": [],
+                "window_since": window_since,
+                "mode": mode,
+                "source_latest_at": None,
+                "diagnostic_status": "warning",
+                "diagnostic_messages": messages,
+            }
         query_signature = hashlib.sha256(
             json.dumps(
                 {
@@ -691,7 +725,8 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             new_papers.append(paper)
             return True
 
-        arxiv = get_arxiv_client()
+        # 经源注册表取 arXiv 适配器；get_arxiv_client 模块属性保留为客户端注入缝
+        arxiv = literature_sources.require_source("arxiv", client=get_arxiv_client())
         while next_start < limit:
             # 页大小问客户端要，别写死：下面拿 len(entries) < page_size 判末页，
             # 一旦要的比客户端肯给的多，第一页就会被误判成末页，搜索静默截断。
@@ -778,7 +813,7 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
     if depth == 0:
         return {"skipped": True, "reason": "snowball_depth=0"}
 
-    s2 = get_s2_client()
+    s2 = literature_sources.require_source("semantic", client=get_s2_client())
     failed: list[dict[str, str]] = []
     new_papers: list[Paper] = []
     inserted = 0
@@ -824,14 +859,14 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
                     break
                 processed_seeds += 1
                 try:
-                    refs = await s2.get_references(f"arXiv:{seed}")
-                    cits = await s2.get_citations(f"arXiv:{seed}")
+                    # snowball 能力 = 参考文献 + 施引文献的合并清单（顺序同旧拼接）
+                    expanded = await s2.snowball(f"arXiv:{seed}")
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:  # noqa: BLE001 — 单个种子失败不打断批处理
                     failed.append({"id": seed, "error": f"{type(e).__name__}: {e}"})
                     continue
-                for item in refs + cits:
+                for item in expanded:
                     if inserted >= max_new:
                         break
                     ext = item.get("externalIds") or {}
@@ -1085,7 +1120,7 @@ def _compile_limit(knobs: dict[str, Any]) -> int:
 async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     knobs = _knobs(ctx)
     top_n = _compile_limit(knobs)
-    arxiv = get_arxiv_client()
+    arxiv = literature_sources.require_source("arxiv", client=get_arxiv_client())
     fetched = 0
     degraded = 0
     failed: list[dict[str, str]] = []
@@ -1160,10 +1195,13 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             need_date = paper.published_at is None and not paper.arxiv_id
             if (not paper.affiliations or need_date) and (paper.arxiv_id or paper.doi):
                 try:
+                    openalex = literature_sources.require_source(
+                        "openalex", client=get_openalex_client()
+                    )
                     meta = (
-                        await get_openalex_client().get_by_arxiv(paper.arxiv_id)
+                        await openalex.resolve("arxiv", paper.arxiv_id)
                         if paper.arxiv_id
-                        else await get_openalex_client().get_by_doi(paper.doi)
+                        else await openalex.resolve("doi", paper.doi)
                     )
                     if not paper.affiliations:
                         apply_author_affiliations(paper, (meta or {}).get("authors"))

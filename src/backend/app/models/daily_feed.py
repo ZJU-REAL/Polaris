@@ -18,8 +18,8 @@ from app.core.db import Base
 from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.paper import Paper
 
-# 默认订阅分类；可在 system_settings 的 daily_feed_categories 键覆盖
-DEFAULT_DAILY_CATEGORIES = ["cs.AI", "cs.CL", "cs.CV"]
+# 订阅分类没有代码级默认（#720 A4）：以前这里写死 cs.AI/cs.CL/cs.CV，非 CS
+# 用户会被静默塞满不相干论文。订阅只存 system_settings 的 daily_feed_categories 键。
 
 # 池滚动保留天数（含当天）
 #: 保留天数的**默认值**。运行时以 SystemSetting daily_feed_retention_days 为准

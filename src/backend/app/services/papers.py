@@ -1166,7 +1166,7 @@ async def fetch_pdf(
     - 下载失败 → PdfFetchFailedError（路由映射 502）
     - 全文抽取失败只记日志，不影响 PDF 落盘
     """
-    from app.services.literature import get_arxiv_client
+    from app.services.literature import sources as literature_sources
     from app.services.literature.pdf_extract import save_pdf
 
     if paper.pdf_path and Path(paper.pdf_path).exists():
@@ -1174,7 +1174,7 @@ async def fetch_pdf(
     if not paper.arxiv_id:
         raise PdfSourceUnsupportedError("论文没有 arxiv 编号，暂不支持自动获取 PDF")
     try:
-        content = await get_arxiv_client().download_pdf(paper.arxiv_id)
+        content = await literature_sources.require_source("arxiv").download_pdf(paper.arxiv_id)
     except asyncio.CancelledError:
         raise
     except Exception as e:

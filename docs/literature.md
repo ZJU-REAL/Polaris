@@ -83,7 +83,8 @@ direction:
 ### The daily feed
 
 **Daily Papers** is the deployment-wide feed of each day's new arXiv announcements (`new` and `cross`
-listings) in the categories an admin subscribes (default `cs.AI`, `cs.CL`, `cs.CV`). A worker probes
+listings) in the categories an admin subscribes. There is no default subscription — until categories
+are added in Settings the feed stays empty and the page says so. A worker probes
 arXiv from a configurable time each day (default 01:30 UTC) until the day's batch actually appears;
 weekends show as quiet because arXiv does not publish. Feed papers enter the content pool as
 lightweight rows — metadata and abstract, no PDF, no LLM cost — and get embeddings so semantic
@@ -267,7 +268,7 @@ Admin settings (Settings → Daily papers):
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Subscribed categories | `cs.AI`, `cs.CL`, `cs.CV` | Which arXiv categories the daily feed fetches |
+| Subscribed categories | (empty — add your own) | Which arXiv categories the daily feed fetches |
 | Retention days | 14 (1–90) | How long feed entries live; also the window library syncs can see |
 | Sync time | 01:30 UTC | When the daily probe starts looking for arXiv's batch |
 | Library sync scan scope | Since last sync | What slice of the pool incremental syncs consider (today only / whole pool) |

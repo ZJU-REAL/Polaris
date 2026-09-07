@@ -67,7 +67,24 @@ class SourceSearchPage(BaseModel):
 
 
 class SourceAdapter(Protocol):
-    """真实来源客户端需要实现的最小异步合同。"""
+    """真实来源客户端需要实现的最小异步合同。
+
+    ``search`` 是唯一必选能力。其余能力**按源自愿实现**，调用方用
+    ``hasattr`` 探测（源注册表 services/literature/sources.py 的内置源
+    即范本），签名约定如下：
+
+    - ``fetch_new(category) -> (entries, batch_at)``：当天新公告增量池
+      （每日推送的供给面；目前只有 arXiv 有「当天公告」这个概念）。
+    - ``resolve(kind, value) -> record | None``：按外部标识解析元数据，
+      kind ∈ {"arxiv", "doi", "corpus_id", …}；能解析哪些 kind 在注册表
+      的 ``resolve_kinds`` 元数据里声明，级联顺序由 ``resolve_priority``
+      决定（paper_import 的 arXiv → OpenAlex 兜底级联从这里派生）。
+    - ``download_pdf(paper_ref) -> bytes``：按源内标识取 PDF 原文。
+    - ``snowball(paper_ref) -> records``：引文扩展（参考文献 + 施引文献）。
+
+    能力方法返回**源原生记录形状**，不做跨源归一化——归一化只发生在
+    ``search`` 的 LiteratureCandidate 出口；这是既有调用点字节等价的前提。
+    """
 
     name: str
 

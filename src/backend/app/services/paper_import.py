@@ -19,12 +19,30 @@ from app.services.libraries import (
     get_membership,
 )
 from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
+from app.services.literature import sources as literature_sources
 from app.services.literature.arxiv import ArxivRateLimitedError, normalize_arxiv_id
 
 logger = logging.getLogger(__name__)
 
 _BRACES_RE = re.compile(r"[{}]")
 _WS_RE = re.compile(r"\s+")
+
+#: 各源的客户端注入缝：模块属性 get_*_client 是既有测试/调试面（monkeypatch
+#: 这里的名字即可换掉客户端），适配器形状则由源注册表决定。lambda 里按名字
+#: 现取，保证 monkeypatch 对后续调用生效。
+_CLIENT_SEAMS: dict[str, Any] = {
+    "arxiv": lambda: get_arxiv_client(),
+    "openalex": lambda: get_openalex_client(),
+    "semantic": lambda: get_s2_client(),
+}
+
+
+def _source(source_id: str) -> Any:
+    """经注册表取源适配器（客户端沿用本模块的注入缝）。"""
+    seam = _CLIENT_SEAMS.get(source_id)
+    return literature_sources.require_source(
+        source_id, client=seam() if seam is not None else None
+    )
 
 
 class ParseFailedError(Exception):
@@ -106,7 +124,7 @@ async def _fields_from_openalex_arxiv(arxiv_id: str) -> dict[str, Any]:
     用户手里就是那个编号，让他因为上游限流而干等着，等于我们把别人的故障转嫁给他。
     """
     normalized = normalize_arxiv_id(arxiv_id)
-    meta = await get_openalex_client().get_by_arxiv(normalized)
+    meta = await _source("openalex").resolve("arxiv", normalized)
     if meta is None or not meta.get("title"):
         raise ParseFailedError(f"arXiv 正在限流，OpenAlex 上也查不到 {normalized}")
     return {
@@ -138,19 +156,41 @@ def _fields_from_arxiv_entry(entry: dict[str, Any], fallback_id: str) -> dict[st
     }
 
 
+async def _fields_from_arxiv_source(arxiv_id: str) -> dict[str, Any]:
+    """arXiv 本尊解析一个编号（级联首选；限流上抛给级联循环兜底）。"""
+    entry = await _source("arxiv").resolve("arxiv", arxiv_id)
+    if entry is None:
+        raise ParseFailedError(f"arxiv 上查不到编号 {arxiv_id}")
+    return _fields_from_arxiv_entry(entry, arxiv_id)
+
+
+#: 按 (源 id, 标识类型) 索引的字段构造器。级联**顺序**不写在这里——由注册表的
+#: resolve 元数据（sources.resolvers_for）给出：arXiv 号先问 arXiv，限流才轮到
+#: OpenAlex。字段映射按源各有一套（半篇元数据的取舍不同），所以留在本模块。
+_FIELD_BUILDERS: dict[tuple[str, str], Any] = {
+    ("arxiv", "arxiv"): lambda value: _fields_from_arxiv_source(value),
+    ("openalex", "arxiv"): lambda value: _fields_from_openalex_arxiv(value),
+}
+
+
 async def _fields_from_arxiv(arxiv_id: str) -> dict[str, Any]:
     normalized = normalize_arxiv_id(arxiv_id)
-    try:
-        entries = await get_arxiv_client().fetch_by_ids([normalized])
-    except ArxivRateLimitedError:
-        # arXiv 限流是常态（尤其每日抓取跑完之后）。这条路以前直接抛到端点、变成
-        # 一句「Internal Server Error」——用户既不知道发生了什么，也不知道要不要重试。
-        logger.warning("arxiv rate-limited, falling back to OpenAlex for %s", normalized)
-        return await _fields_from_openalex_arxiv(normalized)
-    entry = next((e for e in entries if e.get("title")), None)
-    if entry is None:
-        raise ParseFailedError(f"arxiv 上查不到编号 {normalized}")
-    return _fields_from_arxiv_entry(entry, normalized)
+    chain = [
+        source_id
+        for source_id in literature_sources.resolvers_for("arxiv")
+        if (source_id, "arxiv") in _FIELD_BUILDERS
+    ]
+    for index, source_id in enumerate(chain):
+        try:
+            return await _FIELD_BUILDERS[(source_id, "arxiv")](normalized)
+        except ArxivRateLimitedError:
+            # arXiv 限流是常态（尤其每日抓取跑完之后）。这条路以前直接抛到端点、变成
+            # 一句「Internal Server Error」——用户既不知道发生了什么，也不知道要不要重试。
+            # 只有「可重试」的失败才继续级联；「查不到」是终局答案，不换源重问。
+            if index + 1 >= len(chain):
+                raise
+            logger.warning("arxiv rate-limited, falling back to OpenAlex for %s", normalized)
+    raise ParseFailedError(f"arxiv 上查不到编号 {normalized}")  # chain 为空的防御位
 
 
 #: 批量解析里「逐项兜底」的墙钟预算。接口是同步的，超了就把剩下的记成查不到，
@@ -168,7 +208,7 @@ async def resolve_arxiv_fields_batch(arxiv_ids: list[str]) -> list[dict[str, Any
     unique_ids = list(dict.fromkeys(normalized))
     rate_limited = False
     try:
-        entries = await get_arxiv_client().fetch_by_ids(unique_ids)
+        entries = await _source("arxiv").fetch_by_ids(unique_ids)
     except ArxivRateLimitedError:
         logger.warning("arxiv rate-limited while resolving %d anchors", len(unique_ids))
         entries = []
@@ -218,7 +258,8 @@ async def resolve_arxiv_fields_batch(arxiv_ids: list[str]) -> list[dict[str, Any
 
 async def _fields_from_doi(doi: str) -> dict[str, Any]:
     doi = doi.strip().removeprefix("https://doi.org/")
-    meta = await get_openalex_client().get_by_doi(doi)
+    # DOI 目前只有 OpenAlex 能解析（resolvers_for("doi")）；注册新源后自动排进级联
+    meta = await _source("openalex").resolve("doi", doi)
     if meta is None or not meta.get("title"):
         raise ParseFailedError(f"OpenAlex 上查不到 DOI {doi}")
     return {
@@ -246,7 +287,7 @@ def normalize_corpus_id(raw: str) -> str:
 async def _fields_from_corpus_id(corpus_id: str) -> dict[str, Any]:
     normalized = normalize_corpus_id(corpus_id)
     try:
-        meta = await get_s2_client().get_paper(f"CorpusId:{normalized}")
+        meta = await _source("semantic").resolve("corpus_id", normalized)
     except Exception as e:  # noqa: BLE001 - upstream failures become a readable import error
         raise ParseFailedError(
             f"Semantic Scholar 上查不到 Corpus ID {normalized}（{type(e).__name__}）"

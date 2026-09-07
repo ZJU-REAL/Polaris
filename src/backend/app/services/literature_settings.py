@@ -19,22 +19,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decrypt_secret, encrypt_secret
 from app.models.system_setting import SystemSetting
+from app.services.literature import sources as source_registry
 
 SETTING_KEY = "literature_search"
 _SETTING_LOCK_ID = zlib.crc32(SETTING_KEY.encode("utf-8"))
-SUPPORTED_SOURCES = (
-    "openalex",
-    "semantic",
-    "arxiv",
-    "pubmed",
-    "crossref",
-    "europepmc",
-    "hal",
-    "core",
-    "base",
-    "sciverse",
-)
-CREDENTIAL_SOURCES = (*SUPPORTED_SOURCES, "easyscholar")
+
+
+def supported_sources() -> tuple[str, ...]:
+    """可选源清单从源注册表派生（#720）：注册即可选，不再维护手写元组。
+
+    调用时实时读注册表——插件运行期用 register_source 挂新源后，设置校验
+    立刻认得它，不存在「注册了但设置里报 unsupported」的窗口。
+    """
+    return source_registry.selectable_source_ids()
+
+
+def credential_sources() -> tuple[str, ...]:
+    # easyscholar 只做期刊分级（venue_metrics），不是检索源，仅在凭据面出现
+    return (*supported_sources(), "easyscholar")
 DEFAULT_SCORE_WEIGHTS = {
     "relevance": 0.45,
     "evidence_quality": 0.20,
@@ -94,7 +96,7 @@ def _normalize(data: Any) -> dict[str, Any]:
     sources = list(
         dict.fromkeys(str(item).strip().lower() for item in raw_sources if str(item).strip())
     )
-    unknown = [item for item in sources if item not in SUPPORTED_SOURCES]
+    unknown = [item for item in sources if item not in supported_sources()]
     if unknown:
         raise InvalidLiteratureSettingError("sources", f"unsupported source: {unknown[0]}")
 
@@ -255,7 +257,7 @@ async def update_settings(session: AsyncSession, data: Mapping[str, Any]) -> dic
         encrypted: dict[str, list[str]] = {}
         for source, values in raw_pools.items():
             source_name = str(source).strip().lower()
-            if source_name not in CREDENTIAL_SOURCES:
+            if source_name not in credential_sources():
                 raise InvalidLiteratureSettingError(
                     "provider_keys", f"unsupported source: {source_name}"
                 )
@@ -291,7 +293,7 @@ async def update_settings(session: AsyncSession, data: Mapping[str, Any]) -> dic
 
 def _validate_credential_source(source: str) -> str:
     source = source.strip().lower()
-    if source not in CREDENTIAL_SOURCES:
+    if source not in credential_sources():
         raise InvalidLiteratureSettingError("source", f"unsupported source: {source}")
     if source == "arxiv":
         raise InvalidLiteratureSettingError("source", "arxiv does not require credentials")

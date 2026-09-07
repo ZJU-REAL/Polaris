@@ -24,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embedding_space import EmbeddingSpace, active_space
 from app.models.daily_feed import (
-    DEFAULT_DAILY_CATEGORIES,
     DailyFeedEntry,
     DailyFeedLike,
 )
@@ -41,6 +40,7 @@ from app.services import topic_shelf as shelf_service
 from app.services.dedup import pool_dedup_key
 from app.services.libraries import can_manage_library, ensure_membership, find_pool_paper
 from app.services.literature import get_arxiv_client
+from app.services.literature import sources as literature_sources
 from app.services.paper_import import _parse_iso
 
 logger = logging.getLogger(__name__)
@@ -82,9 +82,15 @@ def _today_utc() -> dt.date:
 
 
 async def get_categories(session: AsyncSession) -> list[str]:
+    """订阅分类。没配过就是**空**——不再缺省成 cs.* 三件套（#720 A4）。
+
+    以前静默回退 ["cs.AI","cs.CL","cs.CV"]：非 CS 用户的每日池被填满不相干
+    的论文，还以为系统坏了。现在空列表如实返回，抓取端拿到空就不抓，
+    API/前端提示「先在设置里订阅分类」。
+    """
     row = await session.get(SystemSetting, CATEGORIES_SETTING_KEY)
-    if row is None or not isinstance(row.value, list) or not row.value:
-        return list(DEFAULT_DAILY_CATEGORIES)
+    if row is None or not isinstance(row.value, list):
+        return []
     return [str(c) for c in row.value]
 
 
@@ -98,8 +104,8 @@ async def set_categories(session: AsyncSession, categories: list[str]) -> list[s
             raise InvalidCategoryError(cat)
         if cat not in cleaned:
             cleaned.append(cat)
-    if not cleaned:
-        raise InvalidCategoryError("(empty)")
+    # 允许清空：空订阅是合法状态（池子停止进新论文，界面另有提示），
+    # 不再用「至少留一个分类」逼着用户保留不相干的缺省
     row = await session.get(SystemSetting, CATEGORIES_SETTING_KEY)
     if row is None:
         session.add(SystemSetting(key=CATEGORIES_SETTING_KEY, value=cleaned))
@@ -293,7 +299,8 @@ async def fetch_new_by_category(
     状态取值：``ok``（抓到了，可能是 0 篇——周末/无公告是正常的）、``error``。
     """
     categories = await get_categories(session)
-    client = get_arxiv_client()
+    # 经源注册表取 arXiv 适配器；get_arxiv_client 模块属性保留为客户端注入缝
+    client = literature_sources.require_source("arxiv", client=get_arxiv_client())
     by_category: dict[str, list[dict[str, Any]]] = {}
     statuses: dict[str, dict[str, Any]] = {}
     for category in categories:
@@ -564,6 +571,23 @@ async def create_daily_feed_voyage(
 # ---- 池浏览 ----
 
 
+def _category_rank_case(subscribed: list[str]) -> Any:
+    """订阅顺序 → 列表排序优先级的 CASE 表达式。
+
+    LIKE 序列化文本的写法与列表接口的 category 过滤同口径（categories 是
+    JSON 数组，PG/sqlite 通用）。空订阅返回常量 0（全部同级，按日期排）。
+    """
+    whens = [
+        (
+            (DailyFeedEntry.primary_category == category)
+            | cast(DailyFeedEntry.categories, String).like(f'%"{category}"%'),
+            index,
+        )
+        for index, category in enumerate(subscribed)
+    ]
+    return case(*whens, else_=len(subscribed)) if whens else literal(0)
+
+
 def _like_count_sq() -> Any:
     return (
         select(func.count(DailyFeedLike.id))
@@ -759,21 +783,10 @@ async def list_papers(
     total = (await session.execute(count_stmt)).scalar_one()
 
     likes_sq = _like_count_sq()
-    # 分类优先级打头：cs.CL 的排最前，cs.RO 的排最后（一篇同时挂两者按 cs.CL 算）。
-    # LIKE 序列化文本的写法与上面 category 过滤同口径，PG/sqlite 通用。
-    category_rank = case(
-        (
-            (DailyFeedEntry.primary_category == "cs.CL")
-            | cast(DailyFeedEntry.categories, String).like('%"cs.CL"%'),
-            0,
-        ),
-        (
-            (DailyFeedEntry.primary_category == "cs.RO")
-            | cast(DailyFeedEntry.categories, String).like('%"cs.RO"%'),
-            2,
-        ),
-        else_=1,
-    )
+    # 分类优先级打头：按**订阅列表的顺序**排（越靠前的分类越先出现；一篇挂多个
+    # 分类按最靠前的算）。以前写死 cs.CL 最前、cs.RO 最后——CS 分类学不该长在
+    # 代码里，顺序跟着用户自己的订阅走（#720 A4）。没订阅分类时全部同级。
+    category_rank = _category_rank_case(await get_categories(session))
     # 同分类里，新工作排在交叉提交（更新）前面：新工作才是当天真正的新东西
     announce_rank = case((DailyFeedEntry.announce_type == "new", 0), else_=1)
     if sort == "relevance":
@@ -1697,13 +1710,16 @@ async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | Non
     """
     categories = await get_categories(session)
     if not categories:
-        return True, None
+        # 没订阅任何分类：无可收之物，不该开一轮同步（空转还会把当天锁死）
+        return False, None
 
     today = _today_utc()
     latest: dt.date | None = None
     for category in categories:
         try:
-            entries, batch_at = await get_arxiv_client().fetch_new(category)
+            entries, batch_at = await literature_sources.require_source(
+                "arxiv", client=get_arxiv_client()
+            ).fetch_new(category)
         except Exception:  # noqa: BLE001 — 探测失败不下结论，交给正式抓取去报错
             logger.warning("daily feed probe failed for %s", category, exc_info=True)
             return True, None
