@@ -13,6 +13,7 @@ from app.api import (
     download_client,
     evidence,
     experiments,
+    export,
     gates,
     health,
     highlights,
@@ -90,3 +91,4 @@ api_router.include_router(tts.router)
 api_router.include_router(evidence.router)
 api_router.include_router(experiments.router)
 api_router.include_router(manuscripts.router)
+api_router.include_router(export.router)

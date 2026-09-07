@@ -38,6 +38,7 @@ import {
 } from '../../lib/api';
 import { BuddySettings } from './BuddySettings';
 import { ExtensionApiKeySettings } from './ExtensionApiKeySettings';
+import { FullExportSettings } from './FullExportSettings';
 import { AdminSpeechSettings, PersonalSpeechSettings } from './SpeechSettings';
 
 /* ============================================================
@@ -2285,7 +2286,7 @@ function MyUsageTab() {
 // ---------------- 页面 ----------------
 
 /** 普通用户设置的标签页（管理员那组在 /admin，见 AdminSettingsPage）。 */
-type Tab = 'personal' | 'prefs' | 'buddy' | 'speech' | 'bots' | 'ssh' | 'myusage' | 'extension' | 'mcp';
+type Tab = 'personal' | 'prefs' | 'buddy' | 'speech' | 'bots' | 'ssh' | 'myusage' | 'extension' | 'mcp' | 'export';
 
 /** 旧的 /settings?tab=xxx 深链里属于管理员组的值 → 统一改跳 /admin。 */
 export const ADMIN_TABS = ['llm', 'daily', 'usage'] as const;
@@ -2716,7 +2717,7 @@ export function DailyCategoriesTab() {
   );
 }
 
-const PERSONAL_TABS: Tab[] = ['personal', 'prefs', 'buddy', 'speech', 'bots', 'ssh', 'myusage', 'extension', 'mcp'];
+const PERSONAL_TABS: Tab[] = ['personal', 'prefs', 'buddy', 'speech', 'bots', 'ssh', 'myusage', 'extension', 'mcp', 'export'];
 
 export function SettingsPage() {
   // 支持 /settings?tab=mcp 这类深链（如旧 /mcp-tools 路由的重定向）
@@ -2745,6 +2746,7 @@ export function SettingsPage() {
     { v: 'myusage', label: tr('用量', 'Usage') },
     { v: 'extension', label: tr('Polaris 扩展', 'Polaris extension') },
     { v: 'mcp', label: tr('MCP 接入', 'MCP access') },
+    { v: 'export', label: tr('数据导出', 'Data export') },
   ];
 
   return (
@@ -2762,6 +2764,7 @@ export function SettingsPage() {
       {tab === 'myusage' && <MyUsageTab />}
       {tab === 'extension' && <ExtensionApiKeySettings />}
       {tab === 'mcp' && <McpToolsContent />}
+      {tab === 'export' && <FullExportSettings />}
     </div>
   );
 }

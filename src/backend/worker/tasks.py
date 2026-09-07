@@ -491,3 +491,15 @@ async def zotero_import(
         user_id=uuid.UUID(user_id),
         project_id=uuid.UUID(project_id) if project_id else None,
     )
+
+
+async def full_export(ctx: dict[str, Any], *, task_id: str, user_id: str) -> dict[str, Any]:
+    """一键全量导出（#690）：把用户全部数据面打包成 zip 供下载。
+
+    zip 落共享数据卷 data_dir/exports/<task_id>.zip（api 侧下载端点直接读），
+    进度与完成事件走 paper-task 通道（归属在 API 入队前已注册），并发锁
+    （每用户同时一个）由任务结束时释放。
+    """
+    from app.services.full_export import run_full_export_task
+
+    return await run_full_export_task(ctx["redis"], task_id=task_id, user_id=user_id)

@@ -4550,6 +4550,14 @@ export const api = {
     return requestBlob(`/libraries/${libraryId}/export/obsidian`);
   },
 
+  // —— 一键全量导出（#690）：入队后走 /paper-tasks/{task_id}/events 订阅进度 ——
+  startFullExport(): Promise<{ task_id: string }> {
+    return request<{ task_id: string }>('/export/full', { method: 'POST' });
+  },
+  downloadFullExport(taskId: string): Promise<Blob> {
+    return requestBlob(`/export/full/${taskId}/download`);
+  },
+
   // —— M2 · Dashboard 统计 ——
   getStats(projectId: string): Promise<StatsRead> {
     return request<StatsRead>(`/projects/${projectId}/stats`);

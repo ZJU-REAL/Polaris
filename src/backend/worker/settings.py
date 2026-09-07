@@ -10,6 +10,7 @@ from worker.tasks import (
     daily_publication_match,
     daily_wiki_ingest,
     dispatch_literature_discovery_schedules,
+    full_export,
     index_papers_fulltext_task,
     match_user_publications,
     parse_paper_content_task,
@@ -46,6 +47,8 @@ class WorkerSettings:
         func(translate_literature_hit, timeout=600),
         # Zotero 导入：整库几百条 + 逐篇补全（LLM 打分限并发 3），1h 上限不够用
         func(zotero_import, timeout=4 * 3600),
+        # 全量导出：全库扫描 + 拷 PDF，默认 1h 上限够用（超大库另议）
+        full_export,
     ]
     # 抓取时刻可由管理员配置（SystemSetting daily_feed_sync_time，默认 UTC 02:30 =
     # 北京 10:30；arXiv 约北京 10:00 放新公告）。arq 的 cron 时刻在 worker 启动时就固定
