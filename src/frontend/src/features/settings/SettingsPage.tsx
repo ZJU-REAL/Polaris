@@ -39,6 +39,8 @@ import {
 import { BuddySettings } from './BuddySettings';
 import { ExtensionApiKeySettings } from './ExtensionApiKeySettings';
 import { FullExportSettings } from './FullExportSettings';
+import { PluginsSettings } from './PluginsSettings';
+import { CAPABILITY_PLUGINS_MANAGE, hasHost, isCapabilityAvailable, loadCapabilities } from '../../lib/host';
 import { AdminSpeechSettings, PersonalSpeechSettings } from './SpeechSettings';
 
 /* ============================================================
@@ -2286,7 +2288,7 @@ function MyUsageTab() {
 // ---------------- 页面 ----------------
 
 /** 普通用户设置的标签页（管理员那组在 /admin，见 AdminSettingsPage）。 */
-type Tab = 'personal' | 'prefs' | 'buddy' | 'speech' | 'bots' | 'ssh' | 'myusage' | 'extension' | 'mcp' | 'export';
+type Tab = 'personal' | 'prefs' | 'buddy' | 'speech' | 'bots' | 'ssh' | 'myusage' | 'extension' | 'mcp' | 'export' | 'plugins';
 
 /** 旧的 /settings?tab=xxx 深链里属于管理员组的值 → 统一改跳 /admin。 */
 export const ADMIN_TABS = ['llm', 'daily', 'usage'] as const;
@@ -2717,7 +2719,7 @@ export function DailyCategoriesTab() {
   );
 }
 
-const PERSONAL_TABS: Tab[] = ['personal', 'prefs', 'buddy', 'speech', 'bots', 'ssh', 'myusage', 'extension', 'mcp', 'export'];
+const PERSONAL_TABS: Tab[] = ['personal', 'prefs', 'buddy', 'speech', 'bots', 'ssh', 'myusage', 'extension', 'mcp', 'export', 'plugins'];
 
 export function SettingsPage() {
   // 支持 /settings?tab=mcp 这类深链（如旧 /mcp-tools 路由的重定向）
@@ -2726,6 +2728,25 @@ export function SettingsPage() {
   const [tab, setTab] = useState<Tab>(() =>
     param !== null && PERSONAL_TABS.includes(param as Tab) ? (param as Tab) : 'personal',
   );
+
+  // 「插件」tab 只在桌面端 plugins.manage 能力可用时出现。能力清单由 App.tsx
+  // 启动时异步拉取，本页可能先于它渲染完——这里自己再 loadCapabilities() 一次
+  // （主进程侧就是读内存清单，重复调用便宜）并在拿到结果后重读，避免首次进
+  // 设置页时 tab 闪失。web 端无桥，直接维持 false，零请求。
+  const [pluginsAvailable, setPluginsAvailable] = useState(() => isCapabilityAvailable(CAPABILITY_PLUGINS_MANAGE));
+  useEffect(() => {
+    if (pluginsAvailable || !hasHost()) return;
+    let alive = true;
+    void loadCapabilities().then(() => {
+      if (alive) setPluginsAvailable(isCapabilityAvailable(CAPABILITY_PLUGINS_MANAGE));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [pluginsAvailable]);
+  // 深链 ?tab=plugins 在能力缺失（web 端、清单未就绪）时回落默认 tab，不崩也不留空白；
+  // 清单稍后就绪且能力在，effectiveTab 自动切回 plugins。
+  const effectiveTab: Tab = tab === 'plugins' && !pluginsAvailable ? 'personal' : tab;
 
   // 旧的管理员深链（/settings?tab=llm）改跳新的管理页；
   // 「我的模型」自管轨并入平台配置后（#621），旧深链也指到那里
@@ -2747,24 +2768,26 @@ export function SettingsPage() {
     { v: 'extension', label: tr('Polaris 扩展', 'Polaris extension') },
     { v: 'mcp', label: tr('MCP 接入', 'MCP access') },
     { v: 'export', label: tr('数据导出', 'Data export') },
+    ...(pluginsAvailable ? [{ v: 'plugins' as Tab, label: tr('插件', 'Plugins') }] : []),
   ];
 
   return (
     <div className="page fadeup">
       <PageHead eyebrow="Polaris · Settings" title={tr('设置', 'Settings')} />
       <div className="row" style={{ gap: 12, marginBottom: 22, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Segmented options={items} value={tab} onChange={setTab} />
+        <Segmented options={items} value={effectiveTab} onChange={setTab} />
       </div>
-      {tab === 'personal' && <PersonalTab />}
-      {tab === 'prefs' && <PreferencesTab />}
-      {tab === 'buddy' && <BuddySettings />}
-      {tab === 'speech' && <PersonalSpeechSettings />}
-      {tab === 'bots' && <ChatBotsTab />}
-      {tab === 'ssh' && <SshTab />}
-      {tab === 'myusage' && <MyUsageTab />}
-      {tab === 'extension' && <ExtensionApiKeySettings />}
-      {tab === 'mcp' && <McpToolsContent />}
-      {tab === 'export' && <FullExportSettings />}
+      {effectiveTab === 'personal' && <PersonalTab />}
+      {effectiveTab === 'prefs' && <PreferencesTab />}
+      {effectiveTab === 'buddy' && <BuddySettings />}
+      {effectiveTab === 'speech' && <PersonalSpeechSettings />}
+      {effectiveTab === 'bots' && <ChatBotsTab />}
+      {effectiveTab === 'ssh' && <SshTab />}
+      {effectiveTab === 'myusage' && <MyUsageTab />}
+      {effectiveTab === 'extension' && <ExtensionApiKeySettings />}
+      {effectiveTab === 'mcp' && <McpToolsContent />}
+      {effectiveTab === 'export' && <FullExportSettings />}
+      {effectiveTab === 'plugins' && <PluginsSettings />}
     </div>
   );
 }
