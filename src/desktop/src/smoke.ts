@@ -28,6 +28,7 @@ import { pingAgent, stopAgent } from './main/agent/supervisor';
 import { localBackend, startKernel, stopKernel } from './main/kernel';
 import { capabilityManifest } from './main/capabilities';
 import { installIpc } from './main/ipc/router';
+import { pluginsDisable, pluginsEnable, pluginsExportTree, pluginsList } from './main/ipc/methods.plugins';
 import { extractTarGz } from './main/updates/tar';
 import { compareVersions, stagedSupersedes } from './main/updates/version';
 import { APP_INDEX, buildCsp, handleAppProtocol, registerAppScheme } from './main/protocol';
@@ -341,8 +342,16 @@ void app.whenReady().then(async () => {
   const manifest = await capabilityManifest();
   check('契约版本已声明', manifest.contract >= 1);
   check(
-    '所有本地能力一期均为不可用',
-    Object.values(manifest.capabilities).every((c) => !c.available),
+    '本地计算能力一期均为不可用',
+    Object.entries(manifest.capabilities)
+      .filter(([key]) => key !== 'plugins.manage')
+      .every(([, c]) => !c.available),
+  );
+  // plugins.manage（#705）是第一个真可用的能力位：kernel 已起、树已就绪
+  check(
+    'plugins.manage 能力位可用（配置树已就绪）',
+    manifest.capabilities['plugins.manage']?.available === true,
+    JSON.stringify(manifest.capabilities['plugins.manage']),
   );
   check(
     'tectonic 探测已真的执行（第二期直接用）',
@@ -401,6 +410,40 @@ void app.whenReady().then(async () => {
     await tree.update('desktop-probe', { config: { smokeTouched: true } });
     await tree.flush();
   }
+
+  // plugins.* IPC（#705）：与 kernel.status 同款调用路径——直接调 router
+  // 背后的具名实现（router 只做参数形状分发）。语义细节在 kernel 的
+  // plugins-manage.test 里测全，这里只验「桌面接线真的驱动 loader」。
+  console.log('\nplugins.* IPC');
+  const pluginList = pluginsList();
+  const pluginIds = pluginList.map((info) => info.id);
+  check(
+    'plugins.list 返回全部种子条目',
+    ['desktop-probe', 'sources', 'legacy-engine'].every((id) => pluginIds.includes(id)),
+    `ids=${pluginIds.join(',')}`,
+  );
+  check(
+    '状态映射：desktop-probe=active / legacy-engine=disabled',
+    pluginList.find((info) => info.id === 'desktop-probe')?.state === 'active'
+      && pluginList.find((info) => info.id === 'legacy-engine')?.state === 'disabled',
+  );
+  const treeExport = pluginsExportTree();
+  check(
+    'plugins.exportTree 带版本号且含种子条目',
+    treeExport.version === 1 && treeExport.entries.some((entry) => entry.id === 'sources'),
+  );
+  const probeDisabled = await pluginsDisable('desktop-probe');
+  check(
+    'plugins.disable 停掉 fiber',
+    probeDisabled.state === 'disabled' && tree?.store['desktop-probe']?.fiber == null,
+    `state=${probeDisabled.state}`,
+  );
+  const probeEnabled = await pluginsEnable('desktop-probe');
+  check(
+    'plugins.enable 重建 fiber',
+    probeEnabled.state === 'active' && tree?.store['desktop-probe']?.fiber != null,
+    `state=${probeEnabled.state}`,
+  );
 
   // storage 持久层（#609）：就绪性经 IPC 可见，数据要真的穿过一次「停机 →
   // 重启」仍然在——这正是配置树持久化存在的意义，光断言服务挂着不够。

@@ -46,6 +46,8 @@ export interface CapabilityManifest {
 export const CAPABILITY_LATEX_COMPILE = 'latex.compile';
 export const CAPABILITY_PAPER_IMPORT = 'papers.import';
 export const CAPABILITY_PDF_CACHE = 'cache.pdf';
+/** 插件管理（#705）：kernel 活着且配置树服务可达时可用，设置页插件 tab 读它显隐。 */
+export const CAPABILITY_PLUGINS_MANAGE = 'plugins.manage';
 
 /** 长任务句柄：invoke 立刻返回它，进度经事件通道推。 */
 export interface JobHandle {
@@ -110,6 +112,53 @@ export interface EngineBootstrapStatus {
   done: boolean;
 }
 
+/* ---- plugins.*（#705）：配置树管理的载荷类型 ---- */
+
+/**
+ * 单个插件条目的运行时视图（kernel 侧 SqliteTree.listEntries 的镜像）。
+ * disabled 是树上的持久开关（用户意图），state 才是运行事实：
+ * active=fiber 已装载；disabled=按开关未实例化；error=fiber 启动/运行失败；
+ * pending=在等依赖服务（或树刚建还没跑完）。
+ */
+export interface PluginEntryInfo {
+  id: string;
+  /** 装载 specifier，内置插件形如 cordis:sources。 */
+  name: string;
+  disabled: boolean;
+  state: 'active' | 'disabled' | 'error' | 'pending';
+  /** 仅 state='error' 时存在：fiber 记录的失败原因。 */
+  error?: string;
+  /** 条目当前配置。组条目（children 容器）不暴露 config。 */
+  config?: unknown;
+}
+
+/** schemastery 校验结果：错误作为数据返回而不是抛异常，前端就地回显。 */
+export interface PluginValidationError {
+  /** 出错字段路径；解析不出来时为空串，message 里带完整描述。 */
+  path: string;
+  message: string;
+}
+
+export interface PluginValidationResult {
+  ok: boolean;
+  errors: PluginValidationError[];
+}
+
+/** 整树导出条目（kernel ConfigEntry 的镜像形状）。 */
+export interface PluginTreeEntry {
+  id: string;
+  name: string;
+  config?: unknown;
+  disabled?: boolean;
+  children?: PluginTreeEntry[];
+}
+
+/** 整树导出/导入载荷。version 定死为 1，导入时不认识的版本直接拒绝。 */
+export interface PluginTreeExport {
+  version: 1;
+  entries: PluginTreeEntry[];
+}
+
 /** 服务器连通性探测结果（打 GET {url}/api/health）。 */
 export type ServerProbe =
   | { ok: true; version: string }
@@ -139,6 +188,26 @@ export interface Methods {
   'kernel.localBackend': { params: void; result: LocalBackendInfo };
   /** 内嵌引擎引导进度；首启 bootstrap 期间轮询可得阶段信息。 */
   'kernel.engineBootstrapStatus': { params: void; result: EngineBootstrapStatus };
+
+  /* ---- plugins.*：配置树管理（#705）。能力位 plugins.manage 不可用
+     （kernel 没起来 / 配置树挂载失败）时全族抛 ERR_CAPABILITY_UNAVAILABLE。
+     校验分两层：router 只做 IPC 形状（字符串/对象/递归树形），语义校验
+     （__jsExpr、未知字段、重复 id、schema）在 kernel 进程内完成。 ---- */
+
+  /** 全部条目 + 运行态。 */
+  'plugins.list': { params: void; result: PluginEntryInfo[] };
+  /** 启用条目（删掉树上的 disabled 键并拉起 fiber）；失败抛错且树回滚。 */
+  'plugins.enable': { params: { id: string }; result: PluginEntryInfo };
+  /** 禁用条目（fiber 级联 dispose，树上留 disabled 占位）。 */
+  'plugins.disable': { params: { id: string }; result: PluginEntryInfo };
+  /** 校验并应用配置。ok=false 表示 schema 未过、什么都没改。 */
+  'plugins.updateConfig': { params: { id: string; config: unknown }; result: PluginValidationResult };
+  /** 只校验不应用（配置编辑器的实时回显）。 */
+  'plugins.validateConfig': { params: { name: string; config: unknown }; result: PluginValidationResult };
+  /** 导出当前整树（备份/迁移）。 */
+  'plugins.exportTree': { params: void; result: PluginTreeExport };
+  /** 全量替换整树。导入前 kernel 自动留 last-good 快照，失败回滚。 */
+  'plugins.importTree': { params: { tree: PluginTreeExport }; result: void };
 
   /* ---- local.*：第二期的本地计算能力 ----
      现在全部声明但不实现（一律抛 ERR_CAPABILITY_UNAVAILABLE），目的是把

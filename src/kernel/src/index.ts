@@ -10,7 +10,15 @@ export {
   type ConfigEntry,
   type ConfigTreeStore,
 } from './config/tree.ts'
-export { SqliteTree } from './config/sqlite-tree.ts'
+export {
+  CONFIG_TREE_LAST_GOOD_KEY,
+  SqliteTree,
+  describeEntryState,
+  type LastGoodSink,
+  type PluginEntryInfo,
+  type PluginValidationError,
+  type PluginValidationResult,
+} from './config/sqlite-tree.ts'
 export { BUILTIN_PLUGINS, desktopProbe, registerBuiltins } from './plugins/builtins.ts'
 export {
   ENGINE_CONTAINER,

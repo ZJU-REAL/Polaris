@@ -38,6 +38,7 @@ import {
   type ConfigTreeStore,
   type Kernel,
   type LegacyEngineConfig,
+  type PluginMetaStore,
   type StorageService,
 } from '@polaris/kernel';
 
@@ -233,6 +234,23 @@ export function kernelStatus(): KernelStatus {
 /** kernel.engineBootstrapStatus 的实现：内嵌引擎引导进度（诊断/进度条用）。 */
 export function engineBootstrapStatus(): EngineBootstrapStatus {
   return bootstrapStatus;
+}
+
+/**
+ * plugins.* IPC 与 plugins.manage 能力位共用的树句柄。reflect 严格模式
+ * 保证：kernel 没起、SqliteTree 没装、或其 fiber 不在 ACTIVE，这里一律
+ * 拿到 null——能力位与方法族的「可用」判断因此天然是同一个事实。
+ */
+export function kernelConfigTree(): SqliteTree | null {
+  return (kernel?.ctx.get('configTree') as SqliteTree | undefined) ?? null;
+}
+
+/**
+ * importTree 存 last-good 快照的落点。storage 挂载失败（内存树会话）时为
+ * null，导入照常进行只是少一层持久保险——树本身这次会话也不落盘。
+ */
+export function kernelPluginMeta(): PluginMetaStore | null {
+  return (kernel?.ctx.get('storage') as StorageService | undefined)?.pluginMeta ?? null;
 }
 
 /**

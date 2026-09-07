@@ -21,9 +21,60 @@
    本文件必须保持 electron-free（tests/electron-free.test.ts 强制）。
    ============================================================ */
 
-import { Context, Service } from '@deepseek-ai/cordis'
+import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
 import { EntryGroup, EntryTree, type EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
 import type { ConfigEntry, ConfigTreeStore } from './tree.ts'
+
+/** importTree 存 last-good 快照用的 PluginMetaStore 键（#705）。 */
+export const CONFIG_TREE_LAST_GOOD_KEY = 'config-tree:last-good'
+
+/** last-good 快照的最小落点：结构化成接口以免测试必须拉一整个 SQLite。 */
+export interface LastGoodSink {
+  set(key: string, value: unknown): void
+}
+
+/** plugins.list 的单条视图。桌面 contract.ts 手工镜像本形状，改动需两边同步。 */
+export interface PluginEntryInfo {
+  id: string
+  name: string
+  /** 树上的持久开关（用户意图）；state 才是运行事实。 */
+  disabled: boolean
+  state: 'active' | 'disabled' | 'error' | 'pending'
+  error?: string
+  config?: unknown
+}
+
+export interface PluginValidationError {
+  path: string
+  message: string
+}
+
+/** 校验错误作为数据返回（不抛异常）：前端配置编辑器要就地回显。 */
+export interface PluginValidationResult {
+  ok: boolean
+  errors: PluginValidationError[]
+}
+
+/**
+ * 条目运行态推导。FiberState 是 const enum——对开启 isolatedModules 的
+ * 消费方（desktop 的 tsc）它是 ambient、成员不可引用，所以这里不 import
+ * 枚举，而是照 Fiber._getState 的同一套事实源推导：_error 非空 = FAILED；
+ * uid 未清且 store 已建 = 已装载（ACTIVE）；其余都算等待中。_error 是
+ * 私有字段，但 FAILED 状态下它就是唯一的错误事实源（fiber.await() 会
+ * rethrow 同一个值），这里只读不改。
+ */
+export function describeEntryState(
+  fiber: Fiber | undefined,
+  disabled: boolean,
+): { state: PluginEntryInfo['state']; error?: string } {
+  if (!fiber) return { state: disabled ? 'disabled' : 'pending' }
+  const raw = (fiber as unknown as { _error?: unknown })._error
+  if (raw !== undefined) {
+    return { state: 'error', error: raw instanceof Error ? raw.message : String(raw) }
+  }
+  if (fiber.uid !== null && fiber.store !== undefined) return { state: 'active' }
+  return { state: 'pending' }
+}
 
 /** ConfigEntry 允许的键。多出来的一律拒载，见 assertEntryKeys。 */
 const CONFIG_ENTRY_KEYS = new Set(['id', 'name', 'config', 'disabled', 'children'])
@@ -193,6 +244,107 @@ export class SqliteTree extends EntryTree {
     return super.import(name, getOuterStack)
   }
 
+  /** plugins.list（#705）：树条目 + 运行态的扁平视图。 */
+  listEntries(): PluginEntryInfo[] {
+    return [...this.entries()].map((entry) => {
+      const { state, error } = describeEntryState(entry.fiber, entry.disabled)
+      const info: PluginEntryInfo = {
+        id: entry.id,
+        name: entry.options.name,
+        disabled: Boolean(entry.options.disabled),
+        state,
+      }
+      if (error !== undefined) info.error = error
+      // 组条目的 config 是子条目列表（loader 内部表示），不当作插件配置暴露
+      if (!entry.options.group && entry.options.config !== undefined) {
+        info.config = entry.options.config
+      }
+      return info
+    })
+  }
+
+  /**
+   * plugins.validateConfig（#705）：在 kernel 进程内做 schema 校验，错误
+   * 作为数据返回。内置插件（cordis:）从 loader.builtins 查 Config schema；
+   * 插件没有 Config 或是非内置 specifier（三方 npm 包，拿不到 schema）时
+   * 无校验即通过——装载时 cordis 还会用插件自己的 Config 再校一遍兜底。
+   */
+  validateConfig(name: string, config: unknown): PluginValidationResult {
+    const errors: PluginValidationError[] = []
+    const push = (cause: unknown): void => {
+      // path 统一留空：schemastery 的报错文案自带字段路径，拆出来反而丢上下文
+      errors.push({ path: '', message: cause instanceof Error ? cause.message : String(cause) })
+    }
+    try {
+      // D5：__jsExpr 在任何入口都封死，校验层也要把它当错误回显而不是放过
+      assertNoJsExpr(config, 'config')
+    } catch (cause) {
+      push(cause)
+    }
+    if (name.startsWith('cordis:')) {
+      const plugin = this.ctx.loader.builtins[name.slice(7)] as { Config?: unknown } | undefined
+      if (!plugin) {
+        push(new Error(`未知的内置插件 "${name}"（未在 loader.builtins 注册）`))
+      } else if (typeof plugin.Config === 'function') {
+        // schemastery 的 schema 本身可调用：调用即校验（返回补全默认值的
+        // 副本）。这里只收集错误，不把补全后的值写回树——树存用户写的原文。
+        try {
+          ;(plugin.Config as (value: unknown) => unknown)(config)
+        } catch (cause) {
+          push(cause)
+        }
+      }
+    }
+    return { ok: errors.length === 0, errors }
+  }
+
+  /** plugins.exportTree（#705）：当前树的序列化快照（与落库走同一变换）。 */
+  exportTree(): ConfigEntry[] {
+    return this.root.data.map((options, index) =>
+      toConfigEntry(options, childPath('', options, index)),
+    )
+  }
+
+  /**
+   * plugins.importTree（#705）：全量替换整树。
+   *
+   * 三步走，顺序即安全设计：
+   * 1. 语义校验完全复用装载边界的 toEntryOptions（__jsExpr / 未知字段 /
+   *    重复 id / 形状错误一律抛错）——校验不过时树没有被碰过；
+   * 2. 把替换前的树快照写进 last-good（PluginMetaStore），这是「全量覆盖
+   *    可以清空配置」这条风险的持久保险：哪怕后面的回滚也失败，用户数据
+   *    仍然躺在 KV 里可以人工恢复；
+   * 3. root.update 事务化 reconcile。它失败时自己会把内存树滚回旧状态，
+   *    这里再按 last-good 重放一次做兜底（覆盖「内部回滚半途而废」的残局）。
+   */
+  async importTree(entries: ConfigEntry[], lastGood?: LastGoodSink): Promise<void> {
+    const seen = new Set<string>()
+    const next = entries.map((entry, index) =>
+      toEntryOptions(entry, childPath('', entry, index), seen),
+    )
+    const snapshot = this.exportTree()
+    lastGood?.set(CONFIG_TREE_LAST_GOOD_KEY, snapshot)
+    try {
+      await this.root.update(next)
+    } catch (error) {
+      try {
+        await this.root.update(
+          snapshot.map((entry, index) => toEntryOptions(entry, childPath('', entry, index), new Set())),
+        )
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], '导入失败且 last-good 回滚未完全成功')
+      }
+      // 回滚成功后同样落一次库：部分拉起可能已触发过 write，把磁盘拉回真相
+      this.write()
+      await this.flush().catch(() => {
+        /* flush 内部已记日志；这里不让落库失败盖掉导入失败的原始错误 */
+      })
+      throw error
+    }
+    this.write()
+    await this.flush()
+  }
+
   /**
    * 防抖合并写（why：写放大）。loader 的每个树操作都会调一次 write——
    * create/update/remove 各一次，internal/update 钩子回写 config 又一次，
@@ -239,9 +391,6 @@ export class SqliteTree extends EntryTree {
   async #save(): Promise<void> {
     // 序列化放在真正写的时刻：root.data 是就地变更的活数组，写入点
     // 取快照才能保证落的是合并后的最终状态
-    const entries = this.root.data.map((options, index) =>
-      toConfigEntry(options, childPath('', options, index)),
-    )
-    await this.config.store.save(entries)
+    await this.config.store.save(this.exportTree())
   }
 }

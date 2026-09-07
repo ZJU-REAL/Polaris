@@ -175,3 +175,98 @@ export function onHostEvent(handler: (event: HostEvent) => void): () => void {
   const id = b.subscribe(handler);
   return () => b.unsubscribe(id);
 }
+
+/* —— 插件管理（plugins.*，#705；contract.ts 的手工镜像）——
+   仅桌面端有意义：设置页插件 tab 的显隐读 plugins.manage 能力位，
+   web 端（无桥）所有调用都是安全的 null/no-op、零请求。 */
+
+/** 插件管理能力键（isCapabilityAvailable 用）。 */
+export const CAPABILITY_PLUGINS_MANAGE = 'plugins.manage';
+
+/** 单个插件条目的运行时视图。disabled 是持久开关（用户意图），state 是运行事实。 */
+export interface PluginEntryInfo {
+  id: string;
+  name: string;
+  disabled: boolean;
+  state: 'active' | 'disabled' | 'error' | 'pending';
+  error?: string;
+  config?: unknown;
+}
+
+export interface PluginValidationError {
+  path: string;
+  message: string;
+}
+
+/** 配置校验结果：错误是数据（就地回显），装载失败才是异常。 */
+export interface PluginValidationResult {
+  ok: boolean;
+  errors: PluginValidationError[];
+}
+
+export interface PluginTreeEntry {
+  id: string;
+  name: string;
+  config?: unknown;
+  disabled?: boolean;
+  children?: PluginTreeEntry[];
+}
+
+/** 整树导出/导入载荷；version 不为 1 的载荷主进程直接拒绝。 */
+export interface PluginTreeExport {
+  version: 1;
+  entries: PluginTreeEntry[];
+}
+
+/** 全部插件条目 + 运行态；web 端返回 null。 */
+export async function listPlugins(): Promise<PluginEntryInfo[] | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('plugins.list')) as PluginEntryInfo[];
+}
+
+/** 启用插件，返回变更后的条目；启动失败时抛错（主进程侧树已回滚）。 */
+export async function enablePlugin(id: string): Promise<PluginEntryInfo | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('plugins.enable', { id })) as PluginEntryInfo;
+}
+
+/** 禁用插件（fiber 级联回收），返回变更后的条目。 */
+export async function disablePlugin(id: string): Promise<PluginEntryInfo | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('plugins.disable', { id })) as PluginEntryInfo;
+}
+
+/** 校验并应用配置：ok=false 表示 schema 未过、什么都没改。 */
+export async function updatePluginConfig(
+  id: string,
+  config: Record<string, unknown>,
+): Promise<PluginValidationResult | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('plugins.updateConfig', { id, config })) as PluginValidationResult;
+}
+
+/** 只校验不应用（配置编辑器实时回显）。 */
+export async function validatePluginConfig(
+  name: string,
+  config: Record<string, unknown>,
+): Promise<PluginValidationResult | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('plugins.validateConfig', { name, config })) as PluginValidationResult;
+}
+
+/** 导出整棵配置树（备份/迁移）；web 端返回 null。 */
+export async function exportPluginTree(): Promise<PluginTreeExport | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('plugins.exportTree')) as PluginTreeExport;
+}
+
+/** 全量替换整树。主进程导入前自动留 last-good 快照、失败回滚。 */
+export async function importPluginTree(tree: PluginTreeExport): Promise<void> {
+  await bridge()?.invoke('plugins.importTree', { tree });
+}

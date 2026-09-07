@@ -1,7 +1,8 @@
 /* 能力清单。前端所有「走本地还是走远端」的判断只读这张表。
 
-   一期全部 available: false —— 本地能力还没实现。但 tectonic 的探测是真的做了，
-   一来演练探测这条路，二来第二期接本地编译时这段不用重写。 */
+   本地计算能力（latex/papers/cache）一期全部 available: false —— 还没实现。
+   但 tectonic 的探测是真的做了，一来演练探测这条路，二来第二期接本地编译时
+   这段不用重写。plugins.manage（#705）是第一个真的会翻 true 的能力位。 */
 
 import { app } from 'electron';
 import { execFile } from 'node:child_process';
@@ -11,14 +12,27 @@ import {
   CAPABILITY_LATEX_COMPILE,
   CAPABILITY_PAPER_IMPORT,
   CAPABILITY_PDF_CACHE,
+  CAPABILITY_PLUGINS_MANAGE,
   CONTRACT_VERSION,
   type CapabilityManifest,
   type CapabilityState,
   type HostInfo,
 } from '../shared/contract';
+import { kernelConfigTree } from './kernel';
 
 const execFileAsync = promisify(execFile);
 const PHASE_1_REASON = 'not implemented yet (phase 1 ships the shell only)';
+
+/**
+ * plugins.manage（#705）：kernel 活着且 configTree 服务可达才可用。
+ * 不做缓存——树挂载失败/停机后能力要立刻翻 false，与 plugins.* 方法族的
+ * 门槛（methods.plugins.ts 的 requireTree）读的是同一个访问函数。
+ */
+function pluginsManageState(): CapabilityState {
+  return kernelConfigTree()
+    ? { available: true }
+    : { available: false, reason: 'kernel config tree unavailable' };
+}
 
 let tectonicProbe: CapabilityState['detail'] | undefined;
 let probed = false;
@@ -50,6 +64,7 @@ export async function capabilityManifest(): Promise<CapabilityManifest> {
       },
       [CAPABILITY_PAPER_IMPORT]: { available: false, reason: PHASE_1_REASON },
       [CAPABILITY_PDF_CACHE]: { available: false, reason: PHASE_1_REASON },
+      [CAPABILITY_PLUGINS_MANAGE]: pluginsManageState(),
     },
   };
 }
