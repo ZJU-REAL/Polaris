@@ -29,6 +29,7 @@ import { DraftModal } from './DraftModal';
 import { OutlinePanel } from './OutlinePanel';
 import { AssistPanel, type AssistMode } from './AssistPanel';
 import { HistoryModal } from './HistoryModal';
+import { AiDisclosureModal } from '../../components/ui/AiDisclosureModal';
 import { colorForUser, ruleText, sectionText, type AiWritingState } from './shared';
 
 /* ============================================================
@@ -592,6 +593,7 @@ export function WriterEditorPage() {
 
   // —— 抽屉 / Modal ——
   const [factOpen, setFactOpen] = useState(false);
+  const [disclosureOpen, setDisclosureOpen] = useState(false);
   const [draftOpen, setDraftOpen] = useState(false);
 
   // 「初始化结构」后打开新生成的 draft.tex：先等详情刷新（文件树里出现 draft.tex、
@@ -790,6 +792,11 @@ export function WriterEditorPage() {
         <button className="btn btn-ghost sm" onClick={() => setFactOpen(true)}>
           <Icon name="layers" size={13} />
           {tr('事实包', 'Fact pack')}
+        </button>
+        {/* AI 披露声明（#691）：投稿合规入口，从平台留痕一键生成 */}
+        <button className="btn btn-ghost sm" onClick={() => setDisclosureOpen(true)}>
+          <Icon name="shield" size={13} />
+          {tr('AI 披露', 'AI disclosure')}
         </button>
         {/* 主文件 + 编译器（Overleaf 式；编译时后端按此读取） */}
         <select
@@ -1282,6 +1289,11 @@ export function WriterEditorPage() {
         onInsertFigure={onInsertFigure}
       />
       <DraftModal open={draftOpen} onClose={() => setDraftOpen(false)} manuscript={ms} onInitialized={handleInitialized} />
+      <AiDisclosureModal
+        open={disclosureOpen}
+        onClose={() => setDisclosureOpen(false)}
+        subject={{ kind: 'manuscript', id: ms.id }}
+      />
     </div>
   );
 }

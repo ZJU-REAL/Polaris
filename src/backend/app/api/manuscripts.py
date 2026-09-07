@@ -10,6 +10,7 @@ import mimetypes
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -50,6 +51,7 @@ from app.schemas.manuscript import (
 )
 from app.schemas.review import PaperReviewRequest, PaperReviewSummary
 from app.schemas.voyage import VoyageRead
+from app.services import ai_disclosure as ai_disclosure_service
 from app.services import latex_compile, writing_assist
 from app.services import manuscript_templates as templates_service
 from app.services import manuscript_versions as manuscript_versions_service
@@ -361,6 +363,26 @@ async def get_manuscript(
 ) -> ManuscriptDetail:
     manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
     return await _detail(session, manuscript)
+
+
+@router.get("/manuscripts/{manuscript_id}/ai-disclosure")
+async def get_manuscript_ai_disclosure(
+    manuscript_id: uuid.UUID,
+    style: Literal["icmje", "elsevier", "generic"] = "generic",
+    lang: Literal["zh", "en"] = "zh",
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict:
+    """AI 使用披露声明（#691）：确定性聚合稿件的 AI 参与留痕并按期刊风格渲染。
+
+    可见性与稿件详情同口径（非本人 404）。零 LLM 调用，facts 一并返回供前端展示。
+    """
+    manuscript = await _member_manuscript(session, manuscript_id, user)
+    facts = await ai_disclosure_service.build_disclosure_facts(
+        session, manuscript_id=manuscript.id
+    )
+    rendered = ai_disclosure_service.render_disclosure(facts, style=style, lang=lang)
+    return {**rendered, "facts": facts}
 
 
 @router.patch("/manuscripts/{manuscript_id}", response_model=ManuscriptRead)

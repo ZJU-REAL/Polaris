@@ -519,6 +519,50 @@ export interface VoyageArtifactRead {
   content: unknown;
 }
 
+/** AI 使用披露声明（#691）：statement 纯文本、appendix 为 Markdown 明细，
+    facts 为确定性聚合的溯源事实（零 LLM）。 */
+export type AiDisclosureStyle = 'icmje' | 'elsevier' | 'generic';
+
+export interface AiDisclosureStageRow {
+  stage: string;
+  model: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
+export interface AiDisclosureRun {
+  run_id: string;
+  kind: string;
+  status: string;
+  goal: string | null;
+  outputs: string[];
+  stages: AiDisclosureStageRow[];
+}
+
+export interface AiDisclosureFacts {
+  version: number;
+  subject: { type: 'manuscript' | 'voyage'; id: string; title: string | null };
+  ai_used: boolean;
+  runs: AiDisclosureRun[];
+  models: string[];
+  stages: string[];
+  totals: { prompt_tokens: number; completion_tokens: number; calls: number };
+  editing: {
+    ai_write_snapshots: number;
+    files_with_ai_writes: number;
+    compile_snapshots: number;
+    restore_snapshots: number;
+  } | null;
+  notes: string[];
+}
+
+export interface AiDisclosureRead {
+  statement: string;
+  appendix: string;
+  facts: AiDisclosureFacts;
+}
+
 export interface VoyageRead {
   id: string;
   kind: string;
@@ -3663,6 +3707,15 @@ export const api = {
     return request<VoyageArtifactRead>(`/voyages/${voyageId}/artifacts/${encodeURIComponent(name)}`);
   },
 
+  /** AI 使用披露声明（#691）：run 维度。可见性与任务详情同口径。 */
+  getVoyageAiDisclosure(
+    voyageId: string,
+    style: AiDisclosureStyle,
+    lang: 'zh' | 'en',
+  ): Promise<AiDisclosureRead> {
+    return request<AiDisclosureRead>(`/voyages/${voyageId}/ai-disclosure?style=${style}&lang=${lang}`);
+  },
+
   // —— Gates ——
   listGates(status?: 'pending' | 'decided', projectId?: string): Promise<GateRead[]> {
     const params = new URLSearchParams();
@@ -4778,6 +4831,15 @@ export const api = {
   },
   getManuscript(id: string): Promise<ManuscriptDetail> {
     return request<ManuscriptDetail>(`/manuscripts/${id}`);
+  },
+
+  /** AI 使用披露声明（#691）：稿件维度。可见性与稿件详情同口径。 */
+  getManuscriptAiDisclosure(
+    id: string,
+    style: AiDisclosureStyle,
+    lang: 'zh' | 'en',
+  ): Promise<AiDisclosureRead> {
+    return request<AiDisclosureRead>(`/manuscripts/${id}/ai-disclosure?style=${style}&lang=${lang}`);
   },
   patchManuscript(
     id: string,

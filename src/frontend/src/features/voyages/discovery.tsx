@@ -5,6 +5,7 @@ import { Icon } from '../../components/ui/Icon';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { Segmented } from '../../components/ui/Segmented';
+import { AiDisclosureModal } from '../../components/ui/AiDisclosureModal';
 import { toast } from '../../components/ui/Toast';
 import {
   api,
@@ -1026,6 +1027,8 @@ function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | n
 export function DiscoveryPanel({ voyage }: { voyage: VoyageRead }) {
   const active = !VOYAGE_TERMINAL.has(voyage.status);
   const [view, setView] = useState<'tree' | 'report' | 'disclosure'>('tree');
+  // AI 披露声明弹窗（#691）：与「过程记录」互补——那边是探索过程，这边是投稿声明
+  const [disclosureModalOpen, setDisclosureModalOpen] = useState(false);
   const { data } = useQuery({
     queryKey: ['hypothesis-tree', voyage.id],
     queryFn: () => api.listHypothesisTree(voyage.id),
@@ -1065,7 +1068,10 @@ export function DiscoveryPanel({ voyage }: { voyage: VoyageRead }) {
             {nodes.length} {tr('个节点', 'nodes')}
           </span>
         )}
-        <span style={{ marginLeft: 'auto' }}>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+          <button className="btn btn-ghost sm" onClick={() => setDisclosureModalOpen(true)}>
+            {tr('AI 披露声明', 'AI disclosure')}
+          </button>
           <Segmented
             options={[
               { v: 'tree' as const, label: tr('树视图', 'Tree') },
@@ -1090,6 +1096,11 @@ export function DiscoveryPanel({ voyage }: { voyage: VoyageRead }) {
       ) : (
         <ReportView nodes={nodes} active={active} pruneRecords={pruneRecords} />
       )}
+      <AiDisclosureModal
+        open={disclosureModalOpen}
+        onClose={() => setDisclosureModalOpen(false)}
+        subject={{ kind: 'voyage', id: voyage.id }}
+      />
     </div>
   );
 }

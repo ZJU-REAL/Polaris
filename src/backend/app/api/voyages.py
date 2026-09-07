@@ -5,6 +5,7 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -31,6 +32,7 @@ from app.schemas.voyage import (
     VoyageSkillUse,
     VoyageTerminalLogRead,
 )
+from app.services import ai_disclosure as ai_disclosure_service
 from app.services import experiments as experiments_service
 from app.services import libraries as libraries_service
 from app.services import projects as projects_service
@@ -134,6 +136,24 @@ async def get_voyage(
     if open_ask is not None:
         detail.open_ask = VoyageMessageRead.model_validate(open_ask)
     return detail
+
+
+@router.get("/{voyage_id}/ai-disclosure")
+async def get_voyage_ai_disclosure(
+    voyage_id: uuid.UUID,
+    style: Literal["icmje", "elsevier", "generic"] = "generic",
+    lang: Literal["zh", "en"] = "zh",
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict:
+    """AI 使用披露声明（#691）：run 维度的确定性聚合 + 期刊风格渲染。
+
+    可见性与任务详情同口径（can_view_voyage，无权限 404）。
+    """
+    run = await _get_owned_voyage(session, voyage_id, user)
+    facts = await ai_disclosure_service.build_disclosure_facts(session, run_id=run.id)
+    rendered = ai_disclosure_service.render_disclosure(facts, style=style, lang=lang)
+    return {**rendered, "facts": facts}
 
 
 @router.get("/{voyage_id}/logs", response_model=list[VoyageTerminalLogRead])
