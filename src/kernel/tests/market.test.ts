@@ -61,7 +61,19 @@ async function installHello(pluginsDir: string, fetchImpl: FetchImpl) {
 describe('market index', () => {
   it('the committed official index validates against the contract', async () => {
     const raw = JSON.parse(await readFile(join(import.meta.dirname, '../../../market/index.json'), 'utf8'))
-    expect(validateMarketIndex(raw)).toEqual({ schemaVersion: 1, plugins: [] })
+    const index = validateMarketIndex(raw)
+    expect(index.schemaVersion).toBe(1)
+    // 种子插件（#712）必须在官方索引上，且上架版本与仓内包一字不差——
+    // 索引说装哪个版本，安装引擎就装哪个版本，两处漂移会让 e2e 装错包
+    const pkg = JSON.parse(
+      await readFile(join(import.meta.dirname, '../../../plugins/polaris-plugin-hello/package.json'), 'utf8'),
+    ) as { name: string; version: string }
+    const hello = index.plugins.find((entry) => entry.name === pkg.name)
+    expect(hello).toBeDefined()
+    expect(hello!.version).toBe(pkg.version)
+    expect(hello!.kind).toBe('panel')
+    expect(hello!.tier).toBe('bronze')
+    expect(hello!.badges).toContain('official')
   })
 
   it('fetchIndex returns validated entries', async () => {

@@ -4,12 +4,16 @@
    运行时才暴露的链路整条走一遍。与 smoke.ts 互补：smoke 在 Electron
    进程内做白盒断言，这里从进程外像用户一样操作 UI。
 
-   两个断言组：
+   三个断言组：
    - A「壳与免登录」：需要 docker 与 polaris-api-test:local 镜像，
      门控照抄冒烟——设 POLARIS_E2E_ENGINE=1 且镜像存在才跑，否则
      打明确日志后 skip（CI 无镜像时仍然全绿）。
    - B「无引擎回落」：不依赖 docker，任何机器必跑。不设引擎 env 起壳，
      应停在服务器配置页而不是崩溃。
+   - C「插件市场闭环」（#712）：不依赖 docker，任何机器必跑。本进程起
+     一个 127.0.0.1 的 http 替身充当索引源与 npm registry，经渲染进程的
+     window.polaris（生产 IPC 路径）驱动种子插件走完「换源 → 拉索引 →
+     安装 → 启用 → 拒卸 → 禁用 → 卸载」全链路。
 
    并行安全：容器名与端口都随机化（经 POLARIS_DESKTOP_ENGINE_CONTAINER /
    _PORT 覆盖默认值），同机的其他 docker 套件或手动实例互不干扰；
@@ -20,11 +24,19 @@
    ============================================================ */
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { _electron, type ElectronApplication, type Page } from 'playwright-core';
+
+// tar/tgz 生成逻辑复用 kernel 测试的共用 fixture（#710 抽出）：类型仅
+// import type，esbuild 打包 e2e 时只会带上纯函数的打包器本体
+// eslint-disable-next-line import/no-relative-packages
+import { makeTgz } from '../../kernel/tests/helpers/market-fixture';
 
 // Node 里 require('electron') 拿到的是可执行文件路径（字符串），类型声明
 // 描述的是渲染/主进程 API，所以这里显式断言。
@@ -35,6 +47,18 @@ const MAIN = join(__dirname, 'main.cjs');
 // __dirname = src/desktop/dist → 仓库的 src/backend（与 smoke.ts 同一推导）
 const BACKEND_DIR = join(__dirname, '..', '..', 'backend');
 const ENGINE_IMAGE = 'polaris-api-test:local';
+// 仓库根与种子插件目录（组 C 的 fixture 源头：真实包产物 + 真实索引文件）
+const REPO_ROOT = join(__dirname, '..', '..', '..');
+const HELLO_DIR = join(REPO_ROOT, 'plugins', 'polaris-plugin-hello');
+
+/** 渲染进程里 preload 暴露的桥的最小形状（类型只在 e2e 侧擦除前有效）。 */
+interface PolarisBridge {
+  polaris: {
+    invoke: (method: string, params?: unknown) => Promise<unknown>;
+    subscribe: (handler: (event: unknown) => void) => number;
+    unsubscribe: (id: number) => void;
+  };
+}
 
 const problems: string[] = [];
 
@@ -241,9 +265,223 @@ async function groupNoEngine(): Promise<void> {
   }
 }
 
+
+/* ---------------- 组 C：插件市场闭环（必跑） ---------------- */
+
+async function groupMarket(): Promise<void> {
+  console.log('\n插件市场闭环');
+
+  // fixture 全部取自「将来真上架的那份东西」：种子插件的真实 dist（已
+  // 入库）打成 npm 规范形状的 tarball，索引就是仓内 market/index.json
+  // 原文——断言对象是真实产物链，而不是另一套测试专用副本。
+  const pkgRaw = readFileSync(join(HELLO_DIR, 'package.json'), 'utf8');
+  const pkg = JSON.parse(pkgRaw) as { name: string; version: string };
+  const entryJs = readFileSync(join(HELLO_DIR, 'dist', 'index.js'), 'utf8');
+  const readme = readFileSync(join(HELLO_DIR, 'README.md'), 'utf8');
+  const indexRaw = readFileSync(join(REPO_ROOT, 'market', 'index.json'), 'utf8');
+
+  const tgz = makeTgz([
+    { name: 'package/package.json', data: pkgRaw },
+    { name: 'package/dist/index.js', data: entryJs },
+    { name: 'package/README.md', data: readme },
+  ]);
+  const integrity = `sha512-${createHash('sha512').update(tgz).digest('base64')}`;
+
+  // 本地 http 替身，一个进程同演索引源与 npm registry。为什么不走 #710
+  // 的 setMarketFetchForTesting：那是主进程 bundle 内的模块级变量，从
+  // e2e 进程够不到。索引源经生产路径换源（setEndpoint 指到 127.0.0.1）；
+  // registry 域名是安装引擎里写死的，靠下面 app.evaluate 在主进程包一层
+  // fetch 重定向。
+  let port = 0;
+  const server = createServer((req, res) => {
+    const url = req.url ?? '';
+    if (url === '/index.json') {
+      res.setHeader('content-type', 'application/json');
+      res.end(indexRaw);
+      return;
+    }
+    if (url === `/registry/${pkg.name}`) {
+      res.setHeader('content-type', 'application/json');
+      res.end(
+        JSON.stringify({
+          name: pkg.name,
+          versions: {
+            [pkg.version]: {
+              dist: {
+                tarball: `http://127.0.0.1:${port}/registry/${pkg.name}/-/${pkg.name}-${pkg.version}.tgz`,
+                integrity,
+              },
+            },
+          },
+        }),
+      );
+      return;
+    }
+    if (url === `/registry/${pkg.name}/-/${pkg.name}-${pkg.version}.tgz`) {
+      res.end(tgz);
+      return;
+    }
+    res.statusCode = 404;
+    res.end('not found');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  port = (server.address() as AddressInfo).port;
+
+  const userData = mkdtempSync(join(tmpdir(), 'polaris-e2e-c-'));
+  let app: ElectronApplication | null = null;
+
+  try {
+    const indexEntry = (JSON.parse(indexRaw) as { plugins: { name: string; version: string }[] }).plugins.find(
+      (entry) => entry.name === pkg.name,
+    );
+    check(
+      'market/index.json 收录 hello 且版本与仓内包一致',
+      indexEntry != null && indexEntry.version === pkg.version,
+      `index=${JSON.stringify(indexEntry)} pkg=${pkg.version}`,
+    );
+
+    const r = await launch(launchEnv({ POLARIS_USER_DATA_DIR: userData }));
+    app = r.app;
+    const { page } = r;
+    await page.waitForFunction('typeof window.polaris?.invoke === "function"', undefined, { timeout: 30_000 });
+
+    // 安装引擎固定打 https://registry.npmjs.org：在主进程的全局 fetch 外
+    // 包一层，把该域名重定向到本地替身。只改本次 e2e 会话的运行时全局，
+    // 生产代码零改动；索引拉取等其余 URL 原样放行。
+    await app.evaluate((_electron, arg) => {
+      const original = globalThis.fetch;
+      const prefix = 'https://registry.npmjs.org/';
+      globalThis.fetch = ((input: unknown, init?: unknown) => {
+        const url = typeof input === 'string' ? input : String((input as { url?: unknown }).url ?? input);
+        if (url.startsWith(prefix)) {
+          return original(`http://127.0.0.1:${arg.port}/registry/${url.slice(prefix.length)}`, init as RequestInit);
+        }
+        return original(input as RequestInfo, init as RequestInit);
+      }) as typeof fetch;
+    }, { port });
+
+    const endpoint = `http://127.0.0.1:${port}/index.json`;
+    const ep = (await page.evaluate(
+      (u) => (window as unknown as PolarisBridge).polaris.invoke('plugins.market.setEndpoint', { endpoint: u }),
+      endpoint,
+    )) as { endpoint: string; isDefault: boolean };
+    check('setEndpoint 指向本地索引源', ep.endpoint === endpoint && !ep.isDefault, JSON.stringify(ep));
+
+    const entries = (await page.evaluate(() =>
+      (window as unknown as PolarisBridge).polaris.invoke('plugins.market.fetchIndex'),
+    )) as { name: string; version: string; tier: string; badges: string[] }[];
+    const listed = Array.isArray(entries) ? entries.find((entry) => entry.name === pkg.name) : undefined;
+    check(
+      'fetchIndex 经校验路径见到 hello（bronze/official）',
+      listed != null && listed.version === pkg.version && listed.tier === 'bronze' && listed.badges.includes('official'),
+      JSON.stringify(entries).slice(0, 300),
+    );
+
+    // 安装是长任务：先订阅事件再 invoke（进度可能赶在 invoke 返回之前），
+    // 等到本 job 的 job.done / job.error 或 60s 超时
+    const install = (await page.evaluate(async (arg) => {
+      const w = window as unknown as PolarisBridge;
+      const events: { type: string; jobId?: string; phase?: string; result?: unknown; code?: string; message?: string }[] = [];
+      const sub = w.polaris.subscribe((event) => {
+        const e = event as { type?: unknown };
+        if (typeof e.type === 'string' && e.type.startsWith('job.')) events.push(event as (typeof events)[number]);
+      });
+      try {
+        const { jobId } = (await w.polaris.invoke('plugins.market.install', arg)) as { jobId: string };
+        const deadline = Date.now() + 60_000;
+        for (;;) {
+          const finished = events.find((e) => e.jobId === jobId && (e.type === 'job.done' || e.type === 'job.error'));
+          if (finished || Date.now() > deadline) {
+            return {
+              finished: finished ?? null,
+              phases: events.filter((e) => e.jobId === jobId && e.type === 'job.progress').map((e) => e.phase),
+            };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      } finally {
+        w.polaris.unsubscribe(sub);
+      }
+    }, { name: pkg.name, version: pkg.version })) as {
+      finished: { type: string; result?: { entryId?: string }; code?: string; message?: string } | null;
+      phases: (string | undefined)[];
+    };
+    check('install job 以 job.done 收尾', install.finished?.type === 'job.done', JSON.stringify(install.finished));
+    check('job.done 带回条目 id', install.finished?.result?.entryId === pkg.name, JSON.stringify(install.finished?.result));
+    check(
+      '四个安装阶段全部上报进度',
+      ['download', 'verify', 'extract', 'register'].every((phase) => install.phases.includes(phase)),
+      `phases=${install.phases.join(',')}`,
+    );
+    check(
+      '安装物落盘 userData/plugins/<name>/<version>/',
+      existsSync(join(userData, 'plugins', pkg.name, pkg.version, 'dist', 'index.js')),
+    );
+
+    const listPlugins = async (): Promise<{ id: string; name: string; state: string }[]> =>
+      (await page.evaluate(() =>
+        (window as unknown as PolarisBridge).polaris.invoke('plugins.list'),
+      )) as { id: string; name: string; state: string }[];
+    const installedInfo = (await listPlugins()).find((info) => info.id === pkg.name);
+    check(
+      'plugins.list 出现 disabled 条目（装/启分离）',
+      installedInfo != null && installedInfo.state === 'disabled' && installedInfo.name.startsWith('file://'),
+      JSON.stringify(installedInfo),
+    );
+
+    const pluginCount = async (): Promise<number> =>
+      (((await page.evaluate(() =>
+        (window as unknown as PolarisBridge).polaris.invoke('kernel.status'),
+      )) as { plugins?: number }).plugins ?? 0);
+    const countBefore = await pluginCount();
+
+    const enabled = (await page.evaluate(
+      (id) => (window as unknown as PolarisBridge).polaris.invoke('plugins.enable', { id }),
+      pkg.name,
+    )) as { state: string };
+    check('enable 后条目 active（file:// 动态 import 真实走通）', enabled.state === 'active', JSON.stringify(enabled));
+    const countAfter = await pluginCount();
+    check('hello 占据 registry 名额（kernel.status 可观测）', countAfter > countBefore, `plugins ${countBefore} -> ${countAfter}`);
+
+    const refused = (await page.evaluate(
+      (name) => (window as unknown as PolarisBridge).polaris.invoke('plugins.market.uninstall', { name }),
+      pkg.name,
+    )) as { ok: boolean; code?: string };
+    check('enabled 状态拒卸（错误作为数据返回）', refused.ok === false && refused.code === 'plugin-enabled', JSON.stringify(refused));
+
+    const disabledInfo = (await page.evaluate(
+      (id) => (window as unknown as PolarisBridge).polaris.invoke('plugins.disable', { id }),
+      pkg.name,
+    )) as { state: string };
+    check('disable 停回 disabled', disabledInfo.state === 'disabled', JSON.stringify(disabledInfo));
+
+    const removed = (await page.evaluate(
+      (name) => (window as unknown as PolarisBridge).polaris.invoke('plugins.market.uninstall', { name }),
+      pkg.name,
+    )) as { ok: boolean };
+    check('禁用后卸载成功', removed.ok === true, JSON.stringify(removed));
+    check('卸载后树条目消失', !(await listPlugins()).some((info) => info.id === pkg.name));
+    check('卸载后盘面清空', !existsSync(join(userData, 'plugins', pkg.name)));
+    // 再卸一次报 not-installed：该分支要求树条目与安装记录**都**不在，
+    // 顺带证明 PluginMetaStore 里的记录也拆干净了
+    const again = (await page.evaluate(
+      (name) => (window as unknown as PolarisBridge).polaris.invoke('plugins.market.uninstall', { name }),
+      pkg.name,
+    )) as { ok: boolean; code?: string };
+    check('重复卸载报 not-installed（安装记录已清）', again.ok === false && again.code === 'not-installed', JSON.stringify(again));
+  } catch (err) {
+    check('插件市场组执行完成', false, String(err).slice(0, 400));
+  } finally {
+    await shutdown(app);
+    server.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+}
+
 void (async () => {
   await groupEngine();
   await groupNoEngine();
+  await groupMarket();
   console.log(problems.length ? `\n${problems.length} 项失败` : '\n全部通过');
   process.exit(problems.length ? 1 : 0);
 })();

@@ -14,6 +14,9 @@ htmlcov/
 # 只匹配目录，会把软链漏进提交
 node_modules
 dist/
+# 种子插件的 dist 反向入库：安装引擎装的是 npm 包产物（单文件 bundle），
+# e2e fixture 直接拿它打 tarball，不入库则 e2e 凭空依赖一次本地构建
+!plugins/*/dist/
 *.tsbuildinfo
 .vite/
 

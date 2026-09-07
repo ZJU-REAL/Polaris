@@ -96,6 +96,7 @@ looks like; to do real work, [run your own instance](getting-started.md).
 | Configure environment variables and model routing | [Configuration](configuration.md) |
 | Deploy for your lab | [Deployment](deployment.md) |
 | Install the desktop client | [Desktop](desktop.md) |
+| Extend the desktop app with plugins | [Plugins](plugins.md) |
 
 > [!TIP]
 > New to Polaris? The shortest useful path is: [get it running](getting-started.md), create a

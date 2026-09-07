@@ -2,6 +2,7 @@ packages:
   - src/frontend
   - src/desktop
   - src/kernel
+  - plugins/*
   - vendor/deepseek-cordis/*
   - vendor/contract-smoke
   - spikes/p0/*

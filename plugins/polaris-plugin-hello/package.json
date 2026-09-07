@@ -1,0 +1,39 @@
+{
+  "name": "polaris-plugin-hello",
+  "version": "0.1.0",
+  "description": "A minimal hello panel plugin for Polaris, published as the official template for third-party plugins",
+  "license": "MIT",
+  "homepage": "https://github.com/ZJU-REAL/Polaris",
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "polaris": {
+    "kind": "panel",
+    "entry": "dist/index.js",
+    "description": {
+      "zh": "示例面板插件：提供一个可配置问候语的 hello 服务",
+      "en": "An example panel plugin exposing a hello service with a configurable greeting"
+    },
+    "permissions": {
+      "network": false,
+      "filesystem": false
+    },
+    "runtime": "in-process",
+    "locales": [
+      "zh",
+      "en"
+    ]
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/index.js",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:*",
+    "@deepseek-ai/schemastery": "workspace:*",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.4"
+  }
+}

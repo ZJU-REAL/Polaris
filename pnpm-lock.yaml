@@ -15,6 +15,24 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
 
+  plugins/polaris-plugin-hello:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:*
+        version: link:../../vendor/deepseek-cordis/cordis
+      '@deepseek-ai/schemastery':
+        specifier: workspace:*
+        version: link:../../vendor/deepseek-cordis/schemastery
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      esbuild:
+        specifier: ^0.24.0
+        version: 0.24.2
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
   spikes/p0/1-legacy-chain:
     dependencies:
       '@polaris/kernel':

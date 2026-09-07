@@ -1,4 +1,18 @@
 {
   "schemaVersion": 1,
-  "plugins": []
+  "plugins": [
+    {
+      "name": "polaris-plugin-hello",
+      "version": "0.1.0",
+      "kind": "panel",
+      "description": "A minimal hello panel plugin for Polaris, published as the official template for third-party plugins",
+      "publisher": "Polaris official",
+      "permissions": {
+        "network": false,
+        "filesystem": false
+      },
+      "tier": "bronze",
+      "badges": ["official"]
+    }
+  ]
 }
