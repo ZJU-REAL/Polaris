@@ -176,6 +176,46 @@ describe('uninstallAndRemove', () => {
     expect(await h.store.load()).toEqual([])
   })
 
+  it('uninstalls by tree entry id, including scoped packages (dual resolution)', async () => {
+    // 前端插件列表里可靠可得的只有条目 id；scoped 包的 id（scope--pkg）
+    // 无法无歧义反推包名，必须由持有安装记录的 kernel 侧解析。
+    // fixture registry 只发 polaris-plugin-hello，scoped 记录手工播种：
+    // uninstallPlugin 的 rm 是 force 的，目录不存在也照常收尾。
+    const h = await bootTree()
+    const pluginsDir = await freshPluginsDir()
+    const scoped = '@zju-real/polaris-plugin-x'
+    const entryId = packageEntryId(scoped) // 'zju-real--polaris-plugin-x'
+    h.metaStore.set(installRecordKey(scoped), {
+      name: scoped,
+      version: '1.0.0',
+      entry: 'index.js',
+      tarballSha512: 'sha512-x',
+      entrySha256: 'x',
+      installedAt: '2026-01-01T00:00:00.000Z',
+      dir: join(pluginsDir, '@zju-real', 'polaris-plugin-x', '1.0.0'),
+    } satisfies InstallRecord)
+    // 与 lifecycle 登记同形：ensureId 尊重传入的 id（create 形参剔除了 id，
+    // 经变量传入绕过字面量多余属性检查，正是 installAndRegister 的写法）
+    const entryOptions = { id: entryId, name: 'file:///nowhere/index.js', disabled: true }
+    await h.tree.create(entryOptions)
+
+    const outcome = await uninstallAndRemove({ name: entryId, pluginsDir, tree: h.tree, metaStore: h.metaStore })
+    expect(outcome).toEqual({ ok: true })
+    expect(h.tree.store[entryId]).toBeUndefined()
+    expect(h.metaStore.get(installRecordKey(scoped))).toBeUndefined()
+
+    // 无 scope 包按 id 卸载同样成立（id 与包名相等，走直查分支）
+    await installHello(h, pluginsDir)
+    const byId = await uninstallAndRemove({
+      name: packageEntryId(NAME),
+      pluginsDir,
+      tree: h.tree,
+      metaStore: h.metaStore,
+    })
+    expect(byId).toEqual({ ok: true })
+    expect(h.metaStore.get(KEY)).toBeUndefined()
+  })
+
   it('reports a plugin that was never installed as data', async () => {
     const h = await bootTree()
     const outcome = await uninstallAndRemove({

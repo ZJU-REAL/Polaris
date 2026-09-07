@@ -118,6 +118,7 @@ export async function installAndRegister(options: InstallAndRegisterOptions): Pr
 }
 
 export interface UninstallAndRemoveOptions {
+  /** npm 包名或树条目 id（packageEntryId 形态），二者皆可，见 resolveInstallName。 */
   name: string
   pluginsDir: string
   tree: SqliteTree
@@ -130,12 +131,32 @@ export type UninstallOutcome =
   | { ok: false; code: 'plugin-enabled' | 'not-installed'; message: string }
 
 /**
+ * 卸载入口的双解析：输入先当 npm 包名直查安装记录；未命中再扫全部
+ * 安装记录，找 packageEntryId(record.name) 等于输入的那条——即输入是
+ * 树条目 id 的情形。为什么要兼容 id：前端插件列表（plugins.list）里
+ * 可靠可得的只有条目 id（条目 name 存的是 file:// 入口 URL，市场包名
+ * 根本不在里面），而从 id 反推包名对含 '--' 的无 scope 包名有歧义，
+ * 只有持有安装记录的这一侧能无歧义地解析。都未命中时原样返回，
+ * 让后续统一走 not-installed。
+ */
+function resolveInstallName(metaStore: PluginMetaLike, input: string): string {
+  if (readRecord(metaStore, input)) return input
+  for (const key of metaStore.list()) {
+    if (!key.startsWith(INSTALL_RECORD_PREFIX)) continue
+    const record = readRecord(metaStore, key.slice(INSTALL_RECORD_PREFIX.length))
+    if (record && packageEntryId(record.name) === input) return record.name
+  }
+  return input
+}
+
+/**
  * 卸载并拆登记：树条目仍处于启用态时拒绝（用户先禁用、看清后果再卸，
  * 也避免「卸载顺手停掉正在运行的东西」这种隐式副作用）；disabled 或
  * 条目已被用户删掉时：移除树条目 → 删安装目录 → 删记录。
  */
 export async function uninstallAndRemove(options: UninstallAndRemoveOptions): Promise<UninstallOutcome> {
-  const { name, pluginsDir, tree, metaStore } = options
+  const { pluginsDir, tree, metaStore } = options
+  const name = resolveInstallName(metaStore, options.name)
   const entryId = packageEntryId(name)
   const entry = tree.store[entryId]
   const record = readRecord(metaStore, name)

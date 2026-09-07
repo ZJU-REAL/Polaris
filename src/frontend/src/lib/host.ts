@@ -316,7 +316,9 @@ export async function installMarketPlugin(
   return (await b.invoke('plugins.market.install', { name, version })) as { jobId: string };
 }
 
-/** 卸载插件；条目仍启用时返回 ok:false（先禁用再卸）。 */
+/** 卸载插件；条目仍启用时返回 ok:false（先禁用再卸）。
+    name 收 npm 包名或树条目 id 皆可（kernel 侧双解析）——前端列表里
+    可靠可得的只有条目 id，传 id 即可。 */
 export async function uninstallMarketPlugin(name: string): Promise<MarketUninstallResult | null> {
   const b = bridge();
   if (!b) return null;

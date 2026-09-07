@@ -1,14 +1,17 @@
-/* 设置页「插件」tab（#707，插件市场计划 PR-4 的前端面）。
+/* 设置页「插件」tab（#707 列表/启停/配置 + #711 市场分区）。
 
    数据全部走桌面宿主桥的 plugins.* IPC（lib/host.ts，#706）：列表、启停、
-   配置校验/保存、整树导出导入。这个 tab 只在 plugins.manage 能力可用时
-   出现（SettingsPage 里判），所以这里的「桥不可用」分支只是兜底。 */
+   配置校验/保存、整树导出导入、卸载。市场分区（浏览/安装）在
+   PluginsMarketSection，用 Segmented 与已安装列表切换——两边信息密度都
+   不低，纵向堆叠会把「已安装」挤到第二屏。这个 tab 只在 plugins.manage
+   能力可用时出现（SettingsPage 里判），「桥不可用」分支只是兜底。 */
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Icon } from '../../components/ui/Icon';
 import { Modal } from '../../components/ui/Modal';
+import { Segmented } from '../../components/ui/Segmented';
 import { Switch } from '../../components/ui/Switch';
 import { toast } from '../../components/ui/Toast';
 import { tr } from '../../lib/i18n';
@@ -19,12 +22,14 @@ import {
   hasHost,
   importPluginTree,
   listPlugins,
+  uninstallMarketPlugin,
   updatePluginConfig,
   validatePluginConfig,
   type PluginEntryInfo,
   type PluginTreeExport,
 } from '../../lib/host';
 import { saveBlob } from '../wiki/shared';
+import { PluginsMarketSection } from './PluginsMarketSection';
 import { parseConfigDraft, parseTreeFile, pluginBadge, validationErrorLines } from './pluginsView';
 
 function errMsg(e: unknown): string {
@@ -34,6 +39,7 @@ function errMsg(e: unknown): string {
 export function PluginsSettings() {
   const queryClient = useQueryClient();
   const bridged = hasHost();
+  const [view, setView] = useState<'installed' | 'market'>('installed');
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['plugins'],
     queryFn: () => listPlugins(),
@@ -118,6 +124,24 @@ export function PluginsSettings() {
     },
   });
 
+  const uninstallMutation = useMutation({
+    // 传条目 id 而不是 name：市场装的插件条目 name 是 file:// 入口 URL，
+    // 包名只有 kernel 的安装记录知道，那边按 id 双解析（resolveInstallName）
+    mutationFn: (p: PluginEntryInfo) => uninstallMarketPlugin(p.id),
+    onSuccess: (result) => {
+      if (!result) return;
+      if (result.ok) {
+        toast(tr('插件已卸载', 'Plugin uninstalled'), 'ok');
+        invalidate();
+      } else {
+        // 拒卸原因是数据不是异常：仍启用 / 不是市场装的，原话如实展示
+        toast(result.message, 'error');
+        invalidate();
+      }
+    },
+    onError: (e) => toast(`${tr('卸载失败', 'Uninstall failed')}：${errMsg(e)}`, 'error'),
+  });
+
   const openConfig = (p: PluginEntryInfo) => {
     setConfigFor(p);
     setDraft(JSON.stringify(p.config ?? {}, null, 2));
@@ -176,19 +200,31 @@ export function PluginsSettings() {
           <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
           {tr('插件', 'Plugins')}
         </span>
-        <div className="row gap8">
-          <button className="btn btn-soft sm" disabled={!bridged || exporting} onClick={() => void doExport()}>
-            <Icon name="download" size={12} />
-            {exporting ? tr('导出中…', 'Exporting…') : tr('导出全部配置', 'Export all config')}
-          </button>
-          <button
-            className="btn btn-soft sm"
-            disabled={!bridged || importMutation.isPending}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Icon name="file" size={12} />
-            {tr('从文件导入', 'Import from file')}
-          </button>
+        <div className="row gap8" style={{ flexWrap: 'wrap' }}>
+          <Segmented
+            options={[
+              { v: 'installed', label: tr('已安装', 'Installed') },
+              { v: 'market', label: tr('插件市场', 'Market') },
+            ]}
+            value={view}
+            onChange={setView}
+          />
+          {view === 'installed' && (
+            <>
+              <button className="btn btn-soft sm" disabled={!bridged || exporting} onClick={() => void doExport()}>
+                <Icon name="download" size={12} />
+                {exporting ? tr('导出中…', 'Exporting…') : tr('导出全部配置', 'Export all config')}
+              </button>
+              <button
+                className="btn btn-soft sm"
+                disabled={!bridged || importMutation.isPending}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Icon name="file" size={12} />
+                {tr('从文件导入', 'Import from file')}
+              </button>
+            </>
+          )}
           <input
             ref={fileInputRef}
             type="file"
@@ -203,10 +239,15 @@ export function PluginsSettings() {
         </div>
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
-        {tr(
-          '管理这台电脑上装的插件：随时停用或启用，改配置立即生效。导出的配置文件可以拿到另一台电脑上导入。',
-          'Manage plugins installed on this machine: enable or disable them anytime; config changes apply immediately. Exported config files can be imported on another machine.',
-        )}
+        {view === 'market'
+          ? tr(
+              '从插件市场把插件装到这台电脑上。装好的插件默认不启用，确认没问题后再手动启用。',
+              'Install plugins from the market onto this machine. New installs stay off until you enable them.',
+            )
+          : tr(
+              '管理这台电脑上装的插件：随时停用或启用，改配置立即生效。导出的配置文件可以拿到另一台电脑上导入。',
+              'Manage plugins installed on this machine: enable or disable them anytime; config changes apply immediately. Exported config files can be imported on another machine.',
+            )}
       </div>
 
       {!bridged ? (
@@ -215,6 +256,8 @@ export function PluginsSettings() {
           title={tr('插件管理不可用', 'Plugin management unavailable')}
           desc={tr('这个功能只在桌面客户端里可用。', 'This feature is only available in the desktop app.')}
         />
+      ) : view === 'market' ? (
+        <PluginsMarketSection />
       ) : isLoading ? (
         <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
       ) : isError || data == null ? (
@@ -255,6 +298,19 @@ export function PluginsSettings() {
                   <button className="btn btn-soft sm" onClick={() => openConfig(p)}>
                     <Icon name="sliders" size={12} />
                     {tr('配置', 'Configure')}
+                  </button>
+                  {/* 卸载只对停用条目开放；启用中的条目按钮置灰、悬停说明原因，
+                      主进程侧同样拒卸（plugin-enabled），这里只是把话提前说 */}
+                  <button
+                    className="btn btn-ghost sm"
+                    disabled={p.disabled ? uninstallMutation.isPending : true}
+                    title={p.disabled ? undefined : tr('先停用再卸载', 'Disable it first, then uninstall')}
+                    onClick={() => {
+                      if (p.disabled) uninstallMutation.mutate(p);
+                    }}
+                  >
+                    <Icon name="trash" size={12} />
+                    {tr('卸载', 'Uninstall')}
                   </button>
                   <Switch
                     checked={!p.disabled}
