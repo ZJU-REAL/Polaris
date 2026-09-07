@@ -236,6 +236,10 @@ class Settings(BaseSettings):
 
     # ---- 文件卷（PDF/全文等产物；容器内挂 /srv/data）----
     data_dir: str = "./data"
+    # 常驻文件投影（#719 file-over-app 一期）：在 <data_dir>/workspace/ 下维护一份
+    # 用户可见的文件副本（PDF 别名 / 笔记 md / wiki vault）。DB 仍是唯一真源，
+    # 关掉只是停止刷新文件，不影响任何业务功能（测试套件与 golden 环境关）。
+    file_projection: bool = True
     # 文献 API（arXiv/S2/OpenAlex）出站代理，如 http://host.docker.internal:7897；
     # LLM/内网服务不走此代理
     outbound_proxy: str | None = None

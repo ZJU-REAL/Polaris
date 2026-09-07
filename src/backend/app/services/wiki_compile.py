@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter, get_llm_router
 from app.models.paper import Paper
+from app.services import file_projection
 from app.services.affiliations import (
     AFFIL_COMPILE_INSTRUCTION,
     apply_author_affiliations,
@@ -303,4 +304,6 @@ async def recompile_paper(
     await link_paper_concepts(
         session, paper, membership, llm=llm, user_id=user_id, project_id=project_id
     )
+    # 常驻文件投影（#719）：解读更新 → 刷新所有含它的库 vault（best-effort，DB wins）
+    await file_projection.refresh_wiki_vaults_for_paper(session, paper.id)
     return view

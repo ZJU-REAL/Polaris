@@ -187,6 +187,9 @@ async def enrich_paper(
             )
             paper.pdf_path = str(save_pdf(str(paper_id), content))
             await session.commit()
+            from app.services.file_projection import project_paper_pdf
+
+            project_paper_pdf(paper)  # 常驻文件投影（#719）：best-effort，DB wins
             await emit("download", "ok")
         except asyncio.CancelledError:
             raise

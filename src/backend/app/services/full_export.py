@@ -23,7 +23,7 @@ import re
 import shutil
 import uuid
 import zipfile
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -90,7 +90,7 @@ def export_active_key(user_id: str) -> str:
 _UNSAFE_NAME_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 
 
-def _safe_name(name: str | None, used: set[str], fallback: str = "untitled") -> str:
+def safe_name(name: str | None, used: set[str], fallback: str = "untitled") -> str:
     base = _UNSAFE_NAME_RE.sub(" ", (name or "").strip()).strip(" .")[:80] or fallback
     candidate, n = base, 2
     # 大小写不敏感去重：macOS/Windows 文件系统大小写不敏感，解 zip 时会互相覆盖
@@ -151,7 +151,7 @@ async def _export_libraries(
     counts = manifest["counts"]
     used: set[str] = set()
     for library in await _user_libraries(session, user_id):
-        name = _safe_name(library.name, used, fallback=str(library.id)[:8])
+        name = safe_name(library.name, used, fallback=str(library.id)[:8])
         lib_dir = root / "libraries" / name
         try:
             member_rows = (
@@ -216,6 +216,41 @@ async def _export_libraries(
             _warn(manifest, "libraries", library.name, e)
 
 
+def render_paper_notes_md(
+    paper: Paper,
+    notes: Sequence[PaperNote],
+    highlights: Sequence[PaperHighlight],
+) -> str:
+    """一篇论文的笔记 + 划线 → 单个 Markdown 文本。
+
+    全量导出与常驻文件投影（services/file_projection.py，#719）共用同一渲染器：
+    两边各写一份必然漂移，而这份文件正是「离开平台也读得懂」的承诺本体。
+    frontmatter 带论文标识（arxiv_id / doi / 标题），离线也能定位是哪篇论文。
+    """
+    lines = [
+        "---",
+        f"title: {_yaml_str(paper.title)}",
+        f"paper_id: {_yaml_str(paper.id)}",
+        f"arxiv_id: {_yaml_str(paper.arxiv_id)}",
+        f"doi: {_yaml_str(paper.doi)}",
+        f"year: {_yaml_str(paper.year)}",
+        "---",
+        "",
+        f"# {paper.title}",
+    ]
+    if notes:
+        lines += ["", "## 笔记 Notes"]
+        for note in notes:
+            lines += ["", f"### {note.created_at:%Y-%m-%d %H:%M}", "", note.content]
+    if highlights:
+        lines += ["", "## 划线 Highlights"]
+        for hl in highlights:
+            lines += ["", f"- p.{hl.page}: > {hl.selected_text}"]
+            if hl.note:
+                lines += [f"  - {hl.note}"]
+    return "\n".join(lines) + "\n"
+
+
 async def _export_notes(
     session: AsyncSession, user_id: uuid.UUID, root: Path, manifest: dict[str, Any]
 ) -> None:
@@ -252,31 +287,13 @@ async def _export_notes(
     for entry in by_paper.values():
         paper: Paper = entry["paper"]
         try:
-            lines = [
-                "---",
-                f"title: {_yaml_str(paper.title)}",
-                f"paper_id: {_yaml_str(paper.id)}",
-                f"arxiv_id: {_yaml_str(paper.arxiv_id)}",
-                f"doi: {_yaml_str(paper.doi)}",
-                f"year: {_yaml_str(paper.year)}",
-                "---",
-                "",
-                f"# {paper.title}",
-            ]
-            if entry["notes"]:
-                lines += ["", "## 笔记 Notes"]
-                for note in entry["notes"]:
-                    lines += ["", f"### {note.created_at:%Y-%m-%d %H:%M}", "", note.content]
-            if entry["highlights"]:
-                lines += ["", "## 划线 Highlights"]
-                for hl in entry["highlights"]:
-                    lines += ["", f"- p.{hl.page}: > {hl.selected_text}"]
-                    if hl.note:
-                        lines += [f"  - {hl.note}"]
-            name = _safe_name(paper.title, used, fallback=str(paper.id)[:8])
+            name = safe_name(paper.title, used, fallback=str(paper.id)[:8])
             notes_dir = root / "notes"
             notes_dir.mkdir(parents=True, exist_ok=True)
-            (notes_dir / f"{name}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            (notes_dir / f"{name}.md").write_text(
+                render_paper_notes_md(paper, entry["notes"], entry["highlights"]),
+                encoding="utf-8",
+            )
         except Exception as e:  # noqa: BLE001
             _warn(manifest, "notes", paper.title, e)
 
@@ -308,7 +325,7 @@ async def _export_wiki(
             vault = await build_obsidian_zip_for_libraries(
                 session, library_ids=[library.id], title=library.name, user_id=user_id
             )
-            name = _safe_name(library.name, used, fallback=str(library.id)[:8])
+            name = safe_name(library.name, used, fallback=str(library.id)[:8])
             target = root / "wiki" / name
             target.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(io.BytesIO(vault)) as zf:
@@ -369,7 +386,7 @@ async def _export_discovery(
     used: set[str] = set()
     for run in runs:
         try:
-            name = _safe_name(run.goal, used, fallback=str(run.id)[:8])
+            name = safe_name(run.goal, used, fallback=str(run.id)[:8])
             run_dir = root / "discovery" / name
             nodes = await tree_for_run(session, run.id)
             _dump_json(
@@ -428,7 +445,7 @@ async def _export_experiments(
     used: set[str] = set()
     for experiment, idea_title in rows:
         try:
-            name = _safe_name(idea_title, used, fallback=str(experiment.id)[:8])
+            name = safe_name(idea_title, used, fallback=str(experiment.id)[:8])
             _dump_json(
                 root / "experiments" / name / "run.json",
                 {
@@ -496,7 +513,7 @@ async def _export_manuscripts(
     used: set[str] = set()
     for manuscript in manuscripts:
         try:
-            name = _safe_name(manuscript.title, used, fallback=str(manuscript.id)[:8])
+            name = safe_name(manuscript.title, used, fallback=str(manuscript.id)[:8])
             ms_dir = root / "manuscripts" / name
             source_dir = ms_dir / "source"
             for file in manuscript.files:

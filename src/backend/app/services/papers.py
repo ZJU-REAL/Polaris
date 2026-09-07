@@ -819,8 +819,11 @@ async def _paper_still_referenced(session: AsyncSession, paper: Paper) -> bool:
 
 def _remove_paper_files(paper: Paper) -> None:
     """尽力删除论文落盘文件：pdf/全文文件 + <papers_dir>/<id>/ 图片目录（失败只记日志）。"""
+    from app.services.file_projection import remove_paper_projection
     from app.services.literature.pdf_extract import papers_dir
 
+    # 投影清理必须在原件 unlink 之前：旧硬链接别名靠 samefile 对着原件识别（#719）
+    remove_paper_projection(paper)
     for raw in (paper.pdf_path, paper.full_text_path):
         if raw:
             try:
@@ -1102,6 +1105,11 @@ async def _process_saved_pdf(
     except Exception:  # noqa: BLE001
         logger.warning("chunk embed failed for paper %s", paper.id, exc_info=True)
     await session.refresh(paper)
+    # 常驻文件投影（#719）：PDF 入库完成 → 在 workspace/papers/ 下建可辨认的别名
+    # （硬链接优先，失败复制；best-effort，DB wins）。上传 / URL / 自动补下全走这里。
+    from app.services.file_projection import project_paper_pdf
+
+    project_paper_pdf(paper)
     return paper
 
 

@@ -36,6 +36,7 @@ from app.models.paper import Paper, new_paper
 from app.models.research_digest import LibraryResearchDigest
 from app.models.voyage import VoyageRun, VoyageStep
 from app.schemas.ingest import TIME_RANGE_DAYS
+from app.services import file_projection
 from app.services.affiliations import (
     apply_author_affiliations,
     extract_author_affiliations_llm,
@@ -1234,6 +1235,9 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                     )
             membership_of[paper.id].status = "fetched"  # 无全文也进入编译（退化用摘要）
             await session.commit()
+            # 常驻文件投影（#719）：PDF 到手即建可辨认别名；幂等（已投影则秒过），
+            # best-effort 不进 failed——投影失败不该算这篇论文抽取失败
+            file_projection.project_paper_pdf(paper)
             fetched += 1
 
     return {
@@ -1260,6 +1264,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
         library = await _resolve_library(session, ctx)
         if library is None:
             raise ValueError(f"library not found for run: {ctx.run.id}")
+        library_id = library.id  # session 关闭后还要用（批尾刷新文件投影）
         billing_user_id = _ingest_billing_owner(library)
         # 幂等断点：已 compiled 的不再进入（status=fetched 才编译）。外层只查 id，每篇
         # 编译在各自独立 session 内重新加载，避免多任务共享一个 AsyncSession。
@@ -1362,6 +1367,10 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             compiled_brief.append(result)
 
     ctx.checkpoint["compiled_count"] = int(ctx.checkpoint.get("compiled_count") or 0) + compiled
+    # 常驻文件投影（#719）：本批有新解读才刷新，且整批只重建一次该库 vault——
+    # 逐篇重建是 O(N²) 的读写量，批量场景按批收口（best-effort，DB wins）
+    if compiled:
+        await file_projection.refresh_library_vault_by_id(library_id)
     return {
         "processed": len(paper_ids),
         "succeeded": compiled,

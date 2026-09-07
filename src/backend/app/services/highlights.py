@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.paper import PaperHighlight
 from app.models.user import User
 from app.schemas.highlight import HighlightCreate
+from app.services import file_projection
 from app.services.notes import author_name_of
 
 
@@ -38,6 +39,8 @@ async def create_highlight(
     session.add(hl)
     await session.commit()
     await session.refresh(hl)
+    # 常驻文件投影（#719）：划线与笔记落同一个 notes/<论文名>.md，best-effort（DB wins）
+    await file_projection.refresh_paper_notes(session, paper_id)
     return hl
 
 
@@ -80,9 +83,12 @@ async def update_highlight(
             setattr(hl, key, updates[key])
     await session.commit()
     await session.refresh(hl)
+    await file_projection.refresh_paper_notes(session, hl.paper_id)  # 投影跟进（DB wins）
     return hl
 
 
 async def delete_highlight(session: AsyncSession, hl: PaperHighlight) -> None:
+    paper_id = hl.paper_id  # delete 后对象过期，先留住
     await session.delete(hl)
     await session.commit()
+    await file_projection.refresh_paper_notes(session, paper_id)  # 投影跟进（DB wins）

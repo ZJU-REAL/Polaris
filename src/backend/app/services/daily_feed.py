@@ -1204,6 +1204,10 @@ async def compile_entry_wiki(
     # 单篇概念上链：正文里的 [[双链]] 建词条并关联。不传成员行 → 记账落平台级
     # （library_id 空）+ 触发编译的人，不把费用摊给某个不相干的库。
     await link_paper_concepts(session, paper, llm=get_llm_router(), user_id=user_id)
+    # 常驻文件投影（#719）：解读更新 → 刷新含它的库 vault（池论文常不属于任何库→跳过）
+    from app.services.file_projection import refresh_wiki_vaults_for_paper
+
+    await refresh_wiki_vaults_for_paper(session, paper.id)
     return wiki
 
 

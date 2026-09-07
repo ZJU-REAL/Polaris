@@ -15,6 +15,7 @@ from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperNote
 from app.models.topic_shelf import TopicPaper
 from app.models.user import User
+from app.services import file_projection
 from app.services.libraries import get_source_library_ids
 
 
@@ -30,6 +31,9 @@ async def create_note(
     session.add(note)
     await session.commit()
     await session.refresh(note)
+    # 常驻文件投影（#719）：保存成功后 best-effort 重渲染该论文的笔记文件。
+    # 冲突规则 DB wins：投影失败只记日志，绝不影响这次保存。
+    await file_projection.refresh_paper_notes(session, paper_id)
     return note
 
 
@@ -67,12 +71,16 @@ async def update_note(session: AsyncSession, note: PaperNote, *, content: str) -
     note.content = content
     await session.commit()
     await session.refresh(note)
+    await file_projection.refresh_paper_notes(session, note.paper_id)  # 投影跟进（DB wins）
     return note
 
 
 async def delete_note(session: AsyncSession, note: PaperNote) -> None:
+    paper_id = note.paper_id  # delete 后对象过期，先留住
     await session.delete(note)
     await session.commit()
+    # 投影跟进：这是该论文最后一条笔记且没有划线时，文件一并清走
+    await file_projection.refresh_paper_notes(session, paper_id)
 
 
 async def list_project_notes(
