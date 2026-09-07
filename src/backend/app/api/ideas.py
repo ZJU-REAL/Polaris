@@ -176,7 +176,7 @@ async def _manage_idea_project(session: AsyncSession, project_id: uuid.UUID, use
     """项目 + 管理权限（回收站/删除用）。"""
     project = await _member_project(session, project_id, user)
     if not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_REQUIRED")
     return project
 
 

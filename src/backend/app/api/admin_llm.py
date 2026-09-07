@@ -1,4 +1,6 @@
-"""管理端 LLM 配置路由（仅 role=admin，docs/task-system.md §7（原 api-m1.md §2））。"""
+"""LLM 配置路由（仅平台主人：桌面档=本人；服务器档=首位用户）。
+
+接口清单见 docs/task-system.md §7（原 api-m1.md §2）。"""
 
 import uuid
 
@@ -6,7 +8,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.models.llm_config import LLMCallLog, LLMProviderConfig
 from app.schemas.llm_admin import (
@@ -23,9 +24,10 @@ from app.schemas.llm_admin import (
     UsageRow,
 )
 from app.services import llm_admin as llm_admin_service
+from app.services.owner import require_owner
 
 router = APIRouter(
-    prefix="/admin/llm", tags=["admin-llm"], dependencies=[Depends(current_active_user)]
+    prefix="/admin/llm", tags=["admin-llm"], dependencies=[Depends(require_owner)]
 )
 
 

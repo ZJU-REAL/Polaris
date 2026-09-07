@@ -1,7 +1,8 @@
 """每日新论文池路由：/daily。
 
 全部署共享：登录即可浏览/点赞/收录（收录目标各自校验写权限）；
-订阅分类管理与手动刷新仅 admin。业务逻辑在 services/daily_feed.py。
+全局参数（分类/扫描范围/保留期/抓取时刻/探测上限）与手动刷新仅平台主人
+（桌面档=本人；服务器档=首位用户，#722）。业务逻辑在 services/daily_feed.py。
 """
 
 import asyncio
@@ -54,6 +55,7 @@ from app.services import library_chat as library_chat_service
 from app.services import paper_enrich as paper_enrich_service
 from app.services import papers as papers_service
 from app.services.embedding import embed_query
+from app.services.owner import require_owner
 
 logger = logging.getLogger(__name__)
 
@@ -354,9 +356,9 @@ async def get_sync_scope(
 async def set_sync_scope(
     payload: LibrarySyncScopeUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(current_active_user),
+    _: User = Depends(require_owner),
 ) -> LibrarySyncScopeRead:
-    """改扫描范围（admin）。
+    """改扫描范围（仅平台主人）。
 
     - ``since_last``（默认）：从这个库**上次成功同步**那天算起。正常情况下就是当天
       那批（和 daily 一样省），漏了几天会自动多扫几天（和 full 一样能自愈）。
@@ -380,9 +382,9 @@ async def get_retention(
 async def set_retention(
     payload: DailyRetentionUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(current_active_user),
+    _: User = Depends(require_owner),
 ) -> DailyRetentionRead:
-    """改保留天数（admin）。
+    """改保留天数（仅平台主人）。
 
     这不只是「每日页显示几天」：每日池同时是**库同步的取数窗口**，同步会全量重扫它。
     所以保留期也就是「一个文献库最多能漏几天还能自愈」——掉出窗口的论文永久错过，
@@ -405,9 +407,9 @@ async def get_sync_time(
 async def set_sync_time(
     payload: DailySyncTimeUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(current_active_user),
+    _: User = Depends(require_owner),
 ) -> DailySyncTimeRead:
-    """改抓取时刻（admin）。
+    """改抓取时刻（仅平台主人）。
 
     arXiv 每天约北京时间 10:00 放新公告，早于这个点跑只会拿到**前一天**的列表。
     库同步与发表匹配的时刻由它派生（+90 / +150 分钟），不必分别设置。
@@ -429,9 +431,9 @@ async def get_probe_attempts(
 async def set_probe_attempts(
     payload: DailyProbeAttemptsUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(current_active_user),
+    _: User = Depends(require_owner),
 ) -> DailyProbeAttemptsRead:
-    """改探测次数上限（admin）。
+    """改探测次数上限（仅平台主人）。
 
     从抓取时刻起每 15 分钟探一次，探满这么多次仍没有今天的批次就当天收工——
     这是**正常结束**，不会留下失败的任务。默认 10 次 ≈ 覆盖 2.5 小时。
@@ -452,7 +454,7 @@ async def get_categories(
 async def set_categories(
     payload: DailyCategoriesUpdate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    _: User = Depends(require_owner),
 ) -> DailyCategoriesRead:
     try:
         categories = await daily_service.set_categories(session, payload.categories)
@@ -537,10 +539,10 @@ async def compile_entry(
 @router.post("/refresh", status_code=status.HTTP_202_ACCEPTED)
 async def refresh(
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_owner),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> dict[str, str]:
-    """手动触发一次抓取（验证/补抓用）：建任务 + 入队，返回 voyage_id 供跳转任务详情。
+    """手动触发一次抓取（仅平台主人，验证/补抓用）：建任务 + 入队，返回 voyage_id 供跳转任务详情。
 
     互斥是全局单例——已有一次抓取在跑就 409（比按天去重的 job_id 更准：同一天里
     上一次失败后仍可立刻重来，而正在跑的绝不会被重复触发）。

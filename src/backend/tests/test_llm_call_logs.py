@@ -140,9 +140,9 @@ async def _admin_and_member(client):
     )
 
 
-async def test_call_log_endpoints_require_login(client):
-    """role 治理移除（#614）后管理端点对任何登录用户开放；未登录仍 401。"""
-    _, member = await _admin_and_member(client)
+async def test_call_log_endpoints_owner_only(client):
+    """admin 面回到单一主人守卫（#722）：首位用户放行，其余登录用户 403，未登录 401。"""
+    admin, member = await _admin_and_member(client)
     for method, url, body in [
         ("GET", "/api/admin/llm/call-logs", None),
         ("GET", "/api/admin/llm/call-logs/settings", None),
@@ -150,6 +150,8 @@ async def test_call_log_endpoints_require_login(client):
         resp = await client.request(method, url, json=body)
         assert resp.status_code == 401, (method, url, resp.status_code)
         resp = await client.request(method, url, json=body, headers=member)
+        assert resp.status_code == 403, (method, url, resp.status_code)
+        resp = await client.request(method, url, json=body, headers=admin)
         assert resp.status_code == 200, (method, url, resp.status_code)
 
 
