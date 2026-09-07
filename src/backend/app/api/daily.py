@@ -81,7 +81,7 @@ async def list_days(
 @router.get("/papers", response_model=DailyPage)
 async def list_papers(
     date: dt.date | None = Query(default=None),
-    sort: str = Query(default="likes", pattern="^(likes|date)$"),
+    sort: str = Query(default="likes", pattern="^(likes|date|relevance)$"),
     mode: str = Query(default="keyword", pattern="^(keyword|semantic)$"),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
@@ -99,6 +99,8 @@ async def list_papers(
 ) -> DailyPage:
     """池内列表 / 检索。
 
+    sort=relevance 按「与你的文献库的相关性 × 新近度」融合排序（没有文献库时与
+    sort=date 一致）；条目附带「与你的库相关」徽章数据（related_library_id/name）。
     mode=semantic 且有 q 时走论文向量检索（结果按相关度排序、不分页）；数据库不是
     postgres 或 provider 不支持嵌入时回退关键词，响应里 mode_used 如实反映。
     池论文默认不建向量（管理员开关），语义结果可能不全，覆盖度见 vector_ready/total。
@@ -144,6 +146,7 @@ async def list_papers(
         items, total = await daily_service.list_papers(
             session,
             user_id=user.id,
+            user=user,
             date=date,
             sort=sort,
             page=page,

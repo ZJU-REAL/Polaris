@@ -52,6 +52,9 @@ class DailyPaperItem(BaseModel):
     likers_preview: list[DailyLiker] = []
     # 仅「我赞过的」列表返回
     liked_at: datetime | None = None
+    # 「与你的库相关」徽章（#623）：最像的那个文献库；低于阈值/没有库时为空
+    related_library_id: uuid.UUID | None = None
+    related_library_name: str | None = None
 
     @field_validator("authors", mode="before")
     @classmethod

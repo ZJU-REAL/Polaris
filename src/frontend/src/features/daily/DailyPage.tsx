@@ -126,6 +126,7 @@ function DailyRow({
   onClick: () => void;
   onToggleCheck: () => void;
 }) {
+  const navigate = useNavigate();
   return (
     <div
       onClick={onClick}
@@ -185,6 +186,38 @@ function DailyRow({
               </span>
             )}
           </div>
+          {/* 「与你的库相关」：后端按库质心/关键词算出来的最像的那个库；没命中不占行 */}
+          {p.related_library_name && (
+            <div style={{ marginTop: 4 }}>
+              <span
+                className="pill sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (p.related_library_id) navigate(`/libraries/${p.related_library_id}`);
+                }}
+                title={tr(
+                  `和你的文献库「${p.related_library_name}」方向相近，点击打开该库`,
+                  `Close to your library “${p.related_library_name}” — click to open it`,
+                )}
+                style={{
+                  background: 'var(--accent-soft)',
+                  color: 'var(--accent-text)',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  maxWidth: '100%',
+                }}
+              >
+                <Icon name="book" size={10} />
+                <span
+                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                >
+                  {tr('与你的库相关', 'Relevant to')} · {p.related_library_name}
+                </span>
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -574,10 +607,11 @@ type AnnounceFilter = 'collected' | 'all' | 'new';
 // 类型筛选默认值：只看已收录的（进了文献库的才值得先看；「恢复默认」也回到这个值）
 const DEFAULT_ANNOUNCE: AnnounceFilter = 'collected';
 
-// 列表固定按点赞排序（没有排序切换 UI）；语义检索时后端按相关度排，忽略这个值
-// 时间倒排：最新的在最前。按点赞排会让一篇被点过的旧论文压在当天新论文前面，
-// 而「每日新论文」这个页面的主线本来就是时间。
-const DAILY_SORT: DailySort = 'date';
+// 排序默认按时间：最新的在最前（按点赞排会让一篇被点过的旧论文压在当天新论文前面，
+// 而「每日新论文」这个页面的主线本来就是时间）。用户可切到「按相关性」：后端按
+// 「与你的文献库的相关性 × 新近度」融合排（没有文献库时两种排法一样）。
+// 语义检索时后端按检索相关度排，忽略这个值。
+type DailySortMode = Extract<DailySort, 'date' | 'relevance'>;
 
 /** 每日池的同步状况。池子是所有文献库的唯一供给——抓取失败会让全实验室当天颗粒无收，
     所以状态要摆在页面上，而不是只躺在任务日志里等人去翻。 */
@@ -678,6 +712,8 @@ export function DailyPage() {
   // 高级条件是否偏离默认（决定高级检索按钮上的小圆点）
   // 分类/类型已上工具栏；高级检索只剩作者与机构
   const advActive = !!author || !!affiliation;
+  // 排序：按时间（默认）/ 按相关性（与自己的文献库方向相近的靠前）
+  const [sortMode, setSortMode] = useState<DailySortMode>('date');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [collectPaper, setCollectPaper] = useState<CollectPaperRef | null>(null);
   const [collectOpen, setCollectOpen] = useState(false);
@@ -768,12 +804,12 @@ export function DailyPage() {
   const listQuery = useInfiniteQuery({
     queryKey: [
       'daily-papers',
-      semanticOn, q, category, announce, author, affiliation, showAll, day,
+      semanticOn, q, category, announce, author, affiliation, showAll, day, sortMode,
     ],
     initialPageParam: 1,
     queryFn: ({ pageParam }) =>
       api.listDailyPapers({
-        sort: semantic ? undefined : DAILY_SORT,
+        sort: semantic ? undefined : sortMode,
         page: semantic ? undefined : pageParam,
         size: PAGE_SIZE,
         q: q || undefined,
@@ -1006,6 +1042,28 @@ export function DailyPage() {
                 <span className={`chip${announce === 'new' ? ' on' : ''}`} onClick={() => setAnnounce('new')}>
                   {tr('新工作', 'New')}
                 </span>
+                {/* 排序切换：语义检索时后端按检索相关度排，这两个开关不起作用，藏起来少个矛盾 */}
+                {!semantic && (
+                  <div className="row gap6" style={{ marginLeft: 'auto' }}>
+                    <span
+                      className={`chip${sortMode === 'date' ? ' on' : ''}`}
+                      onClick={() => setSortMode('date')}
+                      title={tr('最新公告的排最前', 'Newest announcements first')}
+                    >
+                      {tr('按时间', 'By time')}
+                    </span>
+                    <span
+                      className={`chip${sortMode === 'relevance' ? ' on' : ''}`}
+                      onClick={() => setSortMode('relevance')}
+                      title={tr(
+                        '和你的文献库方向相近的排前面（还没有文献库时与按时间一样）',
+                        'Papers close to your libraries come first (same as by time if you have no libraries)',
+                      )}
+                    >
+                      {tr('按相关性', 'By relevance')}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* 高级检索面板：作者 / 机构（分类与类型已上工具栏） */}
@@ -1156,9 +1214,11 @@ export function DailyPage() {
                 />
               ) : (
                 items.map((p, i) => {
-                  // 与上一条日期不同 → 插入粘性日期头
+                  // 与上一条日期不同 → 插入粘性日期头。按相关性排时日期是交错的，
+                  // 分组头会每隔几行冒一个，反而添乱——不分组。
                   const prev = items[i - 1];
-                  const newDay = i === 0 || prev?.feed_date !== p.feed_date;
+                  const newDay =
+                    sortMode !== 'relevance' && (i === 0 || prev?.feed_date !== p.feed_date);
                   return (
                     <Fragment key={p.entry_id}>
                       {newDay && (

@@ -19,7 +19,7 @@ import re
 import uuid
 from typing import Any
 
-from sqlalchemy import String, case, cast, delete, func, select, text
+from sqlalchemy import Date, Float, String, case, cast, delete, func, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embedding_space import EmbeddingSpace, active_space
@@ -681,6 +681,7 @@ async def list_papers(
     session: AsyncSession,
     *,
     user_id: uuid.UUID,
+    user: User | None = None,
     date: dt.date | None = None,
     sort: str = "likes",
     page: int = 1,
@@ -693,6 +694,21 @@ async def list_papers(
     library_id: uuid.UUID | None = None,
     collected: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
+    """池内列表。``sort`` 还支持 ``relevance``：按「与你的文献库的相关性 × 新近度」
+    融合排序（#623，需要 ``user`` 来圈定可见库）；没有任何可用的库锚点时退回按时间，
+    与没有这个功能时的行为完全一致。传了 ``user`` 时，无论哪种排序都会给条目补
+    「与你的库相关」徽章数据（related_library_id/name）。
+    """
+    # 延迟 import 与 papers 服务同因（见 cleanup_expired）——daily_relevance 依赖 papers
+    from app.services import daily_relevance
+
+    anchors: list[daily_relevance.LibraryAnchor] = []
+    if user is not None:
+        anchors = await daily_relevance.library_anchors(session, user=user)
+    if sort == "relevance" and not anchors:
+        # 一个库都没有（或都空得没法当锚）：行为与现状一致，按时间排
+        sort = "date"
+
     stmt = select(DailyFeedEntry, Paper).join(Paper, Paper.id == DailyFeedEntry.paper_id)
     if collected:
         # 「已收录」：被**任意**文献库真正收进去的（候选/回收站不算）。与 library_id
@@ -760,25 +776,129 @@ async def list_papers(
     )
     # 同分类里，新工作排在交叉提交（更新）前面：新工作才是当天真正的新东西
     announce_rank = case((DailyFeedEntry.announce_type == "new", 0), else_=1)
-    if sort == "likes":
-        stmt = stmt.order_by(
-            category_rank,
-            announce_rank,
-            likes_sq.desc(),
-            DailyFeedEntry.feed_date.desc(),
-            DailyFeedEntry.created_at.desc(),
-        )
-    else:  # date
-        stmt = stmt.order_by(
-            category_rank,
-            announce_rank,
-            DailyFeedEntry.feed_date.desc(),
-            DailyFeedEntry.created_at.desc(),
-        )
-    stmt = stmt.offset((page - 1) * size).limit(size)
+    if sort == "relevance":
+        rows = await _relevance_page(session, stmt, anchors=anchors, page=page, size=size)
+    else:
+        if sort == "likes":
+            stmt = stmt.order_by(
+                category_rank,
+                announce_rank,
+                likes_sq.desc(),
+                DailyFeedEntry.feed_date.desc(),
+                DailyFeedEntry.created_at.desc(),
+            )
+        else:  # date
+            stmt = stmt.order_by(
+                category_rank,
+                announce_rank,
+                DailyFeedEntry.feed_date.desc(),
+                DailyFeedEntry.created_at.desc(),
+            )
+        stmt = stmt.offset((page - 1) * size).limit(size)
+        rows = list((await session.execute(stmt)).all())
 
-    rows = (await session.execute(stmt)).all()
-    return await entry_items(session, list(rows), user_id=user_id), total
+    items = await entry_items(session, list(rows), user_id=user_id)
+    await _annotate_library_relevance(session, items, list(rows), anchors)
+    return items, total
+
+
+async def _relevance_page(
+    session: AsyncSession,
+    stmt: Any,
+    *,
+    anchors: list[Any],
+    page: int,
+    size: int,
+) -> list[tuple[DailyFeedEntry, Paper]]:
+    """带筛选的池条目按「新近度 × 库相关性」融合分取一页（#623）。
+
+    公式与 daily_relevance.fused_score 一致：recency 按保留窗口线性归一，
+    权重 RELEVANCE_WEIGHT 给相关性、其余给新近度；平分时新日期在前。
+
+    postgres 在 SQL 里算（窗口内几千条、每条要对若干个 1024 维质心做余弦，把向量
+    搬出来在 Python 算每次请求要传几十 MB）；其余方言（测试的 sqlite）把筛选后的行
+    全取出来在 Python 打分排序——那种部署数据量本来就小。两条路径必须同公式。
+    """
+    from app.services import daily_relevance
+
+    today = _today_utc()
+    window = await get_retention_days(session)
+    weight = daily_relevance.RELEVANCE_WEIGHT
+
+    if session.get_bind().dialect.name == "postgresql":
+        from pgvector.sqlalchemy import Vector as PgVector
+
+        space = await active_space(session)
+        join_vec = space is not None and any(a.centroid is not None for a in anchors)
+        if join_vec:
+            stmt = stmt.outerjoin(
+                PaperVector,
+                (PaperVector.paper_id == Paper.id) & (PaperVector.space == space.key),
+            )
+        score_exprs: list[Any] = []
+        for anchor in anchors:
+            kw_expr = None
+            if anchor.keywords:
+                hits = [
+                    Paper.title.ilike(f"%{kw}%") | Paper.abstract.ilike(f"%{kw}%")
+                    for kw in anchor.keywords
+                ]
+                kw_expr = case((or_(*hits), daily_relevance.KEYWORD_HIT_SCORE), else_=0.0)
+            if anchor.centroid is not None and join_vec:
+                cos = 1.0 - PaperVector.embedding.op("<=>", return_type=Float)(
+                    cast(literal(anchor.centroid, PgVector()), PgVector())
+                )
+                # 论文缺向量（嵌入失败的兜底）→ 该锚点退回关键词，与 anchor_score 同口径
+                score_exprs.append(
+                    func.coalesce(cos, kw_expr if kw_expr is not None else 0.0)
+                )
+            elif kw_expr is not None:
+                score_exprs.append(kw_expr)
+        # 余弦可为负；Python 侧只保留正分（负相关不该把论文压到窗口底），SQL 用 0 兜底对齐
+        rel = func.greatest(0.0, *score_exprs) if score_exprs else literal(0.0)
+        days = cast(literal(today, Date()) - DailyFeedEntry.feed_date, Float)
+        recency = func.greatest(0.0, 1.0 - days / float(window))
+        fused = (1.0 - weight) * recency + weight * rel
+        stmt = stmt.order_by(
+            fused.desc(), DailyFeedEntry.feed_date.desc(), DailyFeedEntry.created_at.desc()
+        )
+        stmt = stmt.offset((page - 1) * size).limit(size)
+        return list((await session.execute(stmt)).all())
+
+    rows = list((await session.execute(stmt)).all())
+    scores = await daily_relevance.relevance_for_papers(session, [p for _, p in rows], anchors)
+
+    def sort_key(row: tuple[DailyFeedEntry, Paper]) -> tuple[float, int, float]:
+        entry, paper = row
+        rel_score = scores.get(paper.id, (0.0, None))[0]
+        fused = daily_relevance.fused_score(rel_score, (today - entry.feed_date).days, window)
+        return (-fused, -entry.feed_date.toordinal(), -entry.created_at.timestamp())
+
+    rows.sort(key=sort_key)
+    return rows[(page - 1) * size : (page - 1) * size + size]
+
+
+async def _annotate_library_relevance(
+    session: AsyncSession,
+    items: list[dict[str, Any]],
+    rows: list[tuple[DailyFeedEntry, Paper]],
+    anchors: list[Any],
+) -> None:
+    """给这页条目补「与你的库相关」徽章数据（命中库的 id/名）。
+
+    只标最像的那个库；低于 MATCH_THRESHOLD 的不标——徽章的意义是「值得点进去看」，
+    而排序融合用的是原始分，不受这个阈值影响。
+    """
+    if not anchors or not rows:
+        return
+    from app.services import daily_relevance
+
+    scores = await daily_relevance.relevance_for_papers(session, [p for _, p in rows], anchors)
+    for item, (_, paper) in zip(items, rows, strict=False):
+        hit = scores.get(paper.id)
+        if hit is not None and hit[0] >= daily_relevance.MATCH_THRESHOLD:
+            item["related_library_id"] = hit[1].library_id
+            item["related_library_name"] = hit[1].name
 
 
 async def semantic_search_daily(

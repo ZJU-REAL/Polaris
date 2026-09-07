@@ -3262,7 +3262,7 @@ export interface DailyLikeState {
   likers_preview: DailyLiker[];
 }
 
-export type DailySort = 'likes' | 'date';
+export type DailySort = 'likes' | 'date' | 'relevance';
 
 export interface DailyPaperItem {
   entry_id: string;
@@ -3288,6 +3288,9 @@ export interface DailyPaperItem {
   likers_preview: DailyLiker[];
   /** 仅「我赞过的」列表返回 */
   liked_at?: string | null;
+  /** 「与你的库相关」徽章：最像的那个文献库（低于阈值/没有库时为空） */
+  related_library_id?: string | null;
+  related_library_name?: string | null;
 }
 
 export interface DailyPaperDetail extends DailyPaperItem {
