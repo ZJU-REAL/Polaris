@@ -182,15 +182,21 @@ export async function bootstrapEngine(opts: BootstrapOptions): Promise<EngineCom
 /**
  * 引擎启动 argv：与 legacy-engine docker 模式的 `sh -lc "alembic && uvicorn"`
  * 同构，但 command 模式没有 shell，所以用 python -c 的小启动器串联两步。
- * 启动器同时负责 cwd 与数据库地址：
+ * 启动器同时负责 cwd、数据库地址与用户数据目录：
  * - chdir 到后端源码目录——alembic.ini 的 script_location/prepend_sys_path
  *   都是相对 cwd 的相对路径；
  * - POLARIS_DATABASE_URL 指到 userData 的 SQLite 文件（legacy-engine 只注入
- *   POLARIS_PROFILE，数据库路径是引导方才知道的信息，所以写在启动器里）。
+ *   POLARIS_PROFILE，数据库路径是引导方才知道的信息，所以写在启动器里）；
+ * - POLARIS_DATA_DIR 指到 userData 的 engine/data/（#718）：后端 data_dir
+ *   默认相对 './data'，chdir 之后会落进 App 安装包的 resources/backend/，
+ *   应用更新整包替换时用户的 PDF/导出/实验日志就全没了。setdefault 而非
+ *   覆写：给高级用户留 env 改道的口子，与 PROFILE 同一语义。
  */
 function buildEngineCommand(venvPython: string, backendDir: string, engineDir: string): string[] {
   const dbPath = join(engineDir, 'polaris.db').split('\\').join('/');
   const snapshotRoot = join(engineDir, 'snapshots').split('\\').join('/');
+  const dataDir = join(engineDir, 'data').split('\\').join('/');
+  const legacyDataDir = join(backendDir, 'data').split('\\').join('/');
   // JSON.stringify 产出的字符串字面量对 Python 同样合法（转义子集兼容），
   // 借它安全嵌入含空格/反斜杠/非 ASCII 的路径
   const launcher = [
@@ -199,13 +205,52 @@ function buildEngineCommand(venvPython: string, backendDir: string, engineDir: s
     "os.environ.setdefault('PYTHONUTF8', '1')",
     "os.environ.setdefault('POLARIS_PROFILE', 'desktop')",
     `os.environ['POLARIS_DATABASE_URL'] = ${JSON.stringify(`sqlite+aiosqlite:///${dbPath}`)}`,
+    // 用户数据目录钉在 userData 下（#718，理由见本函数 docstring）
+    `os.environ.setdefault('POLARIS_DATA_DIR', ${JSON.stringify(dataDir)})`,
     `os.chdir(${JSON.stringify(backendDir)})`,
+    ...buildDataDirMigration(legacyDataDir),
     ...buildMigrationGuard(dbPath, snapshotRoot, "[sys.executable, '-m', 'alembic', 'upgrade', 'head']"),
     'import uvicorn',
     `uvicorn.run('app.main:app', host='127.0.0.1', port=${ENGINE_PORT})`,
   ].join('\n');
   // -X utf8：启动器自身的解释器也走 UTF-8 模式（env 对已启动的进程无效）
   return [venvPython, '-X', 'utf8', '-c', launcher];
+}
+
+/**
+ * 旧数据目录一次性搬迁的 Python 片段（#718）：修复前的桌面版把用户文件
+ * 写进了 <resources/backend>/data（chdir 后的相对 './data'）——那里随应用
+ * 更新整包替换。首个修复版启动时：旧位置非空且新位置（POLARIS_DATA_DIR，
+ * 读 env 以尊重用户覆写）还没有内容 → shutil.move 整体搬过去。
+ *
+ * 只搬一次：搬成功后旧位置消失，之后每次启动的判断都是空操作；新位置
+ * 已有内容时绝不合并（说明用户已在新位置积累了数据，盲目合并可能覆盖）。
+ * 失败只打日志不阻断启动——宁可这一轮继续用旧位置的文件（backend 兜底
+ * 已把相对 data_dir resolve 到 cwd，行为与修复前一致），也不能让引擎
+ * 起不来；且任何路径下都不主动删除源目录（shutil.move 失败时源保持原样）。
+ *
+ * 放在启动器里而不是 TS 侧：与 alembic 同理（见下），bootstrapEngine 有
+ * 哨兵会整段跳过，而搬迁必须每次 spawn 都检查；纯 stdlib，不加依赖。
+ * 片段自带 import，可独立喂给 python -c（bootstrap-smoke 单独驱动验证）。
+ */
+export function buildDataDirMigration(legacyDataDir: string): string[] {
+  return [
+    'import os, shutil',
+    `_old_data = ${JSON.stringify(legacyDataDir)}`,
+    "_new_data = os.environ['POLARIS_DATA_DIR']",
+    'try:',
+    '    if os.path.isdir(_old_data) and os.listdir(_old_data):',
+    '        if not os.path.isdir(_new_data) or not os.listdir(_new_data):',
+    // shutil.move 遇到已存在的目标目录会把源搬进目标里面（变成 data/data）；
+    // 空目录先 rmdir 掉，让 move 落在正确的一层。rmdir 只删空目录，安全。
+    '            if os.path.isdir(_new_data):',
+    '                os.rmdir(_new_data)',
+    "            print(f'engine-launcher: 迁移旧数据目录 {_old_data} -> {_new_data}', flush=True)",
+    '            shutil.move(_old_data, _new_data)',
+    '    os.makedirs(_new_data, exist_ok=True)',
+    'except Exception as _e:',
+    "    print(f'engine-launcher: 旧数据目录迁移失败（{_e}），保留 {_old_data}，继续启动', flush=True)",
+  ];
 }
 
 /**

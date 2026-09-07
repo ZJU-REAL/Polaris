@@ -20,7 +20,7 @@
    ============================================================ */
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -28,6 +28,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   bootstrapEngine,
+  buildDataDirMigration,
   buildMigrationGuard,
   type BootstrapPhase,
   type EngineCommand,
@@ -123,9 +124,12 @@ async function runEngineOnce(config: EngineCommand): Promise<void> {
 }
 
 /** 跑一段 python -c，返回退出码；失败时把 stderr 打出来供排查。 */
-function runPython(python: string, code: string): Promise<number> {
+function runPython(python: string, code: string, env?: NodeJS.ProcessEnv): Promise<number> {
   return new Promise((resolveExit, rejectExit) => {
-    const child = spawn(python, ['-X', 'utf8', '-c', code], { stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(python, ['-X', 'utf8', '-c', code], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: env ? { ...process.env, ...env } : process.env,
+    });
     let stderr = '';
     child.stderr!.on('data', (chunk: Buffer) => {
       stderr += chunk.toString();
@@ -136,6 +140,59 @@ function runPython(python: string, code: string): Promise<number> {
       resolveExit(exitCode ?? 1);
     });
   });
+}
+
+/**
+ * 数据目录搬迁语义（#718）：与守卫同一套路，用 venv Python 直接驱动
+ * buildDataDirMigration 生成的片段验证，不必为此再造一个「带旧数据的
+ * 安装包」跑整轮引擎。三个断言：旧非空 + 新缺失 → 整体搬走（含子结构）；
+ * 新已非空 → 绝不合并、源纹丝不动；片段自身对空环境幂等（旧位置不存在
+ * 时是空操作且要把新位置建出来）。
+ */
+async function assertDataDirMigration(python: string): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), 'polaris-datadir-'));
+  try {
+    const oldDir = join(dir, 'backend', 'data');
+    const newDir = join(dir, 'userData', 'engine', 'data');
+    const code = buildDataDirMigration(oldDir.split('\\').join('/')).join('\n');
+    const env = { POLARIS_DATA_DIR: newDir.split('\\').join('/') };
+
+    // 场景 1：旧位置有数据、新位置不存在 → 搬走，旧位置消失
+    mkdirSync(join(oldDir, 'papers'), { recursive: true });
+    writeFileSync(join(oldDir, 'papers', 'a.pdf'), 'pdf-bytes');
+    if ((await runPython(python, code, env)) !== 0) {
+      throw new Error('datadir migration: 正常搬迁不该失败');
+    }
+    if (readFileSync(join(newDir, 'papers', 'a.pdf'), 'utf8') !== 'pdf-bytes') {
+      throw new Error('datadir migration: 旧数据没有搬到新位置');
+    }
+    if (existsSync(oldDir)) {
+      throw new Error('datadir migration: 搬迁后旧目录应当消失');
+    }
+
+    // 场景 2：新位置已非空 → 不合并；旧位置原样保留
+    mkdirSync(oldDir, { recursive: true });
+    writeFileSync(join(oldDir, 'stale.txt'), 'stale');
+    if ((await runPython(python, code, env)) !== 0) {
+      throw new Error('datadir migration: 新位置非空时应是无害空操作');
+    }
+    if (!existsSync(join(oldDir, 'stale.txt'))) {
+      throw new Error('datadir migration: 新位置非空时不得动旧目录');
+    }
+    if (existsSync(join(newDir, 'stale.txt')) || existsSync(join(newDir, 'data'))) {
+      throw new Error('datadir migration: 新位置非空时不得合并/嵌套旧数据');
+    }
+
+    // 场景 3：旧位置不存在 → 空操作，但要把新位置目录建出来
+    await rm(oldDir, { recursive: true, force: true });
+    await rm(newDir, { recursive: true, force: true });
+    if ((await runPython(python, code, env)) !== 0 || !existsSync(newDir)) {
+      throw new Error('datadir migration: 无旧数据时应只创建新目录');
+    }
+    console.log('datadir migration: 搬迁/不合并/幂等 OK');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -243,6 +300,20 @@ async function main(): Promise<void> {
       }
     }
     console.log(`snapshots after run 2: ${snaps.sort().join(', ')}`);
+
+    // #718：用户数据目录必须落在（临时）userData 下，安装目录（resources/
+    // backend）里绝不能长出 data/——那正是应用更新会整包清掉的地方
+    if (!existsSync(join(dataDir, 'engine', 'data'))) {
+      throw new Error('引擎启动后 <userData>/engine/data 应已创建');
+    }
+    if (existsSync(join(args.resources, 'backend', 'data'))) {
+      throw new Error('安装目录 resources/backend/data 不该被创建（#718）');
+    }
+    console.log(`data dir under userData: ${join(dataDir, 'engine', 'data')}`);
+
+    // 数据目录搬迁语义（#718，用引导出来的 venv Python 驱动）
+    console.log('\n== data dir migration semantics');
+    await assertDataDirMigration(config.command[0]!);
 
     // 守卫语义：失败还原 + 成功修剪（用引导出来的 venv Python 驱动）
     console.log('\n== migration guard semantics');

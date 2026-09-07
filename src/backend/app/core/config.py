@@ -2,6 +2,7 @@
 
 import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
@@ -261,6 +262,22 @@ class Settings(BaseSettings):
         if v and (v.startswith("#") or not v.isascii()):
             logger.warning("忽略非法配置值（疑似注释混入）：%r", v[:40])
             return ""
+        return v
+
+    @field_validator("data_dir", mode="after")
+    @classmethod
+    def _resolve_data_dir(cls, v: str) -> str:
+        """data_dir 一律钉成绝对路径（#718）：桌面引擎启动器会 chdir 到
+        App 安装包里的后端源码目录，相对默认 "./data" 会随之漂进安装目录
+        （应用更新即被整体替换，用户文件全丢）。这里在 settings 加载时基于
+        当时的 cwd resolve 一次，此后进程内任何 chdir 都不再影响落盘位置；
+        桌面正常路径由引导器注入绝对的 POLARIS_DATA_DIR，本兜底只在 env
+        缺失时生效。docker/server 部署显式设 /srv/data（绝对路径），不受影响。"""
+        path = Path(v)
+        if not path.is_absolute():
+            resolved = str(path.resolve())
+            logger.info("data_dir 是相对路径 %r，已按当前工作目录解析为 %s", v, resolved)
+            return resolved
         return v
 
     @model_validator(mode="after")
