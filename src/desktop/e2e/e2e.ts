@@ -167,14 +167,19 @@ async function groupEngine(): Promise<void> {
     await page.waitForURL(/app:\/\/polaris\/t\//, { timeout: 30_000 });
     check('创建课题后进入课题工作台（/t/<id>）', true);
 
-    // 回落地页确认列表可见——整页重载，顺带验证会话在刷新后依然有效
+    // 回落地页确认列表可见——整页重载，顺带验证会话在刷新后依然有效。
+    // .sidebar 先于课题列表出现（列表是异步查询），isVisible() 的立即快照
+    // 必然竞态：用有界等待，断言的语义仍是「重载后新课题可见」。
     await page.goto('app://polaris/start');
     await page.waitForSelector('.sidebar', { timeout: 60_000 });
     const visible = await page
       .getByText(topicName)
       .first()
-      .isVisible()
-      .catch(() => false);
+      .waitFor({ state: 'visible', timeout: 30_000 })
+      .then(
+        () => true,
+        () => false,
+      );
     check('新建课题出现在课题列表', visible, `name=${topicName}`);
   } catch (err) {
     check('壳与免登录组执行完成', false, String(err).slice(0, 400));

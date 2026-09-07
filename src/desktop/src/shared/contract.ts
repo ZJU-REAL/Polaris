@@ -79,7 +79,9 @@ export interface UpdateInfo {
 
 /**
  * 内核运行状态。plugins = cordis registry 里已注册的插件 runtime 数量
- * （ctx.registry.size，公开口径）；一期只有探针插件，恒 ≥ 1 即为健康。
+ * （ctx.registry.size，公开口径）。树驱动装载（#703）后名额包括直挂的
+ * storage、Loader（连带其内部 isolate）、SqliteTree，以及配置树条目拉起的
+ * 内置插件（desktop-probe / sources 等），恒 ≥ 5 即为健康。
  */
 export interface KernelStatus {
   started: boolean;

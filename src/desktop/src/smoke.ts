@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
-import type { StorageService } from '@polaris/kernel';
+import type { SqliteTree, StorageService } from '@polaris/kernel';
 
 import { pingAgent, stopAgent } from './main/agent/supervisor';
 import { localBackend, startKernel, stopKernel } from './main/kernel';
@@ -377,7 +377,30 @@ void app.whenReady().then(async () => {
   check('kernel.status 经 IPC 往返返回', kernelState.error === undefined, kernelState.error ?? '');
   check('内核已启动（started=true）', kernelState.started === true);
   check('实例名为 polaris-desktop', kernelState.name === 'polaris-desktop', `name=${kernelState.name}`);
-  check('探针插件已注册（plugins ≥ 1）', (kernelState.plugins ?? 0) >= 1, `plugins=${kernelState.plugins}`);
+  // 树驱动装载（#703）后 registry 至少有：storage、Loader（连带其内部
+  // isolate）、SqliteTree、树条目 desktop-probe / sources 五个 runtime——
+  // 引擎条目默认 disabled 不占名额。计数只会随插件增多而涨，用 ≥ 兜底。
+  check('插件树已建立（plugins ≥ 5）', (kernelState.plugins ?? 0) >= 5, `plugins=${kernelState.plugins}`);
+
+  // 树驱动装载（#703）：内核插件不再硬编码直挂，而是首启种进配置树、
+  // 由 loader 按树拉起。断言种子条目真的在树里、真的驱动出了 fiber 与服务，
+  // 再改一条配置留给下面的重启组验证持久性。
+  console.log('\n树驱动装载');
+  const tree = kernelInstance.ctx.get('configTree') as SqliteTree | undefined;
+  check('configTree 服务可从 ctx 读到', tree != null);
+  if (tree) {
+    check('种子条目 desktop-probe 已装载', tree.store['desktop-probe']?.fiber != null);
+    check('种子条目 sources 已装载', tree.store['sources']?.fiber != null);
+    const engineEntry = tree.store['legacy-engine'];
+    check(
+      '种子条目 legacy-engine 保持 disabled 占位',
+      engineEntry != null && engineEntry.fiber == null && engineEntry.options.disabled === true,
+    );
+    check('树驱动的 sources 服务已挂出', kernelInstance.ctx.get('sources') != null);
+    // 改一条目的 config：write 是防抖合并的，必须 flush 才保证在重启前落库
+    await tree.update('desktop-probe', { config: { smokeTouched: true } });
+    await tree.flush();
+  }
 
   // storage 持久层（#609）：就绪性经 IPC 可见，数据要真的穿过一次「停机 →
   // 重启」仍然在——这正是配置树持久化存在的意义，光断言服务挂着不够。
@@ -391,8 +414,13 @@ void app.whenReady().then(async () => {
     `path=${storageSvc?.path}`,
   );
   if (storageSvc) {
+    // 追加而不是整树覆盖：树现在是真实的装载来源，覆盖掉种子会让重启后的
+    // 树驱动断言测不到恢复路径。disabled: true 让这行假插件名（smoke-plugin
+    // 并不存在）在重启装载时不会被 import。
+    const current = await storageSvc.configTree.load();
     await storageSvc.configTree.save([
-      { id: 'smoke-entry', name: 'smoke-plugin', config: { touched: true } },
+      ...current,
+      { id: 'smoke-entry', name: 'smoke-plugin', disabled: true, config: { touched: true } },
     ]);
   }
 
@@ -411,6 +439,25 @@ void app.whenReady().then(async () => {
     ),
     `entries=${JSON.stringify(entries)}`,
   );
+
+  // 树驱动恢复：重启后同一集合被重新装载，且上面那次条目配置修改仍在。
+  // 顺带证明「非空树不再种子」——smoke-entry 若被种子覆盖就不会在这里了。
+  const reopenedTree = reopened.ctx.get('configTree') as SqliteTree | undefined;
+  check('重启后配置树重新驱动装载', reopenedTree != null);
+  if (reopenedTree) {
+    check(
+      '重启后种子集合恢复（probe/sources 活、engine 仍 disabled）',
+      reopenedTree.store['desktop-probe']?.fiber != null
+        && reopenedTree.store['sources']?.fiber != null
+        && reopenedTree.store['legacy-engine'] != null
+        && reopenedTree.store['legacy-engine'].fiber == null,
+    );
+    const probeConfig = reopenedTree.store['desktop-probe']?.options.config as
+      | { smokeTouched?: boolean }
+      | undefined;
+    check('重启后条目配置修改仍在', probeConfig?.smokeTouched === true, `config=${JSON.stringify(probeConfig)}`);
+    check('非空树未被重新种子（smoke-entry 仍在树中）', reopenedTree.store['smoke-entry'] != null);
+  }
   await stopKernel();
 
   stopAgent();
