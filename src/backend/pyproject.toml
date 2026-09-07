@@ -76,3 +76,8 @@ known-first-party = ["app", "worker"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# 真容器冒烟默认不选（需要本机 docker 与镜像）；单独跑：pytest -m docker_integration
+addopts = "-m 'not docker_integration'"
+markers = [
+    "docker_integration: 真 docker 容器冒烟（本机 docker + 镜像在场才跑，CI/默认 deselect）",
+]

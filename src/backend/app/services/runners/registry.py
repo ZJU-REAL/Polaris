@@ -16,6 +16,8 @@ from collections.abc import Callable
 from typing import Any
 
 from app.services.runners.contract import RunnerPlugin
+from app.services.runners.ngspice import NGSPICE_BACKEND, NgspiceRunner
+from app.services.runners.openfoam import OPENFOAM_BACKEND, OpenFOAMRunner
 from app.services.runners.python_ml import PYTHON_ML_BACKEND, PythonMLRunner
 
 DEFAULT_BACKEND = PYTHON_ML_BACKEND  # 缺省后端：兼容全部存量实验
@@ -76,3 +78,5 @@ def resolve_backend(plan: Any, **substrate: Any) -> RunnerPlugin:
 
 # —— 内建后端注册（新后端在各自模块里定义工厂，在这里挂进注册表）——
 register(PYTHON_ML_BACKEND, PythonMLRunner.create)
+register(NGSPICE_BACKEND, NgspiceRunner.create)  # R4 零 license 容器后端（#681）
+register(OPENFOAM_BACKEND, OpenFOAMRunner.create)  # 同上：case 目录物料形态的范本
