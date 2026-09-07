@@ -9,7 +9,7 @@ Polaris 把「在哪跑实验」交给用户：实验室 GPU 机、云主机、�
 | Tier | 接入方式 | 状态 |
 | --- | --- | --- |
 | 1 | SSH 可达（平台主动连出去） | **已实现**（本页上半部分） |
-| 2 | 出站 WebSocket agent（机器主动连回来，适合 NAT/内网机） | **未实现**，协议草案见下 |
+| 2 | 出站 WebSocket agent（机器主动连回来，适合 NAT/内网机） | **传输层已实现**（#695，本页下半部分）；实验执行接线归 runner v2 后续 |
 
 ## Tier 1：SSH 直连（已实现）
 
@@ -66,52 +66,66 @@ GitHub self-hosted runner 的教训：非 ephemeral 环境的残留物会变成�
 - 解密后的私钥只进 asyncssh 连接参数，不进日志、不进 Activity、不进异常文本
   （连接失败的 detail 会先过 `scrub_secrets` 抹除，测试钉住该行为）。
 
-## Tier 2：出站 WebSocket agent（未实现，协议草案）
-
-> Not implemented. 本节是设计笔记，落地前以此为讨论基线；实现时另立 RFC。
+## Tier 2：出站 WebSocket agent（传输层已实现，#695）
 
 场景：内网/NAT 后的机器，平台连不进去。方案学 GitHub self-hosted runner：
-机器上跑一个常驻 agent，**出站**长连接拉任务，永不要求开入站端口；
-复杂 NAT 场景文档化 Tailscale，不自研穿透。
+机器上跑一个常驻 agent（参考实现 `integrations/runner-agent/`），**出站**
+长连接拉任务，永不要求开入站端口；复杂 NAT 场景文档化 Tailscale，不自研穿透。
 
-### 注册（短时效 token）
+当前范围：**传输层可用**——注册、长连接、心跳在线判定、任务派发座
+（`dispatch_task`）、事件回传。实验执行链（runner v2 在此底座上的接线：
+run 级派发、组件清单、产物分块上传、agent 自动升级、seq/ack 断点续传）
+归后续 PR。服务端实现：`app/services/runner_ws.py`。
+
+### 注册（短时效一次性 token）
 
 ```
-POST /api/resources/runner-hosts/registration-token   （用户，Web 端）
-  → {"token": "prt_…", "expires_in": 3600}            （一次性、短命）
+POST /api/resources/runner-hosts/registration-tokens    （登录用户，Web 端）
+  → {"token": "prt_…", "expires_in": 3600}              （一次性、1 小时时效）
 
-$ polaris-runner register --url https://polaris.example --token prt_…
+$ python agent.py register --server https://polaris.example --token prt_…
+  （agent 内部调 POST /api/resources/runner-hosts/register，
+   携 token + name + machine 自述信息）
 ```
 
-agent 用 token 换取长期凭据（仅限该机器身份），token 立即作废。注册成功 =
-服务端自动创建 `host` 类 Resource（与 tier-1 同一张表，租约语义共用），
-`config.transport = "websocket"`。
+- token 是随机串 + Redis TTL，GETDEL 原子消费：**用后即焚**，重放/过期一律
+  401（不区分原因）；
+- 注册成功 = 自动创建 `host` 类 Resource（与 tier-1 同一张表，租约语义共用），
+  `config.transport = "websocket"`、`config.machine` 存 agent 自述信息；
+- 机器凭据落 `connection_credentials`（kind=`ws`）：**只存 agent secret 的
+  sha256 摘要**（Fernet 加密后入 payload），明文 secret 仅注册响应返回一次，
+  服务端无法找回；agent 存本地 `~/.polaris-runner/agent.json`（0600）。
 
 ### 任务拉取（出站 WS 长连接）
 
 ```
-agent → wss://polaris.example/api/runner-agent/ws     （Authorization: 机器凭据）
-  ← {"kind": "hello", "agent_version": "…"}            agent 自述版本/硬件（probe 结果）
-  → {"kind": "upgrade", "payload_url": …}              版本过期时先升级（同 tier-1 钉定语义）
-  → {"kind": "task", "run_id": …, "spec": {…}}         派发：流程包 + 物料 + container spec
-  ← {"kind": "ack", "run_id": …}
+agent → wss://polaris.example/ws/runner-agents/connect
+  → {"type": "auth", "resource_id": …, "secret": "pra_…"}   首帧鉴权
+  ← {"type": "ready", "resource_id": …}                     鉴权通过
+  ← {"type": "task", "task_id": …, "payload": {…}}          派发（payload 对传输层不透明）
+  → {"type": "heartbeat"}                                   保活（agent 每 30s 一跳）
+  → {"type": "event"|"result", "task_id": …, "data": {…}}   回传
 ```
 
-- 派发以 run 为单位（voyage run 整体交给 runner，携带组件清单）；
-- 无任务时心跳保活；断线重连后按 run_id 对账续传（桌面/服务端离线不炸 run）。
-
-### 事件回传
-
-```
-  ← {"kind": "event", "run_id": …, "seq": N, "event": {…}}   日志/指标/状态，seq 单调
-  ← {"kind": "artifact", "run_id": …, "name": …}             产物分块上传
-  → {"kind": "ack_event", "run_id": …, "seq": N}             服务端确认位点
-```
-
-seq + ack 位点保证断线重连后从确认点续传，不丢不重。
+- 鉴权走**首消息**而非 Authorization header/query：长期 secret 不进 URL 与
+  各级访问日志；失败以 4401 关闭。WS 路径不挂 `/api` 前缀（nginx 按 `/ws`
+  反代 Upgrade，与现有 WS 端点一致）；
+- 在线判定：连接即在线（`config.agent_online`，连接边沿写库），90 秒收不到
+  任何帧（含心跳）判离线并以 4408 关闭；
+- 派发座 `dispatch_task(resource_id, payload) → task_id`：任务先进 Redis
+  队列（**离线排队**，TTL 1 小时兜底），再 publish 唤醒在线连接——在线即推、
+  离线排队、断线重连补投同一条路径；worker 进程也可经 Redis 向 API 进程的
+  连接派发；
+- 事件回传落专用 Redis 记录（`runner:task:{id}:events` 回放 list + 实时频道，
+  同 paper-task 的「先回放后实时」模式但独立 key 空间），runner v2 接线时
+  消费。seq/ack 断点续传（不丢不重的强保证）归接线 PR，当前档位：任务未投递
+  即断线会留在队列里重连补投；投递后 agent 崩溃的重试语义由执行层定义。
 
 ### Ephemeral 承诺
 
-tier-2 的任务**一律**容器内执行（tier-1 的裸机路径不下放）：agent 收到任务后
-`docker run` 一次性容器，结束即销毁，工作区产物先回传再删除。机器凭据可随时
-吊销（同 tier-1 语义），吊销后 WS 连接被服务端主动断开、Resource 标记不可用。
+tier-2 的任务**一律**容器内执行（tier-1 的裸机路径不下放）：注册即
+`config.ephemeral = true`，**不提供关闭口**。agent 收到任务后 `docker run`
+一次性容器，结束即销毁，工作区产物先回传再删除（执行部分随 runner v2 接线；
+参考 agent 目前只执行 echo 型任务验证传输）。机器凭据可随时吊销（同 tier-1
+语义，`DELETE /api/connection-credentials/{id}`）：吊销后新连接 4401 拒绝，
+在跳的连接最迟一个心跳周期内被服务端以 4403 断开，Resource 标记不可用。

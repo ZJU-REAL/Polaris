@@ -19,6 +19,9 @@ app/core/security.py；所有敏感字段绝不明文出库/出 API）：
 - ``visa``：host = 仪器主机（展示用）；payload = {"resource": str
   (pyvisa 资源串，如 "TCPIP0::10.0.0.5::INSTR"), "secret"?: str}。
   资源串含内网定位信息，整体按敏感处理。
+- ``ws``：BYO runner tier-2 机器凭据（#695）。连接方向反过来——agent 出站
+  连回平台，host/port 仅作展示；payload = {"secret_sha256": str}，只存 agent
+  secret 的 sha256 摘要（服务端只需验证、永不回读明文，泄库也拼不回 secret）。
 """
 
 import uuid
@@ -31,7 +34,7 @@ from app.core.db import Base
 from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 
 # 合法凭据类型（Runner v2 manifest.credential_kinds 的运行时对应物）
-CREDENTIAL_KINDS = ("ssh", "grpc", "visa", "http")
+CREDENTIAL_KINDS = ("ssh", "grpc", "visa", "http", "ws")
 
 
 class ConnectionCredential(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -40,7 +43,7 @@ class ConnectionCredential(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    # ssh | grpc | visa | http（载荷约定见模块 docstring）
+    # ssh | grpc | visa | http | ws（载荷约定见模块 docstring）
     kind: Mapped[str] = mapped_column(String(16), default="ssh", nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     host: Mapped[str] = mapped_column(String(255), nullable=False)

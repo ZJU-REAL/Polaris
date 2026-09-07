@@ -9,10 +9,12 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
+from app.core.redis import get_redis_dep
 from app.models.resource import Resource
 from app.models.user import User
 from app.schemas.resource import (
@@ -21,10 +23,14 @@ from app.schemas.resource import (
     ResourceCreate,
     ResourceRead,
     ResourceUpdate,
+    RunnerAgentRegister,
+    RunnerAgentRegistered,
     RunnerHostRegister,
+    RunnerRegistrationTokenRead,
 )
 from app.services import byo_runner as byo_runner_service
 from app.services import resources as resources_service
+from app.services import runner_ws as runner_ws_service
 
 router = APIRouter(prefix="/resources", tags=["resources"])
 credentials_router = APIRouter(prefix="/connection-credentials", tags=["connection-credentials"])
@@ -98,6 +104,53 @@ async def register_runner_host(
     except byo_runner_service.RunnerHostKindError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)) from e
     return ResourceRead.model_validate(resource)
+
+
+# ---- BYO runner tier-2：出站 WebSocket agent（#695） ----
+
+
+@router.post(
+    "/runner-hosts/registration-tokens",
+    response_model=RunnerRegistrationTokenRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_runner_registration_token(
+    user: User = Depends(current_active_user),
+    redis: Redis = Depends(get_redis_dep),
+) -> RunnerRegistrationTokenRead:
+    """签发一次性注册 token（短时效）：拿到 token 的机器可注册为当前用户的 runner。"""
+    token = await runner_ws_service.issue_registration_token(redis, user_id=user.id)
+    return RunnerRegistrationTokenRead(
+        token=token, expires_in=runner_ws_service.REGISTRATION_TOKEN_TTL
+    )
+
+
+@router.post(
+    "/runner-hosts/register",
+    response_model=RunnerAgentRegistered,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register_runner_agent(
+    data: RunnerAgentRegister,
+    session: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis_dep),
+) -> RunnerAgentRegistered:
+    """agent 侧注册：token 换长期机器凭据。token 用后即焚（GETDEL 原子消费），
+    无效/过期/重放一律 401，不区分原因。agent_secret 仅此一次返回。"""
+    user_id = await runner_ws_service.consume_registration_token(redis, data.token)
+    if user_id is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="INVALID_REGISTRATION_TOKEN")
+    if await session.get(User, user_id) is None:
+        # token 有效期内签发者被删号：同样按无效 token 处理
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="INVALID_REGISTRATION_TOKEN")
+    resource, agent_secret = await runner_ws_service.register_agent_host(
+        session, owner_id=user_id, name=data.name, machine=data.machine
+    )
+    return RunnerAgentRegistered(
+        resource=ResourceRead.model_validate(resource),
+        agent_secret=agent_secret,
+        ws_path="/ws/runner-agents/connect",
+    )
 
 
 @router.get("/{resource_id}", response_model=ResourceRead)

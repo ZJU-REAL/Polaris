@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 ResourceKind = Literal["host", "queue", "license_pool", "instrument"]
-CredentialKind = Literal["ssh", "grpc", "visa", "http"]
+CredentialKind = Literal["ssh", "grpc", "visa", "http", "ws"]
 
 
 class ResourceCreate(BaseModel):
@@ -87,3 +87,31 @@ class ConnectionCredentialRead(BaseModel):
     created_at: datetime
     last_verified_at: datetime | None
     proxy_url: str | None
+
+
+# ---- BYO runner tier-2：出站 WebSocket agent 注册（#695） ----
+
+
+class RunnerRegistrationTokenRead(BaseModel):
+    """注册 token（一次性、短时效）：Web 端签发，agent 用它换长期机器凭据。"""
+
+    token: str
+    expires_in: int
+
+
+class RunnerAgentRegister(BaseModel):
+    """agent 侧注册请求：token 即鉴权（无需登录态——agent 机器上没有用户会话）。"""
+
+    token: str = Field(min_length=1, max_length=255)
+    name: str = Field(min_length=1, max_length=255)
+    # agent 自述的机器信息（hostname/os/cpu 等，probe 结果），原样进 config.machine
+    machine: dict[str, Any] | None = None
+
+
+class RunnerAgentRegistered(BaseModel):
+    """注册成功响应。agent_secret 仅此一次返回，服务端只存摘要、无法找回。"""
+
+    resource: ResourceRead
+    agent_secret: str
+    # agent 出站连接的 WS 路径（相对服务器根，不挂 /api 前缀）
+    ws_path: str
