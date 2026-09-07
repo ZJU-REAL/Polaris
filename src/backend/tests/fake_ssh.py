@@ -129,6 +129,14 @@ class FakeSSHSession:
             if exit_status is not None:
                 server.managed_files[f"{prefix}.exit"] = str(exit_status)
             return SSHResult(0, f"{pid}\n", "")
+        # BYO agent（#685）：VERSION 原子落盘（printf tmp && mv）。存进 host_files，
+        # 与读取端 `cat ~/.polaris-runner/VERSION` 的分支（下方通用 cat host_files）对齐，
+        # 这样「首连推送、后连比对跳过」在 fake 上可观测。
+        if command.startswith("printf") and ".polaris-runner/VERSION" in command:
+            m = re.search(r"printf '%s\\n' (\S+) >", command)
+            if m:
+                server.host_files["~/.polaris-runner/VERSION"] = m.group(1) + "\n"
+            return SSHResult(0, "", "")
         if command.startswith("printf ") and "/operations/" in command and "/current" in command:
             match = re.search(
                 r"printf '%s\\n' ([0-9a-f-]+) > (\S+)\.tmp && mv \S+ (\S+)", command

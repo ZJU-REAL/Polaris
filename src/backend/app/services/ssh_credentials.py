@@ -50,9 +50,8 @@ async def get_owned_credential(
     return credential
 
 
-async def delete_credential(session: AsyncSession, credential: SSHCredential) -> None:
-    await session.delete(credential)
-    await session.commit()
+# 删除已升级为「吊销」语义（#685）：活跃引用拒绝 + host 资源联动标记不可用，
+# 统一走 app/services/byo_runner.revoke_connection_credential，此处不再留裸删。
 
 
 async def mark_verified(session: AsyncSession, credential: SSHCredential) -> SSHCredential:

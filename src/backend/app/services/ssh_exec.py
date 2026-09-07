@@ -65,6 +65,22 @@ class SSHPathViolationError(SSHExecError):
     """路径越界：目标不在 ~/polaris_runs/<exp_id> 之下。"""
 
 
+def scrub_secrets(text: str, *secrets: str | None) -> str:
+    """把密钥/口令内容从要出 API 或进日志的文本里抹掉（#685 密钥不出库审计）。
+
+    解密后的私钥只该进 asyncssh 的连接参数；但连接失败时我们会把异常文本转成
+    detail 返回给前端——底层库异常**理论上**可能携带输入片段，这里按行扫一遍
+    兜底（整段 replace 不够：异常可能只嵌了 PEM 的某一行）。"""
+    for secret in secrets:
+        if not secret:
+            continue
+        for line in secret.splitlines():
+            line = line.strip()
+            if len(line) > 4 and line in text:
+                text = text.replace(line, "[REDACTED]")
+    return text
+
+
 def is_connection_error(exc: BaseException) -> bool:
     """判定异常是否为「SSH 连接/通道断开」这类可重连的瞬时故障。
 
@@ -269,6 +285,15 @@ async def open_executor(
         private_key=private_key,
         passphrase=passphrase,
     )
+    # BYO runner tier-1（#685）：连上后保证远端 agent 载荷就位（首连推送、
+    # 后续一条 cat 比对即跳过）。推送失败不拦执行——现网行为在没有 agent 的
+    # 年代就成立，agent 缺位只损失辅助脚本，不该让实验连坐。
+    try:
+        from app.services.byo_runner import ensure_agent
+
+        await ensure_agent(session)
+    except Exception:  # noqa: BLE001 — 尽力而为，失败只记日志
+        logger.warning("byo agent push failed host=%s (continuing)", credential.host)
     return SSHExecutor(
         session,
         exp_id=exp_id,
@@ -280,6 +305,7 @@ async def open_executor(
 
 async def test_credential(credential: SSHCredential) -> tuple[bool, str]:
     """凭据连通性验证：连接 + ``echo ok``（固定模板）。返回 (ok, detail)。"""
+    private_key = passphrase = None  # except 分支要引用，先落空值
     try:
         private_key = decrypt_secret(credential.private_key_encrypted)
         passphrase = (
@@ -295,14 +321,15 @@ async def test_credential(credential: SSHCredential) -> tuple[bool, str]:
             passphrase=passphrase,
         )
     except Exception as e:  # noqa: BLE001 — 连接失败要转成 {ok: false} 而非 500
-        return False, f"{type(e).__name__}: {e}"
+        # detail 会出 API：异常文本过一遍密钥抹除（#685 审计）
+        return False, scrub_secrets(f"{type(e).__name__}: {e}", private_key, passphrase)
     try:
         result = await session.run("echo ok", timeout=DEFAULT_CMD_TIMEOUT_SECONDS)
         if result.exit_status == 0 and "ok" in result.stdout:
             return True, "ok"
         return False, f"echo 测试失败：exit={result.exit_status} stderr={result.stderr[:200]}"
     except Exception as e:  # noqa: BLE001
-        return False, f"{type(e).__name__}: {e}"
+        return False, scrub_secrets(f"{type(e).__name__}: {e}", private_key, passphrase)
     finally:
         await session.close()
 
@@ -372,6 +399,7 @@ async def probe_sysinfo(credential: SSHCredential) -> dict[str, Any]:
     固定模板命令 + 容错解析（确定性探测，非 LLM）；连接失败 → {ok: False, detail}；
     单项探测失败该项缺省（尽力而为，不因一项失败整体报错）。
     """
+    private_key = passphrase = None  # except 分支要引用，先落空值
     try:
         private_key = decrypt_secret(credential.private_key_encrypted)
         passphrase = (
@@ -387,7 +415,9 @@ async def probe_sysinfo(credential: SSHCredential) -> dict[str, Any]:
             passphrase=passphrase,
         )
     except Exception as e:  # noqa: BLE001 — 连接失败转 {ok: false} 而非 500
-        return {"ok": False, "detail": f"{type(e).__name__}: {e}"}
+        # detail 会出 API：异常文本过一遍密钥抹除（#685 审计）
+        detail = scrub_secrets(f"{type(e).__name__}: {e}", private_key, passphrase)
+        return {"ok": False, "detail": detail}
     info: dict[str, Any] = {"ok": True, "host": credential.host}
     probes = (
         ("cpu", "nproc 2>/dev/null; cat /proc/loadavg 2>/dev/null", parse_loadavg_block),

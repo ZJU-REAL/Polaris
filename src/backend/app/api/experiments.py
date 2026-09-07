@@ -171,6 +171,11 @@ async def create_experiment(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEA_NOT_PROMOTED") from e
     except experiments_service.CredentialNotFoundError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CREDENTIAL_NOT_FOUND") from e
+    except experiments_service.RunnerHostNotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="RESOURCE_NOT_FOUND") from e
+    except experiments_service.RunnerHostUnavailableError as e:
+        # 凭据被吊销/资源没绑凭据：请求本身合法但资源当前用不了 → 409
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="RESOURCE_UNAVAILABLE") from e
     await queue.enqueue("run_voyage", str(voyage.id))
     return experiments_service.to_read(experiment, idea_title)
 

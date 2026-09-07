@@ -45,6 +45,19 @@ class ResourceRead(BaseModel):
     updated_at: datetime
 
 
+class RunnerHostRegister(BaseModel):
+    """注册 BYO runner 主机（#685）：一台机器 = host 类 Resource + SSH 凭据关联。
+
+    ephemeral 默认 True = 推荐容器化执行不残留；显式 False = 接受裸机直跑
+    （non-ephemeral，产物留在主机）。只影响新注册的主机。"""
+
+    name: str = Field(min_length=1, max_length=255)
+    credential_id: uuid.UUID
+    ephemeral: bool = True
+    # 其余非敏感配置（workdir/gpus 等，语义见 app/models/resource.py）
+    config: dict[str, Any] | None = None
+
+
 class ConnectionCredentialCreate(BaseModel):
     """通用凭据创建（各 kind 载荷约定见 app/models/ssh_credential.py docstring）。
 

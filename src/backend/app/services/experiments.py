@@ -27,6 +27,7 @@ from app.models.experiment import (
 )
 from app.models.idea import Idea
 from app.models.project import Project
+from app.models.resource import Resource
 from app.models.ssh_credential import SSHCredential
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.experiment import (
@@ -56,6 +57,14 @@ class IdeaNotPromotedError(Exception):
 
 class CredentialNotFoundError(Exception):
     """SSH 凭据不存在或不属于当前用户。"""
+
+
+class RunnerHostNotFoundError(Exception):
+    """指定的 runner 主机资源不存在/不属于当前用户/不是 host 类（#685）。"""
+
+
+class RunnerHostUnavailableError(Exception):
+    """runner 主机不可用：凭据已吊销（config.unavailable）或未关联凭据（#685）。"""
 
 
 class ExperimentAlreadyFinishedError(Exception):
@@ -151,11 +160,22 @@ async def create_experiment(
         raise IdeaNotFoundError(str(data.idea_id))
     if idea.status != "promoted":
         raise IdeaNotPromotedError(str(idea.id))
-    credential = await session.get(SSHCredential, data.credential_id)
+    # 执行目标二选一（#685）：resource_id 指定已注册的 runner 主机（凭据从资源上取，
+    # 顺带吃到租约/吊销联动那套语义）；不给则按老路径直接用 credential_id——
+    # 存量前端只传 credential_id，行为零变化。
+    credential_id = data.credential_id
+    if data.resource_id is not None:
+        resource = await session.get(Resource, data.resource_id)
+        if resource is None or resource.owner_id != user_id or resource.kind != "host":
+            raise RunnerHostNotFoundError(str(data.resource_id))
+        if (resource.config or {}).get("unavailable") or resource.credential_id is None:
+            raise RunnerHostUnavailableError(str(data.resource_id))
+        credential_id = resource.credential_id
+    credential = await session.get(SSHCredential, credential_id)
     # kind 校验（#677 凭据多态化后）：实验直跑只吃 ssh 凭据，别的 kind 私钥列为空，
     # 放进来会在 ssh_exec 解密时炸得不知所云——这里当不存在处理
     if credential is None or credential.user_id != user_id or credential.kind != "ssh":
-        raise CredentialNotFoundError(str(data.credential_id))
+        raise CredentialNotFoundError(str(credential_id))
 
     params = data.params
     budget = dict(DEFAULT_BUDGET)
@@ -199,6 +219,9 @@ async def create_experiment(
                 "backend": params.backend if params else "python-ml",
                 # 流程包（#678）：非空时 navigator 按包生成计划；None = 原路径
                 "process_pack": params.process_pack if params else None,
+                # runner 主机资源（#685）：非空 = 用户指定跑在哪台注册机器上；
+                # 现阶段只作记录（租约获取由 R2 的 prepare 阶段接管时消费）
+                "resource_id": str(data.resource_id) if data.resource_id else None,
             }
         },
         budget=None,

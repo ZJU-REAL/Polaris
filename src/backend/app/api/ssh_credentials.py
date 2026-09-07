@@ -14,6 +14,7 @@ from app.core.db import get_session
 from app.models.ssh_credential import SSHCredential
 from app.models.user import User
 from app.schemas.ssh_credential import SSHCredentialCreate, SSHCredentialRead, SSHTestResult
+from app.services import byo_runner as byo_runner_service
 from app.services import ssh_credentials as credentials_service
 from app.services import ssh_exec
 
@@ -54,8 +55,12 @@ async def delete_credential(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> None:
+    """删除 = 吊销（#685）：有未终态实验引用 → 409；host 资源联动标记不可用。"""
     credential = await _get_owned(session, credential_id, user)
-    await credentials_service.delete_credential(session, credential)
+    try:
+        await byo_runner_service.revoke_connection_credential(session, credential)
+    except byo_runner_service.CredentialInUseError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="CREDENTIAL_IN_USE") from e
 
 
 @router.post("/{credential_id}/test", response_model=SSHTestResult)

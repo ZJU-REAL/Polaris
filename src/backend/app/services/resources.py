@@ -168,8 +168,4 @@ async def list_connection_credentials(
     return (await session.execute(stmt)).scalars().all()
 
 
-async def delete_connection_credential(
-    session: AsyncSession, credential: ConnectionCredential
-) -> None:
-    await session.delete(credential)
-    await session.commit()
+# 删除已升级为「吊销」语义（#685）：见 app/services/byo_runner.revoke_connection_credential。

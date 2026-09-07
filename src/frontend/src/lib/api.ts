@@ -2580,7 +2580,10 @@ export interface ExperimentIntakeQuestion {
 
 export interface CreateExperimentInput {
   idea_id: string;
-  credential_id: string;
+  /** 与 resource_id 二选一（后端要求至少给一个）；现有 UI 只走凭据路径 */
+  credential_id?: string;
+  /** 已注册 runner 主机（host 类 Resource，#685）：指定跑在哪台机器上；本期无 UI */
+  resource_id?: string;
   params?: {
     gpu_hint?: string;
     budget?: ExperimentBudget;

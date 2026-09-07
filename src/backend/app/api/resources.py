@@ -21,7 +21,9 @@ from app.schemas.resource import (
     ResourceCreate,
     ResourceRead,
     ResourceUpdate,
+    RunnerHostRegister,
 )
+from app.services import byo_runner as byo_runner_service
 from app.services import resources as resources_service
 
 router = APIRouter(prefix="/resources", tags=["resources"])
@@ -70,6 +72,31 @@ async def create_resource(
         resource = await resources_service.create_resource(session, owner_id=user.id, data=data)
     except resources_service.ResourceConfigError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return ResourceRead.model_validate(resource)
+
+
+@router.post("/runner-hosts", response_model=ResourceRead, status_code=status.HTTP_201_CREATED)
+async def register_runner_host(
+    data: RunnerHostRegister,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ResourceRead:
+    """注册 BYO runner 主机（#685）：host 类 Resource + SSH 凭据关联，
+    config.ephemeral 默认 true（推荐容器化执行不残留）。"""
+    merged = dict(data.config or {})
+    merged["ephemeral"] = data.ephemeral
+    try:
+        resource = await byo_runner_service.register_runner_host(
+            session,
+            owner_id=user.id,
+            name=data.name,
+            credential_id=data.credential_id,
+            config=merged,
+        )
+    except byo_runner_service.RunnerHostCredentialError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CREDENTIAL_NOT_FOUND") from e
+    except byo_runner_service.RunnerHostKindError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)) from e
     return ResourceRead.model_validate(resource)
 
 
@@ -152,4 +179,8 @@ async def delete_credential(
     )
     if credential is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CREDENTIAL_NOT_FOUND")
-    await resources_service.delete_connection_credential(session, credential)
+    # 删除 = 吊销（#685）：有未终态实验引用 → 409；host 资源联动标记不可用
+    try:
+        await byo_runner_service.revoke_connection_credential(session, credential)
+    except byo_runner_service.CredentialInUseError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="CREDENTIAL_IN_USE") from e

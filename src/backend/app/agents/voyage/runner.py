@@ -116,6 +116,9 @@ class Runner(Protocol):
 
 
 # 现有实现：在 SSH 主机上跑裸机 venv 环境（即目前的全部行为）。
+# ⚠ non-ephemeral（#685）：裸机直跑会在主机留下 venv/产物/进程痕迹。BYO runner
+# 语义下**推荐默认走容器化路径**（ContainerRunner，任务结束不残留）；裸机路径
+# 保留给「用户明确接受残留」的场景（复查产物本就依赖 workdir 留存）。
 RemoteHostRunner = SSHExecutor
 
 
@@ -179,7 +182,13 @@ def parse_container_spec(data: Any) -> ContainerSpec | None:
 
 
 class ContainerRunner(SSHExecutor):
-    """在 SSH 主机的 docker 容器里跑实验。文件原语继承（host 侧），执行原语包一层 docker exec。"""
+    """在 SSH 主机的 docker 容器里跑实验。文件原语继承（host 侧），执行原语包一层 docker exec。
+
+    BYO runner（#685）语境下这是**默认推荐**的执行形态（ephemeral 方向）：执行环境
+    整体在容器里，主机侧只落 bind 挂载的 workdir。注册 runner 主机时
+    config.ephemeral 默认 true 即指向此路径；分派开关本身仍是 plan.container
+    （不改现有 run 行为，默认值只影响新注册的主机）。
+    """
 
     CONTAINER_START_TIMEOUT = 600.0  # docker run（镜像已预拉时很快；给足冗余）
 

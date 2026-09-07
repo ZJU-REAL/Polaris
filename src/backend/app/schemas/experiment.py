@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ExperimentBudget(BaseModel):
@@ -88,8 +88,18 @@ class ExperimentIntakeRequest(BaseModel):
 
 class ExperimentCreate(BaseModel):
     idea_id: uuid.UUID
-    credential_id: uuid.UUID
+    # 二选一（至少给一个）：resource_id 指定跑在哪台已注册的 runner 主机上
+    # （#685，凭据从资源上取）；不给则按老路径直接给 credential_id——存量前端
+    # 只传 credential_id，行为零变化。
+    credential_id: uuid.UUID | None = None
+    resource_id: uuid.UUID | None = None
     params: ExperimentParams | None = None
+
+    @model_validator(mode="after")
+    def _one_of_credential_or_resource(self) -> "ExperimentCreate":
+        if self.credential_id is None and self.resource_id is None:
+            raise ValueError("either credential_id or resource_id is required")
+        return self
 
 
 class ExperimentRead(BaseModel):
