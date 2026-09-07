@@ -15,6 +15,7 @@ from app.agents.voyage.skillset import skill_workflows
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
 from app.models.voyage import VoyageRun
+from app.services.process_packs import load_pack, plan_from_pack
 
 _MAX_ATTEMPTS = 3  # 首次 + 重试 2 次
 
@@ -759,6 +760,12 @@ class Navigator:
         if run.kind == "idea_proposal":
             return proposal_plan(run)
         if run.kind == "experiment":
+            # 流程包一期（#678，设计报告 §8.3）：创建实验时显式选了 process_pack
+            # 才走「加载包 → 由 phases 生成计划」；不选包走下面的原 plan 函数
+            # 原路径——直接 if 分支、不做任何抽象间接，保证行为逐字节不变（golden）。
+            pack_name = ((run.checkpoint or {}).get("params") or {}).get("process_pack")
+            if pack_name:
+                return plan_from_pack(load_pack(str(pack_name)), run)
             return experiment_plan(run)
         if run.kind == "paper_writing":
             return writing_plan(run)

@@ -29,6 +29,7 @@ dependencies = [
     "pycrdt>=0.10",
     "pycrdt-websocket>=0.15",
     "python-pptx>=1.0",
+    "pyyaml>=6.0",
     "tzdata>=2025.2",
     # desktop 档位运行时依赖（POLARIS_PROFILE=desktop：SQLite + 进程内 redis 替身）
     "aiosqlite>=0.20",
@@ -51,7 +52,8 @@ include = ["app*", "worker*"]
 
 [tool.setuptools.package-data]
 # 论文模板 pack（meta.json / main.tex / .sty）随包分发（docker 非 editable 安装用）
-app = ["assets/templates/*/*"]
+# 流程包 YAML（app/packs/，#678）同样随包分发
+app = ["assets/templates/*/*", "packs/*.yaml"]
 
 [tool.ruff]
 target-version = "py312"

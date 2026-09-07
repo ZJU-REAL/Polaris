@@ -195,6 +195,8 @@ async def create_experiment(
                 # 执行后端（Runner v2，#675）：现阶段无读者（动作层仍走旧路），
                 # R4 起 navigator 把它写进 plan.backend 供 resolve_backend 分派
                 "backend": params.backend if params else "python-ml",
+                # 流程包（#678）：非空时 navigator 按包生成计划；None = 原路径
+                "process_pack": params.process_pack if params else None,
             }
         },
         budget=None,

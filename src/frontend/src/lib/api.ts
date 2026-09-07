@@ -2595,6 +2595,9 @@ export interface CreateExperimentInput {
     /** 执行后端（Runner v2 分派键，#675）：缺省 python-ml=存量行为。
      * 单后端阶段创建表单不出选择 UI；接入 openfoam/ngspice 等后端后在此暴露。 */
     backend?: string;
+    /** 流程包（#678 一期）：显式选包（如 "base/experiment"）→ 按包 phases 生成计划；
+     * 缺省 = 原计划路径（行为不变）。本期无编辑/选择 UI——接入创建表单时在此消费。 */
+    process_pack?: string;
   };
 }
 

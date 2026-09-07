@@ -41,6 +41,10 @@ class ExperimentParams(BaseModel):
     # 执行后端（Runner v2 显式分派键，#675）：默认 python-ml = 存量行为，全兼容。
     # 单后端阶段前端不出选择 UI（无意义）；R4 接入 openfoam/ngspice 后由创建表单暴露。
     backend: str = "python-ml"
+    # 流程包（#678 一期）：显式选包 → Navigator 按包 phases 生成计划；
+    # 不选（None，默认）= 原 plan 函数原路径，行为逐字节不变。
+    # 本期只有内置包（如 "base/experiment"），无编辑/选择 UI（deferral）。
+    process_pack: str | None = None
 
     @field_validator("backend")
     @classmethod
@@ -50,6 +54,20 @@ class ExperimentParams(BaseModel):
 
         if v not in known_backends():
             raise ValueError(f"unknown runner backend {v!r}; known: {known_backends()}")
+        return v
+
+    @field_validator("process_pack")
+    @classmethod
+    def _process_pack_exists(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        # 延迟导入：同 backend 校验，别在 import 期拖起服务层
+        from app.services.process_packs import known_pack_names
+
+        if v not in known_pack_names():
+            raise ValueError(
+                f"unknown process pack {v!r}; known: {sorted(known_pack_names())}"
+            )
         return v
 
 

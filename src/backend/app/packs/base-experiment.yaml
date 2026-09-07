@@ -1,0 +1,34 @@
+# 内置流程包 base/experiment（#678 一期，设计报告 §8.3）：
+# 现有 experiment 计划函数（navigator.experiment_plan）输出的物化。
+#
+# 保真承诺：本包生成的计划与原 plan 函数输出**等价**——由
+# tests/test_process_packs.py 的逐 params 对照断言守护，两边任一漂移测试即红。
+# 步骤标题/验收/失败语义是动作侧元数据，见 process_packs._STEP_TEMPLATES；
+# 本文件只声明流程拓扑（phase 顺序、检查、循环）与软知识（guidance）。
+kind: research-process
+name: base/experiment
+phases:
+  - id: plan
+    actions: [experiment.plan]
+  - id: setup
+    # 预算闸门（compute_budget）不在这里声明：gates 字段本期惰性（deferral），
+    # 沿用 params.confirm_budget 开关（#626 默认不拦），由生成逻辑落到本步。
+    actions: [experiment.setup]
+  - id: smoke
+    # 冒烟用退出码机械判定（原 Sextant 硬编码逻辑，docs/voyage-loop.md §6）
+    actions: [experiment.smoke]
+    checks: ["exit_code:0"]
+  - id: iterate
+    # 螺旋迭代：run → analyze 为一轮；analyze 给出 improve/debug/finish 判定，
+    # 后续轮由 plan_edit.SIGNAL_TABLES 确定性追加（终止 → figures+report 收尾）。
+    # 本期引擎只顺序展开第 1 轮；fanout/funnel 拓扑等引擎支持后再消费 loop.kind。
+    actions: [experiment.run, experiment.analyze]
+    loop: { kind: spiral, exit_check: experiment.analyze }
+guidance: |
+  计划 → 建环境 → 冒烟 → 逐轮「运行 + 分析」螺旋迭代；分析步骤给出
+  improve/debug/finish 判定，终止后以图表 + 报告收尾。
+  失败语义按节点分派：plan/setup/analyze/figures/report 失败走 loop 回灌
+  （原地重试 → AI 计划调整）；冒烟与运行失败即硬停——冒烟动作内部已有
+  LLM 修复循环（只受时间预算约束），仍失败转向用户提问；运行级失败 =
+  预算超时/基础设施故障，盲目重跑烧算力；训练本身失败（exit != 0）不算
+  步骤失败，observation 携带 exit_code 交由分析步骤走 debug 分支。
