@@ -159,7 +159,6 @@ export interface UserRead {
   id: string;
   email: string;
   is_active: boolean;
-  is_superuser: boolean;
   is_verified: boolean;
   /** Polaris 扩展字段（后端可能暂未返回，均可选） */
   display_name?: string | null;
@@ -1411,7 +1410,7 @@ export interface DirectionLibrarySummary {
 
 export interface DirectionLibraryDetail extends DirectionLibrarySummary {
   cadence: string | null;
-  /** 每月 AI 预算（token 数；null = 不限） */
+  /** @deprecated 参考上限（#734 起硬限额已移除，仅治理页用量条展示；null = 未设） */
   monthly_budget: number | null;
   /** 收录配置全量（P8：库为权威源），供「收录设置」编辑 */
   definition: ProjectDefinition | null;
@@ -1619,17 +1618,18 @@ export interface PaperMergeResult {
   details: Record<string, unknown>;
 }
 
-/** 库预算面板：本月 AI 用量（token）与上限。 */
+/** 库用量面板：本月 AI 用量（token）。#734 起纯展示——上限只是参考，不再拦任务。 */
 export interface LibraryBudgetRead {
   /** 如 "2026-07" */
   month: string;
+  /** @deprecated 参考上限；null = 未设 */
   monthly_budget: number | null;
   prompt_tokens: number;
   completion_tokens: number;
   used_tokens: number;
-  /** 不限时为 null */
+  /** 未设参考上限时为 null */
   remaining_tokens: number | null;
-  /** true = 本月预算已用尽（同步任务会被拒绝启动） */
+  /** true = 本月用量已超参考上限（仅展示，任务照常运行） */
   exhausted: boolean;
 }
 
@@ -4197,12 +4197,13 @@ export const api = {
     rubric?: RubricDimension[];
     anchors?: AnchorPaper[];
     cadence?: string | null;
+    /** @deprecated 参考上限（#734 起不再拦任务），界面已不提供输入 */
     monthly_budget?: number | null;
     keywords?: KeywordSpec | null;
   }): Promise<DirectionLibraryDetail> {
     return requestJson<DirectionLibraryDetail>('/libraries', 'POST', input);
   },
-  /** 对某个方向库直接触发抓取（P9a；仅 status=active 且预算内，可管理者）。 */
+  /** 对某个方向库直接触发抓取（P9a；可管理者。#734 起预算不再拦截）。 */
   startLibraryIngest(id: string, input: IngestStart): Promise<VoyageRead> {
     return requestJson<VoyageRead>(`/libraries/${id}/ingest/run`, 'POST', input);
   },
@@ -4225,6 +4226,7 @@ export const api = {
       name?: string;
       statement?: string | null;
       cadence?: string | null;
+      /** @deprecated 参考上限（#734 起不再拦任务），界面已不提供输入 */
       monthly_budget?: number | null;
       rubric?: RubricDimension[] | null;
       anchors?: AnchorPaper[] | null;

@@ -43,7 +43,6 @@ async def _library(session, *, user_id: uuid.UUID, public: bool = False) -> Dire
         statement="PDF asset test",
         is_public=public,
         submitted_by=user_id,
-        created_by=user_id,
     )
     session.add(library)
     await session.flush()

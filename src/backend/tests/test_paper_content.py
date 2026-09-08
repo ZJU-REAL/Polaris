@@ -42,7 +42,6 @@ async def _setup(client):
             name=f"content-{uuid.uuid4().hex[:8]}",
             statement="content test",
             submitted_by=user_id,
-            created_by=user_id,
         )
         paper = new_paper(title="Content paper", doi="10.1234/content")
         session.add_all([library, paper])

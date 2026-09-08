@@ -1,4 +1,10 @@
-"""P6 库预算（任务 2）：用量按库归因、月度聚合、超限拒绝启动与剩余额度收紧。"""
+"""库用量与预算语义（#734 暂缓机制收口后）：
+
+- 用量按库归因、月度聚合（展示面保留）；
+- ingest 预算**默认无限**：不再从 max_papers 派生隐式 token 上限；
+- 有限预算 = 显式 opt-in（knobs.max_tokens）；
+- monthly_budget 只是参考上限：用超也照样启动任务，面板 exhausted 仅展示。
+"""
 
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -11,6 +17,7 @@ from app.core.llm.router import get_llm_router
 from app.models.library_direction import DirectionLibrary
 from app.models.llm_config import LLMUsage
 from app.models.voyage import VoyageRun
+from app.schemas.ingest import IngestKnobs
 from app.services import ingest as ingest_service
 from tests.conftest import make_project_with_library, register_and_login
 
@@ -18,7 +25,7 @@ from tests.conftest import make_project_with_library, register_and_login
 async def _setup_project(client, email="budget-owner@example.com"):
     token = await register_and_login(client, email=email)
     headers = {"Authorization": f"Bearer {token}"}
-    # P9c：课题不再自动建库——显式配一条 active 起源库（project_id 回指）。
+    # P9c：课题不再自动建库——显式配一条起源库（project_id 回指）。
     project_id, library_id = await make_project_with_library(
         client, headers, name="预算方向"
     )
@@ -67,17 +74,35 @@ async def test_monthly_usage_aggregation(client):
         assert empty["total_tokens"] == 0
 
 
-async def test_ingest_rejected_when_budget_exhausted(client, queue_stub):
+def test_derive_budget_defaults_to_unlimited():
+    """#734：默认不设 token 预算——隐式的 max_papers×2 万派生上限已移除。"""
+    assert ingest_service.derive_budget(IngestKnobs()) == {"max_tokens": None}
+    # max_papers 再大也不再影响预算
+    assert ingest_service.derive_budget(IngestKnobs(max_papers=500)) == {"max_tokens": None}
+    # 有限预算 = 显式 opt-in
+    assert ingest_service.derive_budget(IngestKnobs(max_tokens=70_000)) == {"max_tokens": 70_000}
+    # 最大化模式下即便显式给了上限也不设（unlimited 语义优先）
+    assert ingest_service.derive_budget(IngestKnobs(unlimited=True, max_tokens=1)) == {
+        "max_tokens": None
+    }
+
+
+async def test_over_budget_library_still_starts_ingest(client, queue_stub):
+    """monthly_budget 用超只是展示：ingest 照常启动、照常入队（硬限额已移除）。"""
     headers, project_id, library_id = await _setup_project(client, email="budget-a@example.com")
     await _set_budget(library_id, 1000)
     await _add_usage(library_id, prompt=800, completion=300)  # 1100 ≥ 1000
     resp = await client.post(
         f"/api/projects/{project_id}/ingest", json={"mode": "bootstrap"}, headers=headers
     )
-    assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"] == "LIBRARY_BUDGET_EXHAUSTED"
-    assert queue_stub.jobs == []  # 没有入队任何任务
-    # 预算面板显示已用尽
+    assert resp.status_code == 201, resp.text
+    voyage_id = resp.json()["id"]
+    assert ("run_voyage", (voyage_id,), {}) in queue_stub.jobs
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, uuid.UUID(voyage_id))
+        # 月度上限不再折进 run.budget
+        assert run.budget == {"max_tokens": None}
+    # 面板仍然如实展示「已超参考上限」——但那只是信息，不是闸门
     resp = await client.get(f"/api/libraries/{library_id}/budget", headers=headers)
     assert resp.status_code == 200
     body = resp.json()
@@ -86,25 +111,25 @@ async def test_ingest_rejected_when_budget_exhausted(client, queue_stub):
     assert body["remaining_tokens"] == 0
 
 
-async def test_ingest_budget_capped_to_monthly_remaining(client, queue_stub):
+async def test_ingest_budget_not_capped_by_monthly_budget(client, queue_stub):
+    """月度预算不再收紧 run.budget；显式 opt-in 的 max_tokens 原样生效。"""
     headers, project_id, library_id = await _setup_project(client, email="budget-b@example.com")
     await _set_budget(library_id, 100_000)
-    await _add_usage(library_id, prompt=20_000, completion=10_000)  # 已用 30k → 剩 70k
+    await _add_usage(library_id, prompt=20_000, completion=10_000)
     resp = await client.post(
         f"/api/projects/{project_id}/ingest",
-        json={"mode": "bootstrap", "knobs": {"max_papers": 10}},  # 派生预算 200k > 剩余
+        json={"mode": "bootstrap", "knobs": {"max_papers": 10}},
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
-    voyage_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
-        run = await session.get(VoyageRun, uuid.UUID(voyage_id))
-        assert run.budget["max_tokens"] == 70_000
-    # 无预算库不受影响：max_tokens 用 knobs 派生值
+        run = await session.get(VoyageRun, uuid.UUID(resp.json()["id"]))
+        assert run.budget == {"max_tokens": None}  # 既无隐式派生，也无月度收紧
+    # 显式 opt-in：传 max_tokens 才有有限预算
     headers2, project_id2, _library_id2 = await _setup_project(client, email="budget-c@example.com")
     resp = await client.post(
         f"/api/projects/{project_id2}/ingest",
-        json={"mode": "bootstrap", "knobs": {"max_papers": 10}},
+        json={"mode": "bootstrap", "knobs": {"max_papers": 10, "max_tokens": 200_000}},
         headers=headers2,
     )
     assert resp.status_code == 201, resp.text
@@ -149,3 +174,5 @@ async def test_router_records_library_attribution(client):
         assert len(rows) == 1
         assert rows[0].stage == "relevance"
         assert rows[0].prompt_tokens > 0
+        # #734 停写核证：对话归因列不再被任何写点填充
+        assert rows[0].conversation_id is None

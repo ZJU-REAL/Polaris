@@ -19,9 +19,10 @@ function fromDefinition(def: ProjectDefinition | null): InclusionValue {
 }
 
 /* ============================================================
-   文献库治理页签（P6）：
-   - 库信息与预算编辑（可管理者）；
-   - 本月 AI 用量进度（超限后同步任务暂停到下月）；
+   文献库治理页签：
+   - 库信息编辑（可管理者）；
+   - 本月 AI 用量展示（#734 起纯展示：预算硬限额已移除，不再暂停任务，
+     旧的「每月预算」输入随之撤下——参考上限仅在用量条上呈现）；
    - 重复论文候选与合并（不可撤销）。
    ============================================================ */
 
@@ -188,7 +189,7 @@ function DuplicatesCard({ libraryId }: { libraryId: string }) {
   );
 }
 
-/* —— 本月用量进度 —— */
+/* —— 本月用量展示（原「预算进度」；上限只是参考，不再是闸门） —— */
 
 function BudgetCard({ libraryId }: { libraryId: string }) {
   const { data: budget, isError } = useQuery({
@@ -226,8 +227,8 @@ function BudgetCard({ libraryId }: { libraryId: string }) {
             </span>
             <span className="muted" style={{ fontSize: 12 }}>
               {limited
-                ? `${tr('上限 ', 'Cap ')}${budget.monthly_budget!.toLocaleString()}`
-                : tr('未设上限', 'No cap')}
+                ? `${tr('参考上限 ', 'Reference cap ')}${budget.monthly_budget!.toLocaleString()}`
+                : tr('未设参考上限', 'No reference cap')}
             </span>
           </div>
           {limited && (
@@ -244,10 +245,10 @@ function BudgetCard({ libraryId }: { libraryId: string }) {
             </div>
           )}
           {budget.exhausted && (
-            <div style={{ color: 'var(--danger-tx)', fontSize: 13 }}>
+            <div style={{ color: 'var(--warn)', fontSize: 13 }}>
               {tr(
-                '本月预算已用尽：同步任务已暂停，下月自动恢复，或调高上限后再试。',
-                'Monthly budget used up: syncing is paused until next month, or raise the cap and retry.',
+                '本月用量已超过参考上限（仅提示，任务照常运行）。',
+                'Usage has passed the reference cap this month (informational only — tasks keep running).',
               )}
             </div>
           )}
@@ -257,7 +258,7 @@ function BudgetCard({ libraryId }: { libraryId: string }) {
   );
 }
 
-/* —— 库信息与预算 —— */
+/* —— 库信息 —— */
 
 function LibraryInfoCard({
   lib,
@@ -269,29 +270,26 @@ function LibraryInfoCard({
   const queryClient = useQueryClient();
   const [name, setName] = useState(lib.name);
   const [statement, setStatement] = useState(lib.statement ?? '');
-  const [budget, setBudget] = useState(lib.monthly_budget == null ? '' : String(lib.monthly_budget));
   const [isPublic, setIsPublic] = useState(lib.is_public);
 
   // 库切换 / 保存后回填
   useEffect(() => {
     setName(lib.name);
     setStatement(lib.statement ?? '');
-    setBudget(lib.monthly_budget == null ? '' : String(lib.monthly_budget));
     setIsPublic(lib.is_public);
   }, [lib]);
 
   const dirty =
     name !== lib.name ||
     statement !== (lib.statement ?? '') ||
-    isPublic !== lib.is_public ||
-    budget !== (lib.monthly_budget == null ? '' : String(lib.monthly_budget));
+    isPublic !== lib.is_public;
 
+  // 「每月预算」输入已撤（#734）：硬限额移除后它什么都不控制，留着只会误导。
   const save = useMutation({
     mutationFn: () =>
       api.updateLibrary(lib.id, {
         name: name.trim() || lib.name,
         statement: statement.trim() || null,
-        monthly_budget: budget.trim() === '' ? null : Math.max(0, Math.floor(Number(budget))),
         is_public: isPublic,
       }),
     onSuccess: () => {
@@ -303,8 +301,6 @@ function LibraryInfoCard({
     onError: () => toast(tr('保存失败，请重试', 'Save failed, please retry'), 'error'),
   });
 
-  const budgetInvalid = budget.trim() !== '' && (!Number.isFinite(Number(budget)) || Number(budget) < 0);
-
   return (
     <section className="card" style={{ padding: 18 }}>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
@@ -312,7 +308,7 @@ function LibraryInfoCard({
         {!readOnly && (
           <button
             className="btn btn-primary sm"
-            disabled={!dirty || budgetInvalid || save.isPending || !name.trim()}
+            disabled={!dirty || save.isPending || !name.trim()}
             onClick={() => save.mutate()}
           >
             {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
@@ -353,27 +349,6 @@ function LibraryInfoCard({
               {tr('开启后本部署的所有用户都能浏览这个库', 'Everyone on this deployment can browse this library')}
             </span>
           </label>
-        )}
-        {!readOnly && (
-        <div className="row gap12" style={{ flexWrap: 'wrap' }}>
-          <label className="col gap6" style={{ minWidth: 220 }}>
-            <span className="muted" style={{ fontSize: 12 }}>
-              {tr('每月 AI 预算（token 数，留空 = 不限）', 'Monthly AI budget (tokens, empty = unlimited)')}
-            </span>
-            <input
-              className="input"
-              inputMode="numeric"
-              value={budget}
-              onChange={(e) => setBudget(e.target.value)}
-              placeholder={tr('如 2000000', 'e.g. 2000000')}
-            />
-          </label>
-        </div>
-        )}
-        {!readOnly && budgetInvalid && (
-          <div style={{ color: 'var(--danger-tx)', fontSize: 12 }}>
-            {tr('预算需为不小于 0 的数字', 'Budget must be a number ≥ 0')}
-          </div>
         )}
       </div>
     </section>

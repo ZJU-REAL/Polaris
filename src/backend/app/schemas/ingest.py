@@ -20,8 +20,13 @@ class IngestKnobs(BaseModel):
     snowball_depth: int = Field(default=1, ge=0, le=3)
     compile_top_n: int = Field(default=50, ge=1, le=200)  # 打分后精读编译前 N 篇
     # 最大化模式：True 时检索/打分/抽取/编译不设篇数上限（max_papers/compile_top_n 被忽略，
-    # 仅保留极高安全哨兵防失控），token 预算也不设限。默认 False，向后兼容。
+    # 仅保留极高安全哨兵防失控）。默认 False，向后兼容。
     unlimited: bool = False
+    # 本次运行的 token 预算上限（引擎步间检查，超限走既有预算暂停语义）。
+    # #734 暂缓机制收口：默认 None = 不设预算——以前按 max_papers 派生一个隐式
+    # 上限，量一大任务就静默暂停在半路，界面上只见「卡住了」。有限预算改为
+    # 显式 opt-in：真想设限的调用方自己传数。
+    max_tokens: int | None = Field(default=None, ge=1)
 
 
 class IngestRequest(BaseModel):

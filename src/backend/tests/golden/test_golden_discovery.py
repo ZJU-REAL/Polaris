@@ -10,9 +10,9 @@ novelty_report / feasibility / score、步骤观测与 token 记账，归一化�
 引擎驱动（VoyageEngine.run）不是 HTTP 步骤，不进 transcript；transcript 只收
 API 面上的可观测结果——golden 钉的是对外行为，不是内部实现。
 
-更新方式（仅限本地，CI 只比对）::
+更新方式（仅限本地，CI 只比对；何时允许重录、diff 怎么审见 docs/golden-policy.md）::
 
-    POLARIS_GOLDEN=record python -m pytest tests/golden -q
+    make golden-record   # 或：POLARIS_GOLDEN=record python -m pytest tests/golden -q
 """
 
 import json
@@ -189,6 +189,6 @@ async def test_discovery_chain_matches_golden(client, queue_stub):
     )
     expected = GOLDEN_PATH.read_text(encoding="utf-8")
     assert rendered == expected, (
-        "golden transcript 变了。若这是有意的行为变更：本地 POLARIS_GOLDEN=record 重录，"
-        "人工审查 diff 后随代码一起提交。"
+        "golden transcript 变了。若这是有意的行为变更：本地 make golden-record 重录，"
+        "人工审查 diff 后随代码一起提交（规则见 docs/golden-policy.md）。"
     )

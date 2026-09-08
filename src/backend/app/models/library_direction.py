@@ -71,11 +71,11 @@ class DirectionLibrary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_public: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
-    # 库创建者（P9b 用户建库）：个人库仅创建者 + admin 可见/可管理。
+    # 库归属人（创建者）：个人库仅归属人可见/可管理；NULL = 无主库（存量/系统建）。
+    # 曾与 created_by 双列并存、写入时恒等（P9b 遗留），#734 合一：全部读写走这一列，
+    # 列名保留 submitted_by——30+ 读点、前端类型与 golden wire 形状都在用它，改名收益
+    # 只有「更好听」，代价是全链路 churn。
     submitted_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL")
-    )
-    created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
     # 起源课题溯源（历史 1:1 库回指；SET NULL——删课题不再级联删库，孤儿库保留）。
@@ -104,9 +104,6 @@ class LibraryPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     relevance_score: Mapped[float | None]  # LLM 对照方向 rubric 的打分
     relevance_reason: Mapped[str | None] = mapped_column(Text)  # 本次收录/排除的方向化理由
     tldr_note: Mapped[str | None] = mapped_column(Text)  # 库视角一句话概括（可选）
-    # 退役列（解读已统一到 paper_wikis，每篇论文一份、不再按库分版本）：只留存量
-    # 数据，代码不再读写；删列待确认稳定后另做迁移。
-    wiki_content: Mapped[str | None] = mapped_column(Text)
     # 状态流转同 PAPER_STATUSES：candidate → scored|excluded → fetched → compiled；included 人工纳入
     status: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False)
     # 进回收站的原因（status=excluded 时有值）：irrelevant 相关性不足自动淘汰 | manual 手动删除
@@ -118,9 +115,6 @@ class LibraryPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     scored_run_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("voyage_runs.id", ondelete="SET NULL"), index=True
     )
-    # 退役列（编译时间/模型随解读走 paper_wikis）：同上，只留存量数据。
-    compiled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    compiled_model: Mapped[str | None] = mapped_column(String(255))
 
     paper: Mapped[Paper] = relationship()
 

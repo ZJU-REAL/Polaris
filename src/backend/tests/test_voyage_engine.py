@@ -14,13 +14,21 @@ from tests.conftest import RecordingBus, register_and_login
 
 
 async def _setup_demo_voyage(client, goal="研究 LLM 推理加速的关键路径"):
+    """demo 任务 + 显式预算闸门 opt-in（#734 起 demo 的闸门与 experiment 同款：
+    默认直行，params.confirm_budget=True 才在第 2 步停下）。本文件的闸门链路
+    用例靠这个 opt-in 演示 Gate + engine 断点机制。"""
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
     resp = await client.post("/api/projects", json={"name": "voyage-proj"}, headers=headers)
     project_id = resp.json()["id"]
     resp = await client.post(
         "/api/voyages",
-        json={"kind": "demo", "project_id": project_id, "goal": goal},
+        json={
+            "kind": "demo",
+            "project_id": project_id,
+            "goal": goal,
+            "params": {"confirm_budget": True},
+        },
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
@@ -100,6 +108,31 @@ async def test_demo_voyage_full_loop(client, queue_stub, bus_recorder):
         )
         assert usage_rows  # llm.complete + sextant 均记账
         assert {r.stage for r in usage_rows} <= {"navigator", "sextant", "default"}
+
+
+async def test_demo_voyage_default_runs_gateless(client, queue_stub, bus_recorder):
+    """预算闸门默认不拦（#626 的漏网处，#734 补齐）：不传 confirm_budget 的 demo
+    任务一口气跑到 done，全程不建任何 Gate。"""
+    token = await register_and_login(client, email="gateless@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = await client.post("/api/projects", json={"name": "gateless-proj"}, headers=headers)
+    project_id = resp.json()["id"]
+    resp = await client.post(
+        "/api/voyages",
+        json={"kind": "demo", "project_id": project_id, "goal": "默认直行"},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    run_id = resp.json()["id"]
+
+    engine, _bus = _make_engine()
+    await engine.run(uuid.UUID(run_id))
+
+    detail = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()
+    assert detail["status"] == "done"
+    assert [s["status"] for s in detail["steps"]] == ["passed", "passed", "passed"]
+    gates = (await client.get(f"/api/gates?project_id={project_id}", headers=headers)).json()
+    assert gates == []
 
 
 async def test_gate_reject_fails_voyage(client, queue_stub, bus_recorder):

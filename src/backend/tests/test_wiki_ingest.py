@@ -285,7 +285,7 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     assert resp.status_code == 201, resp.text
     voyage = resp.json()
     assert voyage["kind"] == "wiki_bootstrap"
-    assert voyage["budget"]["max_tokens"] == 10 * 20_000  # 预算从 knobs 派生
+    assert voyage["budget"]["max_tokens"] is None  # 预算默认无限（#734，有限=显式 opt-in）
     run_id = voyage["id"]
     assert ("run_voyage", (run_id,), {}) in queue_stub.jobs
 
@@ -877,10 +877,11 @@ def test_unlimited_knobs_and_budget_semantics():
     knobs = IngestKnobs(unlimited=True, max_papers=10, compile_top_n=5)
     assert knobs.unlimited is True and knobs.max_papers == 10 and knobs.compile_top_n == 5
 
-    # 预算：unlimited → max_tokens=None；默认模式派生公式不变
+    # 预算：unlimited → max_tokens=None；默认模式同样无预算（#734，隐式派生已移除）
     assert ingest_service.derive_budget(knobs) == {"max_tokens": None}
-    # 预算按「最大检索篇数」派生（上限而非开销；真正花钱的是编译那部分）
-    assert ingest_service.derive_budget(IngestKnobs()) == {"max_tokens": 150 * 20_000}
+    assert ingest_service.derive_budget(IngestKnobs()) == {"max_tokens": None}
+    # 有限预算是显式 opt-in
+    assert ingest_service.derive_budget(IngestKnobs(max_tokens=42)) == {"max_tokens": 42}
 
     # 引擎语义：max_tokens 为 None（falsy）不触发预算暂停，用量再大也不算超限
     run = VoyageRun(
@@ -1166,8 +1167,8 @@ async def test_manual_digest_falls_back_to_incremental_when_no_today_updates(cli
         assert run.checkpoint["params"].get("digest_only") is None
 
 
-async def test_standalone_library_ingest_budget_gate(client, queue_stub):
-    """独立库触发同样受库预算门约束：本月用尽 → 409 且不入队。"""
+async def test_standalone_library_ingest_ignores_monthly_budget(client, queue_stub):
+    """月度预算硬限额已移除（#734）：本月用超也照样启动、照常入队（上限仅展示）。"""
     token = await register_and_login(client, email="lib-budget@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     library_id = await _create_standalone_library(
@@ -1190,9 +1191,9 @@ async def test_standalone_library_ingest_budget_gate(client, queue_stub):
         json={"mode": "bootstrap"},
         headers=headers,
     )
-    assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"] == "LIBRARY_BUDGET_EXHAUSTED"
-    assert queue_stub.jobs == []
+    assert resp.status_code == 201, resp.text
+    voyage_id = resp.json()["id"]
+    assert ("run_voyage", (voyage_id,), {}) in queue_stub.jobs
 
 
 async def test_standalone_library_ingest_forbidden_for_stranger(client, queue_stub):
@@ -1431,11 +1432,12 @@ async def test_recent_paused_run_is_left_alone(client, queue_stub, wiki_mocks):
         assert await ingest_service.reclaim_stale_paused_ingests(session) == []
 
 
-async def test_over_budget_library_does_not_stop_the_others(client, queue_stub, wiki_mocks):
-    """一个库超预算不能拖垮当天其余的库。
+async def test_over_budget_library_still_syncs_daily(client, queue_stub, wiki_mocks):
+    """月度预算硬限额移除后（#734），超预算的库不再被每日扇出跳过。
 
-    老写法只捕获 IngestConflictError，LibraryBudgetExhaustedError 会穿透整个循环，
-    排在后面的库当天全都不同步，而且只在 arq 日志里留个异常，界面上完全无感。
+    历史坑（留档）：老写法里超预算抛 LibraryBudgetExhaustedError，一度会穿透整个
+    循环把排在后面的库当天全部拖停；后来改为逐库跳过；现在预算只作展示，两个库
+    都照常入队。
     """
     from worker.tasks import daily_wiki_ingest
 
@@ -1471,7 +1473,7 @@ async def test_over_budget_library_does_not_stop_the_others(client, queue_stub, 
     redis = _Redis()
     enqueued = await daily_wiki_ingest({"redis": redis})
 
-    # 超预算的那个被跳过，正常的那个照常入队
+    # 超「参考上限」的那个与正常的那个都照常入队（预算不再是闸门）
     async with get_sessionmaker()() as session:
         runs = {
             str(r.library_id): r
@@ -1484,8 +1486,8 @@ async def test_over_budget_library_does_not_stop_the_others(client, queue_stub, 
             .all()
         }
     assert healthy_id in runs, "正常的库必须仍被入队"
-    assert broke_id not in runs
-    assert len(redis.jobs) == len(enqueued) == 1
+    assert broke_id in runs, "超参考上限的库同样入队（#734 硬限额已移除）"
+    assert len(redis.jobs) == len(enqueued) == 2
 
 
 async def test_truncated_run_does_not_advance_the_watermark(client, queue_stub, wiki_mocks):

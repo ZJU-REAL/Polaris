@@ -13,12 +13,12 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     display_name: str
     username: str | None = None
     username_locked: bool = False
-    # 历史遗留：自管 LLM 轨已并入平台配置（#621），users 表里没有这一列了。
-    # 字段保留并恒为 False，只为不动 API 形状（golden transcript 逐字节比对着它）；
-    # 下次允许重录 golden 时一并移除。
-    llm_self_managed: bool = False
     has_avatar: bool = False
     settings: dict[str, Any] | None = None
+    # 单人产品没有「超管」概念（治理列已随 #614 删除）：fastapi-users 基类自带的
+    # is_superuser 不再随 API 下发（exclude 只影响响应序列化；DB 列与内部逻辑不动）。
+    # 恒 False 的幽灵字段 llm_self_managed（#621 遗留）已随 #734 重录 golden 移除。
+    is_superuser: bool = Field(default=False, exclude=True)
 
 
 class UserCreate(schemas.BaseUserCreate):

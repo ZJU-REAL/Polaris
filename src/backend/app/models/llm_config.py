@@ -95,11 +95,13 @@ class ModelRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class LLMUsage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "llm_usage"
-    # 用量面板按天/周窗口聚合（/lab/usage、排行榜），没这个索引就是全表扫
+    # 按时间窗聚合的现实消费者（lab 用量面板/排行榜已随去实验室化移除）：
+    # 库月度用量 services/ingest.monthly_library_usage（治理页用量条）与管理端
+    # usage_report 都按 created_at 过滤，没这个索引就是全表扫。
     __table_args__ = (Index("ix_llm_usage_created_at", "created_at"),)
 
-    #: index=True：配额检查按用户过滤，而这一列此前**没有索引**（project_id/library_id
-    #: 都有），agent 循环里每轮查一次配额就是一次全表扫。
+    #: index=True：个人用量汇总（services/users.usage_summary，设置页展示）按用户
+    #: 过滤；配额检查已随治理机制移除（#614），索引留给展示查询。
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
@@ -110,7 +112,9 @@ class LLMUsage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     library_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("direction_libraries.id", ondelete="SET NULL"), index=True
     )
-    #: 这一行属于哪场对话（voyage_id 的对偶）。让"这场对话花了多少 token"可回答。
+    #: deprecated（#734）：设想中的「这场对话花了多少 token」从未有读点，写点也已
+    #: 移除——router 记账（_record_usage）不带它，恒 NULL。列保留一期防在途回滚，
+    #: 下一次列卫生迁移删除。
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     voyage_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("voyage_runs.id", ondelete="SET NULL")

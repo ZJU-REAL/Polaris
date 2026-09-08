@@ -27,7 +27,7 @@ class User(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
     avatar_path: Mapped[str | None] = mapped_column(String(1024))
     # 用户个人设置：{key: value}。None/缺键 = 未设置。
     # managed_command_unanswered_minutes 存远端命令等待用户答复的个人偏好；管理员全局
-    # 上限仍优先。历史 chat_fulltext_index 已废除，存量值保留但不再读取。
+    # 上限仍优先。
     # #737 配置分层起，原 system_settings 里的用户偏好也存在这里（命名空间键，
     # 落在 owner 用户头上）：daily.categories / daily.sync_time / daily.retention_days /
     # daily.sync_scope / tts.admin / affiliations.extraction_mode，读写统一走

@@ -19,7 +19,7 @@ from app.models.paper import Paper
 
 
 class TopicPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """课题-论文书架行：引用内容池论文 + 入架时的 wiki 快照 + 课题语境备注。"""
+    """课题-论文书架行：引用内容池论文 + 课题语境备注（解读经 paper_wikis 现查）。"""
 
     __tablename__ = "topic_papers"
     __table_args__ = (
@@ -39,10 +39,6 @@ class TopicPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source_library_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("direction_libraries.id", ondelete="SET NULL")
     )
-    # 退役列（解读已统一到 paper_wikis，每篇一份、书架直接引用）：只留存量数据，
-    # 代码不再读写；删列待确认稳定后另做迁移。
-    wiki_snapshot: Mapped[str | None] = mapped_column(Text)
-    snapshot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # 课题语境的「为什么相关」备注
     note: Mapped[str | None] = mapped_column(Text)
     added_by: Mapped[uuid.UUID | None] = mapped_column(

@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b737c1a2d3e4"  # User-preference settings move to users.settings (#737)
+HEAD_REVISION = "351c324f4f6b"  # Schema hygiene: retired columns + owner merge (#734)
+SETTINGS_REVISION = "b737c1a2d3e4"  # User-preference settings move to users.settings (#737)
 RESOURCES_REVISION = "d2dcfc8b899f"  # Resources, leases, polymorphic credentials (#677)
 METHOD_VECTORS_REVISION = "e867fcbae4ea"  # Method purpose/mechanism vectors (#663)
 EXTRACTIONS_REVISION = "58b0bc2d809d"  # Paper skeleton extractions (#661)
@@ -183,6 +184,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
+    # 列卫生（#734）：退役快照列与归属副本列在 head 已删
+    assert not {"wiki_content", "compiled_at", "compiled_model"} & columns["library_papers"]
+    assert "wiki_content" not in columns["user_library_entries"]
+    assert not {"wiki_content", "wiki_model"} & columns["daily_feed_entries"]
+    assert not {"wiki_snapshot", "snapshot_at"} & columns["topic_papers"]
+    assert "created_by" not in columns["direction_libraries"]
+    assert "submitted_by" in columns["direction_libraries"]
     # 治理列已随个人化定位删除（#614）
     assert not {"role", "read_only", "llm_access", "token_quota", "features"} & columns[
         "users"
@@ -212,7 +220,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"slug", "description", "body", "allowed_tools", "invocation"} <= columns["agent_skills"]
     assert {"scope_kind", "scope_id", "usage", "active_stream_id"} <= columns["conversations"]
     assert {"blocks", "text", "seq", "status", "sources"} <= columns["conversation_messages"]
-    # 这场对话花了多少 token（voyage_id 的对偶）
+    # deprecated（#734 停写）：列保留一期防在途回滚，下一次列卫生迁移删除
     assert "conversation_id" in columns["llm_usage"]
     assert "venue_metric_snapshot" in columns["literature_search_hits"]
     assert {"provider", "identity_key", "metrics", "expires_at"} <= columns[
@@ -401,8 +409,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "owner_id" in columns["model_routes"]
     # 自管轨并入平台配置（#621）：接管开关列已删，providers/routes 的 owner_id 保留
     assert "llm_self_managed" not in columns["users"]
-    # 个人库 wiki 快照列（上一版）
-    assert "wiki_content" in columns["user_library_entries"]
+    # 个人库 wiki 快照列已随列卫生退役（#734）
+    assert "wiki_content" not in columns["user_library_entries"]
     # 方向文献库两表 + papers.dedup_key（策展人表已在 P1 去实验室化中移除）
     assert {
         "direction_libraries",
@@ -415,8 +423,6 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "topic_id",
         "paper_id",
         "source_library_id",
-        "wiki_snapshot",
-        "snapshot_at",
         "note",
         "added_by",
     } <= columns["topic_papers"]
@@ -439,9 +445,6 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 本分支新增：论文级唯一解读表（原列一律保留，只是不再读写）
     assert "paper_wikis" in columns["_tables"]
     assert {"paper_id", "content", "model", "compiled_by"} <= columns["paper_wikis"]
-    assert "wiki_content" in columns["library_papers"]  # 存量列保留，可回滚
-    assert "wiki_content" in columns["daily_feed_entries"]
-    assert "wiki_snapshot" in columns["topic_papers"]
     # 本分支新增：概念统一到论文级（去 library_id，slug 全局唯一）+ 两张回滚留档表
     assert "library_id" not in columns["concepts"]
     assert {"concepts_pre_unify", "paper_concepts_pre_unify"} <= columns["_tables"]
@@ -609,7 +612,19 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["paper_extractions"]
     assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
 
-    # 先退掉用户偏好搬家（#737）：纯数据迁移，schema 原样。
+    # 先退掉列卫生（#734）：退役快照列与 created_by 按原形状回来（数据不可恢复，
+    # created_by 从 submitted_by 回填——两列写入历史上恒等）。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == SETTINGS_REVISION
+    assert {"wiki_content", "compiled_at", "compiled_model"} <= columns["library_papers"]
+    assert "wiki_content" in columns["user_library_entries"]
+    assert {"wiki_content", "wiki_model"} <= columns["daily_feed_entries"]
+    assert {"wiki_snapshot", "snapshot_at"} <= columns["topic_papers"]
+    assert "created_by" in columns["direction_libraries"]
+    assert "resources" in columns["_tables"]  # 只退一步：资源/租约仍在
+
+    # 再退掉用户偏好搬家（#737）：纯数据迁移，schema 原样。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == RESOURCES_REVISION
@@ -1035,6 +1050,12 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "models" in columns["llm_providers"]
     assert "owner_id" in columns["llm_providers"]
     assert "llm_self_managed" not in columns["users"]  # head 已删（#621）
+    # 列卫生在重新 upgrade 后回归（#734）
+    assert not {"wiki_content", "compiled_at", "compiled_model"} & columns["library_papers"]
+    assert "wiki_content" not in columns["user_library_entries"]
+    assert not {"wiki_content", "wiki_model"} & columns["daily_feed_entries"]
+    assert not {"wiki_snapshot", "snapshot_at"} & columns["topic_papers"]
+    assert "created_by" not in columns["direction_libraries"]
     assert "project_members" not in columns["_tables"]  # head 已删（#625）
     assert "hypothesis_nodes" in columns["_tables"]  # 假设树表回归（#637）
     assert not {"feedback", "feedback_images"} & columns["_tables"]  # head 已删（#617）
@@ -1101,7 +1122,9 @@ def test_user_preference_settings_copy_to_owner_and_roundtrip(tmp_path):
                 {"k": key, "v": json.dumps(value)},
             )
 
-    command.upgrade(cfg, HEAD_REVISION)
+    # 精确升到 #737 本身（不再用 HEAD：#734 已排在它后面，
+    # 用 HEAD 会让下面的 downgrade -1 退错一层）
+    command.upgrade(cfg, SETTINGS_REVISION)
     with engine.connect() as conn:
         rows = dict(conn.execute(text("SELECT id, settings FROM users")).fetchall())
         owner = json.loads(rows["00000000-0000-0000-0000-000000000001"])
@@ -1138,3 +1161,75 @@ def test_user_preference_migration_skips_empty_deployment(tmp_path):
     command.upgrade(cfg, "head")
     version, _ = _inspect_db(db_path)
     assert version == HEAD_REVISION
+
+
+def test_schema_hygiene_migration_merges_owner_and_purges_private_llm_rows(tmp_path):
+    """#734 的数据面：created_by 并入 submitted_by；自管轨私有 provider/route 行删除。
+
+    在上一版（RESOURCES_REVISION）落一批存量行再升 head：
+    - submitted_by 为空但 created_by 有值的库 → 归属回填，不丢归属人；
+    - llm_providers / model_routes 的 owner_id 非 NULL 行（#621 只拆了入口没清数据，
+      全靠 WHERE owner_id IS NULL 挡着）→ 物理删除；全局行（owner NULL）原样保留。
+    """
+    db_path = tmp_path / "hygiene.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, RESOURCES_REVISION)
+
+    owner = "11111111-1111-1111-1111-111111111111"
+    engine = create_engine(f"sqlite:///{db_path}")
+    now = "2026-09-07 00:00:00"
+    with engine.begin() as conn:
+        # 归属双列：一行只有 created_by（极老存量），一行两列齐（P9b 后的常态）
+        conn.execute(
+            text(
+                "INSERT INTO direction_libraries "
+                "(id, name, library_kind, is_public, created_by, submitted_by, "
+                " created_at, updated_at) VALUES "
+                "('lib-legacy', '老库', 'standard', 0, :owner, NULL, :now, :now), "
+                "('lib-normal', '常态库', 'standard', 0, :owner, :owner, :now, :now)"
+            ),
+            {"owner": owner, "now": now},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO llm_providers "
+                "(id, owner_id, name, kind, enabled, created_at, updated_at) VALUES "
+                "('prov-global', NULL, 'platform', 'openai_compat', 1, :now, :now), "
+                "('prov-private', :owner, 'mine', 'openai_compat', 1, :now, :now)"
+            ),
+            {"owner": owner, "now": now},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO model_routes "
+                "(id, owner_id, stage, provider_id, model, created_at, updated_at) VALUES "
+                "('route-global', NULL, 'default', 'prov-global', 'gpt-x', :now, :now), "
+                "('route-private', :owner, 'default', 'prov-global', 'gpt-x', :now, :now), "
+                "('route-dangling', NULL, 'librarian', 'prov-private', 'gpt-x', :now, :now)"
+            ),
+            {"owner": owner, "now": now},
+        )
+    engine.dispose()
+
+    command.upgrade(cfg, "head")
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            merged = dict(
+                conn.execute(
+                    text("SELECT id, submitted_by FROM direction_libraries")
+                ).fetchall()
+            )
+            # 老存量的归属人回填；常态行不动
+            assert merged == {"lib-legacy": owner, "lib-normal": owner}
+            providers = {
+                r[0] for r in conn.execute(text("SELECT id FROM llm_providers")).fetchall()
+            }
+            assert providers == {"prov-global"}  # 私有 provider 已清
+            routes = {r[0] for r in conn.execute(text("SELECT id FROM model_routes")).fetchall()}
+            # 私有路由与挂在私有 provider 下的残路由都清掉，全局行保留
+            assert routes == {"route-global"}
+    finally:
+        engine.dispose()
+

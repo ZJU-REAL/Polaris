@@ -56,7 +56,7 @@ async def test_create_project_can_link_existing_libraries(client):
     """P9c：建课题入参可关联已有库；语料 = 关联库并集。"""
     admin = await _register(client, "p7-link@example.com")
     async with get_sessionmaker()() as session:
-        lib = DirectionLibrary(name="已有库", created_by=None, project_id=None)
+        lib = DirectionLibrary(name="已有库", project_id=None)
         session.add(lib)
         await session.commit()
         lib_id = lib.id
@@ -177,7 +177,7 @@ async def test_delete_library_without_topics_needs_no_force(client):
     """独立库（无课题关联）删除不受 force 影响；无主库（submitted_by 空）谁都能删（#614）。"""
     admin = await _register(client, "p7-admin5@example.com")
     async with get_sessionmaker()() as session:
-        library = DirectionLibrary(name="孤儿库", created_by=None, project_id=None)
+        library = DirectionLibrary(name="孤儿库", project_id=None)
         session.add(library)
         await session.commit()
         library_id = library.id
@@ -193,7 +193,7 @@ async def test_get_source_libraries_returns_multiple_associations(client):
     project_id = uuid.UUID(project_id_str)
 
     async with get_sessionmaker()() as session:
-        extra = DirectionLibrary(name="额外方向库", created_by=None, project_id=None)
+        extra = DirectionLibrary(name="额外方向库", project_id=None)
         session.add(extra)
         await session.flush()
         await libraries_service.set_source_libraries(

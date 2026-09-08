@@ -204,9 +204,9 @@ async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
 
     按库选而不是按课题选：独立库（project_id 为空）在按课题遍历的老写法里一个都进不来。
 
-    每个库单独兜异常。以前只捕获 IngestConflictError，于是一个库超月度预算抛
-    LibraryBudgetExhaustedError 就会打断整个循环，**排在它后面的库当天全都不同步**，
-    而且只在 arq 日志里留个异常，界面上完全无感。
+    每个库单独兜异常：一个库启动失败不能打断整个循环，否则排在它后面的库当天
+    全都不同步，而且只在 arq 日志里留个异常，界面上完全无感（月度预算硬限额
+    时代实测发生过；硬限额已随 #734 移除，这条纪律保留防其他异常复现同样的坑）。
 
     返回本次入队的 voyage id 列表（arq 结果可查）。
     """
@@ -238,9 +238,6 @@ async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
                 )
             except ingest_service.IngestConflictError:
                 continue  # 并发保护：查表与建 run 之间有人手动触发
-            except ingest_service.LibraryBudgetExhaustedError:
-                logger.warning("daily ingest skipped, budget exhausted: %s", library.id)
-                continue
             except Exception:  # noqa: BLE001 — 单个库出问题不能拖垮当天其余的库
                 logger.exception("daily ingest failed to start for library %s", library.id)
                 await session.rollback()

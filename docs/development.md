@@ -66,6 +66,12 @@ make lint      # ruff check (backend) + tsc --noEmit (frontend and desktop)
 make build     # build production images
 ```
 
+Two backend test suites deserve a special mention: the **golden transcripts** under
+`src/backend/tests/golden/` replay two end-to-end chains and compare the responses byte for byte.
+If one fails on your branch, read [the golden policy](golden-policy.md) before touching anything —
+re-recording (`make golden-record`) is only legitimate for an intentional, human-reviewed wire
+change.
+
 ## Layering convention
 
 The backend follows one strict rule, and reviews enforce it:

@@ -192,7 +192,7 @@ async def merge_papers(
         set_committed_value(drop, "wiki", None)
     report["wiki_moved"] = wiki_moved
 
-    # ---- 2. topic_papers：同课题冲突保留 keep 行（缺快照/备注则补），否则 repoint ----
+    # ---- 2. topic_papers：同课题冲突保留 keep 行（缺备注则补），否则 repoint ----
     keep_shelf = {
         t.topic_id: t
         for t in (
@@ -208,9 +208,7 @@ async def merge_papers(
             row.paper_id = keep_id
             shelf_repointed += 1
             continue
-        if existing.wiki_snapshot is None and row.wiki_snapshot is not None:
-            existing.wiki_snapshot = row.wiki_snapshot
-            existing.snapshot_at = row.snapshot_at
+        # wiki 快照列已退役删除（#734）：解读统一走 paper_wikis，无需搬运
         if not existing.note and row.note:
             existing.note = row.note
         # 一边在架一边在回收站 → 合并后在架（别让合并把还在书架上的条目变没）

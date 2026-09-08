@@ -141,7 +141,7 @@ answer) rather than declaring failure.
 | `paper_review` | pipeline | topic | `paper_review_plan()` (6 steps) | `POST /manuscripts/{id}/review` |
 | `presentation` | pipeline | topic | `presentation_plan()` (4 steps) | `POST /projects/{id}/presentations` |
 | `custom` | loop | topic | the workflow skill's own steps, written into `run.plan` at creation | `POST /skills/{id}/run` |
-| `demo` | loop | topic | `demo_plan()` (3 steps, one behind a `compute_budget` approval) | `POST /voyages` |
+| `demo` | loop | topic | `demo_plan()` (3 steps; pass `params.confirm_budget: true` to put the second behind a `compute_budget` approval — the same opt-in as experiments) | `POST /voyages` |
 
 Two things worth knowing:
 
@@ -503,19 +503,14 @@ optional embedding.
 3. If nothing has been completed at all, there is nothing honest to wrap up: the run goes to
    `paused_error`.
 
-**Library monthly budgets** fold into the same mechanism instead of adding a second one
-(`apply_library_budget` in `app/services/ingest.py`). When an ingest run is created:
-
-- `derive_budget(knobs)` gives a starting figure — `max_papers × 20 000` tokens, or `None` for
-  unlimited;
-- `monthly_library_usage()` sums this calendar month's (UTC) `llm_usage` rows for this `library_id`;
-- if `monthly_budget - used <= 0`, creation is refused with `LibraryBudgetExhaustedError`, which the
-  API returns as `409 LIBRARY_BUDGET_EXHAUSTED` — the run is never created;
-- otherwise `max_tokens` is tightened to `min(derived, remaining)`.
-
-So a library budget behaves as: refuse to start when it is already spent, and otherwise cap this run
-so it cannot overshoot the month. Once running, it is just an ordinary token budget and hits the
-wrap-up path above. The cap resets on the first of the month.
+**Ingest runs default to an unlimited budget** (#734). `derive_budget(knobs)` returns
+`{"max_tokens": None}` unless the caller explicitly opts into a finite budget via
+`knobs.max_tokens` — the old implicit `max_papers × 20 000` derivation silently paused large
+libraries halfway and is gone. The library's `monthly_budget` is **display-only** now: the usage
+panel (`GET /libraries/{id}/budget`) still aggregates this calendar month's (UTC) `llm_usage`
+rows via `monthly_library_usage()` and flags `exhausted` when usage passes the reference cap,
+but nothing is refused or tightened anymore — no run is ever blocked by it. An explicitly
+opted-in token budget is an ordinary run budget and hits the wrap-up path above.
 
 ### 4.6 Progress, events and logs
 
@@ -605,7 +600,7 @@ Library incremental sync (`daily_wiki_ingest`) is **not** on the cron anymore: i
 the daily feed run's final `daily.sync_libraries` step, once the pool is actually refreshed —
 scheduling it at a fixed later hour meant betting the fetch had finished, and losing that bet
 synced every library against a stale pool. It runs at most once per day, and each library is
-wrapped in its own exception handler so one library's exhausted monthly budget cannot stop the
+wrapped in its own exception handler so one library failing to start cannot stop the
 libraries queued after it.
 
 Two more operational details:
@@ -632,8 +627,8 @@ refreshed. `create_ingest_voyage()`:
 1. refuses with `IngestConflictError` → `409 INGEST_ALREADY_RUNNING` if a non-terminal
    `wiki_bootstrap`/`wiki_ingest` run already exists **for this library** (mutual exclusion is keyed
    on the library, not the topic, precisely because library runs do not carry a `project_id`);
-2. derives the token budget from the knobs and narrows it by the library's remaining monthly budget,
-   refusing outright if the month is spent;
+2. derives the token budget from the knobs (`None` — unlimited — unless the caller explicitly
+   passed `knobs.max_tokens`; the monthly budget is display-only and never blocks creation);
 3. writes a `VoyageRun` with `kind="wiki_ingest"`, `library_id` set, **`project_id` left null**, and
    `checkpoint["params"] = {mode, knobs}`;
 4. writes an `ingest.started` activity row against the library;
@@ -690,7 +685,7 @@ anything.
 | 2 | `daily.upsert` | Deduplicates into the content pool and creates/merges feed entries; records the touched paper ids in `checkpoint["daily_touched_papers"]` and drops `daily_entries`. |
 | 3 | `daily.cleanup` | Expires entries outside the rolling 7-day window and reclaims papers nobody collected. |
 | 4 | `daily.embed` | Only if the admin setting `daily_feed_embed_enabled` is on: builds paper-level vectors for the papers touched in step 2. Deliberately best-effort — a failure is reported as `embed_error`, *not* `error`, so it cannot fail the run. |
-| 5 | `daily.sync_libraries` | Enqueues the incremental `wiki_ingest` for each built library — the pool is refreshed, so the sync has something to sync. Skipped when the fetch brought in nothing new; at most once per day; one library's failure (e.g. an exhausted monthly budget) does not stop the rest. |
+| 5 | `daily.sync_libraries` | Enqueues the incremental `wiki_ingest` for each built library — the pool is refreshed, so the sync has something to sync. Skipped when the fetch brought in nothing new; at most once per day; one library's failure does not stop the rest. |
 
 Handing the fetched entries forward through the checkpoint rather than re-fetching in step 2 is not
 just an optimisation: re-querying arXiv could return a different result set, and step 2's dedup keys
