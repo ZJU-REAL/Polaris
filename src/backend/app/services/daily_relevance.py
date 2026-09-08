@@ -38,7 +38,8 @@ from app.services.relevance import _include_keywords
 
 logger = logging.getLogger(__name__)
 
-#: 质心缓存的 system_settings 键前缀（每库一行）。
+#: 质心缓存的 system_settings 键前缀（每库一行）。派生缓存/机器状态，
+#: 不随 #737 的用户偏好迁移——删掉它下次读取会自动重算。
 ANCHOR_SETTING_PREFIX = "daily_library_anchor:"
 
 #: 排序融合里库相关性的权重（其余给新近度）。故意温和：每日页的主线是「今天有什么

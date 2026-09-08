@@ -3,7 +3,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import current_active_user
 from app.core.db import get_session
+from app.models.user import User
 from app.schemas.admin_settings import (
     AffiliationModeRead,
     AffiliationModeUpdate,
@@ -56,9 +58,12 @@ async def get_affiliation_mode(session: AsyncSession = Depends(get_session)) -> 
 async def set_affiliation_mode(
     payload: AffiliationModeUpdate,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
 ) -> AffiliationModeRead:
     try:
-        mode = await affiliations_service.set_affiliation_extraction_mode(session, payload.mode)
+        mode = await affiliations_service.set_affiliation_extraction_mode(
+            session, payload.mode, user=user
+        )
     except affiliations_service.InvalidAffiliationModeError as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"INVALID_AFFILIATION_MODE:{exc.mode}"
@@ -539,9 +544,10 @@ async def test_document_processing_credential(
 async def set_tts_settings(
     payload: TTSAdminSettings,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
 ) -> TTSAdminSettings:
     try:
-        saved = await tts_service.set_admin_settings(session, payload.model_dump())
+        saved = await tts_service.set_admin_settings(session, payload.model_dump(), user=user)
     except tts_service.InvalidTTSSettingError as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"INVALID_TTS_SETTING:{exc.field}"

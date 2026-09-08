@@ -25,6 +25,8 @@ from app.services import voyage_messages as messages_service
 
 logger = logging.getLogger(__name__)
 
+# 留在 system_settings（#737 分层）：这是管理员护栏（全局上限），存在的意义就是
+# 压住 users.settings 里的个人偏好（USER_SETTING_KEY），它本身不能再是用户偏好。
 SYSTEM_SETTING_KEY = "managed_command_watchdog"
 USER_SETTING_KEY = "managed_command_unanswered_minutes"
 DEFAULT_MAX_UNANSWERED_MINUTES = 120

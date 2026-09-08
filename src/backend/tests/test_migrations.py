@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d2dcfc8b899f"  # Resources, leases, polymorphic credentials (#677)
+HEAD_REVISION = "b737c1a2d3e4"  # User-preference settings move to users.settings (#737)
+RESOURCES_REVISION = "d2dcfc8b899f"  # Resources, leases, polymorphic credentials (#677)
 METHOD_VECTORS_REVISION = "e867fcbae4ea"  # Method purpose/mechanism vectors (#663)
 EXTRACTIONS_REVISION = "58b0bc2d809d"  # Paper skeleton extractions (#661)
 CITATIONS_REVISION = "57543f6328a1"  # Paper citation edges (#639)
@@ -608,7 +609,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["paper_extractions"]
     assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
 
-    # 先退掉资源/租约与凭据多态化（#677）：ssh_credentials 按原形状回来。
+    # 先退掉用户偏好搬家（#737）：纯数据迁移，schema 原样。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == RESOURCES_REVISION
+    assert "settings" in columns["users"]
+    assert "system_settings" in columns["_tables"]
+
+    # 再退掉资源/租约与凭据多态化（#677）：ssh_credentials 按原形状回来。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == METHOD_VECTORS_REVISION
@@ -1044,3 +1052,89 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "ingest_state" not in columns["projects"]
     assert "library_id" in columns["paper_tags"]
     assert "project_id" not in columns["paper_tags"]
+
+
+def test_user_preference_settings_copy_to_owner_and_roundtrip(tmp_path):
+    """#737 数据迁移：偏好键拷进 owner（最早活跃用户），downgrade 剔除新键。"""
+    import json
+
+    db_path = tmp_path / "prefs.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, RESOURCES_REVISION)
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    user_cols = (
+        "id, email, hashed_password, is_active, is_superuser, is_verified, "
+        "display_name, username_locked, settings, created_at, updated_at"
+    )
+    with engine.begin() as conn:
+        # 两个用户：owner（更早注册）带既有 settings，晚注册的不该收到拷贝
+        conn.execute(
+            text(
+                f"INSERT INTO users ({user_cols}) VALUES "
+                "('00000000-0000-0000-0000-000000000001', 'owner@e.com', 'x', 1, 0, 1, "
+                "'', 0, :settings, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            ),
+            {"settings": json.dumps({"tts": {"enabled": True}})},
+        )
+        conn.execute(
+            text(
+                f"INSERT INTO users ({user_cols}) VALUES "
+                "('00000000-0000-0000-0000-000000000002', 'late@e.com', 'x', 1, 0, 1, "
+                "'', 0, NULL, '2026-02-01 00:00:00', '2026-02-01 00:00:00')"
+            )
+        )
+        for key, value in {
+            "daily_feed_categories": ["cs.AI", "stat.ML"],
+            "daily_feed_sync_time": "03:45",
+            "daily_feed_retention_days": 21,
+            "library_sync_scope": "full",
+            "tts_config": {"enabled": True, "model": "m"},
+            "affiliation_extraction_mode": "on_compile",
+            "daily_feed_probe_state": {"date": "2026-09-08"},  # 机器状态，不迁移
+        }.items():
+            conn.execute(
+                text(
+                    "INSERT INTO system_settings (key, value, created_at, updated_at) "
+                    "VALUES (:k, :v, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                ),
+                {"k": key, "v": json.dumps(value)},
+            )
+
+    command.upgrade(cfg, HEAD_REVISION)
+    with engine.connect() as conn:
+        rows = dict(conn.execute(text("SELECT id, settings FROM users")).fetchall())
+        owner = json.loads(rows["00000000-0000-0000-0000-000000000001"])
+        assert owner["daily.categories"] == ["cs.AI", "stat.ML"]
+        assert owner["daily.sync_time"] == "03:45"
+        assert owner["daily.retention_days"] == 21
+        assert owner["daily.sync_scope"] == "full"
+        assert owner["tts.admin"] == {"enabled": True, "model": "m"}
+        assert owner["affiliations.extraction_mode"] == "on_compile"
+        assert owner["tts"] == {"enabled": True}  # 既有个人设置原样保留
+        assert "daily_feed_probe_state" not in owner  # 机器状态没被误迁
+        assert rows["00000000-0000-0000-0000-000000000002"] is None  # 晚注册者不收拷贝
+        # 旧行保留（迁移期只读回退的数据源）
+        n = conn.execute(
+            text("SELECT COUNT(*) FROM system_settings WHERE key = 'daily_feed_categories'")
+        ).scalar_one()
+        assert n == 1
+
+    command.downgrade(cfg, "-1")
+    with engine.connect() as conn:
+        raw = conn.execute(
+            text("SELECT settings FROM users WHERE id = '00000000-0000-0000-0000-000000000001'")
+        ).scalar_one()
+        owner = json.loads(raw)
+        assert "daily.categories" not in owner and "tts.admin" not in owner
+        assert owner["tts"] == {"enabled": True}  # 非命名空间键不受 downgrade 影响
+    engine.dispose()
+
+
+def test_user_preference_migration_skips_empty_deployment(tmp_path):
+    """没有用户就没有可归属的人：迁移应静默跳过而不是报错。"""
+    db_path = tmp_path / "empty.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, "head")
+    version, _ = _inspect_db(db_path)
+    assert version == HEAD_REVISION

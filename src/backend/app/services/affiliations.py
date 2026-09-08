@@ -18,14 +18,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
 from app.models.paper import Paper
-from app.models.system_setting import SystemSetting
+from app.models.user import User
+from app.services import owner_settings
 
 logger = logging.getLogger(__name__)
 
-# ---- 抽取模式（管理员可设，存 SystemSetting）----
+# ---- 抽取模式 ----
 # on_add：论文入库/补全阶段就用专门的 LLM 调用解析机构（默认）；
 # on_compile：跳过专门调用，把机构映射折叠进 wiki 编译那一次 LLM（省一次调用）。
+# 用户偏好（#737 配置分层）：存 owner 用户的 settings['affiliations.extraction_mode']，
+# 旧 system_settings 键只作迁移期只读回退（deprecated，一期后删）。
 AFFILIATION_MODE_KEY = "affiliation_extraction_mode"
+AFFILIATION_MODE_USER_KEY = "affiliations.extraction_mode"
 AFFILIATION_MODES = ("on_add", "on_compile")
 DEFAULT_AFFILIATION_MODE = "on_add"
 
@@ -39,21 +43,22 @@ class InvalidAffiliationModeError(ValueError):
 
 
 async def get_affiliation_extraction_mode(session: AsyncSession) -> str:
-    """读取机构抽取模式（system_settings 表，默认 on_add；非法存量值回落默认）。"""
-    row = await session.get(SystemSetting, AFFILIATION_MODE_KEY)
-    value = row.value if row is not None else None
+    """读取机构抽取模式（owner 用户偏好，默认 on_add；非法存量值回落默认）。"""
+    value = await owner_settings.read_setting(
+        session, AFFILIATION_MODE_USER_KEY, legacy_key=AFFILIATION_MODE_KEY
+    )
     return value if value in AFFILIATION_MODES else DEFAULT_AFFILIATION_MODE
 
 
-async def set_affiliation_extraction_mode(session: AsyncSession, mode: str) -> str:
+async def set_affiliation_extraction_mode(
+    session: AsyncSession, mode: str, *, user: User | None = None
+) -> str:
     """写入机构抽取模式；取值非法抛 InvalidAffiliationModeError。"""
     if mode not in AFFILIATION_MODES:
         raise InvalidAffiliationModeError(mode)
-    row = await session.get(SystemSetting, AFFILIATION_MODE_KEY)
-    if row is None:
-        session.add(SystemSetting(key=AFFILIATION_MODE_KEY, value=mode))
-    else:
-        row.value = mode
+    await owner_settings.write_setting(
+        session, AFFILIATION_MODE_USER_KEY, mode, legacy_key=AFFILIATION_MODE_KEY, user=user
+    )
     await session.commit()
     return mode
 

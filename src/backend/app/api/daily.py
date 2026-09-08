@@ -356,7 +356,7 @@ async def get_sync_scope(
 async def set_sync_scope(
     payload: LibrarySyncScopeUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_owner),
+    user: User = Depends(require_owner),
 ) -> LibrarySyncScopeRead:
     """改扫描范围（仅平台主人）。
 
@@ -366,7 +366,9 @@ async def set_sync_scope(
       再给第二次。
     - ``full``：扫整张每日池表。最稳，代价是每次重复排序几千篇早就处理过的。
     """
-    return LibrarySyncScopeRead(scope=await daily_service.set_sync_scope(session, payload.scope))
+    return LibrarySyncScopeRead(
+        scope=await daily_service.set_sync_scope(session, payload.scope, user=user)
+    )
 
 
 @router.get("/retention", response_model=DailyRetentionRead)
@@ -382,7 +384,7 @@ async def get_retention(
 async def set_retention(
     payload: DailyRetentionUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_owner),
+    user: User = Depends(require_owner),
 ) -> DailyRetentionRead:
     """改保留天数（仅平台主人）。
 
@@ -390,7 +392,9 @@ async def set_retention(
     所以保留期也就是「一个文献库最多能漏几天还能自愈」——掉出窗口的论文永久错过，
     arXiv 那边不会再给第二次。调小要谨慎。
     """
-    return DailyRetentionRead(days=await daily_service.set_retention_days(session, payload.days))
+    return DailyRetentionRead(
+        days=await daily_service.set_retention_days(session, payload.days, user=user)
+    )
 
 
 @router.get("/sync-time", response_model=DailySyncTimeRead)
@@ -407,14 +411,16 @@ async def get_sync_time(
 async def set_sync_time(
     payload: DailySyncTimeUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_owner),
+    user: User = Depends(require_owner),
 ) -> DailySyncTimeRead:
     """改抓取时刻（仅平台主人）。
 
     arXiv 每天约北京时间 10:00 放新公告，早于这个点跑只会拿到**前一天**的列表。
     库同步与发表匹配的时刻由它派生（+90 / +150 分钟），不必分别设置。
     """
-    hour, minute = await daily_service.set_sync_time(session, payload.hour, payload.minute)
+    hour, minute = await daily_service.set_sync_time(
+        session, payload.hour, payload.minute, user=user
+    )
     return DailySyncTimeRead(hour=hour, minute=minute)
 
 
@@ -454,10 +460,10 @@ async def get_categories(
 async def set_categories(
     payload: DailyCategoriesUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_owner),
+    user: User = Depends(require_owner),
 ) -> DailyCategoriesRead:
     try:
-        categories = await daily_service.set_categories(session, payload.categories)
+        categories = await daily_service.set_categories(session, payload.categories, user=user)
     except daily_service.InvalidCategoryError as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"INVALID_CATEGORY:{exc.category}"

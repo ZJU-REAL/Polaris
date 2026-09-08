@@ -34,7 +34,7 @@ from app.models.topic_shelf import TopicPaper
 from app.models.user import User
 from app.models.vectors import PaperVector
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep
-from app.services import paper_wiki, user_library
+from app.services import owner_settings, paper_wiki, user_library
 from app.services import projects as projects_service
 from app.services import topic_shelf as shelf_service
 from app.services.dedup import pool_dedup_key
@@ -45,7 +45,10 @@ from app.services.paper_import import _parse_iso
 
 logger = logging.getLogger(__name__)
 
+# 订阅分类是用户偏好（#737 配置分层）：存 owner 用户的 settings['daily.categories']，
+# 旧 system_settings 键只作迁移期只读回退（deprecated，一期后连旧行一起删）。
 CATEGORIES_SETTING_KEY = "daily_feed_categories"
+CATEGORIES_USER_KEY = "daily.categories"
 
 # 注：论文级向量的管理员开关已升格为平台总闸并改名（daily_feed_embed_enabled →
 # 默认关意味着每日推送的论文连论文级向量都没有、语义检索里根本搜不到；而只管每日推送
@@ -88,13 +91,17 @@ async def get_categories(session: AsyncSession) -> list[str]:
     的论文，还以为系统坏了。现在空列表如实返回，抓取端拿到空就不抓，
     API/前端提示「先在设置里订阅分类」。
     """
-    row = await session.get(SystemSetting, CATEGORIES_SETTING_KEY)
-    if row is None or not isinstance(row.value, list):
+    value = await owner_settings.read_setting(
+        session, CATEGORIES_USER_KEY, legacy_key=CATEGORIES_SETTING_KEY
+    )
+    if not isinstance(value, list):
         return []
-    return [str(c) for c in row.value]
+    return [str(c) for c in value]
 
 
-async def set_categories(session: AsyncSession, categories: list[str]) -> list[str]:
+async def set_categories(
+    session: AsyncSession, categories: list[str], *, user: User | None = None
+) -> list[str]:
     cleaned: list[str] = []
     for raw in categories:
         cat = raw.strip()
@@ -106,11 +113,9 @@ async def set_categories(session: AsyncSession, categories: list[str]) -> list[s
             cleaned.append(cat)
     # 允许清空：空订阅是合法状态（池子停止进新论文，界面另有提示），
     # 不再用「至少留一个分类」逼着用户保留不相干的缺省
-    row = await session.get(SystemSetting, CATEGORIES_SETTING_KEY)
-    if row is None:
-        session.add(SystemSetting(key=CATEGORIES_SETTING_KEY, value=cleaned))
-    else:
-        row.value = cleaned
+    await owner_settings.write_setting(
+        session, CATEGORIES_USER_KEY, cleaned, legacy_key=CATEGORIES_SETTING_KEY, user=user
+    )
     await session.commit()
     return cleaned
 
@@ -1501,6 +1506,8 @@ def feed_state(
 # ---- 抓取时刻（可配置） ----
 
 SYNC_TIME_SETTING_KEY = "daily_feed_sync_time"
+# 用户偏好（#737）：存 owner settings['daily.sync_time']（"HH:MM"），旧键只读回退。
+SYNC_TIME_USER_KEY = "daily.sync_time"
 
 #: 默认**开始探测**的时刻（UTC）= 北京时间 09:30。
 #:
@@ -1514,8 +1521,9 @@ DEFAULT_SYNC_UTC = (1, 30)
 
 async def get_sync_time(session: AsyncSession) -> tuple[int, int]:
     """抓取时刻（UTC 时、分）。存量值非法时回落默认。"""
-    row = await session.get(SystemSetting, SYNC_TIME_SETTING_KEY)
-    value = row.value if row is not None else None
+    value = await owner_settings.read_setting(
+        session, SYNC_TIME_USER_KEY, legacy_key=SYNC_TIME_SETTING_KEY
+    )
     if isinstance(value, str) and ":" in value:
         hh, _, mm = value.partition(":")
         try:
@@ -1527,21 +1535,24 @@ async def get_sync_time(session: AsyncSession) -> tuple[int, int]:
     return DEFAULT_SYNC_UTC
 
 
-async def set_sync_time(session: AsyncSession, hour: int, minute: int) -> tuple[int, int]:
+async def set_sync_time(
+    session: AsyncSession, hour: int, minute: int, *, user: User | None = None
+) -> tuple[int, int]:
     if not (0 <= hour < 24 and 0 <= minute < 60):
         raise ValueError(f"invalid time: {hour}:{minute}")
     value = f"{hour:02d}:{minute:02d}"
-    row = await session.get(SystemSetting, SYNC_TIME_SETTING_KEY)
-    if row is None:
-        session.add(SystemSetting(key=SYNC_TIME_SETTING_KEY, value=value))
-    else:
-        row.value = value
+    await owner_settings.write_setting(
+        session, SYNC_TIME_USER_KEY, value, legacy_key=SYNC_TIME_SETTING_KEY, user=user
+    )
     await session.commit()
     return hour, minute
 
 
 # ---- 探测次数上限（可配置） ----
 
+# 这两个键留在 system_settings（#737 分层）：probe_state 是机器状态（今天探了几次、
+# 探到哪批），根本不是配置；max_probe_attempts 是给 arXiv 探测限流的运维旋钮，管的
+# 是平台对外的请求节奏而不是个人口味——归属有争议时保守留原层。
 MAX_PROBE_SETTING_KEY = "daily_feed_max_probe_attempts"
 PROBE_STATE_SETTING_KEY = "daily_feed_probe_state"
 
@@ -1674,6 +1685,7 @@ async def claim_today(session: AsyncSession, key: str, *, now: dt.datetime) -> b
 
     给不建任务记录、因而无从按 VoyageRun 判重的检查点任务用（如发表匹配）。
     先占位再干活：检查点每 15 分钟一次，不占位就会重复触发。
+    占位键是机器状态，留在 system_settings（#737 分层），不随用户偏好迁移。
     """
     today = now.date().isoformat()
     row = await session.get(SystemSetting, key)
@@ -1776,6 +1788,8 @@ async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | Non
 # ---- 保留期（可配置） ----
 
 RETENTION_SETTING_KEY = "daily_feed_retention_days"
+# 用户偏好（#737）：存 owner settings['daily.retention_days']，旧键只读回退。
+RETENTION_USER_KEY = "daily.retention_days"
 
 #: 每日池默认保留天数。这张表同时是**库同步的取数窗口**（同步全量重扫它），所以保留期
 #: 也就是「一个库最多能漏几天还能自愈」——漏掉的那几天只要论文还在窗口内，下次同步
@@ -1785,21 +1799,22 @@ DEFAULT_RETENTION_DAYS = 14
 
 async def get_retention_days(session: AsyncSession) -> int:
     """保留天数（默认 14）。存量值非法时回落默认。"""
-    row = await session.get(SystemSetting, RETENTION_SETTING_KEY)
-    value = row.value if row is not None else None
+    value = await owner_settings.read_setting(
+        session, RETENTION_USER_KEY, legacy_key=RETENTION_SETTING_KEY
+    )
     if isinstance(value, int) and 1 <= value <= 90:
         return value
     return DEFAULT_RETENTION_DAYS
 
 
-async def set_retention_days(session: AsyncSession, days: int) -> int:
+async def set_retention_days(
+    session: AsyncSession, days: int, *, user: User | None = None
+) -> int:
     if not (1 <= days <= 90):
         raise ValueError(f"retention out of range: {days}")
-    row = await session.get(SystemSetting, RETENTION_SETTING_KEY)
-    if row is None:
-        session.add(SystemSetting(key=RETENTION_SETTING_KEY, value=days))
-    else:
-        row.value = days
+    await owner_settings.write_setting(
+        session, RETENTION_USER_KEY, days, legacy_key=RETENTION_SETTING_KEY, user=user
+    )
     await session.commit()
     return days
 
@@ -1807,6 +1822,8 @@ async def set_retention_days(session: AsyncSession, days: int) -> int:
 # ---- 库同步的扫描范围（可配置） ----
 
 SYNC_SCOPE_SETTING_KEY = "library_sync_scope"
+# 用户偏好（#737，与保留天数同族的取数口味）：存 owner settings['daily.sync_scope']。
+SYNC_SCOPE_USER_KEY = "daily.sync_scope"
 
 #: 库同步每次扫描每日池的范围：
 #:
@@ -1820,18 +1837,17 @@ SYNC_SCOPES = ("since_last", "daily", "full")
 
 
 async def get_sync_scope(session: AsyncSession) -> str:
-    row = await session.get(SystemSetting, SYNC_SCOPE_SETTING_KEY)
-    value = row.value if row is not None else None
+    value = await owner_settings.read_setting(
+        session, SYNC_SCOPE_USER_KEY, legacy_key=SYNC_SCOPE_SETTING_KEY
+    )
     return value if value in SYNC_SCOPES else DEFAULT_SYNC_SCOPE
 
 
-async def set_sync_scope(session: AsyncSession, scope: str) -> str:
+async def set_sync_scope(session: AsyncSession, scope: str, *, user: User | None = None) -> str:
     if scope not in SYNC_SCOPES:
         raise ValueError(f"unknown scope: {scope}")
-    row = await session.get(SystemSetting, SYNC_SCOPE_SETTING_KEY)
-    if row is None:
-        session.add(SystemSetting(key=SYNC_SCOPE_SETTING_KEY, value=scope))
-    else:
-        row.value = scope
+    await owner_settings.write_setting(
+        session, SYNC_SCOPE_USER_KEY, scope, legacy_key=SYNC_SCOPE_SETTING_KEY, user=user
+    )
     await session.commit()
     return scope

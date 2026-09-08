@@ -11,6 +11,32 @@ Application settings use the `POLARIS_` prefix (parsed by pydantic-settings). A 
 directly by the Postgres container image or by the Docker build do not use that prefix; they are
 noted below.
 
+## Configuration layering (#737)
+
+Configuration lives in four layers. Each value has exactly one home; the layer answers "who owns
+this and when can it change".
+
+| Layer | Owner | What belongs here | Examples |
+| --- | --- | --- | --- |
+| Environment (`.env` / `POLARIS_*`) | The person deploying | **Deployment facts**: values that describe the machine and its surroundings, fixed before the process starts and identical for every user of the deployment. | database/redis URLs, secret keys, SMTP, data dir, proxies |
+| Kernel config tree + kernel KV (desktop SQLite) | The kernel | **Plugin composition and kernel behavior**: which plugins are loaded, their config, and settings that change what the kernel itself does. | plugin entries/enable state, plugin install records, market index endpoint (`PluginMetaStore` key `market:endpoint`) |
+| Electron store (`userData/config.json`) | The desktop shell | **Shell-only preferences**: things only the window chrome cares about, meaningless to the kernel or backend. | window bounds/maximized state, server URL |
+| Database | The application | **User and domain state**. Two sub-homes: *user preferences* go to `users.settings` namespaced keys on the deployment owner (earliest active user; the desktop's single user is the owner), read/written through `app/services/owner_settings.py`; *platform-operational state* stays in `system_settings`. | preferences: `daily.categories`, `daily.sync_time`, `daily.retention_days`, `daily.sync_scope`, `tts.admin`, `affiliations.extraction_mode`; operational: probe state, `claim_today` markers, relevance-anchor caches, active embedding space, LLM call-log switch, watchdog cap, experiment host facts, literature/document-processing docs (user-tunable fields share one atomic document with encrypted credential pools, so they conservatively stay put) |
+
+Placement test, in order:
+
+1. Known before the process starts, per-machine, same for everyone? → environment.
+2. Does it configure what the kernel loads or how the kernel behaves? → kernel tree/KV.
+3. Does only the desktop window chrome care? → electron store.
+4. Is it someone's preference? → `users.settings` (owner-scoped, namespaced key). Is it machine
+   state, a derived cache, or an operator guardrail? → `system_settings`.
+
+Migration notes (one release only): reads of the migrated preference keys fall back to the legacy
+`system_settings` rows when the new key is absent, and the desktop market endpoint reads through to
+the old electron-store value (migrating a non-default value into the kernel KV on first read).
+Writes go to the new home only. The fallbacks and the legacy rows are removed together next
+release.
+
 ## Application settings (`POLARIS_` prefix)
 
 | Variable | Purpose | Default / example |

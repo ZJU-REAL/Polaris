@@ -29,6 +29,7 @@ import { kernelPluginMeta, localBackend, marketPluginsDir, startKernel, stopKern
 import { capabilityManifest } from './main/capabilities';
 import { installIpc } from './main/ipc/router';
 import {
+  MARKET_ENDPOINT_META_KEY,
   awaitInstallForTesting,
   marketFetchIndex,
   marketGetEndpoint,
@@ -37,6 +38,7 @@ import {
   marketUninstall,
   setMarketFetchForTesting,
 } from './main/ipc/methods.market';
+import { writeConfig } from './main/store';
 import { pluginsDisable, pluginsEnable, pluginsExportTree, pluginsList } from './main/ipc/methods.plugins';
 import { MARKET_ENDPOINT_DEFAULT } from './shared/contract';
 import { extractTarGz } from './main/updates/tar';
@@ -473,6 +475,26 @@ void app.whenReady().then(async () => {
   );
   marketSetEndpoint('');
   check('空串复位官方默认源', marketGetEndpoint().isDefault);
+
+  // #737 配置分层：索引源的真相在 kernel KV（PluginMetaStore），旧 electron
+  // store 只是读穿回退 + 一次性迁移源。
+  const endpointMeta = kernelPluginMeta();
+  check(
+    'setEndpoint 落 kernel KV（market:endpoint）',
+    endpointMeta?.get(MARKET_ENDPOINT_META_KEY) === MARKET_ENDPOINT_DEFAULT,
+  );
+  endpointMeta?.delete(MARKET_ENDPOINT_META_KEY);
+  writeConfig({ marketEndpoint: 'https://legacy.example.edu/market/index.json' });
+  check(
+    '读穿 shim：KV 无值时回读旧 store 并迁移写入 KV',
+    marketGetEndpoint().endpoint === 'https://legacy.example.edu/market/index.json'
+      && endpointMeta?.get(MARKET_ENDPOINT_META_KEY)
+        === 'https://legacy.example.edu/market/index.json',
+  );
+  // 复位两层，别让后面的安装链路拿错索引源
+  marketSetEndpoint('');
+  writeConfig({ marketEndpoint: MARKET_ENDPOINT_DEFAULT });
+  check('shim 迁移后空串仍复位官方默认源', marketGetEndpoint().isDefault);
 
   // 现造一个合法的 npm 发布包（ustar 头带校验和：市场解包器会验，
   // 上面更新包用的 tarEntry 不带校验和，不能复用）

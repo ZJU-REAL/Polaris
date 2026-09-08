@@ -8,7 +8,12 @@
    - install 的长任务化：invoke 立刻返回 JobHandle，kernel 的四个安装
      阶段（下载/校验/解压/登记）翻译成 job.progress，成败走 job.done/
      job.error（错误码用 MarketError.code，前端可分流展示）；
-   - 索引源持久化：读写 store.ts 的 marketEndpoint，空串复位官方默认。
+   - 索引源持久化（#737 配置分层）：市场源配置的是 kernel 的行为（索引
+     从哪拉、装什么包），归内核持久层——存 PluginMetaStore（kernel 的
+     SQLite KV）键 'market:endpoint'。旧 electron store 的 marketEndpoint
+     只作读穿回退：KV 无值时读旧 store，非默认值顺手迁移写入 KV（一期
+     后删）。KV 不可用的降级会话（storage 挂载失败）退回旧 store，壳的
+     换源能力不因持久层故障消失。空串复位官方默认。
 
    fetch 经模块级变量注入：smoke 测试把它换成离线替身跑完整安装链路，
    生产路径永远是 globalThis.fetch（不换源不叠代理，网络语义与索引
@@ -36,6 +41,31 @@ import {
 import { kernelConfigTree, kernelPluginMeta, marketPluginsDir } from '../kernel';
 import { readConfig, writeConfig } from '../store';
 import { fail, finish, progress, startJob } from './events';
+
+/** 市场索引源在 kernel 持久层（PluginMetaStore）里的键（#737）。 */
+export const MARKET_ENDPOINT_META_KEY = 'market:endpoint';
+
+/** 当前生效的索引源：优先 kernel KV，读穿旧 electron store（见文件头）。 */
+function readEndpoint(): string {
+  const meta = kernelPluginMeta();
+  const stored = meta?.get(MARKET_ENDPOINT_META_KEY);
+  if (typeof stored === 'string' && stored) return stored;
+  const legacy = readConfig().marketEndpoint;
+  // 迁移写入只搬「用户改过源」这个事实；默认值不落 KV，让「从未配置」
+  // 与「显式选了官方源」保持可区分（也避免每次读都白写一行）。
+  if (meta && legacy !== MARKET_ENDPOINT_DEFAULT) meta.set(MARKET_ENDPOINT_META_KEY, legacy);
+  return legacy;
+}
+
+function writeEndpoint(endpoint: string): void {
+  const meta = kernelPluginMeta();
+  if (meta) {
+    meta.set(MARKET_ENDPOINT_META_KEY, endpoint);
+    return;
+  }
+  // 持久层不可用（内存树会话）：退回旧 store，至少本机仍能换源
+  writeConfig({ marketEndpoint: endpoint });
+}
 
 /** 安装阶段 → job.progress 的进度分子（分母恒为 4）。 */
 const PHASE_STEP: Record<string, number> = { download: 1, verify: 2, extract: 3, register: 4 };
@@ -70,7 +100,7 @@ function requireMarket(): { tree: SqliteTree; meta: NonNullable<ReturnType<typeo
 
 export async function marketFetchIndex(): Promise<MarketIndexEntry[]> {
   // 读索引不需要树/持久层，网络与校验失败原样抛给前端展示
-  return await fetchIndex(readConfig().marketEndpoint, { fetchImpl });
+  return await fetchIndex(readEndpoint(), { fetchImpl });
 }
 
 export function marketInstall(name: string, version: string): JobHandle {
@@ -111,7 +141,7 @@ export async function marketUninstall(name: string): Promise<MarketUninstallResu
 }
 
 export function marketGetEndpoint(): MarketEndpoint {
-  const endpoint = readConfig().marketEndpoint;
+  const endpoint = readEndpoint();
   return { endpoint, isDefault: endpoint === MARKET_ENDPOINT_DEFAULT };
 }
 
@@ -127,6 +157,6 @@ export function marketSetEndpoint(endpoint: string): MarketEndpoint {
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
     throw new Error(`${ERR_INVALID_PARAMS}: endpoint must be http(s)`);
   }
-  writeConfig({ marketEndpoint: next });
+  writeEndpoint(next);
   return { endpoint: next, isDefault: next === MARKET_ENDPOINT_DEFAULT };
 }

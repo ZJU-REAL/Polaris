@@ -22,7 +22,12 @@ export interface DesktopConfig {
   /** 空串 = 尚未配置，前端进入首启配置页。 */
   serverUrl: string;
   window: WindowState;
-  /** 插件市场索引源（#708）。可换源是一等能力，故进持久配置而不是写死。 */
+  /**
+   * 插件市场索引源（#708）。
+   * @deprecated #737 起真相在 kernel 持久层（PluginMetaStore 'market:endpoint'，
+   * 见 methods.market.ts）：这里只剩迁移期读穿回退与「持久层不可用」的降级落点，
+   * 一期后随回退一起删。electron store 只放纯壳偏好（窗口状态/服务器地址）。
+   */
   marketEndpoint: string;
 }
 
