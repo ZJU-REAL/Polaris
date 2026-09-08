@@ -542,9 +542,9 @@ async def test_categories_admin_and_refresh(client, queue_stub):
     # 本文件的 autouse fixture 播种了历史三件套；「没配过就是空」见 test_no_cs_defaults
     assert resp.json()["categories"] == ["cs.AI", "cs.CL", "cs.CV"]
 
-    # 任何登录用户都能改分类（admin 治理已随 #614 移除）；非法格式 422
+    # 分类只有平台主人能改（#722）；非法格式 422
     resp = await client.put("/api/daily/categories", json={"categories": ["cs.LG"]}, headers=mh)
-    assert resp.status_code == 200 and resp.json()["categories"] == ["cs.LG"]
+    assert resp.status_code == 403 and resp.json()["detail"] == "OWNER_REQUIRED"
 
     resp = await client.put(
         "/api/daily/categories", json={"categories": ["cs.LG", "stat.ML"]}, headers=ah
@@ -1022,10 +1022,10 @@ async def test_sync_time_is_admin_configurable(client):
     async with get_sessionmaker()() as session:
         assert await daily_feed.get_sync_time(session) == (3, 45)
 
-    # 任何登录用户都能改（#614）
+    # 只有平台主人能改（#722）
     other = {"Authorization": f"Bearer {await register_and_login(client, email='u2@e.com')}"}
     resp = await client.put("/api/daily/sync-time", json={"hour": 5, "minute": 0}, headers=other)
-    assert resp.status_code == 200
+    assert resp.status_code == 403
 
 
 async def test_due_now_gates_on_the_configured_time(client):
@@ -1250,7 +1250,7 @@ async def test_max_probe_attempts_defaults_to_ten_and_is_configurable(client):
 
     assert (
         await client.put("/api/daily/probe-attempts", json={"attempts": 4}, headers=member)
-    ).status_code == 200  # 任何登录用户都能改（#614）
+    ).status_code == 403  # 只有平台主人能改（#722）
 
     resp = await client.put("/api/daily/probe-attempts", json={"attempts": 4}, headers=admin)
     assert resp.status_code == 200 and resp.json()["attempts"] == 4
@@ -1465,7 +1465,7 @@ async def test_retention_defaults_to_two_weeks_and_is_configurable(client):
     other = {"Authorization": f"Bearer {await register_and_login(client, email='r2@e.com')}"}
     assert (
         await client.put("/api/daily/retention", json={"days": 3}, headers=other)
-    ).status_code == 200  # 任何登录用户都能改（#614）
+    ).status_code == 403  # 只有平台主人能改（#722）
 
 
 async def test_cleanup_uses_the_configured_retention(client, monkeypatch):

@@ -93,8 +93,8 @@ async def _admin_and_member(client):
     )
 
 
-async def test_admin_llm_requires_login(client):
-    """role 治理移除（#614）后管理端点对任何登录用户开放；未登录仍 401。"""
+async def test_admin_llm_owner_only(client):
+    """admin 面回到单一主人守卫（#722）：首位用户放行，其余登录用户 403，未登录 401。"""
     admin, member = await _admin_and_member(client)
     for method, url in [
         ("GET", "/api/admin/llm/providers"),
@@ -104,7 +104,8 @@ async def test_admin_llm_requires_login(client):
         resp = await client.request(method, url)
         assert resp.status_code == 401, (method, url, resp.status_code)
         resp = await client.request(method, url, headers=member)
-        assert resp.status_code == 200, (method, url, resp.status_code)
+        assert resp.status_code == 403, (method, url, resp.status_code)
+        assert resp.json()["detail"] == "OWNER_REQUIRED"
     resp = await client.get("/api/admin/llm/providers", headers=admin)
     assert resp.status_code == 200
 
@@ -303,11 +304,13 @@ async def _fake_provider_id(client, admin) -> str:
     return resp.json()["id"]
 
 
-async def test_test_model_open_to_any_user(client):
+async def test_test_model_owner_only(client):
     admin, member = await _admin_and_member(client)
     provider_id = await _fake_provider_id(client, admin)
     body = {"provider_id": provider_id, "model": "fake-default", "capability": "chat"}
     resp = await client.post("/api/admin/llm/test-model", json=body, headers=member)
+    assert resp.status_code == 403  # admin 面整体回到主人守卫（#722）
+    resp = await client.post("/api/admin/llm/test-model", json=body, headers=admin)
     assert resp.status_code == 200
 
 

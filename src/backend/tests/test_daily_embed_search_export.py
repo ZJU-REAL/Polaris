@@ -148,12 +148,12 @@ async def test_backfill_counts(client, monkeypatch):
     assert resp.status_code == 200
     assert resp.json() == {"embedded": 0, "skipped": 1, "failed": 0}
 
-    # 管理端点对任何登录用户开放（#614）
+    # admin 面回到单一主人守卫（#722）：第二个注册用户 403
     other = await register_and_login(client, email="bob@example.com")
     resp = await client.post(
         "/api/admin/settings/daily-embed/backfill", headers={"Authorization": f"Bearer {other}"}
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 403
 
 
 # ---- 3. 语义检索（sqlite 下回退关键词） ----

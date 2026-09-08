@@ -424,7 +424,7 @@ async def _manage_manuscript_project(session: AsyncSession, manuscript: Manuscri
         session, project_id=manuscript.project_id, user_id=user.id
     )
     if project is None or not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_REQUIRED")
     return project
 
 
@@ -475,7 +475,7 @@ async def batch_manuscripts(
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     if not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_REQUIRED")
     if data.action == "trash":
         n = await manuscripts_service.trash_manuscripts(
             session, project_id=project_id, ids=data.ids
@@ -502,7 +502,7 @@ async def empty_manuscript_trash(
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     if not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_REQUIRED")
     n = await manuscripts_service.purge_manuscripts(session, project_id=project_id, ids=None)
     return BatchResult(affected=n)
 

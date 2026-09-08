@@ -202,7 +202,7 @@ async def _manage_exp_project(session: AsyncSession, project_id: uuid.UUID, user
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     if not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_REQUIRED")
     return project
 
 

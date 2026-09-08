@@ -69,9 +69,10 @@ async def test_admin_and_personal_tts_settings(client):
     admin = await _headers(client)
     member = await _headers(client, "tts-member@example.com")
 
-    # 管理端点对任何登录用户开放（#614）
-    allowed = await client.get("/api/admin/settings/tts", headers=member)
-    assert allowed.status_code == 200
+    # admin 面回到单一主人守卫（#722）：第二个注册用户 403
+    denied = await client.get("/api/admin/settings/tts", headers=member)
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "OWNER_REQUIRED"
 
     payload = {
         "enabled": True,

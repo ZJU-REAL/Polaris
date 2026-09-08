@@ -3,12 +3,15 @@
 注意：必须在 import app 之前设置环境变量（Settings 是 lru_cache 的）。
 """
 
+import datetime as dt
+import itertools
 import os
 import re
 import tempfile
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select as sa_select
 
 _TMPDIR = tempfile.mkdtemp(prefix="polaris-test-")
 os.environ["POLARIS_ENV"] = "dev"
@@ -24,12 +27,14 @@ os.environ["POLARIS_OPENALEX_ALIGN_ON_ENRICH"] = "0"
 # 不该有意外文件产物；投影专项测试（test_file_projection.py）用 fixture 单独开
 os.environ["POLARIS_FILE_PROJECTION"] = "0"
 
-from app.core.db import Base, dispose_engine, get_engine  # noqa: E402
+from app.core.db import Base, dispose_engine, get_engine, get_sessionmaker  # noqa: E402
 from app.core.events import get_event_bus  # noqa: E402
 from app.core.llm.router import reset_llm_router  # noqa: E402
 from app.core.queue import get_task_queue  # noqa: E402
 from app.core.redis import get_redis_dep  # noqa: E402
 from app.main import create_app  # noqa: E402
+from app.models.user import User  # noqa: E402
+from app.services.owner import reset_owner_cache  # noqa: E402
 
 import app.models  # noqa: E402,F401  isort: skip  注册全部表
 
@@ -44,6 +49,16 @@ async def app():
     reset_llm_router()  # 丢弃路由缓存，避免跨测试串味
     yield create_app()
     await dispose_engine()
+
+
+@pytest_asyncio.fixture(autouse=True)
+def _fresh_owner_cache():
+    """owner id 是进程内缓存（#722）：每个用例都换新库/新用户集，先清缓存再跑。
+
+    autouse 而不是挂在 app 夹具里——不经 app 夹具的用例也可能间接触发解析，
+    统一在这里清一次最不容易漏。"""
+    reset_owner_cache()
+    yield
 
 
 @pytest_asyncio.fixture
@@ -332,6 +347,26 @@ def _username_from_email(email: str) -> str:
     return (uname + "_u")[:32] if len(uname) < 3 else uname[:32]
 
 
+# 本机 dev 虚拟机的容器墙钟每 ~10 秒跳 ±1 秒（#234 的根因）：连续两次注册的
+# created_at 可能倒挂，「服务器档 owner = created_at 最早的用户」（#722）会被随机
+# 翻车。注册成功后把 created_at 钉成进程内单调递增，还原生产环境（时钟正常）本来
+# 就成立的「注册顺序 == created_at 顺序」，测试才有确定性。
+_register_seq = itertools.count()
+_register_epoch: dt.datetime | None = None
+
+
+async def _pin_created_at(email: str) -> None:
+    global _register_epoch
+    if _register_epoch is None:
+        _register_epoch = dt.datetime.now(dt.UTC)
+    async with get_sessionmaker()() as session:
+        user = (
+            await session.execute(sa_select(User).where(User.email == email))
+        ).scalar_one()
+        user.created_at = _register_epoch + dt.timedelta(seconds=next(_register_seq))
+        await session.commit()
+
+
 async def register_and_login(
     client: AsyncClient, email: str = "alice@example.com", username: str | None = None
 ) -> str:
@@ -347,6 +382,7 @@ async def register_and_login(
         },
     )
     assert resp.status_code == 201, resp.text
+    await _pin_created_at(email)
     resp = await client.post(
         "/api/auth/jwt/login",
         data={"username": email, "password": "str0ng-password"},
