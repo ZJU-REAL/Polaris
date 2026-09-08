@@ -35,7 +35,6 @@ async def _target(email: str, *, name: str = "batch library", papers: int = 1):
             name=name,
             is_public=False,
             submitted_by=owner.id,
-            created_by=owner.id,
         )
         session.add(library)
         await session.flush()

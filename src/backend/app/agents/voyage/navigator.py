@@ -1,8 +1,9 @@
 """Navigator（领航 · planning）：把目标分解为步骤列表；执行失败时依据诊断重规划。
 
 - 输出严格 JSON（{"steps": [...]}），做 schema 校验，解析失败重试 2 次；
-- ``demo`` kind 用固定三步计划（不依赖 LLM 规划质量），第 2 步声明
-  ``requires_gate="compute_budget"`` 以演示人在环闸门。
+- ``demo`` kind 用固定三步计划（不依赖 LLM 规划质量）；显式传
+  ``params.confirm_budget=True`` 时第 2 步声明 ``requires_gate="compute_budget"``
+  以演示人在环闸门（与 experiment 同款 opt-in，#626/#734）。
 """
 
 import json
@@ -553,7 +554,14 @@ def discovery_plan(run: VoyageRun) -> list[dict[str, Any]]:
 
 
 def demo_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """demo 航程固定三步：分析目标 → 生成产物（过闸门）→ 总结。"""
+    """demo 航程固定三步：分析目标 → 生成产物 → 总结。
+
+    预算闸门默认不拦（#626 的漏网处，#734 补齐）：与 experiment_plan 同款，
+    创建时显式传 params.confirm_budget=True 才在「生成产物」前停下等审批；
+    机制（Gate 模型 + engine 断点）原样保留，闸门链路的测试靠 opt-in 演示。
+    """
+    checkpoint = (run.checkpoint if run is not None else None) or {}
+    confirm_budget = bool((checkpoint.get("params") or {}).get("confirm_budget"))
     return [
         {
             "title": "分析目标",
@@ -573,7 +581,7 @@ def demo_plan(run: VoyageRun) -> list[dict[str, Any]]:
                 "content": "# Demo 任务产物\n\n目标：{goal}\n\n（由演示任务生成）\n",
             },
             "acceptance": "产物已写入 checkpoint",
-            "requires_gate": "compute_budget",
+            "requires_gate": "compute_budget" if confirm_budget else None,
         },
         {
             "title": "总结",

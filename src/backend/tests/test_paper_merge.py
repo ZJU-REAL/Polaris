@@ -106,11 +106,9 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
         )
         # 另一用户只有 drop 行 → repoint
         session.add(PaperUserMeta(paper_id=drop.id, user_id=other_id, starred=True))
-        # 书架冲突：同课题两行（keep 行无快照）
+        # 书架冲突：同课题两行（keep 行无备注）
         session.add(TopicPaper(topic_id=pid, paper_id=keep.id))
-        session.add(
-            TopicPaper(topic_id=pid, paper_id=drop.id, wiki_snapshot="snap", note="why")
-        )
+        session.add(TopicPaper(topic_id=pid, paper_id=drop.id, note="why"))
         session.add(TopicPaper(topic_id=pid_b, paper_id=drop.id))  # 仅 drop → repoint
         # 软引用
         session.add(
@@ -202,7 +200,7 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
             ).all()
         )
         assert chunk_count == 2
-        # 书架：keep 行补了快照与备注
+        # 书架：keep 行补了备注（wiki 快照列已退役删除，解读统一走 paper_wikis）
         shelf = (
             await session.execute(
                 select(TopicPaper).where(TopicPaper.paper_id == keep_id)
@@ -210,7 +208,6 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
         ).scalars().all()
         assert len(shelf) == 2
         merged_row = next(t for t in shelf if t.topic_id == uuid.UUID(project_id))
-        assert merged_row.wiki_snapshot == "snap"
         assert merged_row.note == "why"
         # 软引用 repoint
         entry = (

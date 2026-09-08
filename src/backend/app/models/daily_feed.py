@@ -11,7 +11,7 @@ import datetime as dt
 import uuid
 from typing import Any
 
-from sqlalchemy import Date, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Date, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -44,10 +44,6 @@ class DailyFeedEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     categories: Mapped[Any] = mapped_column(JSONVariant, nullable=False, default=list)
     # arxiv 公告类型：new（新提交）| cross（转投/交叉列表）
     announce_type: Mapped[str] = mapped_column(String(16), nullable=False, default="new")
-    # 退役列（解读已统一到 papers.wiki / paper_wikis，每篇一份）：只留存量数据，
-    # 代码不再读写；删列待确认稳定后另做迁移。
-    wiki_content: Mapped[str | None] = mapped_column(Text)
-    wiki_model: Mapped[str | None] = mapped_column(String(128))
 
     paper: Mapped[Paper] = relationship()
 

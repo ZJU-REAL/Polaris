@@ -6,9 +6,9 @@
 这是 B 轨（去实验室化移除）的回归闸门：**纯移除 PR 必须保持 golden 不变**。
 golden 变了 = 行为变了，需要人工审查 diff 并说明理由。
 
-更新方式（仅限本地，CI 只比对，纪律来自 DSH 的 snapshot 流程）::
+更新方式（仅限本地，CI 只比对；何时允许重录、diff 怎么审见 docs/golden-policy.md）::
 
-    POLARIS_GOLDEN=record python -m pytest tests/golden -q
+    make golden-record   # 或：POLARIS_GOLDEN=record python -m pytest tests/golden -q
 """
 
 import json
@@ -125,6 +125,7 @@ async def test_import_wiki_chain_matches_golden(client):
     )
     expected = GOLDEN_PATH.read_text(encoding="utf-8")
     assert rendered == expected, (
-        "golden transcript 变了。若这是有意的行为变更：本地 POLARIS_GOLDEN=record 重录，"
-        "人工审查 diff 后随代码一起提交；纯移除 PR 不允许改 golden。"
+        "golden transcript 变了。若这是有意的行为变更：本地 make golden-record 重录，"
+        "人工审查 diff 后随代码一起提交（规则见 docs/golden-policy.md）；"
+        "自称『纯移除/无行为变更』的 PR 不允许动 golden。"
     )

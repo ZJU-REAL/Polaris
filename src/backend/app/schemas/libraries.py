@@ -20,10 +20,8 @@ class DirectionLibrarySummary(BaseModel):
     statement: str | None
     # 过渡期隐式库回指的课题；未来共享库可为 None
     project_id: uuid.UUID | None
-    # 审批流残留（#619 删列）：恒为 "active" / None。语义已死，但仍随响应下发——
-    # golden transcript 逐字节比对响应形状，纯移除改动不动 wire 形状。
-    status: str = "active"
-    review_note: str | None = None
+    # 审批流残留的恒值字段 status/review_note（#619 删列后只剩 wire 形状兼容）
+    # 已随 #734 的有意重录 golden 移除。
     # 共享开关：false = 仅创建者可见的个人库 | true = 对本部署所有用户可见
     is_public: bool = False
     # 库创建者（个人库仅创建者 + admin 可见）
@@ -47,7 +45,8 @@ class DirectionLibrarySummary(BaseModel):
 
 class DirectionLibraryDetail(DirectionLibrarySummary):
     cadence: str | None
-    # 每月 ingest 预算（token 数；None = 不限）
+    # deprecated（#734 暂缓机制收口）：月度预算不再拦截任何任务，列保留只作
+    # 「参考上限」展示（治理页用量条）；值仍可读写以兼容存量配置。
     monthly_budget: int | None = None
     # 收录配置全量（P8a 权威源）：statement/goals/in_scope/out_of_scope/questions/
     # rubric/anchor_papers/keywords(含 arxiv_categories)/cadence，供「收录设置」编辑
@@ -70,6 +69,7 @@ class LibraryCreate(BaseModel):
     # 那才是能真正问出「研究问题/对象/子问题/方法类型」的东西。
     statement: str = Field(min_length=1, max_length=4000)
     cadence: str | None = Field(default=None, max_length=32)
+    # deprecated（#734）：参考上限，仅展示；界面已不提供输入，字段保留兼容存量调用
     monthly_budget: int | None = Field(default=None, ge=0)
     rubric: Any | None = None
     anchors: list[Any] | None = None
@@ -94,6 +94,7 @@ class DirectionLibraryUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     statement: str | None = None
     cadence: str | None = Field(default=None, max_length=32)
+    # deprecated（#734）：参考上限，仅展示；界面已不提供输入，字段保留兼容存量调用
     monthly_budget: int | None = Field(default=None, ge=0)
     rubric: Any | None = None
     anchors: list[Any] | None = None
@@ -140,15 +141,18 @@ class PaperMergeResult(BaseModel):
 
 
 class LibraryBudgetRead(BaseModel):
-    """库预算面板（P6）：本月消耗（UTC 自然月，token 口径与 LLMUsage 记账一致）。"""
+    """库用量面板：本月消耗（UTC 自然月，token 口径与 LLMUsage 记账一致）。
+
+    #734 起纯展示：monthly_budget 只是参考上限，超过不再拦截任何任务。
+    """
 
     month: str  # 如 "2026-07"
-    monthly_budget: int | None  # None = 不限
+    monthly_budget: int | None  # 参考上限（deprecated 列）；None = 未设
     prompt_tokens: int
     completion_tokens: int
     used_tokens: int
-    remaining_tokens: int | None  # 不限时为 None；用超时为 0
-    exhausted: bool  # True = 本月预算已用尽（ingest 会被拒绝启动）
+    remaining_tokens: int | None  # 未设上限时为 None；用超时为 0
+    exhausted: bool  # True = 本月用量已超参考上限（仅展示，不再拒绝启动任何任务）
 
 
 class LibraryDigestSummary(BaseModel):

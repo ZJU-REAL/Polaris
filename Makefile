@@ -4,7 +4,7 @@ BACKEND_PY   = src/backend/.venv/bin/python
 BACKEND_PIP  = src/backend/.venv/bin/pip
 
 .PHONY: dev up down logs backend-dev frontend-dev venv migrate test lint build texbase \
-        desktop-deps desktop-dev desktop-shell desktop-dist
+        desktop-deps desktop-dev desktop-shell desktop-dist golden-record
 
 ## ---- Docker ----
 texbase:        ## Build the shared TeX base image (api/worker FROM it; cached unless Dockerfile.texbase changed)
@@ -66,6 +66,16 @@ lint:
 	cd src/backend && .venv/bin/ruff check app worker tests
 	cd src/frontend && npx tsc --noEmit
 	cd src/desktop && npx tsc --noEmit
+
+golden-record:  ## Re-record golden transcripts (intentional wire changes only — read docs/golden-policy.md first)
+	# 一次性容器内录制（与 CI 同一套件形状；宿主机不需要 venv）。挂载可写：
+	# 录制直接改写 src/backend/tests/golden/data/ 下的文件，之后人工审查 diff。
+	docker run --rm \
+	  -v "$(CURDIR)/src/backend:/srv/backend" -w /srv/backend \
+	  -e POLARIS_GOLDEN=record \
+	  polaris-api:latest \
+	  sh -c "pip install -q -e '.[dev]' && python -m pytest tests/golden -q -p no:cacheprovider"
+	git diff --stat -- src/backend/tests/golden/data
 
 build: texbase  ## Build production images
 	$(COMPOSE) build

@@ -155,7 +155,6 @@ async def ensure_project_library(session, project_id):
         name=project.name if project else "test-lib",
         project_id=pid,
         is_public=True,  # 课题起源库=共享库（P10：全实验室可读）
-        created_by=None,
         # 起源库记课题主人为创建者：库级写权限 = admin ∪ 创建者（策展人已随 #593 移除）
         submitted_by=project.owner_id if project else None,
     )
@@ -323,7 +322,6 @@ async def make_project_with_library(
             definition=definition,
             project_id=project_id,
             is_public=True,  # 课题起源库=共享库（P10：全实验室可读）
-            created_by=None,
             submitted_by=owner_id,
         )
         if definition:

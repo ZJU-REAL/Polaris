@@ -21,8 +21,8 @@ async def _hdr(client, email):
 
 
 async def _extra_library_with_paper(session, *, name, title, score=0.5):
-    """独立库 + 一篇库内论文（compiled + wiki），返回 (library, paper)。"""
-    lib = DirectionLibrary(name=name, created_by=None, project_id=None)
+    """独立库 + 一篇库内论文（compiled），返回 (library, paper)。"""
+    lib = DirectionLibrary(name=name, project_id=None)
     session.add(lib)
     await session.flush()
     paper = Paper(title=title)
@@ -34,7 +34,6 @@ async def _extra_library_with_paper(session, *, name, title, score=0.5):
             paper_id=paper.id,
             status="compiled",
             relevance_score=score,
-            wiki_content="# 解读",
         )
     )
     await session.flush()
@@ -86,17 +85,17 @@ async def test_list_papers_union_dedupes_shared_paper(client):
             relevance_score=0.6,
         )
         origin = await libraries_service.get_library_for_project(session, project_id)
-        extra = DirectionLibrary(name="第二库", created_by=None, project_id=None)
+        extra = DirectionLibrary(name="第二库", project_id=None)
         session.add(extra)
         await session.flush()
-        # 同一篇论文在第二个库也有成员行（且带 wiki，视角应优先它）
+        # 同一篇论文在第二个库也有成员行（各库独立打分；解读全平台一份，
+        # 不再随成员行走——wiki 快照列已随 #734 退役删除）
         session.add(
             LibraryPaper(
                 library_id=extra.id,
                 paper_id=paper.id,
                 status="compiled",
                 relevance_score=0.95,
-                wiki_content="# 更好的解读",
             )
         )
         await libraries_service.set_source_libraries(
@@ -110,7 +109,6 @@ async def test_list_papers_union_dedupes_shared_paper(client):
 
     assert total == 1
     assert items[0].paper.title == "Shared Paper"
-    assert items[0].membership.wiki_content == "# 更好的解读"  # 有 wiki 的视角优先
 
 
 async def test_empty_source_libraries_yields_empty_corpus(client):

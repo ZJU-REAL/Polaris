@@ -553,8 +553,7 @@ async def create_library(
         cadence=cadence,
         definition=definition or None,  # P8a：独立库同样以 definition 为收录配置权威源
         monthly_budget=monthly_budget,
-        created_by=created_by,
-        submitted_by=created_by,
+        submitted_by=created_by,  # 归属人单列（#734 起 created_by 副本列已删）
         project_id=None,
     )
     session.add(library)

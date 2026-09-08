@@ -52,7 +52,7 @@ async def _new_paper(title="Shared paper") -> str:
         return str(paper.id)
 
 
-async def _add_membership(lib_id, paper_id, *, status, relevance, wiki=None) -> None:
+async def _add_membership(lib_id, paper_id, *, status, relevance) -> None:
     async with get_sessionmaker()() as session:
         session.add(
             LibraryPaper(
@@ -60,7 +60,6 @@ async def _add_membership(lib_id, paper_id, *, status, relevance, wiki=None) -> 
                 paper_id=uuid.UUID(str(paper_id)),
                 status=status,
                 relevance_score=relevance,
-                wiki_content=wiki,
             )
         )
         await session.commit()

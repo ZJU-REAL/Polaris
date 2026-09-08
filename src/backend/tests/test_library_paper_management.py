@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
 from app.models.library_direction import LibraryPaper
-from app.models.paper import Concept, Paper, paper_concepts
+from app.models.paper import Concept, Paper, PaperWiki, paper_concepts
 from tests.conftest import register_and_login
 
 BIBTEX_ENTRY = """@inproceedings{smith2025bench,
@@ -90,9 +90,11 @@ async def _seed_paper(
                 paper_id=paper.id,
                 status=status,
                 relevance_score=relevance,
-                wiki_content=wiki,
             )
         )
+        if wiki is not None:
+            # 解读全平台一份（paper_wikis）；成员行的 wiki 快照列已随 #734 退役删除
+            session.add(PaperWiki(paper_id=paper.id, content=wiki, model="fake"))
         await session.commit()
         return str(paper.id)
 

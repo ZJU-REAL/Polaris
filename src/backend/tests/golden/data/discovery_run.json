@@ -115,9 +115,7 @@
     "owner_name": "Discovery Golden",
     "paper_count": 0,
     "project_id": null,
-    "review_note": null,
     "statement": "Deterministic golden-transcript library for the hypothesis pipeline.",
-    "status": "active",
     "submitted_by": "<uuid-1>",
     "updated_at": "<ts>"
   },
@@ -458,9 +456,7 @@
     "has_avatar": false,
     "id": "<uuid-1>",
     "is_active": true,
-    "is_superuser": false,
     "is_verified": false,
-    "llm_self_managed": false,
     "settings": null,
     "username": "discoverygolden",
     "username_locked": false

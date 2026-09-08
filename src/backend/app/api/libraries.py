@@ -295,8 +295,6 @@ async def generate_library_digest(
         )
     except ingest_service.IngestConflictError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="INGEST_ALREADY_RUNNING") from e
-    except ingest_service.LibraryBudgetExhaustedError as e:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_BUDGET_EXHAUSTED") from e
     await queue.enqueue("run_voyage", str(run.id))
     return DigestGenerateRead(
         voyage_id=run.id,
@@ -370,7 +368,11 @@ async def get_library_budget(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> LibraryBudgetRead:
-    """本月预算消耗（可管理者）：库侧 LLM 调用（打分/编译/概念定义/向量化）的聚合。"""
+    """本月用量（可管理者）：库侧 LLM 调用（打分/编译/概念定义/向量化）的聚合。
+
+    #734 起纯展示：monthly_budget 只是参考上限，exhausted 也只是「用量超过了
+    参考上限」的提示——不再有任何任务因此被拒绝或暂停。
+    """
     library = await _get_managed_library(session, library_id, user)
     usage = await ingest_service.monthly_library_usage(session, library.id)
     budget = library.monthly_budget
@@ -401,7 +403,7 @@ async def start_library_ingest(
     """对某个方向库直接触发抓取（P9a）：可管理者（创建者 ∪ 无主库）皆可。
 
     独立建的库（project_id 为空）由此入口驱动 ingest；起源课题的隐式库同时
-    带上 project 以兼容活动流/鉴权。互斥以库为准，超预算 409 拒绝。
+    带上 project 以兼容活动流/鉴权。互斥以库为准。
     """
     library = await _get_managed_library(session, library_id, user)
     project = (
@@ -420,8 +422,6 @@ async def start_library_ingest(
         )
     except ingest_service.IngestConflictError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="INGEST_ALREADY_RUNNING") from e
-    except ingest_service.LibraryBudgetExhaustedError as e:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_BUDGET_EXHAUSTED") from e
     await queue.enqueue("run_voyage", str(run.id))
     return VoyageRead.model_validate(run)
 

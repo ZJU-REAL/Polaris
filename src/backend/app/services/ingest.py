@@ -18,10 +18,6 @@ from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.ingest import IngestKnobs
 from app.services.libraries import get_library_for_project
 
-# 预算从 knobs 派生：每篇编译预留的 token 额度（打分+编译+概念定义+验证）
-_TOKENS_PER_PAPER = 20_000
-
-
 #: 三种收集模式。search/snowball 是人主动发起的两条补充路径，incremental 是每天自动
 #: 从每日论文池挑。``bootstrap`` 是 ``search`` 的旧名，只做入口兼容，不再往下传。
 MODE_LABELS: dict[str, str] = {
@@ -40,10 +36,6 @@ def normalize_mode(mode: str) -> str:
 
 class IngestConflictError(Exception):
     """同一项目已有 ingest voyage 在跑。"""
-
-
-class LibraryBudgetExhaustedError(Exception):
-    """方向库本月预算已用尽（P6）：拒绝启动新的 ingest。"""
 
 
 async def monthly_library_usage(session: AsyncSession, library_id: uuid.UUID) -> dict[str, Any]:
@@ -69,37 +61,20 @@ async def monthly_library_usage(session: AsyncSession, library_id: uuid.UUID) ->
     }
 
 
-async def apply_library_budget(
-    session: AsyncSession,
-    *,
-    library_id: uuid.UUID,
-    monthly_budget: int | None,
-    budget: dict[str, Any],
-) -> dict[str, Any]:
-    """把库的月度预算折算进 run.budget（复用 Voyage 预算暂停语义，不另造状态机）。
-
-    - 本月已用 ≥ 上限 → 抛 LibraryBudgetExhaustedError（拒绝启动）；
-    - 否则 run.budget.max_tokens 收紧为 min(原值, 本月剩余)——运行中一旦累计
-      到剩余额度，引擎按既有预算机制收尾/暂停。
-    """
-    if not monthly_budget:
-        return budget
-    usage = await monthly_library_usage(session, library_id)
-    remaining = int(monthly_budget) - int(usage["total_tokens"])
-    if remaining <= 0:
-        raise LibraryBudgetExhaustedError(str(library_id))
-    max_tokens = budget.get("max_tokens")
-    budget = dict(budget)
-    budget["max_tokens"] = remaining if not max_tokens else min(int(max_tokens), remaining)
-    return budget
-
-
 def derive_budget(knobs: IngestKnobs) -> dict[str, Any]:
-    # 最大化模式不设 token 预算：引擎 _budget_exceeded 对 falsy 的 max_tokens（None/缺失）
-    # 直接跳过预算检查（engine.py），任务不会因预算暂停/降级收尾。
-    if knobs.unlimited:
+    """knobs → run.budget。#734 暂缓机制收口：**默认不设 token 预算**。
+
+    以前按 max_papers 派生一个隐式上限（每篇 2 万 token），库一大任务就静默
+    暂停在半路；月度预算（monthly_budget）还会把上限进一步收紧、甚至直接拒绝
+    启动——这些「治理机制」在单人产品里只剩误伤。现在有限预算是显式 opt-in
+    （knobs.max_tokens），monthly_budget 只作展示（见 api/libraries.get_library_budget）。
+
+    引擎 _budget_exceeded 对 falsy 的 max_tokens（None/缺失）直接跳过预算检查
+    （engine.py），任务不会因预算暂停/降级收尾。
+    """
+    if knobs.unlimited or knobs.max_tokens is None:
         return {"max_tokens": None}
-    return {"max_tokens": int(knobs.max_papers) * _TOKENS_PER_PAPER}
+    return {"max_tokens": int(knobs.max_tokens)}
 
 
 async def find_running_ingest_for_library(
@@ -130,7 +105,7 @@ async def create_ingest_voyage(
     query_terms: list[str] | None = None,
     time_range: str | None = None,
 ) -> VoyageRun:
-    """建 ingest voyage（互斥检查 + 库预算检查 + Activity 落记录），由调用方入队 run_voyage。
+    """建 ingest voyage（互斥检查 + Activity 落记录），由调用方入队 run_voyage。
 
     任务只挂 ``library``：建库 / 增量更新是文献库自己的事，课题只是关联库来用
     语料。``project`` 仅用来取展示名（有起源课题时用课题名更好认），不写进
@@ -139,12 +114,7 @@ async def create_ingest_voyage(
     """
     if await find_running_ingest_for_library(session, library.id) is not None:
         raise IngestConflictError(str(library.id))
-    budget = await apply_library_budget(
-        session,
-        library_id=library.id,
-        monthly_budget=library.monthly_budget,
-        budget=derive_budget(knobs),
-    )
+    budget = derive_budget(knobs)
     mode = normalize_mode(mode)
     # 手动的两种模式（search/snowball）沿用 wiki_bootstrap 这个 kind：它们都是"人主动去
     # 拉一批"，与自动的每日同步区分开即可；kind 是存量数据的形状，不为了新名字去迁移。
@@ -231,12 +201,7 @@ async def create_digest_voyage(
         return run, "incremental", 0
 
     actual_knobs = knobs or IngestKnobs()
-    budget = await apply_library_budget(
-        session,
-        library_id=library.id,
-        monthly_budget=library.monthly_budget,
-        budget=derive_budget(actual_knobs),
-    )
+    budget = derive_budget(actual_knobs)
     paper_ids = list(dict.fromkeys(row.paper_id for row in rows))
     latest_published_at = max(
         (row.published_at for row in rows if row.published_at is not None), default=None
