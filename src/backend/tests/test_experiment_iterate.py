@@ -253,7 +253,8 @@ async def test_no_improve_stop_budget_param(client, queue_stub, fake_ssh, bus_re
 async def test_debug_repeats_until_run_budget(client, queue_stub, fake_ssh, bus_recorder):
     """debug 不再按次数终止（旧限额 3 次）：只受轮数/时间预算约束。
     每轮都失败、decision 一直 debug → 修到 max_runs 截断；全部轮次失败 →
-    完成标准终检转提问（零主指标），报告仍按事实收口为 failed。"""
+    完成标准终检转提问（零主指标）。报告步不写终态（#367），failed 只由人拍板：
+    提问期间实验镜像「等你回复」，用户 abort 后 voyage/实验才双双落 failed。"""
     fake_ssh.run_exit = 1  # 每轮正式运行都失败
     fake_ssh.run_log = "Traceback: train boom\n"
     project_id, headers, exp_id, voyage_id = await _launch_experiment(
@@ -267,7 +268,8 @@ async def test_debug_repeats_until_run_budget(client, queue_stub, fake_ssh, bus_
     assert voyage_status == "paused_ask"
     assert observation["stopped_reason"] == "max_runs"
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
-    assert resp.json()["open_ask"]["payload"]["ask_kind"] == "done_criteria"
+    ask = resp.json()["open_ask"]
+    assert ask["payload"]["ask_kind"] == "done_criteria"
     detail = await _get_detail(client, headers, exp_id)
     assert len(detail["runs"]) == 5  # 修过 4 次（超过旧限额 3）仍在继续，直到轮数预算
     assert all(r["status"] == "failed" for r in detail["runs"])
@@ -275,8 +277,21 @@ async def test_debug_repeats_until_run_budget(client, queue_stub, fake_ssh, bus_
     state = detail["iteration_state"]
     assert state["debug_count"] == 4  # 不再在 3 处截断
     assert state["stopped_reason"] == "max_runs"
-    assert detail["status"] == "failed"
+    # 报告已按事实生成，但报告步不写终态——提问期间实验镜像「等你回复」
+    assert detail["status"] == "waiting_user"
     assert detail["report"].startswith("## 实验报告")
+
+    # 人拍板放弃（唯一由用户决定的失败路径）→ voyage 与实验双双落 failed
+    resp = await client.post(
+        f"/api/voyages/{voyage_id}/asks/{ask['id']}/answer",
+        json={"choice": "abort"},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    assert resp.json()["status"] == "failed"
+    detail = await _get_detail(client, headers, exp_id)
+    assert detail["status"] == "failed"
 
 async def test_analyze_ask_pauses_then_guidance_continues(
     client, queue_stub, fake_ssh, bus_recorder

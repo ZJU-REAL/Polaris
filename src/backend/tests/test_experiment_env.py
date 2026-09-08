@@ -220,14 +220,24 @@ async def test_prompt_context_sections(client, queue_stub, fake_ssh, bus_recorde
 
 
 def test_prompt_with_context_unit():
-    """条件段单元测试：无参数时 prompt 原样；各开关独立生效。"""
+    """条件段单元测试：无参数时只有无条件段；各开关独立生效。
+
+    栈保护 / 技能指引 / 证据指引是安全与信任约定，**无条件**追加（#549 起），
+    所以旧的「空参数 == base 恒等」契约已过期——改断言「以 base 开头 + 不含
+    任何条件段」，条件段（eval_model / hf_mirror / extra_notes）仍逐一验证。
+    """
 
     def ctx(params):
         return ax.ActionContext(run=None, llm=None, checkpoint={"params": params})
 
     base = ax.CODE_SYSTEM_PROMPT
-    assert ax._prompt_with_context(base, ctx({})) == base
-    assert ax._prompt_with_context(base, ctx({"eval_model": "  ", "extra_notes": ""})) == base
+    empty = ax._prompt_with_context(base, ctx({}))
+    assert empty.startswith(base)
+    # 负向：空参数时不得混入任何条件段（评测模型的 llm_config.json / HF 镜像）
+    assert "llm_config.json" not in empty
+    assert "HF_ENDPOINT" not in empty and "https://hf-mirror.com" not in empty
+    # 空白参数与空参数等价（strip 后视同未填）
+    assert ax._prompt_with_context(base, ctx({"eval_model": "  ", "extra_notes": ""})) == empty
 
     with_eval = ax._prompt_with_context(base, ctx({"eval_model": EVAL_MODEL}))
     assert with_eval.startswith(base) and "llm_config.json" in with_eval

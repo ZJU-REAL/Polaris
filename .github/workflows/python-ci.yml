@@ -1,0 +1,33 @@
+# 后端全量 pytest 闸门（#728，堵住 #581「失败长期滞留 main」的口子）。
+# 套件在 desktop 档位自足：conftest 自带 SQLite(aiosqlite) + fakeredis 与全部
+# POLARIS_* 环境变量，不需要 postgres/redis 服务容器。
+# docker_integration 用例（要真 docker + 镜像）由 pyproject 的 addopts 默认 deselect。
+name: python-ci
+
+on:
+  pull_request:
+    paths:
+      - "src/backend/**"
+      - ".github/workflows/python-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    # 本机容器全量约 25 分钟，CI 裸机估 15-30 分钟——45 兜底
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: src/backend/pyproject.toml
+
+      - name: Install backend with dev extras
+        run: pip install -e "src/backend[dev]"
+
+      - name: Run backend test suite
+        working-directory: src/backend
+        run: python -m pytest -q -p no:cacheprovider

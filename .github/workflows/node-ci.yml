@@ -1,5 +1,5 @@
-# Workspace-level Node checks for the plugin kernel line of work: the vendored
-# cordis runtime contract test and (as packages appear) kernel lint/tests.
+# Workspace-level Node checks: the vendored cordis runtime contract test,
+# kernel lint/tests (as packages appear), and the frontend vitest suite (#728).
 # Desktop/frontend build coverage lives in desktop-build.yml.
 name: node-ci
 
@@ -8,6 +8,7 @@ on:
     paths:
       - "vendor/**"
       - "src/kernel/**"
+      - "src/frontend/**"
       - "spikes/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -39,6 +40,9 @@ jobs:
 
       - name: Vendored runtime contract test
         run: pnpm --dir vendor/contract-smoke run test
+
+      - name: Frontend unit tests (vitest)
+        run: pnpm --dir src/frontend test
 
       - name: Kernel checks
         run: |

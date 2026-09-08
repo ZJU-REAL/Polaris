@@ -57,8 +57,9 @@ desktop-dist:   ## Package an installer for the current platform (unsigned)
 migrate:
 	cd src/backend && .venv/bin/alembic upgrade head
 
-test:           ## Backend tests + frontend build
+test:           ## Backend tests + frontend unit tests + frontend build
 	cd src/backend && .venv/bin/pytest -q
+	pnpm --dir src/frontend test
 	pnpm --dir src/frontend run build
 
 lint:

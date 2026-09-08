@@ -15,7 +15,10 @@ from app.core.db import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers 默认 True 会把此刻已创建的所有 logger（上面
+    # import app.models 已把 app.* 全拉起来）静默置为 disabled——同进程内跑
+    # 迁移（测试、desktop 档位）后应用日志就此消失（#581 第三个失败的根因）。
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 if not config.get_main_option("sqlalchemy.url"):
     config.set_main_option("sqlalchemy.url", get_settings().database_url)
