@@ -3,6 +3,9 @@
  * 一一对应（同一份 stage 标识符在设置页配路由、看用量分布）。
  *
  * 模块级常量只存 zh/en，渲染处再 tr()（见前端单语 + 中英切换约定）。
+ * 插件命名空间环节（plugin:<pack>:<stage>，#736）不在这张表里——它们由插件
+ * 运行时注册，前端不可能为每个插件备一份名字；渲染处统一走 stageLabel()，
+ * 拿到原串照排，旁边配「插件」badge 说明来路。
  */
 export const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   default: { zh: '默认', en: 'Default' },
@@ -41,3 +44,11 @@ export const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   hyp_feasibility: { zh: '假设·可行性论证', en: 'Hypothesis · feasibility' },
   hyp_compare: { zh: '假设·两两对比', en: 'Hypothesis · pairwise compare' },
 };
+
+/**
+ * 任意 stage 的展示名：内置环节用大白话名字；插件环节与未知环节照排原串
+ * （插件环节的「插件」badge 由渲染处按 isPluginStage 另行补上）。
+ */
+export function stageLabel(stage: string): { zh: string; en: string } {
+  return STAGE_LABELS[stage] ?? { zh: stage, en: stage };
+}

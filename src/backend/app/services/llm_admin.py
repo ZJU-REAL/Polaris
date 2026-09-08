@@ -20,7 +20,7 @@ from app.core.llm.anthropic import AnthropicProvider
 from app.core.llm.base import LLMProvider, Message
 from app.core.llm.fake import FakeProvider
 from app.core.llm.openai_compat import OpenAICompatProvider
-from app.core.llm.router import STAGES, get_llm_router
+from app.core.llm.router import get_llm_router, is_plugin_stage, known_stages
 from app.core.security import decrypt_secret, encrypt_secret
 from app.models.base import utcnow
 from app.models.llm_config import LLMCallLog, LLMProviderConfig, LLMUsage, ModelRoute
@@ -145,8 +145,13 @@ async def list_routes(session: AsyncSession) -> Sequence[ModelRoute]:
 async def replace_routes(session: AsyncSession, items: Sequence[RouteItem]) -> Sequence[ModelRoute]:
     """整表覆盖平台路由。stage 必须合法且不重复，provider 必须是平台的。"""
     seen: set[str] = set()
+    valid_stages = known_stages()
     for item in items:
-        if item.stage not in STAGES:
+        # 内置环节必须精确命中；插件命名空间串（plugin:<pack>:<stage>）按形状放行，
+        # 即使对应插件此刻没加载——PUT 是整表覆盖，若插件卸载后就不认它的存量
+        # 路由行，管理员改任何一个环节都会 400，整张表从此存不进去（digest 的
+        # 事故换个马甲重演）。没人认领的插件路由行只是躺着不被用，无害。
+        if item.stage not in valid_stages and not is_plugin_stage(item.stage):
             raise InvalidRouteError(f"unknown stage: {item.stage}")
         if item.stage in seen:
             raise InvalidRouteError(f"duplicate stage: {item.stage}")

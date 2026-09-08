@@ -700,6 +700,19 @@ export const LLM_STAGES = [
   'hyp_compare',
 ] as const;
 
+/**
+ * 插件命名空间环节（#736）：`plugin:<pack>:<stage>` 三段式，段字符集限 [a-z0-9-]。
+ * 与后端 `app/core/llm/router.py` 的 PLUGIN_STAGE_RE 对齐（vitest 守卫盯着两边）。
+ * 这类环节不进 LLM_STAGES（那是内置清单，与后端 STAGES 逐项对齐）；它们由插件
+ * 在运行时注册，路由表里有记录才会出现在界面上。
+ */
+export const PLUGIN_STAGE_RE = /^plugin:[a-z0-9-]+:[a-z0-9-]+$/;
+
+/** stage 名是否为插件命名空间串（只看形状，不管对应插件是否加载）。 */
+export function isPluginStage(stage: string): boolean {
+  return PLUGIN_STAGE_RE.test(stage);
+}
+
 export interface LlmProviderRead {
   id: string;
   name: string;

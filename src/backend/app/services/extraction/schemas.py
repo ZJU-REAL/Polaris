@@ -55,8 +55,14 @@ class ExtractionSchema:
     fields: tuple[SchemaField, ...]
     # system prompt 模板，{fields_spec} 占位符由 field_spec_text() 填充
     prompt_template: str
-    # 该 schema 走哪个 LLM 环节（须在 core/llm/router.py 的 STAGES 里注册好路由与档位；
-    # 学科包挂新 schema 时要么复用已有环节，要么连同 STAGES/前端清单一起加）
+    # 该 schema 走哪个 LLM 环节。两种写法：
+    # - 内置环节名（如 extract_skeleton）：须在 core/llm/router.py 的 STAGES 里；
+    # - 插件命名空间串 plugin:<pack>:<stage>（#736）：register_schema 会自动把它注册进
+    #   router 的运行时环节表（tier=medium、fallback=extract_skeleton——与内置抽取
+    #   同为「整篇正文进、短 JSON 出」的负载形态），不必改 STAGES 或前端清单。
+    #   管理员想给它配专属模型，直接在路由表里为这个完整串加一行即可；没配时
+    #   按 extract_skeleton 的路由调用，再没有就跟随 default。
+    #   要自定 tier/fallback，先自行调用 router.register_plugin_stage 再 register_schema。
     stage: str = "extract_skeleton"
 
     def field_spec_text(self) -> str:
@@ -195,7 +201,19 @@ _REGISTRY: dict[str, ExtractionSchema] = {}
 
 
 def register_schema(schema: ExtractionSchema) -> None:
-    """挂载一个抽取 schema（学科包的接入点）。同 id 重复注册视为版本演进，直接覆盖。"""
+    """挂载一个抽取 schema（学科包的接入点）。同 id 重复注册视为版本演进，直接覆盖。
+
+    stage 是插件命名空间串且 router 还不认识它时，顺手注册进运行时环节表——
+    学科包作者只写一个 schema 就能走通全链，不用知道 router 的注册接口。
+    已注册过（学科包自己先按需调了 register_plugin_stage）就不动，尊重它声明的档位。
+    """
+    # 函数内 import：schemas 会在各服务模块 import 链的早期被拉起，顶层 import router
+    # 会把 config/db 一串东西提前加载，测试里改环境变量的窗口就没了
+    from app.core.llm.router import is_plugin_stage, known_stages, register_plugin_stage
+
+    if is_plugin_stage(schema.stage) and schema.stage not in known_stages():
+        _, pack, stage_name = schema.stage.split(":", 2)
+        register_plugin_stage(pack, stage_name, tier="medium", fallback="extract_skeleton")
     _REGISTRY[schema.id] = schema
 
 

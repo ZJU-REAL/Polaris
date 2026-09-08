@@ -40,6 +40,12 @@ _CITATION_INTENT_MARKER = "POLARIS_CITATION_INTENT"  # 引文意图批量分类�
 _EXTRACT_SKELETON_MARKER = "POLARIS_EXTRACT_SKELETON"  # 骨架抽取（services/extraction/）
 _EXTRACT_METHOD_MARKER = "POLARIS_EXTRACT_METHOD"  # 方法卡抽取（services/extraction/，#663）
 _EXTRACT_GAPS_MARKER = "POLARIS_EXTRACT_GAPS"  # 缺口台账抽取（services/extraction/，#665）
+# 插件学科 schema 的通用兜底（#736）：约定 prompt 首行带 POLARIS_EXTRACT_ 前缀的
+# 专属 marker（如 POLARIS_EXTRACT_PICO）。上面三个内置 schema 的专用 handler
+# 先判、先返回，所以这个前缀兜底只会接住「fake 不认识的抽取 schema」——
+# 它按 system prompt 里的字段清单（field_spec_text 的确定性格式）反推一份
+# 合法 JSON，让学科包在无 key 演示/测试里也能走通全链。
+_EXTRACT_GENERIC_PREFIX = "POLARIS_EXTRACT_"
 # 库级 agentic RAG 三环节（services/library_rag.py，#644）
 _RAG_EXPAND_MARKER = "POLARIS_RAG_EXPAND"
 _RAG_RERANK_MARKER = "POLARIS_RAG_RERANK"
@@ -458,6 +464,10 @@ class FakeProvider(LLMProvider):
         # 缺口台账抽取：同上，整篇正文进 user prompt，须先于通用 marker 判断
         if _EXTRACT_GAPS_MARKER in full_text:
             return FakeProvider._respond_extract_gaps(last_user)
+        # 插件学科 schema 兜底：内置三个抽取 marker 都没接住、但带抽取前缀时，
+        # 按字段清单反推合法 JSON（见 _respond_extract_generic）
+        if _EXTRACT_GENERIC_PREFIX in full_text:
+            return FakeProvider._respond_extract_generic(full_text, last_user)
         # 发表机构解析（专门调用）：system prompt 带 POLARIS_AUTHOR_AFFIL，user prompt 内嵌
         # 标题页文本（可能含 TL;DR 等其他 marker），须先于通用 marker 判断；返回逐位作者映射
         if _AFFILIATIONS_MARKER in full_text:
@@ -704,6 +714,44 @@ class FakeProvider(LLMProvider):
             },
             ensure_ascii=False,
         )
+
+    @staticmethod
+    def _respond_extract_generic(full_text: str, last_user: str) -> str:
+        """插件学科 schema 的通用抽取兜底（#736）。
+
+        不认识具体 schema，就把 system prompt 里的字段清单读回来——那份清单是
+        field_spec_text() 确定性生成的（「一段文本」「字符串数组」「对象数组」三种
+        句式），据此逐字段造一份能过归一化的 JSON。text 字段回显标题（测试据此
+        断言 prompt 带对了论文），entries 的枚举键取第一个合法取值。
+        """
+        m = re.search(r"标题：(.+)", last_user)
+        title = m.group(1).strip() if m else "未知论文"
+        payload: dict[str, Any] = {}
+        for line in full_text.splitlines():
+            text_m = re.match(r'- "([^"]+)"：一段文本', line)
+            list_m = re.match(r'- "([^"]+)"：字符串数组', line)
+            entries_m = re.match(
+                r'- "([^"]+)"：对象数组，最多 \d+ 条，每条含且仅含键 (.+?)；', line
+            )
+            if text_m:
+                name = text_m.group(1)
+                payload[name] = f"《{title}》的 {name}（fake generic extraction）"
+            elif list_m:
+                payload[list_m.group(1)] = [f"{list_m.group(1)} 条目一（fake generic）"]
+            elif entries_m:
+                entry: dict[str, str] = {}
+                for key_name, choices in re.findall(
+                    r'"([^"]+)"（(?:取值限 ([^）]+)|不超过 \d+ 字)）', entries_m.group(2)
+                ):
+                    entry[key_name] = (
+                        choices.split(" / ")[0].strip()
+                        if choices
+                        else f"（fake generic）{key_name}"
+                    )
+                if entry:
+                    payload[entries_m.group(1)] = [entry]
+        payload["confidence"] = 0.7
+        return json.dumps(payload, ensure_ascii=False)
 
     # ---- 库级 agentic RAG（services/library_rag.py 的三个 system prompt 对齐，#644） ----
 
