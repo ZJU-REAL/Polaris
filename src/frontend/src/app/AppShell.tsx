@@ -38,14 +38,14 @@ interface NavEntry {
 
 /** 侧栏三个分组的标题：面包屑第一段直接复用，保证两处永远对得上。 */
 const NAV_GROUPS = {
-  lab: { zh: '实验室', en: 'Lab' },
+  literature: { zh: '文献', en: 'Library' },
   topic: { zh: '课题研究', en: 'Topic' },
   personal: { zh: '个人', en: 'Personal' },
 } as const;
 
 // 文献区导航：跨课题的公共资产。/lab 的数据面板（索引统计/用量/跨库图谱）
 // 随 #626 移除，该路由只剩课题外的任务列表，条目名跟着改
-const NAV_LAB: NavEntry[] = [
+const NAV_LITERATURE: NavEntry[] = [
   { to: '/libraries', icon: 'book', zh: '文献库', en: 'Libraries' },
   { to: '/daily', icon: 'heart', zh: '每日新论文', en: 'Daily Papers' },
   { to: '/lab', icon: 'compass', zh: '文献任务', en: 'Library Tasks' },
@@ -81,7 +81,7 @@ interface Crumb {
  * key 用条目的 to（实验室 / 个人）或 sub（课题作用域），课题工作台的 key 是空串。
  */
 function navCrumb(key: string, pid: string | null): Crumb {
-  const entry = [...NAV_LAB, ...NAV_MAIN, ...NAV_PIPE, ...NAV_PERSONAL].find(
+  const entry = [...NAV_LITERATURE, ...NAV_MAIN, ...NAV_PIPE, ...NAV_PERSONAL].find(
     (n) => (n.to ?? n.sub ?? '') === key,
   );
   if (!entry) return { label: '—' };
@@ -99,8 +99,8 @@ function crumbsFor(
   libName?: string | null,
   labTask?: boolean,
 ): Crumb[] {
-  // 实验室组的落地页改为文献库列表：/lab 只剩任务列表（#626），不再是这组的门面
-  const lab: Crumb = { label: tr(NAV_GROUPS.lab.zh, NAV_GROUPS.lab.en), to: '/libraries' };
+  // 文献组的落地页是文献库列表：/lab 只剩任务列表（#626），不再是这组的门面
+  const literature: Crumb = { label: tr(NAV_GROUPS.literature.zh, NAV_GROUPS.literature.en), to: '/libraries' };
   const topic: Crumb = {
     label: tr(NAV_GROUPS.topic.zh, NAV_GROUPS.topic.en),
     to: pid ? topicPath(pid) : '/start',
@@ -126,11 +126,11 @@ function crumbsFor(
     if (p.startsWith('/writer/')) return [topic, e('writer'), { label: tr('编辑工作台', 'Editor workspace') }];
     // 任务已并入课题工作台的「任务」标签
     if (p === '/voyages') return [topic, e(''), { label: tr('任务', 'Tasks') }];
-    // 任务详情按归属分流：文献库任务 / 每日新论文（以及任何不挂课题的任务）归实验室，
+    // 任务详情按归属分流：文献库任务 / 每日新论文（以及任何不挂课题的任务）归文献组，
     // 其余归课题。归属要等任务本身取回来才知道，取不到时按课题走（占多数）。
     if (p.startsWith('/voyages/'))
       return labTask
-        ? [lab, e('/lab'), { label: tr('任务详情', 'Task detail') }]
+        ? [literature, e('/lab'), { label: tr('任务详情', 'Task detail') }]
         : [
             topic,
             { ...e(''), to: topicPath(pid) + '?tab=tasks' },
@@ -140,14 +140,14 @@ function crumbsFor(
     if (p === '/projects/new') return [topic, { label: tr('新建课题', 'New topic') }];
     if (p.startsWith('/projects/')) return [topic, { label: tr('课题设置', 'Topic settings') }];
 
-    // —— 实验室组 ——
-    if (p === '/lab') return [lab, e('/lab')];
-    if (p === '/libraries' || p === '/wiki') return [lab, e('/libraries')];
+    // —— 文献组 ——
+    if (p === '/lab') return [literature, e('/lab')];
+    if (p === '/libraries' || p === '/wiki') return [literature, e('/libraries')];
     if (p.startsWith('/libraries/'))
-      return [lab, e('/libraries'), { label: libName || tr('文献库详情', 'Library') }];
-    if (p === '/daily') return [lab, e('/daily')];
-    if (p.startsWith('/papers/')) return [lab, e('/libraries'), { label: tr('论文阅读', 'Paper reading') }];
-    if (p.startsWith('/concepts/')) return [lab, e('/libraries'), { label: tr('概念', 'Concept') }];
+      return [literature, e('/libraries'), { label: libName || tr('文献库详情', 'Library') }];
+    if (p === '/daily') return [literature, e('/daily')];
+    if (p.startsWith('/papers/')) return [literature, e('/libraries'), { label: tr('论文阅读', 'Paper reading') }];
+    if (p.startsWith('/concepts/')) return [literature, e('/libraries'), { label: tr('概念', 'Concept') }];
 
     // —— 个人区 ——
     if (p === '/library') return [personal, e('/library')];
@@ -597,6 +597,14 @@ export function AppShell() {
 
   // —— WebSocket 通知：gate/voyage 事件 → invalidate + toast ——
   const { token } = useAuth();
+  // leaderboard 缓存键带课题 id（['leaderboard', pid]），失效要按同键构造。
+  // 消息本身不带课题 id，取当前课题；经 ref 读取是为了不把 currentProjectId
+  // 放进下面 effect 的依赖里——那会在每次切换课题时重连整条 WebSocket。
+  const { currentProjectId } = useProject();
+  const currentProjectIdRef = useRef(currentProjectId);
+  useEffect(() => {
+    currentProjectIdRef.current = currentProjectId;
+  }, [currentProjectId]);
   useEffect(() => {
     if (!token) return;
     const close = connectNotifications(getToken, (msg) => {
@@ -635,7 +643,7 @@ export function AppShell() {
       } else if (msg.type === 'idea.status') {
         void queryClient.invalidateQueries({ queryKey: ['ideas'] });
         void queryClient.invalidateQueries({ queryKey: ['idea', msg.idea_id] });
-        void queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
+        void queryClient.invalidateQueries({ queryKey: ['leaderboard', currentProjectIdRef.current] });
         void queryClient.invalidateQueries({ queryKey: ['forge-state'] });
       } else if (msg.type === 'manuscript.status') {
         // 论文撰写页靠这里实时刷新（起草 writing→compiled 等流转），不再快轮询
@@ -691,7 +699,6 @@ export function AppShell() {
   }, [pending.length]);
 
   // —— 面包屑（层级同侧栏）：文献库详情页多取一段库名，走详情页同一份缓存，不额外发请求 ——
-  const { currentProjectId } = useProject();
   const crumbLibraryId = /^\/libraries\/([^/]+)$/.exec(location.pathname)?.[1] ?? null;
   const { data: crumbLibrary } = useQuery({
     queryKey: ['library', crumbLibraryId],
@@ -748,11 +755,11 @@ export function AppShell() {
               手机抽屉是完整宽度，字标照常显示。 */}
           {(!navCollapsed || isMobile) && <PolarisWordmark height={30} />}
         </div>
-        {/* —— 实验室 + 课题研究两组（平面分组，只靠 eyebrow + 间距区分，不加分隔线）。
+        {/* —— 文献 + 课题研究两组（平面分组，只靠 eyebrow + 间距区分，不加分隔线）。
             放在滚动区之外：课题切换器的下拉菜单要能向右溢出到主列上 —— */}
         <div className="sb-nav-static">
-          <div className="sb-section">{tr(NAV_GROUPS.lab.zh, NAV_GROUPS.lab.en)}</div>
-          {NAV_LAB.map((n) => (
+          <div className="sb-section">{tr(NAV_GROUPS.literature.zh, NAV_GROUPS.literature.en)}</div>
+          {NAV_LITERATURE.map((n) => (
             <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
           ))}
 

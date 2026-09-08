@@ -87,7 +87,7 @@ function TaskGroup({ group, open, onToggle }: { group: VoyageGroup; open: boolea
   );
 }
 
-export function LabPage() {
+export function LibraryTasksPage() {
   const { data: libs } = useLibraries();
 
   const [filter, setFilter] = useState<Filter>('all');

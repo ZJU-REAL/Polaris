@@ -23,8 +23,8 @@ import {
 import { capabilityManifest } from '../capabilities';
 import { engineBootstrapStatus, kernelStatus, localBackend } from '../kernel';
 import { applyUpdate, checkForUpdate } from '../updates';
+import { cancelJob } from './events';
 import * as host from './methods.host';
-import * as local from './methods.local';
 import * as market from './methods.market';
 import * as plugins from './methods.plugins';
 
@@ -136,11 +136,8 @@ const HANDLERS: Record<MethodName, Handler> = {
   'plugins.market.uninstall': (p) => market.marketUninstall(asString(p, 'name')),
   'plugins.market.getEndpoint': () => market.marketGetEndpoint(),
   'plugins.market.setEndpoint': (p) => market.marketSetEndpoint(asString(p, 'endpoint')),
-  // local.* 一期全部走到 agent 再以 ERR_CAPABILITY_UNAVAILABLE 结束（见 methods.local.ts）
-  'local.latex.compile': (p) => local.latexCompile(p),
-  'local.fs.pickFolder': (p) => local.pickFolder(p),
-  'local.papers.scan': (p) => local.papersScan(p),
-  'local.job.cancel': (p) => local.jobCancel(asString(p, 'jobId')),
+  // 取消是 main 内的簿记（events.ts 的 job 注册表），不涉及任何外部进程
+  'local.job.cancel': (p) => cancelJob(asString(p, 'jobId')),
 };
 
 export function installIpc(): void {

@@ -1,8 +1,8 @@
 /* 能力清单。前端所有「走本地还是走远端」的判断只读这张表。
 
-   本地计算能力（latex/papers/cache）一期全部 available: false —— 还没实现。
-   但 tectonic 的探测是真的做了，一来演练探测这条路，二来第二期接本地编译时
-   这段不用重写。plugins.manage（#705）是第一个真的会翻 true 的能力位。 */
+   latex.compile 目前 available: false —— 本地编译还没实现，但 tectonic 的
+   探测是真的在跑：落地时把 available 翻成探测结果即可，前端判断逻辑不用改。
+   plugins.manage（#705）是第一个真的翻了 true 的能力位。 */
 
 import { app } from 'electron';
 import { execFile } from 'node:child_process';
@@ -10,8 +10,6 @@ import { promisify } from 'node:util';
 
 import {
   CAPABILITY_LATEX_COMPILE,
-  CAPABILITY_PAPER_IMPORT,
-  CAPABILITY_PDF_CACHE,
   CAPABILITY_PLUGINS_MANAGE,
   CONTRACT_VERSION,
   type CapabilityManifest,
@@ -21,7 +19,7 @@ import {
 import { kernelConfigTree } from './kernel';
 
 const execFileAsync = promisify(execFile);
-const PHASE_1_REASON = 'not implemented yet (phase 1 ships the shell only)';
+const NOT_IMPLEMENTED_REASON = 'not implemented yet';
 
 /**
  * plugins.manage（#705）：kernel 活着且 configTree 服务可达才可用。
@@ -55,15 +53,13 @@ export async function capabilityManifest(): Promise<CapabilityManifest> {
     platform: process.platform as HostInfo['platform'],
     contract: CONTRACT_VERSION,
     capabilities: {
-      // detail 里已经带上了「本机有没有 tectonic」，第二期把 available 翻成
-      // found 即可，前端判断逻辑一行不用改。
+      // detail 里已经带上了「本机有没有 tectonic」，本地编译落地时把 available
+      // 翻成 found 即可，前端判断逻辑一行不用改。
       [CAPABILITY_LATEX_COMPILE]: {
         available: false,
-        reason: PHASE_1_REASON,
+        reason: NOT_IMPLEMENTED_REASON,
         detail: tectonicProbe,
       },
-      [CAPABILITY_PAPER_IMPORT]: { available: false, reason: PHASE_1_REASON },
-      [CAPABILITY_PDF_CACHE]: { available: false, reason: PHASE_1_REASON },
       [CAPABILITY_PLUGINS_MANAGE]: pluginsManageState(),
     },
   };

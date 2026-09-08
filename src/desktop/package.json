@@ -9,11 +9,10 @@
   "scripts": {
     "build:main": "esbuild src/main/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/main.cjs --external:electron --external:node-addon-require-builtin --define:import.meta.url=__polarisImportMetaUrl --banner:js=\"const __polarisImportMetaUrl = require('node:url').pathToFileURL(__filename).href;\"",
     "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/preload.cjs --external:electron",
-    "build:agent": "esbuild src/agent/main.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/agent.cjs --external:electron",
     "build:bootstrap-smoke": "esbuild src/bootstrap-smoke.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/bootstrap-smoke.cjs",
     "build:smoke": "esbuild src/smoke.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/smoke.cjs --external:electron --external:node-addon-require-builtin --define:import.meta.url=__polarisImportMetaUrl --banner:js=\"const __polarisImportMetaUrl = require('node:url').pathToFileURL(__filename).href;\"",
-    "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:agent && pnpm run build:bootstrap-smoke",
-    "smoke": "pnpm run build:preload && pnpm run build:agent && pnpm run build:smoke && electron dist/smoke.cjs",
+    "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:bootstrap-smoke",
+    "smoke": "pnpm run build:preload && pnpm run build:smoke && electron dist/smoke.cjs",
     "dev": "pnpm run build && electron .",
     "lint": "tsc --noEmit",
     "icons": "./scripts/make-icons.sh",
@@ -22,7 +21,7 @@
     "dist:win": "pnpm run stage:resources && pnpm run build && electron-builder --win",
     "dist:linux": "pnpm run stage:resources && pnpm run build && electron-builder --linux",
     "build:e2e": "esbuild e2e/e2e.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/e2e.cjs --packages=external",
-    "e2e": "pnpm run build:main && pnpm run build:preload && pnpm run build:agent && pnpm run build:e2e && node dist/e2e.cjs"
+    "e2e": "pnpm run build:main && pnpm run build:preload && pnpm run build:e2e && node dist/e2e.cjs"
   },
   "devDependencies": {
     "@polaris/kernel": "workspace:*",

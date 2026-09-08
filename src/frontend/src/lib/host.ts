@@ -149,10 +149,6 @@ export function isCapabilityAvailable(capability: string): boolean {
   return manifest?.capabilities[capability]?.available === true;
 }
 
-export function capabilitySnapshot(): CapabilityManifest | null {
-  return manifest;
-}
-
 /** 供 invoke 的通用出口（host-jobs 等内部模块用）。 */
 export async function invokeHost(method: string, params?: unknown): Promise<unknown> {
   const b = bridge();

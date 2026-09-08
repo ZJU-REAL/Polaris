@@ -8,7 +8,8 @@
 
    方法命名：<域>.<对象>.<动词>。
    host.*   = 外壳能力，桌面端恒可用。
-   local.*  = 本地计算能力（第二期），届时只往 Methods 里加条目。
+   local.*  = 本地长任务簿记（目前只有 job.cancel）。真正的本地计算走
+              kernel 里的插件（legacy-engine 等），不再经过独立 agent 进程。
    kernel.* = 内核（@polaris/kernel）状态，桌面端恒可用。
    ============================================================ */
 
@@ -42,23 +43,15 @@ export interface CapabilityManifest {
   capabilities: Record<string, CapabilityState>;
 }
 
-/** 已知能力键。第二期实现时把对应的 available 翻成 true。 */
+/** 已知能力键。latex.compile 的 tectonic 探测是真的在跑（见 capabilities.ts），
+    本地编译落地时把 available 翻成 true 即可，前端判断逻辑不用改。 */
 export const CAPABILITY_LATEX_COMPILE = 'latex.compile';
-export const CAPABILITY_PAPER_IMPORT = 'papers.import';
-export const CAPABILITY_PDF_CACHE = 'cache.pdf';
 /** 插件管理（#705）：kernel 活着且配置树服务可达时可用，设置页插件 tab 读它显隐。 */
 export const CAPABILITY_PLUGINS_MANAGE = 'plugins.manage';
 
 /** 长任务句柄：invoke 立刻返回它，进度经事件通道推。 */
 export interface JobHandle {
   jobId: string;
-}
-
-export type FolderPurpose = 'paper-import' | 'zotero-library';
-
-export interface LatexCompileInput {
-  manuscriptId: string;
-  engine: 'tectonic' | 'pdflatex' | 'xelatex' | 'lualatex';
 }
 
 /** 更新检查结果。available=false 时其余字段无意义。 */
@@ -262,18 +255,12 @@ export interface Methods {
   /** 设置索引源；空串 = 复位官方默认源。 */
   'plugins.market.setEndpoint': { params: { endpoint: string }; result: MarketEndpoint };
 
-  /* ---- local.*：第二期的本地计算能力 ----
-     现在全部声明但不实现（一律抛 ERR_CAPABILITY_UNAVAILABLE），目的是把
-     renderer → preload → router → agent supervisor 这条管道**现在就打通**。
-     等第二期真的接上本地进程时，改的只有 agent 侧的 handler。 */
+  /* ---- local.*：本地长任务簿记。曾经还声明过 latex.compile / fs.pickFolder /
+     papers.scan 三个只会抛 ERR_CAPABILITY_UNAVAILABLE 的占位方法（走独立
+     stdio agent 进程），审计证明那条管道从未产生过一次成功调用，连同 agent
+     一起拆除（#731）；本地计算的落点改为 kernel 插件。 ---- */
 
-  /** 本地 tectonic 编译。返回 JobHandle，日志与结果经 job.* 事件推。 */
-  'local.latex.compile': { params: LatexCompileInput; result: JobHandle };
-  /** 弹原生目录选择框，返回不透明句柄 token（绝不把真实路径交给 renderer）。 */
-  'local.fs.pickFolder': { params: { purpose: FolderPurpose }; result: { token: string } | null };
-  /** 扫描已授权目录里的 PDF（识别 arXiv id / DOI）。 */
-  'local.papers.scan': { params: { token: string }; result: JobHandle };
-  /** 取消长任务。 */
+  /** 取消长任务（更新下载等 job.* 事件流的取消口）。 */
   'local.job.cancel': { params: { jobId: string }; result: void };
 }
 

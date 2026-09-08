@@ -1,5 +1,5 @@
 /* ============================================================
-   登录 token 的存储后端 —— 可替换。
+   登录 token 的存储后端。
 
    web 端与桌面端都用浏览器存储（桌面端页面跑在 app://polaris 这个稳定
    origin 上，localStorage 正常持久化，登录态零改动）。
@@ -11,17 +11,12 @@
 
    注意：**不要改用 Electron 的 safeStorage**。试过并退回了——未签名/ad-hoc
    签名的包每次构建签名都不同，钥匙串 ACL 对不上，macOS 每次启动都弹授权框。
-   要用钥匙串的前提是先有稳定的 Developer ID 签名。抽象本身保留：真到那一天，
-   启动时 setTokenStore() 换个实现即可，调用方一行不改。
+   要用钥匙串的前提是先有稳定的 Developer ID 签名；真到那一天，换掉本文件的
+   store 实现即可，读写入口（readToken/writeToken）不变。
 
    注意：接口刻意保持**同步**。改成 async 会波及 request/requestBlob
    与三个 WS/SSE 调用点，那才是真正的重写。
    ============================================================ */
-
-export interface TokenStore {
-  get(): string | null;
-  set(token: string | null): void;
-}
 
 const TOKEN_KEY = 'polaris.token';
 const REMEMBER_KEY = 'polaris.remember';
@@ -68,10 +63,10 @@ export function setLastAccount(account: string | null): void {
   }, null);
 }
 
-const browserTokenStore: TokenStore = {
+const store = {
   get: () =>
     safe(() => sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY), null),
-  set: (token) =>
+  set: (token: string | null) =>
     safe(() => {
       localStorage.removeItem(TOKEN_KEY);
       sessionStorage.removeItem(TOKEN_KEY);
@@ -81,13 +76,6 @@ const browserTokenStore: TokenStore = {
       return null;
     }, null),
 };
-
-let store: TokenStore = browserTokenStore;
-
-/** 替换 token 存储后端（桌面端二期用）。 */
-export function setTokenStore(next: TokenStore): void {
-  store = next;
-}
 
 export function readToken(): string | null {
   return store.get();

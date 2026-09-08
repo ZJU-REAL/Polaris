@@ -440,7 +440,8 @@ export function IdeaDetailPage() {
   function invalidateIdea() {
     void queryClient.invalidateQueries({ queryKey: ['idea', id] });
     void queryClient.invalidateQueries({ queryKey: ['ideas'] });
-    void queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
+    // leaderboard 缓存键带课题 id（['leaderboard', pid]），按同键失效
+    void queryClient.invalidateQueries({ queryKey: ['leaderboard', idea?.project_id ?? currentProjectId] });
     void queryClient.invalidateQueries({ queryKey: ['forge-state'] });
   }
 

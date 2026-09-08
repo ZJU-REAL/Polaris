@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveStructuredResourceUrls } from './structuredContent';
+import { resolveStructuredResourceUrls } from '../structuredContent';
 
 describe('resolveStructuredResourceUrls', () => {
   it('preserves web same-origin signed URLs', () => {

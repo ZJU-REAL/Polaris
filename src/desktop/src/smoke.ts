@@ -25,7 +25,6 @@ import { join } from 'node:path';
 
 import type { FetchImpl, SqliteTree, StorageService } from '@polaris/kernel';
 
-import { pingAgent, stopAgent } from './main/agent/supervisor';
 import { kernelPluginMeta, localBackend, marketPluginsDir, startKernel, stopKernel } from './main/kernel';
 import { capabilityManifest } from './main/capabilities';
 import { installIpc } from './main/ipc/router';
@@ -351,14 +350,12 @@ void app.whenReady().then(async () => {
   const secure = (await win.webContents.executeJavaScript('window.isSecureContext')) as boolean;
   check('secure context（clipboard / Notification 可用）', secure === true);
 
-  console.log('\n第二期骨架（一期应当全部「不可用」但管道是通的）');
+  console.log('\n能力清单与 local.*');
   const manifest = await capabilityManifest();
   check('契约版本已声明', manifest.contract >= 1);
   check(
-    '本地计算能力一期均为不可用',
-    Object.entries(manifest.capabilities)
-      .filter(([key]) => key !== 'plugins.manage')
-      .every(([, c]) => !c.available),
+    'latex.compile 能力位仍关闭（本地编译未实现）',
+    manifest.capabilities['latex.compile']?.available === false,
   );
   // plugins.manage（#705）是第一个真可用的能力位：kernel 已起、树已就绪
   check(
@@ -367,28 +364,28 @@ void app.whenReady().then(async () => {
     JSON.stringify(manifest.capabilities['plugins.manage']),
   );
   check(
-    'tectonic 探测已真的执行（第二期直接用）',
+    'tectonic 探测已真的执行（本地编译落地时直接用）',
     typeof (manifest.capabilities['latex.compile'].detail as { found?: boolean })?.found === 'boolean',
   );
 
-  // 这是最关键的一条：证明 renderer → preload → router → supervisor → agent
-  // 这条 stdio 管道现在就是通的，第二期只需要换掉 agent 侧的 handler。
-  check('本地 agent 进程可探活（stdio JSON-RPC 往返）', await pingAgent());
-
-  const localError = (await win.webContents.executeJavaScript(
+  // 旧 stdio agent 及其三个占位方法已整体拆除（#731）：这些方法名如今必须是
+  // 「未知方法」——若这条断言变红，说明有人把半截管道又接了回来。
+  const removedLocal = (await win.webContents.executeJavaScript(
     `window.polaris.invoke('local.latex.compile', { manuscriptId: 'x', engine: 'tectonic' })
        .then(() => 'UNEXPECTED_SUCCESS', e => String(e && e.message || e))`,
   )) as string;
   check(
-    'local.* 以结构化的能力不可用错误结束',
-    localError.includes('ERR_CAPABILITY_UNAVAILABLE'),
-    localError.slice(0, 120),
+    '已拆除的 local.* 方法返回 ERR_UNKNOWN_METHOD',
+    removedLocal.includes('ERR_UNKNOWN_METHOD'),
+    removedLocal.slice(0, 120),
   );
-  check(
-    '错误确实来自 agent 而不是 main 就地抛出',
-    localError.includes('method not implemented in phase 1'),
-    localError.slice(0, 120),
-  );
+  // local.job.cancel 是唯一留下的 local.* 方法（main 内的 job 簿记，与 agent
+  // 无关）：取消不存在的 job 是 no-op，renderer 全链路必须能正常往返。
+  const cancelRoundtrip = (await win.webContents.executeJavaScript(
+    `window.polaris.invoke('local.job.cancel', { jobId: 'no-such-job' })
+       .then(() => 'ok', e => String(e && e.message || e))`,
+  )) as string;
+  check('local.job.cancel 经 IPC 往返仍可用', cancelRoundtrip === 'ok', cancelRoundtrip);
 
   // 内核：证明 @polaris/kernel 真的挂在主进程里，且 renderer 能经唯一
   // IPC 通道读到它的状态（renderer → preload → router → kernel 单例）。
@@ -656,8 +653,6 @@ void app.whenReady().then(async () => {
     check('非空树未被重新种子（smoke-entry 仍在树中）', reopenedTree.store['smoke-entry'] != null);
   }
   await stopKernel();
-
-  stopAgent();
 
   if (consoleErrors.length) {
     console.log('\n渲染进程 console 错误：');

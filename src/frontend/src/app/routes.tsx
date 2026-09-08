@@ -155,7 +155,7 @@ export const router = createBrowserRouter([
       { path: 'projects/:id', element: <ProjectSettingsRedirect /> },
       { path: 'library', element: page(() => import('../features/library/LibraryPage'), 'LibraryPage') },
       // 课题外任务列表（文献库任务 + 每日新论文）。原实验室数据面板随 #626 移除
-      { path: 'lab', element: page(() => import('../features/lab/LabPage'), 'LabPage') },
+      { path: 'lab', element: page(() => import('../features/library-tasks/LibraryTasksPage'), 'LibraryTasksPage') },
       // 共享方向文献库（无需课题即可读）
       { path: 'libraries', element: page(() => import('../features/libraries/LibrariesPage'), 'LibrariesPage') },
       { path: 'libraries/:id', element: page(() => import('../features/libraries/LibraryDetailPage'), 'LibraryDetailPage') },

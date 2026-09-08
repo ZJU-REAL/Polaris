@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitPaperInput } from './paperInput';
+import { splitPaperInput } from '../paperInput';
 
 describe('splitPaperInput', () => {
   it.each([
