@@ -19,10 +19,11 @@ from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.paper import Paper
 
 # 订阅分类没有代码级默认（#720 A4）：以前这里写死 cs.AI/cs.CL/cs.CV，非 CS
-# 用户会被静默塞满不相干论文。订阅只存 system_settings 的 daily_feed_categories 键。
+# 用户会被静默塞满不相干论文。订阅只存 owner 用户偏好 daily.categories
+# （#737 起在 users.settings，旧 system_settings 键仅迁移期回退）。
 
 # 池滚动保留天数（含当天）
-#: 保留天数的**默认值**。运行时以 SystemSetting daily_feed_retention_days 为准
+#: 保留天数的**默认值**。运行时以 owner 用户偏好 daily.retention_days 为准
 #: （见 services/daily_feed.get_retention_days）；这里留着给不便读设置的调用方。
 DAILY_FEED_RETENTION_DAYS = 14
 

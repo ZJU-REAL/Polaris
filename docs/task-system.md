@@ -592,7 +592,7 @@ passed steps can be neither edited nor obsoleted.
 
 `src/backend/worker/settings.py` registers three cron jobs — but none of them is a fixed "run at
 HH:MM" trigger anymore. arq fixes cron times at worker startup, and the fetch time is an
-admin-editable setting (`daily_feed_sync_time`, Admin → Daily papers), so the crons run as cheap
+editable preference (`daily.sync_time` on the deployment owner, Admin → Daily papers), so the crons run as cheap
 **checkpoints** that decide for themselves whether it is time to act. All times are **UTC**.
 
 | Cadence | Job | What it does |

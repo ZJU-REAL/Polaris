@@ -50,7 +50,7 @@ class WorkerSettings:
         # 全量导出：全库扫描 + 拷 PDF，默认 1h 上限够用（超大库另议）
         full_export,
     ]
-    # 抓取时刻可由管理员配置（SystemSetting daily_feed_sync_time，默认 UTC 02:30 =
+    # 抓取时刻可配置（owner 用户偏好 daily.sync_time，#737 起存 users.settings；默认 UTC 02:30 =
     # 北京 10:30；arXiv 约北京 10:00 放新公告）。arq 的 cron 时刻在 worker 启动时就固定
     # 了，改设置得重启才生效——所以这里让 cron 每 15 分钟空转一次，由任务自己判断到点
     # 没有、今天跑过没有。空转一次只是一条查询，代价可以忽略。

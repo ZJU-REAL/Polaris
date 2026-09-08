@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # 激活空间：检索唯一认的空间，也是新向量的写入目标。未设置 = 平台还没建过任何向量。
+# 索引状态而非偏好，#737 分层后留在 system_settings。
 ACTIVE_SPACE_SETTING_KEY = "embedding_active_space"
 
 

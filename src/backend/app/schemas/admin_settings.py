@@ -1,4 +1,8 @@
-"""管理端全局设置 schema（system_settings 表读写）。"""
+"""管理端全局设置 schema。
+
+#737 配置分层起：用户偏好类（TTS 全局档、机构抽取模式等）存 owner 用户的
+users.settings；平台运维类仍在 system_settings。
+"""
 
 from typing import Any, Literal
 

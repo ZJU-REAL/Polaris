@@ -38,7 +38,12 @@ def reset_owner_cache() -> None:
     _owner_id = None
 
 
-async def _resolve_owner_id(session: AsyncSession) -> uuid.UUID | None:
+async def resolve_owner_id(session: AsyncSession) -> uuid.UUID | None:
+    """owner 的 user id（进程内缓存，见文件头的局限说明）。
+
+    公开导出：#737 的用户偏好存取（services/owner_settings.py）要把偏好落到
+    owner 头上，与本守卫共用同一个「谁是主人」的事实源，不各算各的。
+    """
     global _owner_id
     if _owner_id is None:
         _owner_id = (
@@ -56,7 +61,7 @@ async def is_owner(session: AsyncSession, user: User) -> bool:
     """这个用户是不是平台主人（桌面档=本人；服务器档=首位用户）。"""
     if get_settings().is_desktop:
         return True
-    owner_id = await _resolve_owner_id(session)
+    owner_id = await resolve_owner_id(session)
     return owner_id is not None and user.id == owner_id
 
 

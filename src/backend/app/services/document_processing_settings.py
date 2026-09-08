@@ -22,6 +22,9 @@ from app.core.security import decrypt_secret, encrypt_secret
 from app.models.system_setting import SystemSetting
 from app.services.mineru import MineruRuntimeConfig
 
+# 留在 system_settings（#737 分层）：MinerU 地址/超时/并发是部署基础设施参数（默认
+# 值直接来自 env），且与加密凭据池同住一份原子文档——同 literature_search 的理由，
+# 不迁用户偏好。
 SETTING_KEY = "document_processing"
 _SETTING_LOCK_ID = zlib.crc32(SETTING_KEY.encode("utf-8"))
 

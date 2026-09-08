@@ -197,7 +197,7 @@ The pipeline is built so that a partial failure degrades the output instead of l
   its own `try`; the failure is collected into the step observation's `failed` list and the run
   continues (`actions_wiki.py:881-892`). `CancelledError` is re-raised rather than swallowed, so a
   killed worker resumes at the checkpoint instead of marking papers as failed.
-- **Affiliation extraction rides along.** When the admin setting `affiliation_extraction_mode` is
+- **Affiliation extraction rides along.** When the `affiliations.extraction_mode` preference (stored on the deployment owner, #737) is
   `on_compile` and the paper has no affiliations yet, the compile prompt asks for an author↔institution
   block after the article. The block is **stripped from the body whether or not it parses**
   (`parse_and_strip_affiliation_block`, called at `wiki_compile.py:199`) — a parse failure costs the

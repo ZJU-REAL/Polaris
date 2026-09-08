@@ -18,12 +18,16 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings as get_app_settings
-from app.models.system_setting import SystemSetting
 from app.models.user import User
+from app.services import owner_settings
 
 logger = logging.getLogger(__name__)
 
+# TTS 全局档（上游地址/模型/默认音色）是用户偏好（#737 配置分层）：存 owner 用户的
+# settings['tts.admin']；旧 system_settings 键 tts_config 只作迁移期只读回退。
+# USER_SETTING_KEY 是另一层：每个用户各自的播放偏好（开关/语速），本来就在用户态。
 SETTING_KEY = "tts_config"
+ADMIN_USER_KEY = "tts.admin"
 USER_SETTING_KEY = "tts"
 _WAV_LIMIT_BYTES = 128 * 1024 * 1024
 _DEFAULT_ADMIN_SETTINGS: dict[str, Any] = {
@@ -109,17 +113,17 @@ def validate_system(raw: Any) -> dict[str, Any]:
 
 
 async def get_admin_settings(session: AsyncSession) -> dict[str, Any]:
-    row = await session.get(SystemSetting, SETTING_KEY)
-    return _clean_system(row.value if row is not None else None)
+    value = await owner_settings.read_setting(session, ADMIN_USER_KEY, legacy_key=SETTING_KEY)
+    return _clean_system(value)
 
 
-async def set_admin_settings(session: AsyncSession, raw: Any) -> dict[str, Any]:
+async def set_admin_settings(
+    session: AsyncSession, raw: Any, *, user: User | None = None
+) -> dict[str, Any]:
     cleaned = validate_system(raw)
-    row = await session.get(SystemSetting, SETTING_KEY)
-    if row is None:
-        session.add(SystemSetting(key=SETTING_KEY, value=cleaned))
-    else:
-        row.value = cleaned
+    await owner_settings.write_setting(
+        session, ADMIN_USER_KEY, cleaned, legacy_key=SETTING_KEY, user=user
+    )
     await session.commit()
     return cleaned
 

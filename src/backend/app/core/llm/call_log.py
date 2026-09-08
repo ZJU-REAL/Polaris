@@ -1,6 +1,7 @@
 """LLM 调用日志：开关读取（短 TTL 缓存）、请求脱敏/截断、落库与保留期清理。
 
-- 开关存 system_settings 表（key=llm_call_logging_enabled），~15s 进程内缓存，
+- 开关存 system_settings 表（key=llm_call_logging_enabled，平台诊断开关，#737 分层
+  后仍留原层——它管的是全站可观测性，不是个人偏好），~15s 进程内缓存，
   打开/关闭免重启即生效；管理端改动后调用 invalidate_flag_cache() 立即刷新。
 - 记录尽力而为：任何失败只 log warning，绝不影响 LLM 主流程。
 - 图片绝不存 base64，替换为 "[image ~N KB]" 占位；超长内容截断并标注。
