@@ -9,6 +9,7 @@
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
@@ -102,6 +103,92 @@ STAGES = (
     "hyp_compare",
 )
 
+# ---- 插件命名空间环节（#736，设计报告 §19） ----
+#
+# 上面的 STAGES 元组是内置集合，保持 38 项不动；学科包/插件要挂自己的 LLM 环节时
+# 不再改核心表，而是在运行时注册一个三段式名字 ``plugin:<pack>:<stage>``。
+# 段字符集限 [a-z0-9-]：环节名会进 model_routes / llm_usage / llm_call_logs 的
+# stage 列和前端表格，放开大小写/下划线只会带来「同名不同串」的对账地狱。
+# 总长限 32：三张表的 stage 列都是 String(32)（放宽列宽是另一条改造线的事，
+# 这里先守住不写进截断串）。
+#
+# 与「没显式配路由就回退 default」的内置规则不同，插件环节多一级回退：注册时
+# 可以声明一个**内置** fallback 环节（如 extract_skeleton），语义是「没单独配路由
+# 时按这个内置环节的路由调用」。这不违背下面「界面说什么就是什么」的教训——
+# 那条教训针对的是设置页画着「跟随默认」实际却走别处的行；插件环节在设置页
+# 只有配了路由才出现（没有「跟随默认」的行画在那里骗人），fallback 是插件作者
+# 显式声明、可在注册处查证的行为。fallback 只准指向内置环节：允许指向另一个
+# 插件环节就会出现回退链，行为取决于插件加载顺序，没法讲清。
+PLUGIN_STAGE_RE = re.compile(r"^plugin:([a-z0-9-]+):([a-z0-9-]+)$")
+_PLUGIN_STAGE_MAX_LEN = 32  # ModelRoute/LLMUsage/LLMCallLog.stage 均为 String(32)
+
+
+@dataclass(slots=True, frozen=True)
+class PluginStageSpec:
+    """一个已注册插件环节的运行时声明。tier 决定耐心档（见 call_profile），
+    fallback 决定路由回退（见 resolve）。"""
+
+    name: str  # 完整命名空间串 plugin:<pack>:<stage>
+    tier: str  # "short" | "medium" | "long"
+    fallback: str | None  # 内置环节名或 None（None = 直接回退 default）
+
+
+_PLUGIN_STAGES: dict[str, PluginStageSpec] = {}
+
+
+def is_plugin_stage(stage: str) -> bool:
+    """名字是否为合法的插件命名空间串（只看形状，不看是否已注册）。"""
+    return bool(PLUGIN_STAGE_RE.match(stage)) and len(stage) <= _PLUGIN_STAGE_MAX_LEN
+
+
+def register_plugin_stage(
+    pack: str, stage: str, *, tier: str = "medium", fallback: str | None = None
+) -> str:
+    """注册一个插件环节，返回完整命名空间串。
+
+    重复注册：同名同配置幂等放过——抽取 schema 版本演进（同 id 覆盖注册）会把
+    同一环节再挂一次，这不该炸；同名**不同配置**拒绝——两个插件抢同一个名字，
+    或同一插件改了档位却没改版本，静默用先到的那份只会在线上表现成「配了没生效」。
+    """
+    name = f"plugin:{pack}:{stage}"
+    if not PLUGIN_STAGE_RE.match(name):
+        raise ValueError(
+            f"invalid plugin stage name: {name!r} (pack/stage segments must match [a-z0-9-]+)"
+        )
+    if len(name) > _PLUGIN_STAGE_MAX_LEN:
+        raise ValueError(
+            f"plugin stage name too long: {name!r} "
+            f"(max {_PLUGIN_STAGE_MAX_LEN} chars, the DB stage columns are String(32))"
+        )
+    if tier not in _TIER_PROFILES:
+        raise ValueError(f"unknown tier: {tier!r} (expected one of {sorted(_TIER_PROFILES)})")
+    if fallback is not None and fallback not in STAGES:
+        raise ValueError(f"fallback must be a built-in stage, got {fallback!r}")
+    spec = PluginStageSpec(name=name, tier=tier, fallback=fallback)
+    existing = _PLUGIN_STAGES.get(name)
+    if existing is not None:
+        if existing == spec:
+            return name
+        raise ValueError(f"plugin stage {name!r} already registered with a different config")
+    _PLUGIN_STAGES[name] = spec
+    return name
+
+
+def unregister_plugin_stage(name: str) -> bool:
+    """注销一个插件环节（插件卸载/测试清场用）；返回是否真的删了。"""
+    return _PLUGIN_STAGES.pop(name, None) is not None
+
+
+def plugin_stage_spec(stage: str) -> PluginStageSpec | None:
+    """已注册插件环节的声明；未注册返回 None。"""
+    return _PLUGIN_STAGES.get(stage)
+
+
+def known_stages() -> frozenset[str]:
+    """当前进程认识的全部环节：内置 STAGES + 已注册的插件环节。"""
+    return frozenset(STAGES) | _PLUGIN_STAGES.keys()
+
+
 _ROUTE_CACHE_TTL = 60.0
 
 # 能力型环节：需要专用模型（嵌入/重排），对话模型不具备该能力，
@@ -174,6 +261,9 @@ _SHORT_CALL = (60.0, 2)  # (timeout 秒, 最多尝试次数) → 最坏 60+3+60 
 _MEDIUM_CALL = (180.0, 2)
 _LONG_CALL = (300.0, 4)
 
+# 插件环节按注册时声明的 tier 取档（内置环节仍走下面三个集合的显式归类）
+_TIER_PROFILES = {"short": _SHORT_CALL, "medium": _MEDIUM_CALL, "long": _LONG_CALL}
+
 _SHORT_CALL_STAGES = frozenset(
     {
         "default",
@@ -240,6 +330,11 @@ def call_profile(stage: str) -> tuple[float, int]:
     短档 60s 对一个长生成环节是致命的（#386 就是这么把想法生成掐死的），
     而这种事从日志里看只是「provider 失败」。
     """
+    spec = _PLUGIN_STAGES.get(stage)
+    if spec is not None:
+        # 插件环节：档位在注册时声明（tier），不进上面三个内置集合——
+        # 那三个集合与 STAGES 元组有守卫测试互相对账，混入运行时注册项会把守卫搅浑
+        return _TIER_PROFILES[spec.tier]
     if stage in _MEDIUM_CALL_STAGES:
         return _MEDIUM_CALL
     if stage in _LONG_CALL_STAGES:
@@ -387,9 +482,17 @@ class LLMRouter:
         对话环节连 default 也没有时抛 LLMNotConfiguredError（503），不再
         静默回退演示用 fake provider；仅当显式开启
         ``settings.llm_fake_fallback``（测试套件 / 无 key 演示）才回退 fake。
+
+        插件命名空间环节（#736）的回退链是三级：精确路由（DB 里 stage 名 =
+        完整命名空间串）→ 注册时声明的内置 fallback 环节的路由 → default 路由。
+        耐心档不随回退变：始终按注册时声明的 tier（见 call_profile）。
         """
         routes = await self._get_routes()
         route = routes.get(stage)
+        if route is None:
+            spec = _PLUGIN_STAGES.get(stage)
+            if spec is not None and spec.fallback is not None:
+                route = routes.get(spec.fallback)
         if route is None:
             if stage in _CAPABILITY_STAGES:
                 if not routes and get_settings().llm_fake_fallback:

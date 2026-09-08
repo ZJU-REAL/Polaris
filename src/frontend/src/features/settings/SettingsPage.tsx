@@ -15,12 +15,13 @@ import { SysinfoPanel } from '../../components/ui/SysinfoPanel';
 import { McpToolsContent } from '../mcp/McpToolsPage';
 import { AcademicIdentitySection } from './AcademicIdentitySection';
 import { tr } from '../../lib/i18n';
-import { STAGE_LABELS } from '../../lib/stageLabels';
+import { stageLabel } from '../../lib/stageLabels';
 import { setTaskLogHistory, useTaskLogHistory } from '../../lib/prefs';
 import {
   ApiError,
   LLM_STAGES,
   api,
+  isPluginStage,
   type AffiliationMode,
   type ChatBotPlatform,
   type DailySyncScope,
@@ -1458,7 +1459,8 @@ function RoutesSection() {
   const saveMutation = useMutation({
     mutationFn: () => {
       const routes: LlmRoute[] = [];
-      for (const stage of LLM_STAGES) {
+      // PUT 是整表覆盖：插件环节的行也要一并提交，否则每次保存都会把它们静默删光
+      for (const stage of [...LLM_STAGES, ...pluginStages]) {
         const r = rows[stage];
         if (!r || !r.provider_id || !r.model.trim()) continue;
         const t = r.temperature.trim();
@@ -1478,6 +1480,17 @@ function RoutesSection() {
     },
     onError: (err) => toast(`${tr('保存失败', 'Save failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
+
+  // 插件命名空间环节（#736）：不在内置清单里，路由表里有记录才显示一行。
+  // 从 rows 派生而不是另存状态：清掉行（clearRow）它就消失，保存后路由随之删除，
+  // 该环节回到插件注册时声明的回退链（fallback 环节 → 默认）。
+  const pluginStages = useMemo(
+    () =>
+      Object.keys(rows)
+        .filter((s) => !(LLM_STAGES as readonly string[]).includes(s) && isPluginStage(s))
+        .sort(),
+    [rows],
+  );
 
   const defaultRow = rows['default'];
   const emptyDraftRow: RouteDraft = { provider_id: '', model: '', temperature: '', effort: '' };
@@ -1520,11 +1533,13 @@ function RoutesSection() {
     }
   };
 
-  // 常驻行固定在顶部；展开区只包含其余环节（embedding/rerank 不重复出现）。
-  const visibleStages: string[] =
-    showAll ? [...PRIMARY_STAGES, ...LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s))] : PRIMARY_STAGES;
-  // 收起态下有显式设置的隐藏行数（提示用）
-  const hiddenExplicitCount = LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s) && rows[s]).length;
+  // 常驻行固定在顶部；展开区包含其余内置环节 + 有路由记录的插件环节。
+  const visibleStages: string[] = showAll
+    ? [...PRIMARY_STAGES, ...LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s)), ...pluginStages]
+    : PRIMARY_STAGES;
+  // 收起态下有显式设置的隐藏行数（提示用）；插件行必然是显式设置，全算上
+  const hiddenExplicitCount =
+    LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s) && rows[s]).length + pluginStages.length;
 
   return (
     <div className="card card-pad">
@@ -1580,7 +1595,8 @@ function RoutesSection() {
               const unset = capability && !explicit; // 能力型环节未设置：不跟随默认，运行时降级
               // 展示值：显式行用自己的；跟随默认的行弱化展示 default 的 provider/模型
               const shown = rows[stage] ?? (follows ? defaultRow : undefined) ?? emptyDraftRow;
-              const label = STAGE_LABELS[stage];
+              const plugin = isPluginStage(stage);
+              const label = stageLabel(stage);
               const eff = effectiveOf(stage);
               const state: TestState = eff
                 ? tests.results[testKeyOf(eff.provider_id, eff.model.trim(), capabilityOf(stage))] ?? { status: 'idle' }
@@ -1590,7 +1606,16 @@ function RoutesSection() {
                 <tr key={stage}>
                   <td>
                     <div className="row gap6" style={{ alignItems: 'center' }}>
-                      <span style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : stage}</span>
+                      <span style={{ fontSize: 12, fontWeight: 650, ...(plugin ? { fontFamily: 'var(--mono, monospace)' } : {}) }}>{tr(label.zh, label.en)}</span>
+                      {plugin && (
+                        <span
+                          className="pill sm"
+                          style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}
+                          title={tr('插件注册的环节；清除这一行后按插件声明的回退环节调用', 'Registered by a plugin; clearing this row falls back to the stage it declared')}
+                        >
+                          {tr('插件', 'Plugin')}
+                        </span>
+                      )}
                       {follows && (
                         <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
                           {tr('跟随默认', 'Follows default')}
@@ -1611,14 +1636,19 @@ function RoutesSection() {
                           style={{ width: 20, height: 20 }}
                           title={capability
                             ? tr('清除设置，恢复未设置', 'Clear — back to "Not set"')
-                            : tr('清除单独设置，恢复跟随默认', 'Clear this override and follow default again')}
+                            : plugin
+                              ? tr('清除这一行，按插件声明的回退环节调用', 'Clear this row and fall back to the stage the plugin declared')
+                              : tr('清除单独设置，恢复跟随默认', 'Clear this override and follow default again')}
                           onClick={() => clearRow(stage)}
                         >
                           <Icon name="x" size={11} />
                         </button>
                       )}
                     </div>
-                    <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{stage}</div>
+                    {/* 插件行的标题就是原串本身，下面再排一遍纯属重复 */}
+                    {!plugin && (
+                      <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{stage}</div>
+                    )}
                   </td>
                   <td>
                     <SelectMenu
