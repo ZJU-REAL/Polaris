@@ -7,7 +7,7 @@ import { tr } from '../../lib/i18n';
 import { api, ApiError, type FigureInfo, type PaperDetail } from '../../lib/api';
 
 /* ============================================================
-   论文图片画廊（docs/api-lit.md §6.5）：
+   论文图片画廊（docs/task-system.md §7（原 api-lit.md §6.5））：
    - FigureGallery：缩略图横向网格（默认只看重要图，可切换全部）
      + 点击开 Lightbox（大图 + 说明 + 左右切换 + Esc/点击关闭）
    - FigureEmbed：wiki 正文 ![[fig:N]] 嵌入图（§6.6）：居中大图

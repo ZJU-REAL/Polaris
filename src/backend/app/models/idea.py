@@ -13,10 +13,10 @@ from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 # 状态流转：candidate →(锦标赛) under_review →(闸门批准) promoted；人工可置 rejected
 IDEA_STATUSES = ("candidate", "under_review", "promoted", "rejected")
 
-# 深度分级（docs/api-idea2.md §7）：sketch=阶段0方向草案，proposal=深耕产物（Research Proposal）
+# 深度分级（docs/task-system.md §7）：sketch=阶段0方向草案，proposal=深耕产物（Research Proposal）
 IDEA_DEPTHS = ("sketch", "proposal")
 
-# goal.research_type 枚举（docs/api-idea2.md §3）
+# goal.research_type 枚举（docs/task-system.md §7（原 api-idea2.md §3））
 RESEARCH_TYPES = ("method", "benchmark", "analysis", "survey", "application", "theory")
 
 
@@ -42,12 +42,12 @@ class Idea(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     parent_paper_ids: Mapped[list[Any] | None] = mapped_column(JSONVariant)
     # 语义去重用的向量存 idea_vectors（每个空间一行），不在这张表上
-    # ---- Idea 2.0（docs/api-idea2.md §7） ----
+    # ---- Idea 2.0（docs/task-system.md §7（原 api-idea2.md §7）） ----
     # sketch | proposal
     depth: Mapped[str] = mapped_column(String(16), default="sketch", nullable=False)
     # method | benchmark | analysis | survey | application | theory（深耕产物才有）
     research_type: Mapped[str | None] = mapped_column(String(32))
-    # 结构化研究目标（goal schema，docs/api-idea2.md §3）
+    # 结构化研究目标（goal schema，docs/task-system.md §7（原 api-idea2.md §3））
     goal: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     # 依据文献：[{paper_id|null, title, url|null, why, source: library|external|signal}]
     evidence: Mapped[list[Any] | None] = mapped_column(JSONVariant)

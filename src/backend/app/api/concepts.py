@@ -1,4 +1,4 @@
-"""概念库路由（docs/api-m2.md §2）。"""
+"""概念库路由（docs/task-system.md §7（原 api-m2.md §2））。"""
 
 import uuid
 

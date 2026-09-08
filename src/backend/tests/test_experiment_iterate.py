@@ -1,4 +1,4 @@
-"""M5-A 实验自动迭代 + 图表专项测试（docs/api-m5-a.md §6，离线 MockSSH + fake LLM）。
+"""M5-A 实验自动迭代 + 图表专项测试（docs/task-system.md §7，离线 MockSSH + fake LLM）。
 
 覆盖：早停（连续无提升 / 假设全部定论）、debug 独立限额、max_runs 截断、
 no_improve_stop 预算入参、metrics.json 合并、figures 脚本失败与 VLM 质检失败的
@@ -202,7 +202,7 @@ def _managed_launches(fake_ssh, operation: str) -> int:
 
 
 async def _iterate_observation(client, headers, voyage_id):
-    """末个 analyze 节点的 observation（迭代终止判定所在，docs/voyage-loop.md §7）。"""
+    """末个 analyze 节点的 observation（迭代终止判定所在，docs/task-system.md §7）。"""
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     step = next(s for s in reversed(resp.json()["steps"]) if s["action"] == "experiment.analyze")
     return resp.json()["status"], step["observation"]

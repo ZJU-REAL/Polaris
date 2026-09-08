@@ -49,7 +49,7 @@ TERMINAL_STATUSES = frozenset({"done", "failed", "cancelled"})
 # reconcile 自动 resume 会绕过等待中的提问，把「问用户」变成「没人答自己接着跑」。
 IN_FLIGHT_STATUSES = frozenset({"planning", "executing", "verifying", "replanning"})
 
-# ---- 运行模式（docs/voyage-loop.md §2/§3）：由 kind 静态决定，不暴露给用户/LLM 选择 ----
+# ---- 运行模式（docs/task-system.md §7）：由 kind 静态决定，不暴露给用户/LLM 选择 ----
 # pipeline：固定计划 + 机械校验，失败不经 LLM 重规划；
 # template：固定骨架 + 确定性重规划分支表（LLM 兜底）；
 # loop    ：完整 plan-execute-verify 循环——experiment（模板起步 + plan_signal 分支表推进 +
@@ -93,7 +93,7 @@ class VoyageRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     # demo | ingest | forge | experiment | writing ...
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
-    # pipeline | template | loop（docs/voyage-loop.md §2，由 kind 派生）
+    # pipeline | template | loop（docs/task-system.md §7（原 voyage-loop.md §2），由 kind 派生）
     mode: Mapped[str] = mapped_column(String(16), default="loop", nullable=False)
     goal: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="planning", index=True, nullable=False)
@@ -102,7 +102,7 @@ class VoyageRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     cursor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # 计划演化版本号：每次重规划/计划编辑 +1
     plan_iteration: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    # voyage 级完成标准 {checks: [...]}（docs/voyage-loop.md §5.4；None = 步骤走完即 done）
+    # voyage 级完成标准 {checks: [...]}（docs/task-system.md §7；None = 步骤走完即 done）
     done_criteria: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     # 断点恢复用工作区：artifacts / gates / replans 计数等
     checkpoint: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
@@ -141,7 +141,7 @@ class VoyageStep(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     action: Mapped[str] = mapped_column(String(64), nullable=False)  # actions.py 注册表键
     params: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
-    # 结构化验收 {text: 人读验收标准|None, checks: [...]|None}（docs/voyage-loop.md §6）
+    # 结构化验收 {text: 人读验收标准|None, checks: [...]|None}（docs/task-system.md §7）
     acceptance: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     # 闸门类型（需要人工审批的步骤）
     requires_gate: Mapped[str | None] = mapped_column(String(64))

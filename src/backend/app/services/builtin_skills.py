@@ -1,4 +1,4 @@
-"""内置技能种子（docs/skill-system.md §2）。
+"""内置技能种子（docs/task-system.md §7（原 skill-system.md §2））。
 
 scope=builtin 只读，slug 全局唯一；用户可在技能库「复制为我的技能」后修改。
 启动时由 skills.ensure_builtin_skills() 按 slug 幂等插入（已存在则跳过，

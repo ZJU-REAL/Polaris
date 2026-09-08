@@ -372,7 +372,7 @@ async def rebuild_library_fulltext_index(
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
-    """重建某个库的分段索引（docs/api-lit.md §8）：给缺分段的论文补分段并嵌入。
+    """重建某个库的分段索引（docs/task-system.md §7）：给缺分段的论文补分段并嵌入。
 
     幂等：已有全文分段的论文跳过；没有全文的论文补一个「标题 + 摘要」兜底块，
     这样整库论文都能被文献对话检索到。新入库论文由 ingest 流水线自动处理，

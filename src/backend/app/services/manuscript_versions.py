@@ -1,4 +1,4 @@
-"""稿件文件版本快照（自动打点 + 人工回滚，docs/api-m5-b.md §2 扩展）。
+"""稿件文件版本快照（自动打点 + 人工回滚，docs/task-system.md §7（原 api-m5-b.md §2） 扩展）。
 
 打点时机：AI 分节写入前（pre_ai）、编译当刻（compile）、恢复前备份（pre_restore）。
 同文件连续内容相同不重复存；每文件最多保留 MAX_VERSIONS_PER_FILE 份（删最旧）。

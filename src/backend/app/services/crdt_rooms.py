@@ -1,4 +1,4 @@
-"""CRDT 协同房间（docs/api-m5-b.md §6，不 import fastapi）。
+"""CRDT 协同房间（docs/task-system.md §7（原 api-m5-b.md §6），不 import fastapi）。
 
 - pycrdt.websocket WebsocketServer 单例（懒启动），房间名 = ManuscriptFile.id；
 - Y doc 结构：Text 命名 "content"；房间新建时从 ManuscriptFile.content 初始化；

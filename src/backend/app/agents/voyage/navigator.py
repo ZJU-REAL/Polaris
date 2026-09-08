@@ -77,7 +77,7 @@ IDEA_KINDS = ("idea_forge", "idea_review", "idea_proposal")
 
 
 def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """文献收集计划：每种模式只跑自己需要的步骤（docs/api-m2.md §7）。
+    """文献收集计划：每种模式只跑自己需要的步骤（docs/task-system.md §7（原 api-m2.md §7））。
 
     三种来源按 ``checkpoint.params.mode`` 分叉，共用后续步骤；简报与趋势必须成功后才
     提交水位线。``digest_only`` 用于今日已有论文更新时跳过抓取，直接重建简报与趋势。
@@ -161,7 +161,7 @@ def daily_feed_plan(run: VoyageRun) -> list[dict[str, Any]]:
 
 
 def forge_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """idea_forge 固定七步计划（docs/api-m3.md §1 + docs/api-idea2.md §1 信号升级）。"""
+    """idea_forge 固定七步计划（docs/task-system.md §7 信号升级）。"""
     steps = [
         ("读取知识库上下文", "forge.read_context", "compiled wiki 页与概念已汇总为上下文"),
         ("信号采集（组合空白/趋势/局限）", "forge.collect_signals", "启用的信号源已完成采集"),
@@ -203,7 +203,7 @@ def _proposal_step(
 
 
 def _proposal_body_steps() -> list[dict[str, Any]]:
-    """阶段二/三固定骨架（docs/api-idea2.md §5/§6）。"""
+    """阶段二/三固定骨架（docs/task-system.md §7（原 api-idea2.md §5/§6））。"""
     return [
         _proposal_step(
             "相关工作定位", "proposal.related_work", "覆盖全部 grounding 论文并给出差异对比"
@@ -226,7 +226,7 @@ def _proposal_body_steps() -> list[dict[str, Any]]:
 
 
 def proposal_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """idea_proposal 固定计划（docs/api-idea2.md）：
+    """idea_proposal 固定计划（docs/task-system.md §7（原 api-idea2.md））：
     目标构建 →（显式 confirm_goal=True 时 idea_goal 闸门 + 修订）→ 方案深耕 → 评审修订。
     """
     params = (run.checkpoint or {}).get("params") or {}
@@ -258,7 +258,7 @@ _DIAG_DUPLICATE = "DUPLICATE"
 def proposal_replan(
     run: VoyageRun, failed_step: dict[str, Any], diagnosis: str
 ) -> list[dict[str, Any]]:
-    """idea_proposal 确定性重规划（不经 LLM，docs/api-idea2.md §5）：
+    """idea_proposal 确定性重规划（不经 LLM，docs/task-system.md §7（原 api-idea2.md §5））：
 
     - DUPLICATE → 插入 goal.refine 调整方向，再从 design 起重跑（用户显式开了
       confirm_goal 才带 idea_pivot 闸门；默认不拦，按重合详情自动调整）；
@@ -309,7 +309,7 @@ def proposal_replan(
 
 
 def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """idea_review（辩论锦标赛）启动计划（docs/api-m3.md §3 + docs/voyage-loop.md §7）：
+    """idea_review（辩论锦标赛）启动计划（docs/task-system.md §7）：
     配对 → 汇总；中间的 N 场辩论由 review.pair 的 plan_signal 按对局数展开成
     N 个 review.match 节点插入两者之间（引擎可逐场查预算，超限走降级收尾）。
     """
@@ -325,7 +325,7 @@ def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "acceptance": acceptance,
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
-            # 汇总是廉价收尾：预算耗尽也放行，别让辩论白跑（docs/voyage-loop.md §5.4）
+            # 汇总是廉价收尾：预算耗尽也放行，别让辩论白跑（docs/task-system.md §7）
             "wrapup": action == "review.summarize",
         }
         for title, action, acceptance in steps
@@ -333,7 +333,7 @@ def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
 
 
 def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """experiment 启动计划（docs/voyage-loop.md §7，mode=loop）：
+    """experiment 启动计划（docs/task-system.md §7（原 voyage-loop.md §7），mode=loop）：
     计划 →（显式 confirm_budget=True 时过 compute_budget 闸门）建环境 → 冒烟
     → 第 1 轮运行 → 第 1 轮分析。
     后续轮次由 experiment.analyze 的 plan_signal 走确定性分支表动态追加
@@ -371,7 +371,7 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "action": action,
             "params": {},
             "acceptance": acceptance,
-            # 冒烟测试用退出码机械判定（原 Sextant 硬编码逻辑，docs/voyage-loop.md §6）
+            # 冒烟测试用退出码机械判定（原 Sextant 硬编码逻辑，docs/task-system.md §7）
             "checks": [{"kind": "exit_code", "value": 0}]
             if action == "experiment.smoke"
             else [{"kind": "no_error"}],
@@ -384,7 +384,7 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
     return head + experiment_round_nodes(1)
 
 
-# voyage 级完成标准（docs/voyage-loop.md §5.4）：engine 在规划时写入 run.done_criteria。
+# voyage 级完成标准（docs/task-system.md §7）：engine 在规划时写入 run.done_criteria。
 # experiment 防"过早宣告完成"：迭代必须有明确终止判定、报告必须已生成
 _DONE_CRITERIA_BY_KIND: dict[str, dict[str, Any]] = {
     # discovery：汇总产物（全部节点+状态+统计）必须已落 checkpoint——树长了一半
@@ -421,7 +421,7 @@ _WRITING_SECTION_TITLES = {
 
 
 def writing_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """paper_writing 固定计划（docs/api-m5-b.md §5）：
+    """paper_writing 固定计划（docs/task-system.md §7（原 api-m5-b.md §5））：
     分节固定顺序撰写 →（中期编译）→ Related Work（候选集内选引）→ 终编译。
     固定管线不重规划：所有步骤 on_failure="fail"；终编译 ok 才算 done。
     """
@@ -472,7 +472,7 @@ def writing_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
             "on_failure": "fail",
-            # 终编译把已写的分节变成成稿 PDF：预算耗尽也放行（docs/voyage-loop.md §5.4）
+            # 终编译把已写的分节变成成稿 PDF：预算耗尽也放行（docs/task-system.md §7）
             "wrapup": True,
         }
     )
@@ -505,7 +505,7 @@ def presentation_plan(run: VoyageRun) -> list[dict[str, Any]]:
 
 
 def paper_review_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """paper_review 固定六步计划（docs/api-m5-c.md §1）：
+    """paper_review 固定六步计划（docs/task-system.md §7（原 api-m5-c.md §1））：
     引用核验 → 事实查错 → 渲染稿件 → 评审员评审(×3) → 汇总(meta-review) → guardrail 校验。
     固定管线不重规划：所有步骤 on_failure="fail"。
     """
@@ -641,7 +641,7 @@ def validate_steps(
                 raise ValueError(f"step {i} checks invalid: {e}") from e
         elif action not in _CONTENT_ACTIONS:
             # 平台批处理动作（wiki./forge./… 前缀）默认机械验收：无 error 即通过
-            # （等价于旧 Sextant 前缀白名单，docs/voyage-loop.md §6）
+            # （等价于旧 Sextant 前缀白名单，docs/task-system.md §7（原 voyage-loop.md §6））
             checks = [{"kind": "no_error"}]
         steps.append(
             {
@@ -818,7 +818,7 @@ class Navigator:
         plan_state: str,
         user_guidance: str | None = None,
     ) -> dict[str, Any]:
-        """loop 模式失败回灌：LLM 产出**计划编辑**而非替换尾部（docs/voyage-loop.md §5.3）。
+        """loop 模式失败回灌：LLM 产出**计划编辑**而非替换尾部（docs/task-system.md §7）。
 
         输出经 validate_plan_edit 严格校验（schema / 动作域（按任务动作族收窄）/
         新增节点上限 / 新节点必须带验收）；连续非法抛 NavigatorError。

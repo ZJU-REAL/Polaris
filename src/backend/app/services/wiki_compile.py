@@ -1,4 +1,4 @@
-"""图文交织 wiki 编译（docs/api-lit.md §6.6）：Librarian 看图写作。
+"""图文交织 wiki 编译（docs/task-system.md §7（原 api-lit.md §6.6））：Librarian 看图写作。
 
 流程（wiki.compile 步骤与 POST /papers/{id}/recompile 共用）：
     ① figures 未注释先筛选注释（stage=librarian 多模态）；
@@ -249,7 +249,7 @@ async def recompile_paper(
     *,
     user_id: uuid.UUID | None = None,
 ) -> PaperView:
-    """重跑筛选注释 + 图文编译，覆盖这篇论文的唯一解读并落库（docs/api-lit.md §6.6）。
+    """重跑筛选注释 + 图文编译，覆盖这篇论文的唯一解读并落库（docs/task-system.md §7）。
 
     无 PDF 时跳过图片、仅重写文字；status：scored/fetched 升为 compiled，其余不动。
     """

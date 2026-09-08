@@ -1,4 +1,4 @@
-"""论文笔记路由（docs/api-lit.md §2）：论文级 CRUD + 课题笔记本聚合。
+"""论文笔记路由（docs/task-system.md §7（原 api-lit.md §2））：论文级 CRUD + 课题笔记本聚合。
 
 P5b 起笔记挂 paper × author（跨课题共享）：列表只返回请求者本人的笔记，
 非作者访问单条一律 404（平台 admin 例外，可管理他人笔记）。

@@ -1,4 +1,4 @@
-"""技能系统测试（docs/skill-system.md S1）：
+"""技能系统测试（docs/task-system.md §7（原 skill-system.md） S1）：
 CRUD/版本/fork/归档 · 全局启用（不绑定课题） · 内置种子幂等 · Voyage 快照与 guidance 注入。"""
 
 import uuid

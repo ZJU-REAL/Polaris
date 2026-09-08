@@ -1,9 +1,9 @@
 /* ============================================================
    WebSocket 通知客户端 — /ws/notifications?token=<jwt>
    断线指数退避重连；服务端推送 gate.created / gate.decided /
-   voyage.status（docs/api-m1.md §5）+ M3 的 review.message /
-   idea.status（docs/api-m3.md §5）+ M4 的 experiment.status
-   （docs/api-m4.md §4）。
+   voyage.status（docs/task-system.md §7（原 api-m1.md §5））+ M3 的 review.message /
+   idea.status（docs/task-system.md §7（原 api-m3.md §5））+ M4 的 experiment.status
+   （docs/task-system.md §7（原 api-m4.md §4））。
    ============================================================ */
 
 import type { GateRead, ReviewMessageRead } from './api';

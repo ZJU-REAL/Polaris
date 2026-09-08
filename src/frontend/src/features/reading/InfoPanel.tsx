@@ -51,7 +51,7 @@ export function InfoPanel({
   const arxivUrl = paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : null;
   const extUrl = arxivUrl ?? paper.url;
 
-  // 正文 ![[fig:N]] 嵌入图（docs/api-lit.md §6.6）
+  // 正文 ![[fig:N]] 嵌入图（docs/task-system.md §7（原 api-lit.md §6.6））
   const figures = usePaperFigures(paper);
   const paperId = paper.id;
   const renderFigure = useCallback(

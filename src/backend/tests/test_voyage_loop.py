@@ -1,4 +1,4 @@
-"""任务循环 v1（docs/voyage-loop.md 阶段 A-E）：检查注册表 + 引擎失败分派 + 计划编辑。
+"""任务循环 v1（docs/task-system.md §7 阶段 A-E）：检查注册表 + 引擎失败分派 + 计划编辑。
 
 - checks：确定性检查注册表的判定与 actionable 诊断；
 - pipeline 失败 → paused_error（不经 LLM 重规划），resume 复位失败节点后续跑；
@@ -177,7 +177,7 @@ def test_plan_edit_actions_scoped_to_run_domain():
 
 
 def test_experiment_node_failure_semantics():
-    """experiment mode=loop 的节点级失败语义（docs/voyage-loop.md §7）：
+    """experiment mode=loop 的节点级失败语义（docs/task-system.md §7（原 voyage-loop.md §7））：
     run/smoke 硬停（on_failure=fail + max_attempts=1，防盲目重跑烧算力/重复修复循环），
     plan/setup/analyze/figures/report 走 loop 回灌（原地重试 → AI 计划调整）。"""
     from app.agents.voyage.navigator import experiment_plan
@@ -388,7 +388,7 @@ async def test_loop_execution_error_retries_then_replans(client, queue_stub):
 
 
 async def test_budget_exhausted_runs_wrapup_step(client, queue_stub):
-    """预算耗尽降级收尾（docs/voyage-loop.md §5.4）：昂贵步骤已完成、预算超限时，
+    """预算耗尽降级收尾（docs/task-system.md §7）：昂贵步骤已完成、预算超限时，
     廉价收尾步骤（wrapup）仍放行把结果落地，未执行的非收尾步骤作废——不再一刀切
     paused_error 白费已完成的工作（idea_review 汇总被预算门挡死的真实场景）。"""
     project_id, headers = await _make_project(client)

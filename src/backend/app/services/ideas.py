@@ -22,7 +22,7 @@ from app.services.concepts import library_concept_ids
 from app.services.libraries import get_source_library_ids
 from app.services.projects import in_my_projects
 
-# 同项目 idea 类 voyage 互斥（docs/api-m3.md §1 + docs/api-idea2.md §2）
+# 同项目 idea 类 voyage 互斥（docs/task-system.md §7）
 IDEA_VOYAGE_KINDS = ("idea_forge", "idea_review", "idea_proposal")
 
 # 预算从 knobs 派生：每个候选 idea 预留的 token 额度（gap 分析+生成+打分+去重）
@@ -35,7 +35,7 @@ _DEEP_DEFAULT_BUDGET = 400_000
 
 IDEA_SORTS = ("elo", "-created_at", "score")
 
-# 深耕相关闸门（docs/api-idea2.md §4/§5）
+# 深耕相关闸门（docs/task-system.md §7（原 api-idea2.md §4/§5））
 DEEP_GATE_KINDS = ("idea_goal", "idea_pivot")
 
 
@@ -378,7 +378,7 @@ async def create_deep_voyage(
     data: DeepIdeaRequest,
     created_by: uuid.UUID | None,
 ) -> VoyageRun:
-    """建 idea_proposal voyage（深度生成，docs/api-idea2.md §2），由调用方入队 run_voyage。"""
+    """建 idea_proposal voyage（深度生成，docs/task-system.md §7），由调用方入队 run_voyage。"""
     await _lock_project_idea_creation(session, project.id)
     if await find_running_idea_voyage(session, project.id) is not None:
         raise IdeaVoyageConflictError(str(project.id))
@@ -412,7 +412,7 @@ async def create_deep_voyage(
 
 
 async def deep_state(session: AsyncSession, project: Project) -> dict[str, Any]:
-    """深度生成状态（docs/api-idea2.md §2）：运行中 voyage + 待审批闸门 + 上次运行。"""
+    """深度生成状态（docs/task-system.md §7）：运行中 voyage + 待审批闸门 + 上次运行。"""
     running_stmt = (
         select(VoyageRun)
         .where(

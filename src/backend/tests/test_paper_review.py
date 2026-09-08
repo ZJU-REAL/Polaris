@@ -1,4 +1,4 @@
-"""M5-C 论文评审测试（docs/api-m5-c.md，fake LLM + 假 tectonic 直接驱动 VoyageEngine）。
+"""M5-C 论文评审测试（docs/task-system.md §7，fake LLM + 假 tectonic 直接驱动 VoyageEngine）。
 
 - 发起端点：COMPILE_REQUIRED / 同稿件互斥 / kind=paper_review；
 - 全链路（通过）：固定六步 → payload 契约 shape、4 条消息（3 评审员 + 主席 Meta）、

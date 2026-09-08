@@ -1,4 +1,4 @@
-"""技能路由（docs/skill-system.md §4.1/§4.2）。
+"""技能路由（docs/task-system.md §7（原 skill-system.md §4.1/§4.2））。
 
 - /skills：技能 CRUD / 版本 / fork（builtin 只读，user 技能仅本人可改）
 - /skills/import-md：导入 Claude 官方风格技能包（SKILL.md frontmatter + markdown）

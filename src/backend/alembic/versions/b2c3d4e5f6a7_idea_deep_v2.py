@@ -1,4 +1,4 @@
-"""idea 2.0: ideas 表深耕字段 per docs/api-idea2.md §7
+"""idea 2.0: ideas 表深耕字段 per docs/task-system.md §7（原 api-idea2.md §7）
 
 - depth VARCHAR(16) NOT NULL DEFAULT 'sketch'：历史数据一律 sketch
 - research_type / goal / evidence / seed_idea_id：深耕产物（Research Proposal）专属，可空

@@ -9,7 +9,6 @@ const GATE_KIND: Record<string, { zh: string; en: string }> = {
   idea_goal: { zh: '研究目标确认', en: 'Research goal confirmation' },
   idea_pivot: { zh: '方向调整确认', en: 'Direction change confirmation' },
   compute_budget: { zh: '算力预算审批', en: 'Compute budget approval' },
-  remote_write: { zh: '远程操作审批', en: 'Remote operation approval' },
   pr_push: { zh: '推送 PR', en: 'Push PR' },
   paper_submission: { zh: '论文投稿', en: 'Paper submission' },
 };

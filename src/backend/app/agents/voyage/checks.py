@@ -1,4 +1,4 @@
-"""结构化验收检查注册表（docs/voyage-loop.md §6）。
+"""结构化验收检查注册表（docs/task-system.md §7（原 voyage-loop.md §6））。
 
 Sextant 从「LLM 裁判」变成「检查执行器」：确定性检查先跑、任一失败直接 fail
 （不花 LLM），只有 ``llm_rubric`` 类检查交回 Sextant 走 LLM 判定。

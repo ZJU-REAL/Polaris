@@ -1,4 +1,4 @@
-"""标签与个人状态（docs/api-lit.md §5）：整组覆盖、项目标签、my-meta、列表过滤与新字段。"""
+"""标签与个人状态（docs/task-system.md §7）：整组覆盖、项目标签、my-meta、列表过滤与新字段。"""
 
 import uuid
 

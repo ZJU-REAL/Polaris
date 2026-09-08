@@ -1,4 +1,4 @@
-"""M5-B 编译服务测试（docs/api-m5-b.md §4、§9）：
+"""M5-B 编译服务测试（docs/task-system.md §7（原 api-m5-b.md §4）、§9）：
 
 - tectonic 不可用（本地 venv）：status=error + rule=other「编译器未安装」；
 - 假 tectonic（monkeypatch _run_tectonic）：组装目录（files + 自动 references.bib +

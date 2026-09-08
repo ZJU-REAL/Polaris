@@ -1,4 +1,4 @@
-"""闸门路由（docs/api-m1.md §4）：列表 / 审批 / 驳回。
+"""闸门路由（docs/task-system.md §7（原 api-m1.md §4））：列表 / 审批 / 驳回。
 
 - 课题主人可见与可审批本项目闸门；
 - approve：payload.voyage_id 存在时入队 resume_voyage 恢复航程；

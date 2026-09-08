@@ -1,4 +1,4 @@
-"""引用导出（docs/api-lit.md §6）：BibTeX key 规则 / entry 类型 / eprint + CSL-JSON 结构。"""
+"""引用导出（docs/task-system.md §7）：BibTeX key 规则 / entry 类型 / eprint + CSL-JSON 结构。"""
 
 import json
 import uuid

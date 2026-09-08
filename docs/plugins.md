@@ -86,3 +86,6 @@ Each entry carries a kind, publisher, declared permissions, a quality tier
   `container` runtimes for forward compatibility, but v1 only loads `in-process` bundles.
 - **Descriptions are linted** against instruction-like text and invisible unicode (metadata
   is agent-visible; prompt-injection via descriptions is a real attack class).
+- **The `panel` kind has no rendering surface yet.** An installed `panel` plugin does not show
+  up anywhere in the UI; the services it registers are only consumable by other plugins. A real
+  panel surface is future work.

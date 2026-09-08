@@ -4,7 +4,7 @@
 plan_signal 动态追加节点）→
 figures→report→done、预算超时 kill、协作式 cancel（轮询循环内）、cancel API、
 闸门驳回联动、白名单越界拒绝、创建校验（idea promoted / 凭据归属）与成员权限。
-迭代/图表的专项用例见 test_experiment_iterate.py（docs/api-m5-a.md §6）。
+迭代/图表的专项用例见 test_experiment_iterate.py（docs/task-system.md §7（原 api-m5-a.md §6））。
 """
 
 import json
@@ -181,8 +181,8 @@ async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_record
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     voyage = resp.json()
     assert voyage["status"] == "done", voyage
-    assert voyage["mode"] == "loop"  # 实验按动态循环走（docs/voyage-loop.md §3 档2）
-    # 3 轮 improve→improve→stop：每轮是可见的 run+analyze 节点（docs/voyage-loop.md §7）
+    assert voyage["mode"] == "loop"  # 实验按动态循环走（docs/task-system.md §7 档2）
+    # 3 轮 improve→improve→stop：每轮是可见的 run+analyze 节点（docs/task-system.md §7）
     assert [s["status"] for s in voyage["steps"]] == ["passed"] * 11
     assert [s["action"] for s in voyage["steps"]] == [
         "experiment.plan",

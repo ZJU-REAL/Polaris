@@ -66,7 +66,7 @@ import { ComparisonModal } from './ComparisonModal';
 
 const PAGE_SIZE = 20;
 
-/** 论文库视图（docs/api-lit.md §8.5）：全部 = 已纳入（相关性达标）的文献；
+/** 论文库视图（docs/task-system.md §7（原 api-lit.md §8.5））：全部 = 已纳入（相关性达标）的文献；
     相关性不足的进回收站，不显示不计数。 */
 type ViewFilter = 'all' | 'compiled' | 'starred' | 'today';
 
@@ -884,7 +884,7 @@ function PaperDetailPane({
     setRecompileConfirm(false);
   }, [paperId]);
 
-  // 正文 ![[fig:N]] 嵌入图（docs/api-lit.md §6.6）
+  // 正文 ![[fig:N]] 嵌入图（docs/task-system.md §7（原 api-lit.md §6.6））
   const figures = usePaperFigures(paper);
   const renderFigure = useCallback(
     (n: number) => {

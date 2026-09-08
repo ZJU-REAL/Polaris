@@ -1,35 +1,115 @@
 # Desktop client (Electron shell)
 
-Same shape as the Codex app and Claude Desktop: **a shell plus a local process**, with
-all heavy state (Postgres/pgvector, Redis, the ARQ worker, LLM calls) staying on the
-remote server. **There is no fully offline single-machine build.**
+The desktop app is Polaris's primary form: an **offline, single-machine build**. The packaged
+app ships its own Python backend and boots it locally on first launch — no Docker, no Postgres,
+no Redis, no account, no server address. Sign-in does not exist in this form: the backend runs
+with `POLARIS_PROFILE=desktop` and the frontend silently adopts a local session (the machine's
+owner is their own admin).
 
-The code lives in `src/desktop/`, a sibling of `src/frontend` and `src/backend` with its
-own `package.json`.
+Connecting to a remote multi-user server is still supported: whenever no local engine is
+available (or the bootstrap fails), the renderer falls back to the classic
+"shell plus a remote server" flow, with all heavy state on the server.
 
-## Why Electron rather than Tauri
-
-We need macOS, Windows and Linux. Tauri renders through WebKitGTK on Linux, which has
-known blank-window and rendering failures on NVIDIA GPUs — and Polaris's UI is exactly
-the heavy-rendering combination that would suffer: pdf.js canvas, CodeMirror 6, KaTeX
-and yjs. The cost (85–150MB installer, ~168MB idle RAM) is acceptable for internal use.
+The code lives in `src/desktop/`, a sibling of `src/frontend` and `src/backend` with its own
+`package.json` (one pnpm workspace at the repo root).
 
 ## Process layers
 
 ```
 Renderer (the existing React code in src/frontend, sandbox: true)
   ↓ one channel: ipcRenderer.invoke('polaris:rpc') / .on('polaris:event')
-Main (shell and arbitration: window, menu, protocol, config — no business logic)
-  ↓ line-delimited JSON-RPC over stdio (only does real work in phase 2)
-polaris-locald (child_process, Node): local compilation / directory scans / cache
+Main (shell and arbitration: window, menu, protocol, config)
+  └─ @polaris/kernel — a cordis plugin runtime mounted in the main process
+       ├─ storage        SQLite persistence (userData/kernel/storage.db);
+       │                 holds the plugin config tree
+       ├─ Loader + SqliteTree   mounts plugins from the persisted config tree
+       └─ legacy-engine  spawns the local Python backend and health-checks it
+            → http://127.0.0.1:18080 — the full FastAPI backend, run locally:
+              uv-bootstrapped venv, SQLite database, in-process task queue,
+              POLARIS_PROFILE=desktop (no external services, no login)
 
-Remote server (api / worker / postgres / redis) — reached directly by the renderer
+Remote server (api / worker / postgres / redis) — the fallback path, reached
+directly by the renderer when no local engine is up (or one is configured away)
 ```
 
-**The renderer talks to the server directly; main never proxies the API.** The moment it
-does, SSE streaming, WebSocket upgrades, blob streams and token handling all have to be
-reimplemented there — which is `lib/api.ts`, `lib/sse.ts` and `lib/ws.ts` written a
-second time. The shell exists to *add* capabilities, not to take over the network.
+**The renderer talks to the backend over HTTP in both forms; main never proxies the API.** The
+local engine is a real HTTP server on loopback, so `lib/api.ts`, `lib/sse.ts` and `lib/ws.ts`
+work against it unchanged. The moment main starts proxying, SSE streaming, WebSocket upgrades,
+blob streams and token handling all have to be reimplemented there. The shell exists to *add*
+capabilities, not to take over the network.
+
+The kernel is also the plugin platform: what runs is driven by a persistent **config tree**
+(seeded with `desktop-probe` / `sources` / `legacy-engine` on first launch, user edits are
+authoritative afterwards). See [Plugins](plugins.md) for the loading model and the market.
+
+## The local engine: configuration and precedence
+
+The `legacy-engine` entry is seeded **disabled** in the config tree; the engine's parameters are
+computed fresh on every launch and injected in memory only — the tree stores the user's intent
+(whether the plugin should exist), never a stale engine spec. Configuration sources, in order:
+
+1. **`POLARIS_DESKTOP_ENGINE`** — explicit, for development and debugging. Two forms:
+   - `docker:<image>:<backendDirAbs>` — run the backend image with the source dir mounted,
+     e.g. `docker:polaris-api-test:local:/repo/src/backend`;
+   - `command:<json argv>` — spawn an arbitrary command, e.g. `command:["python","-m","uvicorn",...]`.
+
+   `POLARIS_DESKTOP_ENGINE_CONTAINER` and `POLARIS_DESKTOP_ENGINE_PORT` override the container
+   name and host port for parallel shell instances (E2E runs on one machine); the packaged
+   bootstrap does not read them.
+2. **Packaged auto-bootstrap** — when the app is packaged and no env is set, the installer's own
+   resources bootstrap a local environment (next section). The user's machine needs neither
+   Python nor Docker.
+3. **Neither** (development, no env) — the entry stays disabled and the app follows the
+   remote-server flow.
+
+## First launch: bootstrap and the progress page
+
+The installer carries two extra resources (`electron-builder` extraResources, staged by
+`pnpm run stage:resources`): a pinned single-file **uv** binary and the **backend source** with a
+build-time content hash. On first launch (or after an update that changed either), the app runs:
+
+```
+uv python install 3.12  →  uv venv  →  uv pip install <resources/backend>
+```
+
+entirely under `userData/engine/` (managed Python, venv, uv cache — `UV_PYTHON_PREFERENCE=only-managed`,
+so a system Python is never used and never polluted). A sentinel file
+(`engine/bootstrap.json` recording the uv version, backend hash, and Python version) makes every
+later launch skip the whole sequence at the cost of a few file reads.
+
+The window opens **before** the kernel starts: a first-launch waiting page polls
+`kernel.engineBootstrapStatus` and shows the phase (`check` / `python` / `venv` / `install` /
+`engine` / `ready`; `idle` means the embedded path was not taken, `failed` means it was and fell
+back to the remote flow). The first run downloads the Python toolchain and dependencies, which
+can take minutes; after that, startup cost is zero.
+
+Every engine start runs `alembic upgrade head` under a **migration guard**: a non-empty database
+is snapshotted to `engine/snapshots/<timestamp>/` first, a failed migration restores the
+snapshot before re-raising, and only the last 3 snapshots are kept. A failed bootstrap or engine
+start never blocks the window — it logs, reports `failed`, and the renderer falls back to the
+remote-server flow.
+
+## Where the data lives
+
+Everything is under Electron's `userData` directory; uninstalling the app and deleting
+`userData` removes every trace.
+
+| Path | What it holds |
+|---|---|
+| `userData/kernel/storage.db` | The kernel's SQLite store: plugin config tree, install records |
+| `userData/engine/` | Managed Python, venv, uv cache — the bootstrapped runtime |
+| `userData/engine/polaris.db` | The backend's SQLite database (system of record in desktop form) |
+| `userData/engine/snapshots/` | Pre-migration database snapshots (last 3) |
+| `userData/engine/data/` | User files: PDFs, exports, experiment logs (`POLARIS_DATA_DIR`) |
+| `userData/engine/data/workspace/` | The **file projection**: a continuously refreshed, read-only copy of your papers (`papers/`), notes (`notes/`), and library wikis (`wiki/`, an Obsidian vault). The database is the source of truth — edits here are not written back and are overwritten on the next change. |
+| `userData/plugins/` | Market-installed plugin bundles |
+
+## Why Electron rather than Tauri
+
+We need macOS, Windows and Linux. Tauri renders through WebKitGTK on Linux, which has
+known blank-window and rendering failures on NVIDIA GPUs — and Polaris's UI is exactly
+the heavy-rendering combination that would suffer: pdf.js canvas, CodeMirror 6, KaTeX
+and yjs. The cost (85–150MB installer, ~168MB idle RAM) is acceptable.
 
 ## Page loading: `app://polaris`
 
@@ -38,8 +118,10 @@ Not `file://`: Chromium treats it as an opaque origin and rejects
 `/assets/` and `/pdfjs/cmaps/` paths would also have to change, forking the desktop
 bundle from the web one.
 
-Not a local HTTP server either: any process on the machine could reach that port, which
-adds a network attack surface for no benefit.
+Not a local HTTP server for the *pages* either: any process on the machine could reach that
+port, which adds a network attack surface for no benefit. (The local engine does listen on
+loopback, but it authenticates every request; the page origin stays `app://polaris`, and the
+CSP explicitly allows connecting to the local engine's address.)
 
 Registered as `standard + secure`, the page gets a real origin, so pushState, workers,
 `localStorage`, `navigator.clipboard` and `Notification` all behave as they do over
@@ -56,24 +138,24 @@ one event union.
 
 One channel rather than an `ipcMain.handle` per capability. Preload is the boundary that
 ships inside the installer and is directly visible to the renderer; with per-capability
-channels, every local capability added in phase 2 means touching preload, main and the
+channels, every local capability added later means touching preload, main and the
 renderer together. As it stands, preload is written once and adding a method touches only
 the contract and the main-side implementation.
 
-Methods are named `<domain>.<object>.<verb>`: `host.*` is shell capability, `local.*` is
-reserved for phase-2 local compute.
-
-The local agent uses `child_process` rather than Electron's `utilityProcess`: the latter
-cannot pipe stdin, and "line-delimited JSON-RPC over stdio, swappable for a Python
-process later" is the entire point of this layer (the framing matches
-`src/backend/app/mcp/__main__.py`). Node reuses Electron's own runtime via
-`ELECTRON_RUN_AS_NODE`, since a packaged app ships no standalone `node`.
+Methods are named `<domain>.<object>.<verb>`: `host.*` is shell capability, `kernel.*` is
+kernel state (status, local backend address, bootstrap progress, plugin management),
+`local.*` is local long-job bookkeeping (currently just `local.job.cancel`). Real local
+compute does not run as a separate agent process — it runs as kernel plugins
+(`legacy-engine` being the first); the stdio JSON-RPC agent of the original phase-1 design
+was removed once the kernel landed (#731).
 
 Every frontend decision about local-versus-remote reads the capability manifest
-(`host.capabilities`). **Do not branch on the platform or on a version number.** Local
-implementations register through `lib/local-routes.ts`, and only `LocalUnavailable` falls
-back to the server: a local business error such as a LaTeX syntax error is a legitimate
-result and must not be recomputed remotely.
+(`host.capabilities`). **Do not branch on the platform or on a version number.** A declared
+capability that is unavailable at call time fails with `ERR_CAPABILITY_UNAVAILABLE` and the
+frontend falls back to the server; `plugins.manage` is the first capability that is actually
+`true` (it tracks whether the kernel's config tree is reachable), while `latex.compile`
+still reports unavailable (the tectonic probe already runs, the implementation does not
+exist yet).
 
 ## Settings that look removable and are not
 
@@ -103,21 +185,24 @@ result and must not be recomputed remotely.
   the keychain ACL never matches and macOS prompts for authorisation on every launch. The
   keychain only becomes reasonable once the app has a stable Developer ID signature.
   Sessions persist through `POLARIS_SESSION_LIFETIME_SECONDS` (30 days by default), which
-  does not depend on the keychain at all.
+  does not depend on the keychain at all. (Against the local engine there is nothing to
+  type in the first place: the frontend fetches the local session itself.)
 
 ## Developing and packaging
 
 ```bash
-make desktop-deps          # install dependencies (downloads a ~100MB Electron binary)
+make desktop-deps          # pnpm install for the whole workspace
 make desktop-dev           # build the frontend and start the shell (real app:// path)
-cd src/desktop && npm run smoke   # loads the SPA for real; non-zero exit means failure
-make desktop-dist          # build an installer for the current platform (unsigned)
+cd src/desktop && pnpm run smoke   # loads the SPA for real; non-zero exit means failure
+make desktop-dist          # stage uv + backend, build an installer (unsigned)
 ```
 
-On first launch the app asks for a server address and validates it against
-`GET /api/health`. For internal distribution, `POLARIS_DEFAULT_SERVER_URL` pre-fills it so
-no internal address has to be committed. The server can be changed later from the
-Server… menu item (Cmd+,).
+In development the shell starts with **no local engine** by default and follows the
+remote-server flow; set `POLARIS_DESKTOP_ENGINE` (either form above) to exercise the local
+engine chain. The packaged app boots its own engine, so it asks for nothing on first launch;
+the server-address page appears only when no local engine came up. For internal server-mode
+distribution, `POLARIS_DEFAULT_SERVER_URL` pre-fills the address so no internal address has to
+be committed. The server can be changed later from the Server… menu item (Cmd+,).
 
 CI covers both: `desktop-build.yml` runs the smoke test on pull requests that touch the
 frontend or the shell, and `desktop-release.yml` builds all three platforms on a `v*` tag
@@ -135,8 +220,8 @@ the client whether its preload is new enough to run it; see `src/desktop/src/mai
   `hdiutil detach -force "/Volumes/Polaris <version>-<arch>"` and rebuild. CI never hits
   this; its runners are clean.
 - **`Application entry file "dist/main.cjs" … does not exist`** — `electron-builder` was
-  invoked without building first. Use `npm run dist:mac`, which builds, or run
-  `npm run build` yourself. Note that `npm run smoke` builds only preload, agent and
+  invoked without building first. Use `pnpm run dist:mac`, which stages resources and builds,
+  or run `pnpm run build` yourself. Note that `pnpm run smoke` builds only preload and
   smoke — not `main.cjs`.
 - **The packaged app exits immediately with status 0** — that is the single-instance lock,
   not a crash. Another instance is already running.
@@ -178,4 +263,4 @@ lives on a different domain. The whitelist matters because every desktop request
 `allow_origins` Starlette answers those preflights with 400. This cannot be worked around on
 the client — injecting response headers cannot change a status code.
 
-For other deployment topics see `docs/deployment.md`.
+For server deployment topics see `docs/deployment.md`.

@@ -340,7 +340,7 @@ async def library_paper_counts(session: AsyncSession, library_id: uuid.UUID) -> 
         counts[status] = int(count)
         total += int(count)
     counts["total"] = total
-    # 库内 = 相关性达标及之后（论文库默认视图/计数口径，docs/api-lit.md §8.5）
+    # 库内 = 相关性达标及之后（论文库默认视图/计数口径，docs/task-system.md §7）
     counts["library"] = (
         counts["scored"] + counts["fetched"] + counts["compiled"] + counts["included"]
     )

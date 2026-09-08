@@ -1,4 +1,4 @@
-"""experiment iterate m5a: reflection/primary_value + figures/iteration_state per docs/api-m5-a.md §2
+"""experiment iterate m5a: reflection/primary_value + figures/iteration_state per docs/task-system.md §7
 
 - experiment_runs.reflection JSON：该轮 LLM structured reflection 对象
 - experiment_runs.primary_value FLOAT：主指标值（平台解析，direction 感知比较用）

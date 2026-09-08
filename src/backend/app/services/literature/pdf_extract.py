@@ -16,7 +16,7 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# 嵌入图候选过滤（docs/api-lit.md §6.5）：尺寸下限 + 按页轮转取前 N（重要图由 VLM 再筛）
+# 嵌入图候选过滤（docs/task-system.md §7）：尺寸下限 + 按页轮转取前 N（重要图由 VLM 再筛）
 FIGURE_MIN_WIDTH = 200
 FIGURE_MIN_HEIGHT = 150
 FIGURE_MAX_COUNT = 12

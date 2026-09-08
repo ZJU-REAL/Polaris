@@ -1,7 +1,7 @@
 # BYO Runner（自带执行机）
 
 > Part of the P3 autonomous-experiments track (#674 · #685). Design source:
-> [Polaris 2.0 design report §15](rfcs/2026-09-02-polaris-2.0-design-report.zh.md).
+> [Polaris 2.0 design report §15](https://github.com/ZJU-REAL/Polaris/blob/main/docs/rfcs/2026-09-02-polaris-2.0-design-report.zh.md).
 
 Polaris 把「在哪跑实验」交给用户：实验室 GPU 机、云主机、家里的工作站，
 只要能连上就能当 runner。接入分两档：

@@ -1,9 +1,16 @@
 # Getting started
 
-This guide gets Polaris running on your machine and through your first login. The recommended path
-uses Docker and needs nothing else installed. A no-Docker local path is also documented for focused
-backend or frontend development. For production deployment, see [Deployment](deployment.md); for
-the full environment variable reference, see [Configuration](configuration.md).
+This guide gets the **server (web) form** of Polaris running on your machine and through your
+first login. The recommended path uses Docker and needs nothing else installed. A no-Docker local
+path is also documented for focused backend or frontend development. For production deployment,
+see [Deployment](deployment.md); for the full environment variable reference, see
+[Configuration](configuration.md).
+
+> [!TIP]
+> Just want Polaris on your own machine? The [desktop app](desktop.md) is the zero-setup path: it
+> ships its own local backend (SQLite, no Docker, no external services) and bootstraps it on first
+> launch — there is no login and nothing to configure. This guide is for the multi-user server
+> form.
 
 ## Prerequisites check
 
@@ -160,8 +167,9 @@ make frontend-dev  # npm install && npm run dev
 ```
 
 > [!WARNING]
-> The Experiment Lab connects to real GPU servers over SSH and runs generated code there. Remote
-> writes pass through human approval gates and command allow/deny lists, but you should still point
+> The Experiment Lab connects to real GPU servers over SSH and runs generated code there. Every
+> remote command comes from a fixed whitelist of templates and is written to the audit log, and an
+> experiment can be created with an explicit compute-budget approval — but you should still point
 > Polaris only at machines you control and review the audit log.
 
 ## Next steps

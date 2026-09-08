@@ -1,6 +1,6 @@
 """M5-B 稿件 API 测试：模板展开 / fact-pack 组装与刷新 / 文件管理 / submit 前置与闸门联动。
 
-（docs/api-m5-b.md §1/§2/§3/§7；编译与写作 voyage 见 test_latex_compile / test_writing_voyage）
+（docs/task-system.md §7；编译与写作 voyage 见 test_latex_compile / test_writing_voyage）
 """
 
 import uuid

@@ -1,4 +1,4 @@
-"""literature enhance (M5): paper notes / tags / per-user meta per docs/api-lit.md
+"""literature enhance (M5): paper notes / tags / per-user meta per docs/task-system.md §7
 
 - paper_notes：论文笔记（paper/project/author 外键，content 正文）
 - paper_tags：项目级标签（uq(project, name)）+ paper_tag_links 多对多关联

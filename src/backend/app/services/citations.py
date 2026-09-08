@@ -1,4 +1,4 @@
-"""引用导出：BibTeX / CSL-JSON（docs/api-lit.md §6，不 import fastapi）。
+"""引用导出：BibTeX / CSL-JSON（docs/task-system.md §7（原 api-lit.md §6），不 import fastapi）。
 
 citation key = {第一作者姓小写}{year}{标题首个实义词小写}（冲突加 a/b/c 后缀）。
 entry 类型：venue 含 proceedings/conference → inproceedings；有 venue → article；否则 misc。

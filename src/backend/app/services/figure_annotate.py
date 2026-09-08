@@ -1,4 +1,4 @@
-"""论文图筛选注释（docs/api-lit.md §6.5）：stage=librarian 多模态挑重要图 + 中文图注。
+"""论文图筛选注释（docs/task-system.md §7）：stage=librarian 多模态挑重要图 + 中文图注。
 
 确定性部分（读文件、合并、降级）为普通代码；只有「哪几张图重要 + 图注」交给 LLM。
 LLM 解析失败重试 1 次，仍失败降级：按面积取前 4 张 important=true、caption=null。

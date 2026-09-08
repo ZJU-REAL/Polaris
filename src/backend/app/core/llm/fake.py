@@ -79,7 +79,7 @@ _REVIEW_GUARDRAIL_MARKER = "POLARIS_REVIEW_GUARDRAIL"  # 逐员 guardrail 校验
 _REVIEW_SUPPORT_MARKER = "POLARIS_REVIEW_SUPPORT"  # 引用支撑性判定
 _REVIEW_META_MARKER = "POLARIS_REVIEW_META"  # meta-review 总结
 _REVIEW_FACTCHECK_MARKER = "POLARIS_REVIEW_FACTCHECK"  # claim 抽查
-# Idea 2.0 深耕（actions_proposal.py 的 system prompt 对齐，docs/api-idea2.md）
+# Idea 2.0 深耕（actions_proposal.py 的 system prompt 对齐，docs/task-system.md §7）
 # discovery 树搜索（actions_discovery.py 三个 system prompt 对齐，#642）
 _DISCOVERY_SEED_MARKER = "POLARIS_DISCOVERY_SEED"
 _DISCOVERY_SUMMARY_MARKER = "POLARIS_DISCOVERY_SUMMARY"
@@ -1182,7 +1182,7 @@ class FakeProvider(LLMProvider):
             f"{affil_block}"
         )
 
-    # ---- Idea 2.0 深耕（actions_proposal.py 的 system prompt 对齐，docs/api-idea2.md） ----
+    # ---- Idea 2.0 深耕（actions_proposal.py 的 system prompt 对齐，docs/task-system.md §7） ----
 
     # ---- discovery 树搜索（actions_discovery.py 对齐，#642） ----
 

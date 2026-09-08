@@ -1,4 +1,4 @@
-"""实验 / 运行 schema（docs/api-m4.md §2 + docs/api-m5-a.md §3）。"""
+"""实验 / 运行 schema（docs/task-system.md §7）。"""
 
 import uuid
 from datetime import datetime
@@ -11,7 +11,7 @@ class ExperimentBudget(BaseModel):
     # 0 = 无限时（默认）：修复循环/运行轮询只受它约束，不再按次数设限（用户定调）
     max_hours: float = Field(default=0, ge=0)
     max_runs: int = Field(default=10, ge=1)
-    # 连续 N 轮主指标无提升即停（docs/api-m5-a.md §3）
+    # 连续 N 轮主指标无提升即停（docs/task-system.md §7（原 api-m5-a.md §3））
     no_improve_stop: int = Field(default=2, ge=1)
 
 
@@ -137,7 +137,7 @@ class ExperimentRunRead(BaseModel):
     exit_code: int | None
     log_path: str | None
     metrics: dict[str, Any] | None
-    # 该轮 structured reflection（docs/api-m5-a.md §1）
+    # 该轮 structured reflection（docs/task-system.md §7（原 api-m5-a.md §1））
     reflection: dict[str, Any] | None
     primary_value: float | None
     started_at: datetime | None

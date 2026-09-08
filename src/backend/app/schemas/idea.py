@@ -1,4 +1,4 @@
-"""想法 schema（docs/api-m3.md §1/§2/§3 + docs/api-idea2.md）。"""
+"""想法 schema（docs/task-system.md §7）。"""
 
 import uuid
 from datetime import datetime
@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# 阶段0 方向发散的信号源（docs/api-idea2.md §1）
+# 阶段0 方向发散的信号源（docs/task-system.md §7（原 api-idea2.md §1））
 FORGE_SIGNALS = ("survey_gap", "concept_holes", "limitations", "trends")
 
 
@@ -44,7 +44,7 @@ class ForgeStateRead(BaseModel):
     idea_counts: IdeaCounts
 
 
-# ---- 深度生成（docs/api-idea2.md §2） ----
+# ---- 深度生成（docs/task-system.md §7（原 api-idea2.md §2）） ----
 
 
 class DeepSeed(BaseModel):
@@ -107,7 +107,7 @@ class IdeaDetail(IdeaRead):
     parent_paper_ids: list[uuid.UUID]
     parent_papers: list[ParentPaperBrief]
     score_rationale: dict[str, Any] | None
-    goal: dict[str, Any] | None  # 结构化研究目标（docs/api-idea2.md §3）
+    goal: dict[str, Any] | None  # 结构化研究目标（docs/task-system.md §7（原 api-idea2.md §3））
     evidence: list[dict[str, Any]] | None  # [{paper_id?, title, url?, why, source}]
     seed_idea: SeedIdeaBrief | None  # 深化来源草案
 

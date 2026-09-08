@@ -1,4 +1,4 @@
-"""Voyage schema（docs/api-m1.md §3）。"""
+"""Voyage schema（docs/task-system.md §7（原 api-m1.md §3））。"""
 
 import uuid
 from datetime import datetime
@@ -83,7 +83,7 @@ class VoyageRead(BaseModel):
 
     id: uuid.UUID
     kind: str
-    mode: str = "loop"  # pipeline | template | loop（docs/voyage-loop.md §2）
+    mode: str = "loop"  # pipeline | template | loop（docs/task-system.md §7）
     goal: str
     status: str
     plan_iteration: int = 0  # 计划调整次数
@@ -99,7 +99,7 @@ class VoyageRead(BaseModel):
 
 
 class VoyageSkillUse(BaseModel):
-    """本次任务快照中的一个技能（docs/skill-system.md §4.4）。"""
+    """本次任务快照中的一个技能（docs/task-system.md §7（原 skill-system.md §4.4））。"""
 
     slug: str
     name: str

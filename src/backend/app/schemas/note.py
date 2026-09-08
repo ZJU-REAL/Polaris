@@ -1,4 +1,4 @@
-"""论文笔记 schema（docs/api-lit.md §2）。"""
+"""论文笔记 schema（docs/task-system.md §7（原 api-lit.md §2））。"""
 
 import uuid
 from datetime import datetime

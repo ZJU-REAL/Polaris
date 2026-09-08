@@ -1,4 +1,4 @@
-"""paper review m5c: manuscripts.review_passed per docs/api-m5-c.md
+"""paper review m5c: manuscripts.review_passed per docs/task-system.md §7（原 api-m5-c.md）
 
 - manuscripts.review_passed BOOL NOT NULL DEFAULT false：评审通过标记
   （meta.rating ≥ 6 且无 fabricated 引用时置 true，submit 前置条件）

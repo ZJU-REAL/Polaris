@@ -1,4 +1,4 @@
-"""skill market S4 (docs/skill-system.md §4.3): skill_listings / skill_ratings
+"""skill market S4 (docs/task-system.md §7): skill_listings / skill_ratings
 
 - skill_listings：市场条目（指向具体 skill_version，管理员审核 pending→approved）
 - skill_ratings：评分（uq(listing, user)，可更新）

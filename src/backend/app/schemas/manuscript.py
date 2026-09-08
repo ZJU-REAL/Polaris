@@ -1,4 +1,4 @@
-"""稿件 / 稿件文件 / 编译结果 schema（docs/api-m5-b.md §1/§2/§4/§5）。"""
+"""稿件 / 稿件文件 / 编译结果 schema（docs/task-system.md §7（原 api-m5-b.md §1/§2/§4/§5））。"""
 
 import uuid
 from datetime import datetime

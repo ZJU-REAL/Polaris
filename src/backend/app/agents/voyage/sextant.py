@@ -1,6 +1,6 @@
 """Sextant（六分仪 · self-verification）：每步完成后对照验收标准"对星定位"。
 
-判定顺序（docs/voyage-loop.md §6，规则优先、LLM 兜底）：
+判定顺序（docs/task-system.md §7（原 voyage-loop.md §6），规则优先、LLM 兜底）：
 1. observation.error → 直接 fail；
 2. 动作自带机械验收结论 self_check → 直接采信；
 3. 步骤声明了结构化 checks → 检查注册表执行（确定性先跑，llm_rubric 最后）；
@@ -51,7 +51,7 @@ class Sextant:
         if observation.get("error"):
             return {"passed": False, "reason": str(observation["error"])}, {}
 
-        # 动作自带机械验收结论（goal./proposal. 系动作，docs/api-idea2.md）：直接采信
+        # 动作自带机械验收结论（goal./proposal. 系动作，docs/task-system.md §7）：直接采信
         self_check = observation.get("self_check")
         if isinstance(self_check, dict) and isinstance(self_check.get("passed"), bool):
             return {
@@ -59,7 +59,7 @@ class Sextant:
                 "reason": str(self_check.get("reason", "")),
             }, {}
 
-        # ---- 结构化验收（docs/voyage-loop.md §6）----
+        # ---- 结构化验收（docs/task-system.md §7（原 voyage-loop.md §6））----
         checks = step_def.get("checks")
         if isinstance(checks, list) and checks:
             verdict, rubrics = run_deterministic_checks(
@@ -89,7 +89,7 @@ class Sextant:
         if not content:
             return {"passed": False, "reason": "步骤无产出（observation.content 为空）"}, {}
 
-        # 技能 output_contract：先做确定性校验（docs/skill-system.md §3.2），
+        # 技能 output_contract：先做确定性校验（docs/task-system.md §7），
         # 不通过直接 fail（不花 LLM），通过后仍走 LLM 对照验收标准
         contract = skill_output_contract(run.checkpoint, action)
         if contract and (error := check_output_contract(contract, str(content))):

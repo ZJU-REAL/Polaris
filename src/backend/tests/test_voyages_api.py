@@ -1,4 +1,4 @@
-"""Voyage API 契约测试（docs/api-m1.md §3）+ SSE 冒烟。"""
+"""Voyage API 契约测试（docs/task-system.md §7（原 api-m1.md §3））+ SSE 冒烟。"""
 
 import json
 

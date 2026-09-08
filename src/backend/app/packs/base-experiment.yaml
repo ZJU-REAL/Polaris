@@ -15,7 +15,7 @@ phases:
     # 沿用 params.confirm_budget 开关（#626 默认不拦），由生成逻辑落到本步。
     actions: [experiment.setup]
   - id: smoke
-    # 冒烟用退出码机械判定（原 Sextant 硬编码逻辑，docs/voyage-loop.md §6）
+    # 冒烟用退出码机械判定（原 Sextant 硬编码逻辑，docs/task-system.md §7（原 voyage-loop.md §6））
     actions: [experiment.smoke]
     checks: ["exit_code:0"]
   - id: iterate

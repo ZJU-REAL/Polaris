@@ -1,4 +1,4 @@
-"""项目 Dashboard 统计（docs/api-m2.md §6，不 import fastapi）。"""
+"""项目 Dashboard 统计（docs/task-system.md §7（原 api-m2.md §6），不 import fastapi）。"""
 
 import uuid
 from datetime import UTC, datetime, time

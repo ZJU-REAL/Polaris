@@ -1,4 +1,4 @@
-"""paper_review voyage 动作（kind ``paper_review`` 固定管线执行体，docs/api-m5-c.md）。
+"""paper_review voyage 动作（kind ``paper_review`` 固定管线执行体，docs/task-system.md §7）。
 
 流水线（navigator.paper_review_plan，固定六步）：
     review.citation_check → review.fact_check → review.render →

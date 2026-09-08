@@ -1,4 +1,4 @@
-"""M5-B CRDT 协同房间测试（docs/api-m5-b.md §6/§9，pycrdt 直连房间不走 WS 传输层）：
+"""M5-B CRDT 协同房间测试（docs/task-system.md §7，pycrdt 直连房间不走 WS 传输层）：
 
 - section_span / replace_section 标记区间定位与追加；
 - apply_ai_edit 无房间路径：直写库；

@@ -64,7 +64,7 @@ intact.
 | `action` | Key into the action registry (`app/agents/voyage/actions.py`). |
 | `params` | Arguments for the action. The engine also injects a `diagnosis` key here when it retries a failed step. |
 | `acceptance` | `{text: <human-readable criterion> \| None, checks: [...] \| None}`. See [§4.3](#43-acceptance-checks). |
-| `requires_gate` | If set, the name of a human-approval type (`compute_budget`, `idea_goal`, `idea_pivot`, …). The step will not run until someone approves. |
+| `requires_gate` | If set, the name of a human-approval type (`compute_budget`, `idea_goal`, `idea_pivot`, …). The step will not run until someone approves. In-run gates are **opt-in** (#626): plan templates only include them when the run was created with `confirm_budget` (experiments) or `confirm_goal` (proposals); by default a run goes straight through. |
 | `budget` | Per-step limits, currently `{max_attempts}` (`max_tokens` / `max_gpu_hours` are accepted by the schema but not enforced by the engine). |
 | `observation` | Whatever the action returned. A key named `error` in here means "the step blew up", which is treated differently from "the step ran but did not pass". |
 | `verdict` | `{passed: bool, reason: str}` from Sextant. |
@@ -721,8 +721,29 @@ roles (#614).
   `_regen_plan_snapshot()`; editing `run.plan` directly will be silently overwritten.
 - **Streamed events are not history.** Anything that has to survive a refresh must land in the
   database: log rows, `step.attempts`, `checkpoint["plan_history"]`.
-- **Many `docs/…` paths in the source comments do not exist.** The voyage modules reference
-  `docs/voyage-loop.md`, `docs/api-m1.md`, `docs/api-m2.md`, `docs/api-m3.md`, `docs/api-idea2.md`,
-  `docs/api-m5-b.md`, `docs/api-m5-c.md`, `docs/skill-system.md` and others. Those are internal
-  design notes that were never published to `docs/`. Treat them as historical labels for a design
-  decision, not as links.
+- **Historical doc labels in source comments point here.** Source comments used to cite internal
+  design notes (`docs/voyage-loop.md`, `docs/api-m*.md`, `docs/skill-system.md`, …) that were never
+  published. Those references now point at [§7](#7-historical-document-pointers) below, which maps
+  each label to where the contract actually lives today.
+
+---
+
+## 7. Historical document pointers
+
+Polaris was built in milestones (M1–M5), and the source comments cite the internal design notes of
+those milestones by filename. The notes were never published to `docs/`; the contracts they
+described are all absorbed into the shipped code and the current documentation. When a comment
+cites one of these labels, read it as "the design decision from that milestone", and look here for
+where it lives now:
+
+| Historical label | What it covered | Where it lives today |
+| --- | --- | --- |
+| `voyage-loop.md` | The task-loop redesign: shell/brain split, run modes, plan edits | This document (§1.4, §4) and [Core concepts](concepts.md) |
+| `api-m1.md` | M1 foundation: auth, projects, gates | `app/api/` routers and their tests; gates in [Core concepts](concepts.md#approval-gates) |
+| `api-m2.md` | M2 literature wiki: ingest, scoring, compilation | [Literature](literature.md); `app/services/wiki_*` |
+| `api-m3.md` | M3 ideas: forge, review, promotion | [Ideas](ideas.md); `app/services/ideas.py` |
+| `api-m4.md` | M4 experiments: SSH execution, runs, metrics | [Experiments](experiments.md); `app/services/experiments.py` |
+| `api-m5-a.md` / `api-m5-b.md` / `api-m5-c.md` | M5 iterate / writing / review | [Experiments](experiments.md), [Writing](writing.md), [Paper review](paper-review.md) |
+| `api-lit.md` | Literature enhancements: notes, tags, reading, shelves | [Literature](literature.md) |
+| `api-idea2.md` | Ideas 2.0: multi-signal divergence, goal building, proposal deep-dive | [Ideas](ideas.md); `app/agents/voyage/actions_proposal.py` |
+| `skill-system.md` | The skill system: packs, injection, marketplace | [Skills](skills.md) |

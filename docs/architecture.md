@@ -4,6 +4,21 @@ This is a conceptual overview of how Polaris is put together. For the concepts a
 (the pipeline stages, Voyages, skills, tools), see [Core Concepts](concepts.md). For running the
 system, see [Getting Started](getting-started.md) and [Deployment](deployment.md).
 
+## One codebase, two forms
+
+The same backend and frontend ship in two forms:
+
+- **Desktop (primary)** — the Electron app hosts a plugin kernel (`@polaris/kernel`, a cordis
+  runtime) in its main process; the kernel's `legacy-engine` plugin bootstraps and supervises the
+  same FastAPI backend as a **single local process** (`POLARIS_PROFILE=desktop`): SQLite instead
+  of Postgres, an in-process task queue instead of Redis + a separate ARQ worker, and a local
+  session instead of login. See [Desktop](desktop.md).
+- **Server** — the multi-user deployment described in the rest of this page: separate API, worker,
+  Postgres, and Redis processes behind nginx.
+
+Everything below about layers, the LLM boundary, the task engine, and real-time channels holds in
+both forms; only the process topology and the stores differ.
+
 ## The big picture
 
 Polaris is a monorepo with three parts:
@@ -50,7 +65,7 @@ flowchart TB
     worker --> CORE
 
     CORE -- "core/llm abstraction" --> LLM["LLM providers\n(OpenAI-compatible, Anthropic)"]
-    PIPE -- "asyncssh (gated writes)" --> GPU["Lab GPU servers"]
+    PIPE -- "asyncssh (whitelisted, audited writes)" --> GPU["GPU servers"]
     PIPE -- "httpx" --> LIT["arXiv, Semantic Scholar, OpenAlex"]
     MCP -- "Streamable HTTP / stdio" --> EXT["Claude Code, Codex, Cursor"]
 ```

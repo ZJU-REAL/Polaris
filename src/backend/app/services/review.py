@@ -14,7 +14,7 @@ from app.models.manuscript import Manuscript
 from app.models.review import ReviewMessage, ReviewSession
 from app.models.user import User
 
-# 默认三人设（docs/api-m3.md §3）：顺序约定 [0]=正方 [1]=反方 [2]=裁判
+# 默认三人设（docs/task-system.md §7（原 api-m3.md §3））：顺序约定 [0]=正方 [1]=反方 [2]=裁判
 DEFAULT_PERSONAS: list[dict[str, str]] = [
     {"name": "严谨方法论者", "stance": "专挑方法与实验设计的漏洞，重视消融实验与统计显著性"},
     {"name": "务实工程师", "stance": "关注可实现性、工程成本与复现难度，反对不可落地的空中楼阁"},

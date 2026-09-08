@@ -1,4 +1,4 @@
-"""论文稿件与其 LaTeX 文件（docs/api-m5-b.md §1/§2）。"""
+"""论文稿件与其 LaTeX 文件（docs/task-system.md §7（原 api-m5-b.md §1/§2））。"""
 
 import uuid
 from datetime import datetime
@@ -10,7 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db import Base
 from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 
-# 状态流转（docs/api-m5-b.md §1/§5/§7）：
+# 状态流转（docs/task-system.md §7（原 api-m5-b.md §1/§5/§7））：
 #   draft →(写作 voyage) writing →(编译 ok) compiled →(submit) under_review
 #   →(paper_submission 闸门批准) submitted；approved 为 Wave 3 评审通过预留
 MANUSCRIPT_STATUSES = (
@@ -50,7 +50,7 @@ class Manuscript(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     engine: Mapped[str] = mapped_column(
         String(32), default="tectonic", server_default="tectonic", nullable=False
     )
-    # 论文评审通过标记（docs/api-m5-c.md §4）：meta.rating ≥ 6 且无 fabricated 引用
+    # 论文评审通过标记（docs/task-system.md §7）：meta.rating ≥ 6 且无 fabricated 引用
     # → true；submit 前置条件（未通过 409 REVIEW_REQUIRED）
     review_passed: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
@@ -59,7 +59,7 @@ class Manuscript(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # 置顶：非空即置顶，列表按 pinned_at 优先排在前面
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # 防幻觉事实源（docs/api-m5-b.md §3）：{idea, hypotheses, metrics, figures,
+    # 防幻觉事实源（docs/task-system.md §7）：{idea, hypotheses, metrics, figures,
     # citations, generated_at}；M5-C 评审不通过时追加 revision_notes（修订说明）；
     # citations 条目附内部 paper_id / source 供编译生成 bib
     fact_pack: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)

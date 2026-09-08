@@ -1,4 +1,4 @@
-"""paper figures: papers.figures JSON column per docs/api-lit.md §6.5
+"""paper figures: papers.figures JSON column per docs/task-system.md §7（原 api-lit.md §6.5）
 
 figures 结构：[{index, page, width, height, caption: str|null, important: bool}]，
 图片文件落 <data_dir>/papers/<paper_id>/figures/fig_<index>.png（路径不入库）。

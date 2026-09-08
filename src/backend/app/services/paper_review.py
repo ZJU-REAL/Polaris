@@ -1,4 +1,4 @@
-"""论文评审业务逻辑（docs/api-m5-c.md，不 import fastapi）。
+"""论文评审业务逻辑（docs/task-system.md §7（原 api-m5-c.md），不 import fastapi）。
 
 - 评审 voyage（kind=paper_review）：同 manuscript 互斥；前置 latest_compile ok；
 - 引用核验（§2）：LaTeX \\cite 解析（确定性）→ 库内精确匹配 → S2/OpenAlex
@@ -32,7 +32,7 @@ from app.services.manuscripts import CompileRequiredError
 
 REVIEW_VOYAGE_KIND = "paper_review"
 
-# 默认三人设（docs/api-m5-c.md §3）
+# 默认三人设（docs/task-system.md §7（原 api-m5-c.md §3））
 DEFAULT_REVIEW_PERSONAS: list[dict[str, str]] = [
     {"name": "苛刻方法论者", "stance": "专挑方法缺陷与实验设计漏洞，质疑一切未消融的设计选择"},
     {"name": "建设性领域专家", "stance": "熟悉领域脉络，指出与现有工作的关系并给出可行的改进建议"},
@@ -457,7 +457,7 @@ def scan_fact_issues(
     return items
 
 
-# ---- 评审员 JSON 校验 / 聚合（纯函数，docs/api-m5-c.md §3） ----
+# ---- 评审员 JSON 校验 / 聚合（纯函数，docs/task-system.md §7（原 api-m5-c.md §3）） ----
 
 _SCORE_FIELDS = (("soundness", 1, 4), ("presentation", 1, 4), ("contribution", 1, 4))
 _LIST_FIELDS = ("strengths", "weaknesses", "questions")

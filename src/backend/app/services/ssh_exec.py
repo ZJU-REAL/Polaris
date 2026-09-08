@@ -1,4 +1,4 @@
-"""SSH 执行层（M4 关键安全组件，docs/api-m4.md §3 安全约束）。
+"""SSH 执行层（M4 关键安全组件，docs/task-system.md §7（原 api-m4.md §3） 安全约束）。
 
 设计要点：
 - 连接层抽象为可注入接口（``SSHConnector``/``SSHSession``），测试注入内存 fake，
@@ -37,7 +37,7 @@ WORKDIR_ROOT_SHELL = "~/polaris_runs"  # shell 命令用（~ 由远端展开）
 WORKDIR_ROOT_SFTP = "polaris_runs"  # SFTP 相对 home 目录
 SMOKE_TIMEOUT_SECONDS = 600.0  # 冒烟测试 10 分钟上限
 SETUP_TIMEOUT_SECONDS = 1800.0  # venv + pip install 30 分钟上限
-PLOT_TIMEOUT_SECONDS = 300.0  # plot_figures.py 5 分钟上限（docs/api-m5-a.md §1）
+PLOT_TIMEOUT_SECONDS = 300.0  # plot_figures.py 5 分钟上限（docs/task-system.md §7）
 DEFAULT_CMD_TIMEOUT_SECONDS = 60.0
 
 # 白名单模板内的固定前缀（无任何可变参数，无注入面）：workdir 下若有平台生成的
@@ -638,7 +638,7 @@ class SSHExecutor:
         )
 
     async def run_plot(self, timeout: float = PLOT_TIMEOUT_SECONDS) -> SSHResult:
-        """执行绘图脚本（固定文件名，LLM 只产出脚本内容，docs/api-m5-a.md §1）。"""
+        """执行绘图脚本（固定文件名，LLM 只产出脚本内容，docs/task-system.md §7）。"""
         return await self._run(
             f"cd {self.workdir} && {{ {ENV_SOURCE_PREFIX} .venv/bin/python plot_figures.py; }}",
             timeout=timeout,

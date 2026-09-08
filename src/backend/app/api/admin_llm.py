@@ -1,4 +1,4 @@
-"""管理端 LLM 配置路由（仅 role=admin，docs/api-m1.md §2）。"""
+"""管理端 LLM 配置路由（仅 role=admin，docs/task-system.md §7（原 api-m1.md §2））。"""
 
 import uuid
 

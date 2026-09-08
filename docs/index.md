@@ -1,10 +1,13 @@
 # Introduction
 
-Polaris runs the entire research lifecycle as a single web application: literature survey, idea
-generation, idea review, experiments on real GPU servers, LaTeX paper writing, and paper review.
-Each stage produces durable artifacts that the next stage consumes, and every hand-off can pause at
-a human approval gate — so a lab can go from "new direction" to "reviewed draft" without stitching
-together notebooks, chat windows, and shell sessions.
+Polaris is an autonomous scientific-discovery (deep research) platform built for individual
+researchers, desktop first. It runs the entire research lifecycle in one application: literature
+survey, idea generation, idea review, experiments on real GPU servers, LaTeX paper writing, and
+paper review. Each stage produces durable artifacts that the next stage consumes — so you can go
+from "new direction" to "reviewed draft" without stitching together notebooks, chat windows, and
+shell sessions. The [desktop app](desktop.md) is a self-contained offline build with its own local
+backend (no account, no server to set up); the same codebase also deploys as a multi-user web
+server for a group.
 
 <video controls src="./assets/polaris-demo.mp4" poster="./assets/polaris-demo-cover.jpg"></video>
 
@@ -26,10 +29,11 @@ question instead of failing. Every plan, action, and verdict is retained and rep
 The full loop — Navigator plans, Helm executes, Sextant verifies — is explained in
 [Core concepts](concepts.md) and, at implementation depth, in [The task system](task-system.md).
 
-**Built for individual researchers.** Registration is gated by a deployment-level invite code;
-every account gets per-user encrypted SSH credentials, per-call token and cost accounting
-attributed to user, project, and run, and its own libraries (share one by flipping it public, with
-optional monthly AI budgets).
+**Built for individual researchers.** On the desktop app there is no login at all — the machine's
+owner is the only user and their own admin. On a server deployment, registration is gated by a
+deployment-level invite code. Either way, every account gets per-user encrypted SSH credentials,
+per-call token and cost accounting attributed to user, project, and run, and its own libraries
+(share one by flipping it public, with optional monthly AI budgets).
 
 ## The pipeline, stage by stage
 
@@ -46,7 +50,7 @@ flowchart LR
 | **Literature** | The Research Wiki ingests papers from OpenAlex, Semantic Scholar, and arXiv, scores relevance against each direction library's inclusion config, extracts full text and figures, and compiles a cross-linked wiki page per paper — one wiki per paper, shared platform-wide. A daily arXiv feed keeps libraries current; pgvector powers semantic search. | [Literature guide](literature.md) |
 | **Idea** | Idea Forge runs multi-signal gap analysis over the knowledge base (concept co-occurrence holes, paper limitations, trend velocity), generates ideas with retrieval-planned prompts, scores them on four axes, deduplicates semantically, and hardens the winner into a full research proposal. | [Ideas guide](ideas.md) |
 | **Idea review** | Configurable-persona reviewer agents debate ideas pairwise; a judge produces an Elo tournament ranking. Lab members join the discussion live, and their comments enter the agent context as first-class input. Promotion to experiment passes a human gate. | [Ideas guide](ideas.md) |
-| **Experiment** | The Experiment Lab reaches your lab's GPU servers over per-user encrypted SSH. An experiment run plans the study, passes a compute-budget gate, writes code, smoke-tests it, launches runs with streamed logs and live metric curves, then iterates on the results — and pauses to ask you a question when it is stuck. | [Experiments guide](experiments.md) |
+| **Experiment** | The Experiment Lab reaches your lab's GPU servers over per-user encrypted SSH. An experiment run plans the study (optionally pausing at a compute-budget approval if you ask for one), writes code, smoke-tests it, launches runs with streamed logs and live metric curves, then iterates on the results — and pauses to ask you a question when it is stuck. | [Experiments guide](experiments.md) |
 | **Paper writing** | A multi-file LaTeX project (NeurIPS, ICLR, ACL templates) with collaborative editing and server-side tectonic compilation to a live PDF. An agent drafts section by section, but numbers may only come from real experiment metrics and citations from real knowledge-base entries. | [Writing guide](writing.md) |
 | **Paper review** | Line-by-line citation verification (existence and support, per citation), deterministic fact-checking of every number against the experiment record, then multi-perspective reviewer agents and a meta-review. A fabricated citation forces a non-pass. | [Paper review guide](paper-review.md) |
 

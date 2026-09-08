@@ -1,4 +1,4 @@
-"""稿件业务逻辑（docs/api-m5-b.md §1/§2/§3/§5/§7，不 import fastapi）。
+"""稿件业务逻辑（docs/task-system.md §7（原 api-m5-b.md §1/§2/§3/§5/§7），不 import fastapi）。
 
 - 模板 pack：app/assets/templates/<key>/（meta.json + main.tex 骨架 + 简化 .sty）；
   创建稿件时展开为 ManuscriptFile（.sty/.cls/.bst 标记 readonly）；
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "assets" / "templates"
 TEMPLATE_KEYS = ("neurips2026", "iclr2026", "acl")
 WRITING_VOYAGE_KIND = "paper_writing"
-# 分节固定顺序（related_work 延后到编译之后单独写，docs/api-m5-b.md §5）
+# 分节固定顺序（related_work 延后到编译之后单独写，docs/task-system.md §7（原 api-m5-b.md §5））
 SECTION_ORDER = (
     "introduction",
     "method",
@@ -181,7 +181,7 @@ def read_binary_asset(manuscript_id: uuid.UUID | str, path: str) -> bytes | None
     return target.read_bytes() if target.is_file() else None
 
 
-# ---- fact-pack 组装（docs/api-m5-b.md §3） ----
+# ---- fact-pack 组装（docs/task-system.md §7（原 api-m5-b.md §3）） ----
 
 
 def _last_value(series: Any) -> float | None:
@@ -724,7 +724,7 @@ async def find_active_writing_voyage(
     return None
 
 
-# ---- 文件管理（docs/api-m5-b.md §2） ----
+# ---- 文件管理（docs/task-system.md §7（原 api-m5-b.md §2）） ----
 
 
 def _validate_file_path(path: str) -> str:
@@ -856,7 +856,7 @@ async def delete_file(session: AsyncSession, *, file: ManuscriptFile) -> None:
     await session.commit()
 
 
-# ---- 写作 voyage（docs/api-m5-b.md §5） ----
+# ---- 写作 voyage（docs/task-system.md §7（原 api-m5-b.md §5）） ----
 
 
 def resolve_sections(
@@ -948,7 +948,7 @@ async def create_writing_voyage(
     return run
 
 
-# ---- 投稿（docs/api-m5-b.md §7） ----
+# ---- 投稿（docs/task-system.md §7（原 api-m5-b.md §7）） ----
 
 
 async def submit_manuscript(

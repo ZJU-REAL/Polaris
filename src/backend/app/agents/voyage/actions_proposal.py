@@ -1,4 +1,4 @@
-"""idea_proposal 动作集（docs/api-idea2.md）：目标构建 → 方案深耕 → 评审修订。
+"""idea_proposal 动作集（docs/task-system.md §7）：目标构建 → 方案深耕 → 评审修订。
 
 流水线（navigator.proposal_plan）：
     goal.explore →（idea_goal 闸门）goal.refine → proposal.related_work →
@@ -213,7 +213,7 @@ POLARIS_PROPOSAL_REVISE — 你是研究方案的作者，评审员给出了必�
 只包含确实修订过的章节。
 """
 
-# 评审员 → Idea.scores 维度映射（docs/api-idea2.md §6）
+# 评审员 → Idea.scores 维度映射（docs/task-system.md §7（原 api-idea2.md §6））
 REVIEWERS: tuple[tuple[str, str, str], ...] = (
     (
         "新颖性评审员",
@@ -283,7 +283,7 @@ def _self_check(passed: bool, reason: str, **extra: Any) -> dict[str, Any]:
     return {"self_check": {"passed": passed, "reason": reason}, **extra}
 
 
-# ---- goal 结构校验（确定性，docs/api-idea2.md §3） ----
+# ---- goal 结构校验（确定性，docs/task-system.md §7（原 api-idea2.md §3）） ----
 
 
 def _require_str_list(value: Any, field: str, *, min_len: int = 1, max_len: int = 20) -> list[str]:
@@ -455,7 +455,7 @@ async def goal_explore(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
 
     ctx.checkpoint["goal"] = goal
     ctx.checkpoint["goal_trace"] = trace
-    # idea_goal 闸门 payload 预置（engine 创建 Gate 时合并，docs/api-idea2.md §4）
+    # idea_goal 闸门 payload 预置（engine 创建 Gate 时合并，docs/task-system.md §7）
     ctx.checkpoint["gate_payload"] = {
         "goal": goal,
         "trace_summary": _trace_summary(trace),

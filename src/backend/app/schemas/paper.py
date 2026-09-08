@@ -1,4 +1,4 @@
-"""论文 / 概念 / 检索 / 标签 / AI 伴读 schema（docs/api-m2.md §1–§3、docs/api-lit.md）。"""
+"""论文 / 概念 / 检索 / 标签 / AI 伴读 schema（docs/task-system.md §7）。"""
 
 import uuid
 from datetime import datetime
@@ -87,7 +87,7 @@ class PaperConceptRead(BaseModel):
 
 
 class PaperFigure(BaseModel):
-    """论文图（docs/api-lit.md §6.5）；图片经 GET /papers/{id}/figures/{index}/image 取。"""
+    """论文图（docs/task-system.md §7）；图片经 GET /papers/{id}/figures/{index}/image 取。"""
 
     index: int
     page: int
@@ -178,7 +178,7 @@ class VectorStatusRead(BaseModel):
 
 
 class PaperIndexStatusRead(BaseModel):
-    """单篇论文的索引状态（docs/api-lit.md §9）。"""
+    """单篇论文的索引状态（docs/task-system.md §7（原 api-lit.md §9））。"""
 
     paper_vector: VectorStatusRead  # 论文级向量（标题+作者+摘要）
     chunk_vector: VectorStatusRead  # 分块向量（文献对话检索底座）

@@ -1,4 +1,4 @@
-"""技能 schema（docs/skill-system.md §1.2/§4）：manifest 严格校验。"""
+"""技能 schema（docs/task-system.md §7（原 skill-system.md §1.2/§4））：manifest 严格校验。"""
 
 import re
 import uuid
@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 SKILL_KINDS = ("guidance", "rubric", "persona", "workflow")
 SKILL_SCOPES = ("builtin", "user")
 
-# 注入点白名单（docs/skill-system.md §3.1）。workflow 技能用虚拟注入点 navigator.free_plan
+# 注入点白名单（docs/task-system.md §7）。workflow 技能用虚拟注入点 navigator.free_plan
 SKILL_TARGETS = frozenset(
     {
         "wiki.score_relevance",

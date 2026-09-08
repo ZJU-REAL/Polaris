@@ -3,8 +3,8 @@
 The Experiment Lab turns a promoted idea into a real experiment on your lab's GPU servers. An
 experiment is a long-running [task](task-system.md) (kind `experiment`) that plans the study, writes
 the code, verifies it, runs it over SSH, iterates on the metrics, and ends with figures and a written
-report — pausing for your approval before it spends compute, and pausing to ask you a question
-whenever it is genuinely stuck.
+report — pausing to ask you a question whenever it is genuinely stuck, and (if you opt in at
+creation) pausing for your approval before it spends compute.
 
 The page lives in the topic workspace under **Experiment Lab**.
 
@@ -37,7 +37,7 @@ from a fixed whitelist of templates, the working directory is confined to
 
 ```mermaid
 flowchart LR
-    P["Plan"] --> G{{"Compute-budget<br/>approval"}}
+    P["Plan"] --> G{{"Compute-budget<br/>approval (opt-in)"}}
     G --> S["Setup<br/>codegen + install"]
     S --> K["Smoke test"]
     K --> R["Run"]
@@ -54,10 +54,12 @@ flowchart LR
    models. It also classifies the experiment (`eval`, `training`, `agent`, `analysis`, `other`) and
    may declare a preset container image for heavy frameworks; otherwise the run uses a bare-metal
    virtualenv.
-2. **Compute-budget gate.** Before anything touches the cluster, the task pauses at a
-   `compute_budget` approval carrying the plan summary and the estimated GPU hours. Approve it under
-   **Approvals** (or from the experiment page banner, "Open approvals"). Rejecting the gate marks the
-   experiment failed.
+2. **Compute-budget approval (opt-in).** Approval gates default to off: a newly created
+   experiment runs straight from planning into setup. If the experiment is created with
+   `confirm_budget` enabled (an option on the create-experiment API; the default UI flow runs
+   straight through), the task instead pauses at a `compute_budget` approval before anything
+   touches the cluster, carrying the plan summary and the estimated GPU hours. Approve it under **Approvals** (or from the experiment page banner, "Open approvals").
+   Rejecting the gate marks the experiment failed.
 3. **Setup.** The AI generates the code as a set of files — `requirements.txt`, a `run.sh` that must
    support `--smoke`, and Python sources. Every generated `.py` file is compiled locally with
    `ast.parse` **before it is sent anywhere**: a syntax error is bounced straight back to the model
@@ -124,8 +126,8 @@ the **Memory** tab, and experiment scripts can read the file directly.
 4. Answer the **intake questions**. The AI prepares a few questions specific to the idea ("The AI
    wants to confirm a few things first") — datasets, model sizes, scope. Answering is optional; you
    can also chat during the run. Answers are injected into planning and code generation.
-5. Click **Create experiment**. The task queues, plans, and pauses at the compute-budget approval —
-   approve it and the run proceeds on its own.
+5. Click **Create experiment**. The task queues, plans, and proceeds on its own. (If you enabled
+   the budget confirmation at creation, it first pauses at the compute-budget approval.)
 6. Watch it on the detail page tabs: **Console**, **Plan**, **Metrics & runs**, **Memory**, **Code**,
    **Report**.
 

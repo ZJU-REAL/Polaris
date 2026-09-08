@@ -1,4 +1,4 @@
-"""Voyage 路由（docs/api-m1.md §3）：创建入队 / 列表 / 详情 / 取消 / SSE 事件流。"""
+"""Voyage 路由（docs/task-system.md §7）：创建入队 / 列表 / 详情 / 取消 / SSE 事件流。"""
 
 import asyncio
 import json

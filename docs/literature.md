@@ -273,6 +273,14 @@ Admin settings (Settings → Daily papers):
 | Sync time | 01:30 UTC | When the daily probe starts looking for arXiv's batch |
 | Library sync scan scope | Since last sync | What slice of the pool incremental syncs consider (today only / whole pool) |
 
+::: warning Behavior change: no more built-in CS categories (#727)
+Subscribed categories used to fall back to a hard-coded computer-science list (`cs.AI` /
+`cs.CL` / `cs.CV`) when nothing was configured. That fallback is gone: a deployment that has
+never set its subscriptions now fetches **nothing**, and the daily pool stops receiving new
+papers until you add categories under **Settings → Daily papers**. Polaris no longer picks a
+discipline for you — if your daily feed went quiet after updating, this is why.
+:::
+
 Per-run ingest knobs (Ingest & sync tab):
 
 | Knob | Default | What it does |
