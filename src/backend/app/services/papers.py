@@ -201,7 +201,7 @@ def apply_paper_filters(
     """论文列表 / 引用导出共用的过滤条件（作用于已 join 成员表的语句）。
 
     调用方须以 :func:`app.services.libraries.member_paper_stmt` 为基础语句
-    （本函数只加 WHERE，不负责 join）。status 支持组别名（docs/api-lit.md §8.5）。
+    （本函数只加 WHERE，不负责 join）。status 支持组别名（docs/task-system.md §7）。
     """
     if status in PAPER_STATUS_GROUPS:
         stmt = stmt.where(LibraryPaper.status.in_(PAPER_STATUS_GROUPS[status]))
@@ -210,7 +210,7 @@ def apply_paper_filters(
     if q:
         pattern = f"%{q}%"
         stmt = stmt.where(or_(Paper.title.ilike(pattern), Paper.abstract.ilike(pattern)))
-    # 高级检索（docs/api-lit.md §8.7）：作者/机构在 JSON 列上做文本包含匹配（两种方言通用）
+    # 高级检索（docs/task-system.md §7）：作者/机构在 JSON 列上做文本包含匹配（两种方言通用）
     if author:
         stmt = stmt.where(cast(Paper.authors, SAText).ilike(f"%{author}%"))
     if affiliation:
@@ -562,7 +562,7 @@ async def set_paper_status(session: AsyncSession, view: PaperView, status: str) 
     return view
 
 
-# ---- 标签 / 个人状态 / 笔记数聚合（docs/api-lit.md §5） ----
+# ---- 标签 / 个人状态 / 笔记数聚合（docs/task-system.md §7（原 api-lit.md §5）） ----
 
 
 async def paper_extras_map(
@@ -756,7 +756,7 @@ async def upsert_paper_user_meta(
     return meta
 
 
-# ---- 从方向库移除论文（docs/api-lit.md §8.6） ----
+# ---- 从方向库移除论文（docs/task-system.md §7（原 api-lit.md §8.6）） ----
 #
 # P4 全局内容池语义：删除 = 删本方向的成员行与项目侧标签关联。内容池 Paper 行与磁盘
 # 文件默认保留（可能被其他方向复用）；但当这是该论文最后一处引用（别的库/书架/个人库/
@@ -961,7 +961,7 @@ def restore_status_of(view: PaperView) -> str:
 
 
 async def restore_paper(session: AsyncSession, view: PaperView) -> PaperView:
-    """从回收站召回（docs/api-lit.md §8.6）。"""
+    """从回收站召回（docs/task-system.md §7（原 api-lit.md §8.6））。"""
     view.membership.status = restore_status_of(view)
     view.membership.trash_reason = None
     await session.commit()
@@ -1004,7 +1004,7 @@ async def empty_library_trash(session: AsyncSession, *, library: Any) -> int:
     return await _empty_trash_core(session, library_id=library.id)
 
 
-# ---- PDF 按需补下（docs/api-lit.md §1） ----
+# ---- PDF 按需补下（docs/task-system.md §7（原 api-lit.md §1）） ----
 
 
 def _validate_pdf_content(content: bytes) -> None:
@@ -1193,7 +1193,7 @@ async def fetch_pdf(
     )
 
 
-# ---- AI 伴读上下文（docs/api-lit.md §3） ----
+# ---- AI 伴读上下文（docs/task-system.md §7（原 api-lit.md §3）） ----
 
 
 def build_chat_context(paper: PaperView) -> str:

@@ -1,9 +1,9 @@
 """idea forge / review 动作（Voyage kinds ``idea_forge`` / ``idea_review`` 的固定计划执行体）。
 
-forge 流水线（docs/api-m3.md §1，Idea 2.0 信号升级见 docs/api-idea2.md §1）：
+forge 流水线（docs/task-system.md §7，Idea 2.0 信号升级见 docs/task-system.md §7）：
     forge.read_context → forge.collect_signals → forge.gap_analysis →
     forge.generate → forge.score → forge.dedup → forge.persist
-review 流水线（docs/api-m3.md §3）：
+review 流水线（docs/task-system.md §7（原 api-m3.md §3））：
     review.pair → review.debate → review.summarize
 
 健壮性约定（与 actions_wiki 一致）：
@@ -268,7 +268,7 @@ def _context_prompt(ctx: ActionContext, statement: str) -> str:
     )
 
 
-# ---- forge 2. 信号采集（确定性优先，docs/api-idea2.md §1） ----
+# ---- forge 2. 信号采集（确定性优先，docs/task-system.md §7（原 api-idea2.md §1）） ----
 
 _TREND_WINDOW_DAYS = 90
 _HOLE_TOP_CONCEPTS = 8  # 每组参与配对的高频概念数
@@ -587,7 +587,7 @@ async def forge_generate(ctx: ActionContext, params: dict[str, Any]) -> dict[str
         for i, item in enumerate(ideas):
             if not isinstance(item, dict) or not str(item.get("title") or "").strip():
                 raise ValueError("idea missing title")
-            # gap 绑定（evidence 记录依据信号，docs/api-idea2.md §1）；非法下标回退轮转
+            # gap 绑定（evidence 记录依据信号，docs/task-system.md §7）；非法下标回退轮转
             raw_index = item.get("gap_index")
             index = (
                 raw_index
@@ -982,7 +982,7 @@ async def review_pair(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
             )
         ordered = [(str(i.id), i.depth) for i in ideas]
 
-    # 同 depth 才配对（sketch 对 sketch、proposal 对 proposal，docs/api-idea2.md §7）
+    # 同 depth 才配对（sketch 对 sketch、proposal 对 proposal，docs/task-system.md §7）
     pairs: list[list[str]] = []
     byes: list[str] = []
     for depth in ("proposal", "sketch"):
@@ -1013,7 +1013,7 @@ def _persona_system(persona: dict[str, str], side: str, idea_title: str) -> str:
 
 
 def _debate_brief(label: str, idea: Idea) -> str:
-    # proposal 型内容厚（Research Proposal），截断放宽（docs/api-idea2.md §7）
+    # proposal 型内容厚（Research Proposal），截断放宽（docs/task-system.md §7）
     limit = 4000 if idea.depth == "proposal" else 2000
     return (
         f"想法 {label}：{idea.title}\n"
@@ -1202,7 +1202,7 @@ async def review_match(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
     """单场辩论（review.pair 后由信号表按对局数展开成 N 个 review.match 节点）。
 
     炸开单体 debate 的收益：每场对局是可见节点，引擎能在对局之间查预算、超限走降级
-    收尾（docs/voyage-loop.md §5.4/§7）；单场失败隔离（记 failed，不炸锦标赛）；
+    收尾（docs/task-system.md §7）；单场失败隔离（记 failed，不炸锦标赛）；
     断点幂等按 pair key（已跑过的对局不重赛）。
     """
     idx = int(params.get("match_index", 0))

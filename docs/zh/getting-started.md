@@ -1,6 +1,9 @@
 # 快速上手
 
-这篇指南带你把 Polaris 在自己的机器上跑起来，并完成第一次登录。推荐走 Docker 路线，除 Docker 外无需安装任何东西；如果只做后端或前端开发，也有免 Docker 的本地路线。生产部署见 [Deployment](../../docs/deployment.md)（英文），完整环境变量参考见 [Configuration](../../docs/configuration.md)（英文）。
+这篇指南带你把 Polaris 的**服务器（Web）形态**在自己的机器上跑起来，并完成第一次登录。推荐走 Docker 路线，除 Docker 外无需安装任何东西；如果只做后端或前端开发，也有免 Docker 的本地路线。生产部署见 [Deployment](../../docs/deployment.md)（英文），完整环境变量参考见 [Configuration](../../docs/configuration.md)（英文）。
+
+> [!TIP]
+> 只想在自己的电脑上用 Polaris？[桌面版](../../docs/desktop.md)（英文）才是零配置路线：安装包自带本地后端（SQLite，不需要 Docker 和任何外部服务），首次启动自动装好环境，免登录开箱即用。本篇针对的是多用户的服务器形态。
 
 ## 环境自检
 

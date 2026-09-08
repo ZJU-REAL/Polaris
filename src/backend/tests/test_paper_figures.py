@@ -1,4 +1,4 @@
-"""论文图片（docs/api-lit.md §6.5）：提取过滤/落盘、figures API、注释与降级、多模态 payload。"""
+"""论文图片（docs/task-system.md §7）：提取过滤/落盘、figures API、注释与降级、多模态 payload。"""
 
 import base64
 import io

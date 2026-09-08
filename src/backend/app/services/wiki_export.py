@@ -1,4 +1,4 @@
-"""Obsidian vault 导出：内存构建 zip（docs/api-m2.md §5、docs/api-lit.md §6.6）。
+"""Obsidian vault 导出：内存构建 zip（docs/task-system.md §7）。
 
 vault 结构：
     index.md
@@ -70,7 +70,7 @@ def _unique_slug(base: str, used: set[str]) -> str:
 def _inline_paper_figures(
     zf: zipfile.ZipFile, paper: Paper, slug: str, body: str
 ) -> tuple[str, list[str]]:
-    """图文 wiki 导出（docs/api-lit.md §6.6）：打包 figure PNG 并重写正文标记。
+    """图文 wiki 导出（docs/task-system.md §7）：打包 figure PNG 并重写正文标记。
 
     - 重要图与正文引用的图写入 zip ``papers/figures/<slug>-fig-<N>.png``；
     - ``![[fig:N]]`` 重写为 ``![fig N](figures/<slug>-fig-<N>.png)``（文件缺失则剥除标记）；

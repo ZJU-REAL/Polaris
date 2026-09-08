@@ -1,4 +1,4 @@
-"""LaTeX 编译服务（docs/api-m5-b.md §4，不 import fastapi）。
+"""LaTeX 编译服务（docs/task-system.md §7（原 api-m5-b.md §4），不 import fastapi）。
 
 - 临时目录组装：稿件全部文件 + 自动生成 references.bib（fact-pack 固定 bibkey）
   + figures/（实验图 PDF/PNG 从 data_dir/experiments 拷贝）；

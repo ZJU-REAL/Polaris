@@ -1,4 +1,4 @@
-"""手动添加文献：arxiv_id / doi / bibtex 三选一（docs/api-lit.md §4，不 import fastapi）。"""
+"""手动添加文献：arxiv_id / doi / bibtex 三选一（docs/task-system.md §7，不 import fastapi）。"""
 
 import asyncio
 import logging

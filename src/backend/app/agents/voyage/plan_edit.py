@@ -1,4 +1,4 @@
-"""计划编辑操作集（docs/voyage-loop.md §5.3，阶段 D/E）。
+"""计划编辑操作集（docs/task-system.md §7（原 voyage-loop.md §5.3），阶段 D/E）。
 
 计划不再靠「替换尾部」演化，而是对带状态位的扁平清单做**受限的增量编辑**：
 
@@ -100,11 +100,11 @@ def validate_plan_edit(
     return {"finish": False, "reason": str(data.get("reason", "")), "edits": edits}
 
 
-# ---- 确定性分支表：plan_signal → 计划编辑（不经 LLM，docs/voyage-loop.md §7） ----
+# ---- 确定性分支表：plan_signal → 计划编辑（不经 LLM，docs/task-system.md §7） ----
 
 
 def experiment_round_nodes(next_round: int) -> list[dict[str, Any]]:
-    """一轮 run + analyze（experiment mode=loop，docs/voyage-loop.md §7）。
+    """一轮 run + analyze（experiment mode=loop，docs/task-system.md §7（原 voyage-loop.md §7））。
 
     run 保留 on_failure="fail" 且 max_attempts=1：运行级失败 = 预算超时/基础设施
     故障，盲目重跑或交 AI 重排都在烧算力，诚实硬停；训练本身失败（exit != 0）
@@ -137,7 +137,7 @@ def experiment_wrapup_nodes() -> list[dict[str, Any]]:
     """收尾 figures + report：失败走 loop 回灌（figures 内部已有降级，极少硬失败）。
 
     标 wrapup=True：预算耗尽时（budget 90%/超限）跳过剩余 run/analyze 直接来这里，
-    把已跑完的轮次变成图表与报告（docs/voyage-loop.md §5.4）。
+    把已跑完的轮次变成图表与报告（docs/task-system.md §7（原 voyage-loop.md §5.4））。
     """
     return [
         {

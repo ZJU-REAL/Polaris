@@ -1,10 +1,10 @@
 """评审会话（idea/manuscript 多智能体+人类评审）与评审消息。
 
-target_type（docs/api-m3.md §3/§4）：
+target_type（docs/task-system.md §7（原 api-m3.md §3/§4））：
 - ``idea_match``：一场辩论，payload={"idea_a", "idea_b", "round", "winner"?, "reason"?}，
   target_id 指向正方 idea（idea_a）
 - ``idea_discussion``：idea 常驻讨论区（首次 GET sessions 惰性创建），target_id=idea id
-- ``manuscript``：论文评审（docs/api-m5-c.md），target_id=manuscript id，
+- ``manuscript``：论文评审（docs/task-system.md §7（原 api-m5-c.md）），target_id=manuscript id，
   payload={"citation_check", "fact_check", "meta", "guardrail", "reviews", "passed"}
 """
 

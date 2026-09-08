@@ -57,7 +57,7 @@ class _FailOnePairProvider(FakeProvider):
 
 async def test_tournament_fans_out_per_match_nodes(client, queue_stub):
     """4 个 idea → 2 场对局：pair 展开 2 个 review.match 节点（每场可见、可逐场查预算），
-    顺序 pair → match×2 → summarize，全部通过（docs/voyage-loop.md §7）。"""
+    顺序 pair → match×2 → summarize，全部通过（docs/task-system.md §7（原 voyage-loop.md §7））。"""
     project_id, headers = await _setup_project(client)
     for i in range(4):
         await _seed_idea(project_id, f"想法{i}：方向 {i}")

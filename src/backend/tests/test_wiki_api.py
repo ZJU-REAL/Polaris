@@ -266,7 +266,7 @@ async def test_project_graph(client):
 
 
 async def test_papers_status_group_filters(client):
-    """status 组别名（docs/api-lit.md §8.5）：library / pending_compile + 计数口径。"""
+    """status 组别名（docs/task-system.md §7）：library / pending_compile + 计数口径。"""
     project_id, headers, ids = await _setup(client)
 
     from app.core.db import get_sessionmaker
@@ -320,7 +320,7 @@ async def test_papers_status_group_filters(client):
 
 
 async def test_delete_paper_and_batch(client, tmp_path):
-    """删除论文（docs/api-lit.md §8.6）：单删 + 批量删 + 成员校验。
+    """删除论文（docs/task-system.md §7（原 api-lit.md §8.6））：单删 + 批量删 + 成员校验。
 
     全局内容池语义：删除摘掉本方向的成员行；当这是该论文最后一处引用（别处都没有）时，
     连内容池本体与落盘文件一并回收（孤儿清理）。这里 p1/p2 只在本方向，故删除后本体消失。"""
@@ -434,7 +434,7 @@ async def test_search_hides_deleted_papers(client):
 
 
 async def test_trash_soft_delete_restore_and_empty(client):
-    """垃圾桶（docs/api-lit.md §8.6）：软删 → 召回 → 清空。"""
+    """垃圾桶（docs/task-system.md §7（原 api-lit.md §8.6））：软删 → 召回 → 清空。"""
     project_id, headers, ids = await _setup(client)
 
     # 批量软删（默认）：p1 移入垃圾桶
@@ -476,7 +476,7 @@ async def test_trash_soft_delete_restore_and_empty(client):
 
 
 async def test_papers_advanced_filters(client):
-    """高级检索（docs/api-lit.md §8.7）：作者 / 机构 / 发表时间 / 入库时间。"""
+    """高级检索（docs/task-system.md §7）：作者 / 机构 / 发表时间 / 入库时间。"""
     from datetime import UTC, datetime
 
     from app.core.db import get_sessionmaker

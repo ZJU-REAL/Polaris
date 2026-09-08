@@ -1,4 +1,4 @@
-"""评审锦标赛 / 会话 / 消息 schema（docs/api-m3.md §3/§4）。"""
+"""评审锦标赛 / 会话 / 消息 schema（docs/task-system.md §7（原 api-m3.md §3/§4））。"""
 
 import uuid
 from datetime import datetime
@@ -20,13 +20,13 @@ class TournamentRequest(BaseModel):
 
 
 class PaperReviewRequest(BaseModel):
-    """发起论文评审（docs/api-m5-c.md §1）：personas=null 用默认三人设。"""
+    """发起论文评审（docs/task-system.md §7（原 api-m5-c.md §1））：personas=null 用默认三人设。"""
 
     personas: list[Persona] | None = None
 
 
 class PaperReviewSummary(BaseModel):
-    """评审历史条目（docs/api-m5-c.md §4）：payload.meta 摘要 + 消息数。"""
+    """评审历史条目（docs/task-system.md §7（原 api-m5-c.md §4））：payload.meta 摘要 + 消息数。"""
 
     session_id: uuid.UUID
     created_at: datetime

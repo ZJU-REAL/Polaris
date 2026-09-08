@@ -1,4 +1,4 @@
-"""SSH 凭据路由（docs/api-m4.md §1）：每用户私有 CRUD + 连通性测试。
+"""SSH 凭据路由（docs/task-system.md §7（原 api-m4.md §1））：每用户私有 CRUD + 连通性测试。
 
 - 绝不回传私钥/口令（Read schema 不含相关字段）；
 - 只能操作自己的凭据，他人凭据一律 404（不泄露存在性）。

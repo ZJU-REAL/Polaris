@@ -10,7 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db import Base
 from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 
-# 状态与 voyage 流水线联动（docs/api-m4.md §2）：
+# 状态与 voyage 流水线联动（docs/task-system.md §7（原 api-m4.md §2））：
 #   planning →(计划写入) awaiting_gate →(闸门批准) setup → running → reporting → done
 #   AI 提问等回答 → waiting_user（镜像 voyage paused_ask，回答后恢复原状态）
 #   用户拍板放弃 / 闸门驳回 → failed；用户取消 → cancelled
@@ -55,7 +55,7 @@ class Experiment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     report: Mapped[str | None] = mapped_column(Text)  # markdown 报告
     # {name: [{step, value}]} 全实验汇总（各 run 合并）
     metrics: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
-    # [{index, name, caption, path 内部}]（docs/api-m5-a.md §2，path 不出 API）
+    # [{index, name, caption, path 内部}]（docs/task-system.md §7，path 不出 API）
     figures: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONVariant)
     # {no_improve_streak, debug_count, stopped_reason}（iterate 循环持续落库）
     iteration_state: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
@@ -83,7 +83,7 @@ class ExperimentRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     log_path: Mapped[str | None] = mapped_column(String(1024))  # 本地日志镜像路径
     # {name: [{step, value}]}（解析 POLARIS_METRIC 行 + 可选 workdir/metrics.json）
     metrics: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
-    # 该轮 structured reflection（docs/api-m5-a.md §1）
+    # 该轮 structured reflection（docs/task-system.md §7（原 api-m5-a.md §1））
     reflection: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     # 主指标值（plan.primary_metric，平台从 metrics 解析）
     primary_value: Mapped[float | None] = mapped_column(Float)

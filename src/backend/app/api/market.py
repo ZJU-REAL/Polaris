@@ -1,4 +1,4 @@
-"""技能市场路由（docs/skill-system.md §4.3）。
+"""技能市场路由（docs/task-system.md §7（原 skill-system.md §4.3））。
 
 - 发布：POST /skills/{id}/publish（技能主人）→ 直接上架
 - 浏览/详情/安装：登录即可；下架：发布者或管理员

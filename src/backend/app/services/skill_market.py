@@ -1,4 +1,4 @@
-"""技能市场业务逻辑（docs/skill-system.md §4.3；不 import fastapi）。
+"""技能市场业务逻辑（docs/task-system.md §7（原 skill-system.md §4.3）；不 import fastapi）。
 
 部署内共享：发布即上架（approved）→ 浏览/安装。
 listing 永远指向发布时的具体 SkillVersion；安装 = 拷贝该版本为安装者的 user 技能。

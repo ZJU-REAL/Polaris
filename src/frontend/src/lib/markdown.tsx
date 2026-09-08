@@ -13,7 +13,7 @@ import 'katex/dist/katex.min.css';
      （可多行，独立成段）；解析失败按原文显示，不抛错。
    - 扩展：`[[概念名]]` / `[[概念名|别名]]` 双链 → 可点击 chip，
      通过 onWikiLink(概念名) 回调（Research Wiki 用）。
-   - 扩展：独立一行的 `![[fig:N]]` 图片标记（docs/api-lit.md §6.6）
+   - 扩展：独立一行的 `![[fig:N]]` 图片标记（docs/task-system.md §7（原 api-lit.md §6.6））
      → 调用 renderFigure(N) 渲染嵌入图；未提供 renderFigure 或
      返回 null 时该行静默跳过。行内出现的同标记也剥除不显示；
      代码块 / 行内代码内不解析。
@@ -50,7 +50,7 @@ export type WikiLinkHandler = (name: string) => void;
 export type FigureRenderer = (index: number) => ReactNode;
 
 /**
- * `[[paper:uuid]]` 库内论文引用渲染回调（docs/api-idea2.md §6）；
+ * `[[paper:uuid]]` 库内论文引用渲染回调（docs/task-system.md §7（原 api-idea2.md §6））；
  * 返回 null 时回退为普通 [[双链]] chip 行为。
  */
 export type PaperRefRenderer = (paperId: string) => ReactNode;
@@ -204,7 +204,7 @@ const RE_UL = /^\s*[-*+]\s+(.*)$/;
 const RE_OL = /^\s*\d+[.)]\s+(.*)$/;
 const RE_QUOTE = /^\s*>\s?(.*)$/;
 const RE_TABLE_SEP = /^\s*\|?\s*:?-{2,}[-\s:|]*$/;
-/** 独立一行的 ![[fig:N]] 图片标记（docs/api-lit.md §6.6） */
+/** 独立一行的 ![[fig:N]] 图片标记（docs/task-system.md §7（原 api-lit.md §6.6）） */
 const RE_FIG_LINE = /^\s*!\[\[fig:(\d+)\]\]\s*$/;
 const RE_IMAGE_LINE = /^\s*!\[([^\]]*)\]\(<?([^\s)>]+)>?(?:\s+["'][^"']*["'])?\)\s*$/;
 /** 块级公式起始：$$… 或 \[… */

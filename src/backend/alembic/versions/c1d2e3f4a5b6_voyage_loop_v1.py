@@ -1,4 +1,4 @@
-"""voyage loop v1: 任务循环地基（docs/voyage-loop.md §8 阶段 A）
+"""voyage loop v1: 任务循环地基（docs/task-system.md §7（原 voyage-loop.md §8） 阶段 A）
 
 - voyage_runs：+mode（pipeline|template|loop，按 kind 回填）、+plan_iteration、+done_criteria
 - voyage_steps：+rank（清单序 = 执行序，gap 编号回填 seq*100；seq 冻结为创建序）、
@@ -21,7 +21,7 @@ down_revision: str | None = "b8c9d0e1f2a3"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# kind → mode 回填（docs/voyage-loop.md §3；未知 kind = LLM 自由规划 → loop）
+# kind → mode 回填（docs/task-system.md §7；未知 kind = LLM 自由规划 → loop）
 _PIPELINE_KINDS = (
     "wiki_bootstrap",
     "wiki_ingest",

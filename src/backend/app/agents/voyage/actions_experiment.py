@@ -1,4 +1,4 @@
-"""experiment voyage 动作（kind ``experiment``，docs/api-m5-a.md §1 + docs/voyage-loop.md §7）。
+"""experiment voyage 动作（kind ``experiment``，docs/task-system.md §7）。
 
 启动计划：experiment.plan →（compute_budget 闸门）experiment.setup →
          experiment.smoke → experiment.run（第 1 轮）→ experiment.analyze（第 1 轮）
@@ -1310,7 +1310,7 @@ _EXPERIMENT_KINDS = ("eval", "training", "agent", "analysis", "other")
 
 def validate_plan(data: Any) -> dict[str, Any]:
     """严格校验 plan JSON：hypotheses / repro_strategy / steps / primary_metric /
-    budget_estimate 缺一不可（primary_metric 为 docs/api-m5-a.md §1 新增必填）。"""
+    budget_estimate 缺一不可（primary_metric 为 docs/task-system.md §7 新增必填）。"""
     if not isinstance(data, dict):
         raise ValueError("plan payload is not an object")
     raw_hyps = data.get("hypotheses")
@@ -1450,7 +1450,7 @@ def validate_files(data: Any) -> dict[str, str]:
 
 
 def validate_reflection(data: Any) -> dict[str, Any]:
-    """structured reflection 严格校验（docs/api-m5-a.md §1）。"""
+    """structured reflection 严格校验（docs/task-system.md §7（原 api-m5-a.md §1））。"""
     if not isinstance(data, dict):
         raise ValueError("reflection payload is not an object")
     observation = data.get("observation")
@@ -2637,7 +2637,7 @@ def _best_primary_value(runs: list[ExperimentRun], direction: str) -> float | No
 async def experiment_run(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     """单轮正式运行：launch → 轮询（cancel/日志镜像/指标/超时 kill）→ metrics 合并。
 
-    原 experiment.iterate 的一轮循环体（docs/voyage-loop.md §7）：每轮是独立的
+    原 experiment.iterate 的一轮循环体（docs/task-system.md §7）：每轮是独立的
     任务步骤，可见、可审计、可断点恢复；非零退出码不算步骤失败（observation 携带
     exit_code，交由 experiment.analyze 诊断走 debug 分支）。
     """
@@ -2850,7 +2850,7 @@ async def experiment_run(ctx: ActionContext, params: dict[str, Any]) -> dict[str
 async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     """单轮分析：structured reflection → 假设回写 → 终止判定 → improve/debug 改代码。
 
-    产出 plan_signal 供引擎的确定性分支表消费（docs/voyage-loop.md §7）：
+    产出 plan_signal 供引擎的确定性分支表消费（docs/task-system.md §7（原 voyage-loop.md §7））：
     - continue：已按 reflection 改完代码，追加下一轮 run + analyze；
     - finish：终止条件命中（stop/假设定论/无提升/预算/debug 限额），进入收尾。
     终止判定顺序与原 experiment.iterate 完全一致。
@@ -2992,7 +2992,7 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
                 },
             }
 
-        # decision 分支与终止条件（顺序与原 iterate 一致，docs/api-m5-a.md §1）
+        # decision 分支与终止条件（顺序与原 iterate 一致，docs/task-system.md §7）
         hyps = plan.get("hypotheses", [])
         iterate_cp = dict(ctx.checkpoint.get("iterate") or {})
         iterate_started = (

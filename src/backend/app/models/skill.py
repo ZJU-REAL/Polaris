@@ -1,4 +1,4 @@
-"""技能系统（docs/skill-system.md）：可版本化、可装配的判断性任务指令包。
+"""技能系统（docs/task-system.md §7（原 skill-system.md））：可版本化、可装配的判断性任务指令包。
 
 - Skill：技能主体（builtin 内置只读 / user 个人）
 - SkillVersion：不可变版本（manifest JSON + markdown body），只增不改；
@@ -25,7 +25,7 @@ class Skill(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = ()
 
     slug: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    # guidance | rubric | persona | workflow（docs/skill-system.md §1.1）
+    # guidance | rubric | persona | workflow（docs/task-system.md §7（原 skill-system.md §1.1））
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     name_en: Mapped[str | None] = mapped_column(String(255))

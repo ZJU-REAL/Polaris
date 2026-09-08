@@ -90,7 +90,7 @@ class SemanticScholarClient:
         start_year: int | None = None,
         end_year: int | None = None,
     ) -> list[dict[str, Any]]:
-        """按题目/关键词全文检索（Related Work 候选集，docs/api-m5-b.md §5）。"""
+        """按题目/关键词全文检索（Related Work 候选集，docs/task-system.md §7）。"""
         params: dict[str, Any] = {"query": query, "fields": fields, "limit": limit}
         if start_year is not None or end_year is not None:
             lo = start_year or end_year

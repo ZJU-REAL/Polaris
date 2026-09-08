@@ -1,4 +1,4 @@
-"""SkillSet：读取 voyage checkpoint 的技能快照并渲染注入文本（docs/skill-system.md §3.2）。
+"""SkillSet：读取 voyage checkpoint 的技能快照并渲染注入文本（docs/task-system.md §7）。
 
 快照由 engine 在首次驱动时写入 checkpoint["skills"]（services.skills.snapshot_for_user），
 结构：{target: [{slug, name, kind, version, body, config, personas, steps}, ...]}。

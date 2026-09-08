@@ -1,4 +1,4 @@
-"""论文笔记（docs/api-lit.md §2 + P5b 归属拆分）：CRUD + 仅作者可见 +
+"""论文笔记（docs/task-system.md §7（原 api-lit.md §2） + P5b 归属拆分）：CRUD + 仅作者可见 +
 跨课题共享 + 课题笔记本 + 检索并入 + 导出小节。"""
 
 import io

@@ -1,4 +1,4 @@
-"""文献 ingest 路由（docs/api-m2.md §4）：冷启动/增量入队 + 状态查询。"""
+"""文献 ingest 路由（docs/task-system.md §7（原 api-m2.md §4））：冷启动/增量入队 + 状态查询。"""
 
 import uuid
 

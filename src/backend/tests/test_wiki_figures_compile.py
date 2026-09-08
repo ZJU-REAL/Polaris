@@ -1,4 +1,4 @@
-"""图文交织 wiki（docs/api-lit.md §6.6）：透明图铺白底、图文编译、recompile、导出重写。"""
+"""图文交织 wiki（docs/task-system.md §7）：透明图铺白底、图文编译、recompile、导出重写。"""
 
 import io
 import uuid

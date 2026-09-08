@@ -1,4 +1,4 @@
-"""论文撰写路由（docs/api-m5-b.md §1/§2/§3/§4/§5/§7）。
+"""论文撰写路由（docs/task-system.md §7（原 api-m5-b.md §1/§2/§3/§4/§5/§7））。
 
 权限：一律课题主人（非本人 404 不泄露存在性）。
 编译为同步端点（tectonic 硬超时 120s）；实时协同走 /ws/manuscripts/{fid}（api/ws.py）。

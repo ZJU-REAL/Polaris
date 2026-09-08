@@ -1,10 +1,10 @@
 """WebSocket 端点。
 
-- ``WS /ws/notifications?token=<jwt>``（docs/api-m1.md §5）：手动校验 JWT（复用
+- ``WS /ws/notifications?token=<jwt>``（docs/task-system.md §7）：手动校验 JWT（复用
   fastapi-users JWTStrategy.read_token），订阅当前用户自己的
   ``notify:user:{id}`` 频道并转发（gate.created / gate.decided / voyage.status /
   manuscript.status）；库级任务（无起源课题）的通知也走这条频道（#721）；
-- ``WS /ws/manuscripts/{file_id}?token=<jwt>``（docs/api-m5-b.md §6）：pycrdt CRDT
+- ``WS /ws/manuscripts/{file_id}?token=<jwt>``（docs/task-system.md §7）：pycrdt CRDT
   协同房间（y-websocket 二进制协议，房间名 = file id）。on_connect 校验
   JWT + 课题归属 + 文件存在且非 readonly，失败分别以 4401 / 4404 / 4403 关闭。
 - ``WS /ws/runner-agents/connect``（docs/byo-runner.md tier-2，#695）：BYO runner

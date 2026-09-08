@@ -1,4 +1,4 @@
-"""PDF 阅读 + AI 伴读（docs/api-lit.md §1、§3）：respx mock arxiv、fake LLM，全离线。"""
+"""PDF 阅读 + AI 伴读（docs/task-system.md §7、§3）：respx mock arxiv、fake LLM，全离线。"""
 
 import json
 import uuid

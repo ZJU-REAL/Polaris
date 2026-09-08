@@ -1,4 +1,4 @@
-"""手动添加文献（docs/api-lit.md §4）：三来源 + 去重 409 + 解析失败/互斥 422，全离线。"""
+"""手动添加文献（docs/task-system.md §7）：三来源 + 去重 409 + 解析失败/互斥 422，全离线。"""
 
 import asyncio
 import json

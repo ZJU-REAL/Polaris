@@ -1,4 +1,4 @@
-"""skill system S1 (docs/skill-system.md): skills / skill_versions / project_skills
+"""skill system S1 (docs/task-system.md §7): skills / skill_versions / project_skills
 
 - skills：技能主体（builtin/user/project scope，slug 唯一性在 service 层按 scope 校验）
 - skill_versions：不可变版本（manifest JSON + body），uq(skill, version)

@@ -1,4 +1,4 @@
-"""manuscripts m5b: writing workbench columns per docs/api-m5-b.md
+"""manuscripts m5b: writing workbench columns per docs/task-system.md §7（原 api-m5-b.md）
 
 - manuscripts.experiment_id FK(SET NULL)：关联实验（fact-pack 事实源）
 - manuscripts.template：模板 pack key（neurips2026 | iclr2026 | acl）

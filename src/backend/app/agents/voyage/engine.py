@@ -1,6 +1,6 @@
 """VoyageEngine：持久化状态机，驱动 Navigator/Helm/Sextant 三元组闭环。
 
-任务循环（docs/voyage-loop.md）：计划载体是**带状态位的扁平步骤清单**（真源在
+任务循环（docs/task-system.md §7）：计划载体是**带状态位的扁平步骤清单**（真源在
 voyage_steps 行，run.plan 只是派生快照），调度规则 = 按 rank 取第一个非终态节点。
 
     planning → executing → verifying ─┬→ (下一节点) executing
@@ -11,7 +11,7 @@ voyage_steps 行，run.plan 只是派生快照），调度规则 = 按 rank 取�
                                       ├→ paused_error（pipeline 失败；无人值守 run 的降级兜底）
                                       └→ done / failed（failed 只由人拍板：cancel/驳回/放弃）
 要点：
-- 失败分派按 run.mode（docs/voyage-loop.md §5.1）：
+- 失败分派按 run.mode（docs/task-system.md §7（原 voyage-loop.md §5.1））：
   执行类错误（observation.error）在节点 max_attempts 内带诊断原地重试；
   判断类失败（校验未过）不重试——pipeline 直接停（paused_error 等人工修复后
   断点重试），template/loop 走重规划；on_failure="fail" 步骤（smoke/run 这类
@@ -161,7 +161,7 @@ def _step_def_from_row(row: VoyageStep, plan: list[Any] | None) -> dict[str, Any
 def _is_wrapup(step_def: dict[str, Any]) -> bool:
     """收尾步骤：把已完成工作变成产出的廉价终步（summarize/report/终编译等）。
 
-    预算耗尽时收尾步骤仍放行、其余未执行步骤作废（docs/voyage-loop.md §5.4 降级收尾），
+    预算耗尽时收尾步骤仍放行、其余未执行步骤作废（docs/task-system.md §7 降级收尾），
     避免昂贵工作已完成却卡在最后一步 paused_error 而白费。
     """
     return bool(step_def.get("wrapup"))
@@ -193,7 +193,7 @@ class VoyageEngine:
     async def resume(self, run_id: uuid.UUID) -> None:
         """闸门审批 / paused_error 重试 / worker 重启后从断点续跑。
 
-        失败节点复位重试（docs/voyage-loop.md：人工修复代码后从断点续跑，
+        失败节点复位重试（docs/task-system.md §7（原 voyage-loop.md）：人工修复代码后从断点续跑，
         前功不作废）：attempt 清零（历史已归档进 attempts），状态回 pending。
         """
         async with self._sessionmaker() as session:
@@ -609,7 +609,7 @@ class VoyageEngine:
             if run is None or run.status in TERMINAL_STATUSES:
                 return
             try:
-                # mode 由 kind 静态决定（docs/voyage-loop.md §2）；首次驱动时对齐，
+                # mode 由 kind 静态决定（docs/task-system.md §7）；首次驱动时对齐，
                 # 顺带覆盖迁移前创建的存量 run
                 expected_mode = mode_for_kind(run.kind)
                 if run.mode != expected_mode:
@@ -762,7 +762,7 @@ class VoyageEngine:
 
             step_def = _step_def_from_row(node, run.plan)
 
-            # 预算耗尽：降级收尾（docs/voyage-loop.md §5.4）——收尾步骤放行把已完成
+            # 预算耗尽：降级收尾（docs/task-system.md §7）——收尾步骤放行把已完成
             # 工作变成产出，其余未执行步骤作废；确实无产出可收才 paused_error
             if self._budget_exceeded(run):
                 finishing = self._budget_finishing_steps(run, rows)
@@ -827,7 +827,7 @@ class VoyageEngine:
 
             if node.verdict and node.verdict.get("passed"):
                 # 节点可携带 plan_signal（如 experiment.analyze 的继续/收束判定）：
-                # 走 kind 确定性分支表做计划编辑，不经 LLM（docs/voyage-loop.md §7）
+                # 走 kind 确定性分支表做计划编辑，不经 LLM（docs/task-system.md §7）
                 await self._apply_signal_edits(session, run, node)
                 await self._set_status(session, run, "executing")
                 continue
@@ -835,7 +835,7 @@ class VoyageEngine:
                 return
 
     async def _finalize(self, session: AsyncSession, run: VoyageRun) -> None:
-        """所有节点走完 → voyage 级完成标准终检（docs/voyage-loop.md §5.4）。"""
+        """所有节点走完 → voyage 级完成标准终检（docs/task-system.md §7）。"""
         criteria = run.done_criteria if isinstance(run.done_criteria, dict) else None
         checks = criteria.get("checks") if criteria else None
         if checks:
@@ -1043,7 +1043,7 @@ class VoyageEngine:
 
     @staticmethod
     def _archive_attempt(step_row: VoyageStep) -> None:
-        """每次尝试完整归档（docs/voyage-loop.md §4：审计留痕一律落库）。"""
+        """每次尝试完整归档（docs/task-system.md §7（原 voyage-loop.md §4）：审计留痕一律落库）。"""
         archive = list(step_row.attempts or [])
         archive.append(
             {
@@ -1107,7 +1107,7 @@ class VoyageEngine:
 
     @staticmethod
     def _budget_finishing_steps(run: VoyageRun, rows: list[VoyageStep]) -> list[VoyageStep]:
-        """预算耗尽时应放行的收尾步骤（docs/voyage-loop.md §5.4）：
+        """预算耗尽时应放行的收尾步骤（docs/task-system.md §7（原 voyage-loop.md §5.4））：
         1. 显式 `wrapup=True` 的待办步骤（summarize / report / 终编译）；
         2. 都没有、但已有步骤完成过 → 最后一个待办步骤作**隐式收尾**（跑完它才有产出，
            兼容 wrapup 标记出现前创建的旧 run：如 debate 已跑完、summarize 无标记）；
@@ -1121,7 +1121,7 @@ class VoyageEngine:
             return [pending[-1]]
         return []
 
-    # ---- 失败分派（docs/voyage-loop.md §5.1）----
+    # ---- 失败分派（docs/task-system.md §7（原 voyage-loop.md §5.1））----
 
     async def _handle_failure(
         self,
@@ -1197,7 +1197,7 @@ class VoyageEngine:
         # loop：失败回灌 Navigator 做计划编辑（阶段 D）
         return await self._navigator_edit(session, run, node, step_def)
 
-    # ---- 计划编辑（loop 模式失败回灌 + plan_signal 分支表，docs/voyage-loop.md §5.3/§7）----
+    # ---- 计划编辑（loop 模式失败回灌 + plan_signal 分支表，docs/task-system.md §7）----
 
     @staticmethod
     def _plan_state_summary(rows: list[VoyageStep]) -> str:
@@ -1253,7 +1253,7 @@ class VoyageEngine:
     ) -> None:
         """节点通过后消费 observation.plan_signal：kind 确定性分支表 → 计划编辑。
 
-        能写成规则的决策不问 LLM（docs/voyage-loop.md §5.3）；分支表自带幂等
+        能写成规则的决策不问 LLM（docs/task-system.md §7（原 voyage-loop.md §5.3））；分支表自带幂等
         （待办节点已存在则返回 None，防 resume 重放导致重复追加）。
         """
         signal = (node.observation or {}).get("plan_signal")
@@ -1292,7 +1292,7 @@ class VoyageEngine:
     ) -> int:
         """应用一次已通过 schema 校验的计划编辑；引用非法抛 PlanEditError。
 
-        应用期不变量（docs/voyage-loop.md §5.3）：只能编辑/作废非终态节点，
+        应用期不变量（docs/task-system.md §7（原 voyage-loop.md §5.3））：只能编辑/作废非终态节点，
         插入位置必须在当前执行点之后；seq 只增不改，rank 取间隙值。
         返回新增节点数；调用方负责 commit 与快照重生成。
         """

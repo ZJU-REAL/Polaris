@@ -11,7 +11,7 @@ import { handleUnauthorized } from './local-session';
      POST /api/auth/jwt/login    form-encoded username/password
      POST /api/auth/register     JSON
      GET  /api/users/me
-   M1 契约见 docs/api-m1.md（Projects / Voyages / Gates / Admin LLM）。
+   M1 契约见 docs/task-system.md §7（原 api-m1.md）（Projects / Voyages / Gates / Admin LLM）。
    ============================================================ */
 
 /* baseURL 与 token 后端都经抽象层解析：web 端 apiBase() === '/api'、token 走
@@ -571,7 +571,7 @@ export interface VoyagePlanEvent {
 
 export interface VoyageDetail extends VoyageRead {
   steps: VoyageStepRead[];
-  /** 本次任务快照使用的技能（启动时固定，见 docs/skill-system.md §3.2）。 */
+  /** 本次任务快照使用的技能（启动时固定，见 docs/task-system.md §7）。 */
   skills?: { slug: string; name: string; kind: string; version: number; target: string }[];
   /** 计划调整历史（无调整为 [] / 缺失） */
   plan_history?: VoyagePlanEvent[] | null;
@@ -965,12 +965,12 @@ export interface LlmCallLogDetail {
 }
 
 // ============================================================
-// M2 · Papers（论文库）— docs/api-m2.md
+// M2 · Papers（论文库）— docs/task-system.md §7（原 api-m2.md）
 // ============================================================
 
 export type PaperStatus = 'candidate' | 'scored' | 'excluded' | 'fetched' | 'compiled' | 'included';
 
-/** 状态组别名（docs/api-lit.md §8.5）：visible=检索到的全部（不含回收站）；
+/** 状态组别名（docs/task-system.md §7（原 api-lit.md §8.5））：visible=检索到的全部（不含回收站）；
     library=库内（达标及之后）；pending_compile=待编译。 */
 export type PaperStatusFilter =
   | PaperStatus
@@ -1019,7 +1019,7 @@ export interface PaperRead {
   compiled_at?: string | null;
   /** 编译所用模型名；未编译/存量数据为 null（旧后端可能缺失） */
   compiled_model?: string | null;
-  /* —— 文献管理增强字段（docs/api-lit.md §5，后端未就绪时可能缺失，均可选容错） —— */
+  /* —— 文献管理增强字段（docs/task-system.md §7，后端未就绪时可能缺失，均可选容错） —— */
   /** 库标签（共享）：本次浏览的那个库里打的；没有库上下文时为空 */
   tags?: string[];
   /** 我的标签：只有本人看得到、改得了，跟着论文本身走（换库浏览也在） */
@@ -1041,7 +1041,7 @@ export interface PaperConceptRef {
 /** 论文图片类型（视觉模型判定；编译时决定插到哪个小节）。 */
 export type FigureKind = 'motivation' | 'method' | 'architecture' | 'experiment' | 'other';
 
-/** 论文图片元数据（docs/api-lit.md §6.5）；文件本体走 fetchFigureImage blob。 */
+/** 论文图片元数据（docs/task-system.md §7）；文件本体走 fetchFigureImage blob。 */
 export interface FigureInfo {
   index: number;
   page: number;
@@ -1180,7 +1180,7 @@ export interface PageOf<T> {
 }
 
 // ============================================================
-// Lit · 阅读 / 笔记 / 标签 / 引用导出 — docs/api-lit.md
+// Lit · 阅读 / 笔记 / 标签 / 引用导出 — docs/task-system.md §7（原 api-lit.md）
 // ============================================================
 
 export type ReadingStatus = 'unread' | 'reading' | 'read';
@@ -1704,7 +1704,7 @@ export interface ShelfImportInput {
 }
 
 // ============================================================
-// 文献知识底座：全文分段索引 + 文献库对话（docs/api-lit.md §8）
+// 文献知识底座：全文分段索引 + 文献库对话（docs/task-system.md §7（原 api-lit.md §8））
 // ============================================================
 
 /** 文献库对话的引用来源（SSE sources 事件 items）。 */
@@ -1788,7 +1788,7 @@ export interface VectorStatus {
   stale?: boolean;
 }
 
-/** 单篇论文的索引状态（docs/api-lit.md §9）。 */
+/** 单篇论文的索引状态（docs/task-system.md §7（原 api-lit.md §9））。 */
 export interface PaperIndexStatus {
   /** 论文级向量：标题+作者+摘要一条，语义检索用 */
   paper_vector: VectorStatus;
@@ -2070,7 +2070,7 @@ export interface StatsRead {
 }
 
 // ============================================================
-// M3 · Ideas（Idea Forge 候选池）— docs/api-m3.md
+// M3 · Ideas（Idea Forge 候选池）— docs/task-system.md §7（原 api-m3.md）
 // ============================================================
 
 export type IdeaStatus = 'candidate' | 'under_review' | 'promoted' | 'rejected';
@@ -2080,7 +2080,7 @@ export type IdeaSort = 'elo' | '-created_at' | 'score';
 /** idea 深度：sketch=方向草案（阶段 0 发散产物）| proposal=完整研究方案（深度生成产物）。 */
 export type IdeaDepth = 'sketch' | 'proposal';
 
-/** 研究类型枚举（docs/api-idea2.md §3 goal.research_type）。 */
+/** 研究类型枚举（docs/task-system.md §7（原 api-idea2.md §3） goal.research_type）。 */
 export const RESEARCH_TYPES = ['method', 'benchmark', 'analysis', 'survey', 'application', 'theory'] as const;
 
 /** 四维评分（0-10）。 */
@@ -2114,7 +2114,7 @@ export interface IdeaParentPaper {
   title: string;
 }
 
-// —— Idea 2.0 · 研究目标与依据文献（docs/api-idea2.md §3/§7） ——
+// —— Idea 2.0 · 研究目标与依据文献（docs/task-system.md §7（原 api-idea2.md §3/§7）） ——
 
 export interface IdeaGoalScope {
   in_scope?: string[];
@@ -2212,7 +2212,7 @@ export interface ForgeState {
 }
 
 // ============================================================
-// Idea 深度生成（Idea 2.0）— docs/api-idea2.md §2
+// Idea 深度生成（Idea 2.0）— docs/task-system.md §7（原 api-idea2.md §2）
 // ============================================================
 
 export type DeepSeedType = 'text' | 'concept' | 'paper' | 'idea';
@@ -2300,7 +2300,7 @@ export interface ReviewMessageRead {
 }
 
 // ============================================================
-// M4 · SSH 凭据（每用户私有）— docs/api-m4.md §1
+// M4 · SSH 凭据（每用户私有）— docs/task-system.md §7（原 api-m4.md §1）
 // ============================================================
 
 export interface SshCredentialRead {
@@ -2425,7 +2425,7 @@ export interface ExperimentHypothesis {
   evidence?: string;
 }
 
-/** 主指标（docs/api-m5-a.md §1：plan 生成时 LLM 必填；旧实验可能缺失）。 */
+/** 主指标（docs/task-system.md §7（原 api-m5-a.md §1）：plan 生成时 LLM 必填；旧实验可能缺失）。 */
 export interface PrimaryMetric {
   name: string;
   direction: 'maximize' | 'minimize';
@@ -2496,7 +2496,7 @@ export interface ReflectionHypothesisUpdate {
   evidence?: string;
 }
 
-/** 每轮运行后的 LLM 结构化反思（docs/api-m5-a.md §1）。 */
+/** 每轮运行后的 LLM 结构化反思（docs/task-system.md §7（原 api-m5-a.md §1））。 */
 export interface RunReflection {
   observation?: string;
   diagnosis?: string;
@@ -2621,7 +2621,7 @@ export interface CreateExperimentInput {
 }
 
 // ============================================================
-// M5-B · Manuscripts（论文撰写）— docs/api-m5-b.md
+// M5-B · Manuscripts（论文撰写）— docs/task-system.md §7（原 api-m5-b.md）
 // ============================================================
 
 /**
@@ -2838,7 +2838,7 @@ export interface DraftManuscriptInput {
 }
 
 // ============================================================
-// M5-C · Paper Review（论文同行评审）— docs/api-m5-c.md
+// M5-C · Paper Review（论文同行评审）— docs/task-system.md §7（原 api-m5-c.md）
 // ============================================================
 
 /** 引用存在性：库内/外部精确 | 模糊匹配 | 疑似编造。 */
@@ -2936,7 +2936,7 @@ export interface ReviewSummary {
 // ============================================================
 
 // ============================================================
-// Skills · 技能系统（docs/skill-system.md）
+// Skills · 技能系统（docs/task-system.md §7（原 skill-system.md））
 // ============================================================
 
 export type SkillKind = 'guidance' | 'rubric' | 'persona' | 'workflow';
@@ -3842,7 +3842,7 @@ export const api = {
     return requestResourceText(url);
   },
 
-  // —— Lit · 论文图片（docs/api-lit.md §6.5） ——
+  // —— Lit · 论文图片（docs/task-system.md §7（原 api-lit.md §6.5）） ——
   /** 论文图片元数据列表；无图返回 []。 */
   listFigures(id: string): Promise<FigureInfo[]> {
     return request<FigureInfo[]>(`/papers/${id}/figures`);
@@ -3859,7 +3859,7 @@ export const api = {
     );
   },
 
-  /** 用最新的图文模式重写 wiki 页（docs/api-lit.md §6.6）：重跑图片筛选注释 + 图文编译，覆盖 wiki_content；同步调用，约 1 分钟。 */
+  /** 用最新的图文模式重写 wiki 页（docs/task-system.md §7）：重跑图片筛选注释 + 图文编译，覆盖 wiki_content；同步调用，约 1 分钟。 */
   recompilePaper(id: string): Promise<PaperDetail> {
     return request<PaperDetail>(`/papers/${id}/recompile`, { method: 'POST' });
   },
@@ -5212,7 +5212,7 @@ export const api = {
     return requestJson<McpSelfCheckReport>('/mcp/selfcheck', 'POST', input);
   },
 
-  // —— Skills · 技能（docs/skill-system.md §4） ——
+  // —— Skills · 技能（docs/task-system.md §7（原 skill-system.md §4）） ——
   listSkills(opts: { scope?: 'builtin' | 'mine'; kind?: SkillKind; q?: string } = {}): Promise<SkillRead[]> {
     const params = new URLSearchParams();
     if (opts.scope) params.set('scope', opts.scope);
@@ -5300,7 +5300,7 @@ export const api = {
     return requestJson<SkillDetail>('/skills/import', 'POST', data);
   },
 
-  // —— Skills · 技能市场（docs/skill-system.md §4.3） ——
+  // —— Skills · 技能市场（docs/task-system.md §7（原 skill-system.md §4.3）） ——
   /** 发布我的技能到市场（当前版本），发布后全员可安装。 */
   publishSkill(id: string, input: { summary?: string; tags?: string[] } = {}): Promise<SkillListingRead> {
     return requestJson<SkillListingRead>(`/skills/${id}/publish`, 'POST', input);

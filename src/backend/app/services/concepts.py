@@ -97,7 +97,7 @@ def is_placeholder_definition(text: str | None) -> bool:
 def extract_wikilinks(markdown: str) -> list[str]:
     """解析 [[..]] 双链，返回去重（保序）的概念名列表。
 
-    跳过 ``![[...]]`` 嵌入标记（如图文 wiki 的 ``![[fig:N]]``，docs/api-lit.md §6.6）；
+    跳过 ``![[...]]`` 嵌入标记（如图文 wiki 的 ``![[fig:N]]``，docs/task-system.md §7）；
     感叹号与括号之间夹了空格的 ``! [[fig:3]]`` 也算嵌入标记（模型偶尔这么写）。
     「这名字配不配当概念」不在这里判——那是判断题，交给转正时的有效性判定
     （见 :func:`promote_ready_concepts`），这里只做确定性的解析。
@@ -851,7 +851,7 @@ async def link_paper_concepts(
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
 ) -> tuple[int, int]:
-    """单篇概念上链（手动编译/重编译/每日推送编译后调用，docs/api-lit.md §6.6）——同步语义：
+    """单篇概念上链（手动编译/重编译/每日推送编译后调用，docs/task-system.md §7）——同步语义：
 
     从这篇论文的解读正文抽 [[双链]] → 缺失概念建**候选**词条（全平台一份，已有同名的
     直接复用；候选不生成定义）→ 建关联；再删除该论文上新正文已不引用的陈旧关联，被解除

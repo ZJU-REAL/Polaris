@@ -1,4 +1,4 @@
-"""实时事件总线：向 Redis 频道发布 JSON 事件（频道约定见 docs/api-m1.md §6）。
+"""实时事件总线：向 Redis 频道发布 JSON 事件（频道约定见 docs/task-system.md §7）。
 
 - ``voyage:{id}:events``：voyage 引擎发布，SSE 端点订阅转发
 - ``notify:user:{user_id}``：gate/voyage 状态变化，WS 端点订阅转发

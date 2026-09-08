@@ -1,4 +1,4 @@
-"""SSH 凭据 schema（docs/api-m4.md §1）。Read 模型绝不包含私钥/口令。"""
+"""SSH 凭据 schema（docs/task-system.md §7（原 api-m4.md §1））。Read 模型绝不包含私钥/口令。"""
 
 import uuid
 from datetime import datetime

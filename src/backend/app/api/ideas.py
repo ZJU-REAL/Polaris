@@ -1,4 +1,4 @@
-"""Idea Forge / 评审锦标赛 / 讨论路由（docs/api-m3.md）。
+"""Idea Forge / 评审锦标赛 / 讨论路由（docs/task-system.md §7（原 api-m3.md））。
 
 权限：一律课题主人（非本人 404 不泄露存在性）。
 """
@@ -106,7 +106,7 @@ async def get_forge_state(
     return ForgeStateRead(**state)
 
 
-# ---- 深度生成（docs/api-idea2.md §2） ----
+# ---- 深度生成（docs/task-system.md §7（原 api-idea2.md §2）） ----
 
 
 @router.post(

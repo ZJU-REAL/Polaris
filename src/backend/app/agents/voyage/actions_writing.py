@@ -1,4 +1,4 @@
-"""paper_writing voyage 动作（kind ``paper_writing`` 固定管线执行体，docs/api-m5-b.md §5）。
+"""paper_writing voyage 动作（kind ``paper_writing`` 固定管线执行体，docs/task-system.md §7）。
 
 流水线（navigator.writing_plan）：
     writing.section × N（固定顺序 Intro→Method→Experimental Setup→Results→
@@ -206,7 +206,7 @@ async def _section_file(
     return main
 
 
-# ---- 静态校验（docs/api-m5-b.md §5 三类） ----
+# ---- 静态校验（docs/task-system.md §7（原 api-m5-b.md §5） 三类） ----
 
 
 def _allowed_metric_values(fact_pack: dict[str, Any]) -> list[float]:

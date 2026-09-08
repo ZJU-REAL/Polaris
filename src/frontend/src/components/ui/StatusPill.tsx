@@ -39,7 +39,7 @@ export const STATUS: Record<string, StatusMeta> = {
   paused_ask: { cls: 'st-candidate', zh: '等你回复', en: 'waiting for you' },
   failed: { cls: 'st-failed', zh: '失败', en: 'failed' },
   cancelled: { cls: 'st-rejected', zh: '已取消', en: 'cancelled' },
-  // —— Voyage 步骤（任务板，docs/voyage-loop.md §4） ——
+  // —— Voyage 步骤（任务板，docs/task-system.md §7（原 voyage-loop.md §4）） ——
   passed: { cls: 'st-implemented', zh: '通过', en: 'passed' },
   obsolete: { cls: 'st-rejected', zh: '已作废', en: 'obsolete' },
   // —— Experiment 状态（M4 Experiment Lab） ——
@@ -57,7 +57,7 @@ export const STATUS: Record<string, StatusMeta> = {
   archived: { cls: 'st-rejected', zh: '已归档', en: 'archived' },
 };
 
-/** 论文三态（docs/api-lit.md §8.5 大白话）：检索到 = 已抓取；相关性达标 = 已纳入；编译完成 = 已编译。
+/** 论文三态（docs/task-system.md §7 大白话）：检索到 = 已抓取；相关性达标 = 已纳入；编译完成 = 已编译。
     与全局 STATUS 分开：candidate 等键在 Idea 等场景有不同含义。 */
 const PAPER_STATUS: Record<string, StatusMeta> = {
   candidate: { cls: 'st-drafted', zh: '已抓取', en: 'fetched' },

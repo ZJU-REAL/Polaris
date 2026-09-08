@@ -1,4 +1,4 @@
-"""文献知识底座（docs/api-lit.md §8）：全文分段索引 + 文献库对话 SSE。"""
+"""文献知识底座（docs/task-system.md §7（原 api-lit.md §8））：全文分段索引 + 文献库对话 SSE。"""
 
 import json
 import uuid

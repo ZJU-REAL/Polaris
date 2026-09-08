@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 class GateCreate(BaseModel):
     project_id: uuid.UUID
-    kind: str  # idea_promotion | compute_budget | remote_write | paper_submission
+    kind: str  # idea_promotion | compute_budget | paper_submission | idea_goal | idea_pivot
     payload: dict[str, Any] | None = None
     requested_by: str
 

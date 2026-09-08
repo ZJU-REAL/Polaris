@@ -1,4 +1,4 @@
-"""文献 ingest schema（docs/api-m2.md §4）。"""
+"""文献 ingest schema（docs/task-system.md §7（原 api-m2.md §4））。"""
 
 import uuid
 from datetime import datetime

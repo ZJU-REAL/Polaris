@@ -6,7 +6,7 @@ import { api, type ExperimentFigureInfo } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
 /* ============================================================
-   实验图表画廊（docs/api-m5-a.md §3）：
+   实验图表画廊（docs/task-system.md §7（原 api-m5-a.md §3））：
    figures 步骤由 AI 写绘图脚本产出 PNG，
    数据源 GET /experiments/{id}/figures/{index}/image（blob）。
    复用论文 FigureGallery 的 blob 缓存 + Lightbox 模式：

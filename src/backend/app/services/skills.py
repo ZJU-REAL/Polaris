@@ -1,4 +1,4 @@
-"""技能系统业务逻辑（docs/skill-system.md；不 import fastapi）。
+"""技能系统业务逻辑（docs/task-system.md §7（原 skill-system.md）；不 import fastapi）。
 
 - 技能 CRUD / 版本追加 / fork / 归档（builtin 只读）
 - 全局启用（user_skills：技能不绑定课题，对该用户所有新任务生效）
@@ -366,7 +366,7 @@ async def snapshot_for_user(
     return snapshot
 
 
-# ---- 试运行（docs/skill-system.md §4.1）----
+# ---- 试运行（docs/task-system.md §7（原 skill-system.md §4.1））----
 
 
 def _snapshot_entry(skill: Skill, version: SkillVersion) -> dict[str, Any]:
@@ -421,7 +421,7 @@ async def test_run_skill(
     return {"rendered": rendered, "output": result.content, "model": result.model}
 
 
-# ---- 运行 workflow 技能（docs/skill-system.md §3.3）----
+# ---- 运行 workflow 技能（docs/task-system.md §7（原 skill-system.md §3.3））----
 
 
 async def run_workflow_skill(

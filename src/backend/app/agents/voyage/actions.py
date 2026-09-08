@@ -54,7 +54,7 @@ class ActionContext:
             )
 
     def skill_guidance(self, *targets: str) -> str:
-        """注入点上项目启用技能的补充指引（docs/skill-system.md §3）；无技能返回空串。"""
+        """注入点上项目启用技能的补充指引（docs/task-system.md §7）；无技能返回空串。"""
         return skill_guidance(self.checkpoint, *targets)
 
     def skill_personas(self, target: str) -> list[dict[str, Any]] | None:

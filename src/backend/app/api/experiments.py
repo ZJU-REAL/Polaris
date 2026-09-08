@@ -1,4 +1,4 @@
-"""Experiment Lab 路由（docs/api-m4.md §2/§4）。
+"""Experiment Lab 路由（docs/task-system.md §7（原 api-m4.md §2/§4））。
 
 权限：一律课题主人（非本人 404 不泄露存在性）；凭据校验属当前用户。
 日志读取只走本地镜像文件（worker 轮询远端时同步写入），不在请求线程碰 SSH。
@@ -306,7 +306,7 @@ async def get_experiment_figure_image(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> FileResponse:
-    """实验图表 PNG（成员校验，模式同论文 figures 图片端点，docs/api-m5-a.md §3）。"""
+    """实验图表 PNG（成员校验，模式同论文 figures 图片端点，docs/task-system.md §7）。"""
     experiment, _ = await _member_experiment(session, experiment_id, user)
     figure = next((f for f in experiment.figures or [] if int(f.get("index", -1)) == index), None)
     path = Path(str(figure["path"])) if figure and figure.get("path") else None

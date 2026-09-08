@@ -1,6 +1,6 @@
 """wiki ingest 动作（Voyage kinds ``wiki_bootstrap`` / ``wiki_ingest`` 的固定计划执行体）。
 
-流水线（docs/api-m2.md §7）：
+流水线（docs/task-system.md §7（原 api-m2.md §7））：
     wiki.search_candidates → wiki.snowball → wiki.score_relevance →
     wiki.fetch_extract → wiki.compile → wiki.link_concepts → wiki.daily_digest →
     wiki.trend_synthesize → wiki.update_watermark

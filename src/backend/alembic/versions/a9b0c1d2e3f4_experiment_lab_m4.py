@@ -1,4 +1,4 @@
-"""experiment lab (M4): ssh_credentials table, experiment/run columns per docs/api-m4.md
+"""experiment lab (M4): ssh_credentials table, experiment/run columns per docs/task-system.md §7
 
 - ssh_credentials：每用户 SSH 凭据（私钥/口令 Fernet 加密列）
 - experiments：project_id/voyage_id/credential_id 外键、report、metrics

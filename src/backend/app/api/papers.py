@@ -1,4 +1,4 @@
-"""论文库路由（docs/api-m2.md §1、docs/api-lit.md §1/§3/§4/§5）。"""
+"""论文库路由（docs/task-system.md §7）。"""
 
 import asyncio
 import json
@@ -225,7 +225,7 @@ async def add_paper_manually(
     user: User = Depends(current_active_user),
     redis: Redis = Depends(get_redis_dep),
 ) -> Any:
-    """手动添加文献：arxiv_id / doi / bibtex 三选一（docs/api-lit.md §4）。
+    """手动添加文献：arxiv_id / doi / bibtex 三选一（docs/task-system.md §7（原 api-lit.md §4））。
 
     同步只建元数据行；PDF 下载/全文抽取/向量化/相关性打分交给后台任务，响应回传
     task_id 供前端订阅分阶段进度（论文已处理完整时为 null）。
@@ -604,7 +604,7 @@ async def empty_trash(
     return {"deleted": deleted}
 
 
-# ---- PDF 阅读（docs/api-lit.md §1） ----
+# ---- PDF 阅读（docs/task-system.md §7（原 api-lit.md §1）） ----
 
 
 @router.get("/papers/{paper_id}/pdf")
@@ -715,7 +715,7 @@ async def upload_paper_pdf_from_url(
     return await _paper_detail(session, view, user.id)
 
 
-# ---- 论文图片（docs/api-lit.md §6.5） ----
+# ---- 论文图片（docs/task-system.md §7（原 api-lit.md §6.5）） ----
 
 
 @router.get("/papers/{paper_id}/figures", response_model=list[PaperFigure])
@@ -807,7 +807,7 @@ async def extract_paper_figures(
     return PaperFiguresResponse(figures=[PaperFigure(**f) for f in figures])
 
 
-# ---- 图文交织 wiki 重编译（docs/api-lit.md §6.6，同步调用约 1 分钟） ----
+# ---- 图文交织 wiki 重编译（docs/task-system.md §7（原 api-lit.md §6.6），同步调用约 1 分钟） ----
 
 
 @router.post("/papers/{paper_id}/recompile", response_model=PaperDetail)
@@ -830,7 +830,7 @@ async def recompile_paper(
     return await _paper_detail(session, paper, user.id)
 
 
-# ---- 索引状态与手动重建（docs/api-lit.md §9） ----
+# ---- 索引状态与手动重建（docs/task-system.md §7（原 api-lit.md §9）） ----
 
 
 @router.get("/papers/{paper_id}/libraries", response_model=list[CollectingLibraryRead])
@@ -940,7 +940,7 @@ async def rebuild_paper_index(
     return PaperIndexStatusRead.model_validate(status_, from_attributes=True)
 
 
-# ---- AI 伴读（docs/api-lit.md §3，SSE 流） ----
+# ---- AI 伴读（docs/task-system.md §7（原 api-lit.md §3），SSE 流） ----
 
 
 @router.post("/papers/{paper_id}/chat")
@@ -984,7 +984,7 @@ async def chat_with_paper(
     )
 
 
-# ---- 标签 / 个人状态（docs/api-lit.md §5） ----
+# ---- 标签 / 个人状态（docs/task-system.md §7（原 api-lit.md §5）） ----
 
 
 @router.get("/projects/{project_id}/tags", response_model=list[TagRead])

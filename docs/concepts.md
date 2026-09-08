@@ -211,16 +211,22 @@ is in [The task system](task-system.md#1-what-a-task-is).
 
 ## Approval gates
 
-Some transitions should never be automatic: promoting an idea into a funded experiment, spending
-compute, writing to a lab GPU server, submitting a paper. These are **gates** — pending approval
-records tied to the topic. The four platform-level kinds:
+Some transitions warrant an explicit human decision: promoting an idea into the experiment stage,
+spending compute, submitting a paper. These are **gates** — pending approval records tied to the
+topic. The platform-level kinds:
 
 | Gate kind | Guards |
 | --- | --- |
-| `idea_promotion` | Promoting an idea to the experiment stage. |
-| `compute_budget` | Spending GPU time — created before an experiment's environment setup. |
-| `remote_write` | Writing files or running state-changing commands on a remote server. |
-| `paper_submission` | Marking a manuscript as submitted. Approval requires the manuscript to have passed [paper review](paper-review.md) first, unless an admin explicitly overrides. |
+| `idea_promotion` | Promoting an idea to the experiment stage — promotion is itself an approval action, so this gate is always created. |
+| `compute_budget` | Spending GPU time — created before an experiment's environment setup, **only when the experiment was created with `confirm_budget` enabled**. |
+| `paper_submission` | Marking a manuscript as submitted — always an approval action. Approval requires the manuscript to have passed [paper review](paper-review.md) first, unless an admin explicitly overrides. |
+
+**In-run gates default to off.** A task runs straight through unless you opted in when creating
+it: `confirm_budget` on an experiment inserts the `compute_budget` gate, and `confirm_goal` on a
+research proposal inserts the `idea_goal` (confirm the research goal) and `idea_pivot` (approve a
+direction change) gates. With neither flag set, the engine never pauses a run for approval —
+gates then only appear where an approval *is* the action, such as idea promotion and paper
+submission.
 
 A step that declares `requires_gate` stops the run before executing: the engine creates the gate,
 sets the run to `paused_gate`, and **ends its worker job** — a paused voyage consumes nothing while
@@ -230,8 +236,8 @@ Approving enqueues a resume and the run continues from exactly that step; reject
 status, approving `paper_submission` marks the manuscript submitted.
 
 One smaller point: a gate's kind is simply whatever the step declared, so flows can define their
-own intermediate approvals through the same mechanism — the proposal builder does this with
-`idea_goal` (confirm the research goal) and `idea_pivot` (approve a direction change).
+own intermediate approvals through the same mechanism — `idea_goal` and `idea_pivot` above are
+exactly that.
 
 ## Mid-run questions: `paused_ask`
 

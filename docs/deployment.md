@@ -1,9 +1,14 @@
 # Deployment
 
-Docker Compose is the only supported production path. This guide covers the compose overlays, the
-data directory convention, restricted-network build arguments, migrations, ports, and backups. For
-local development, see [Development](development.md); for the variables referenced here, see
+This guide is about the **multi-user server form** of Polaris. Docker Compose is the only
+supported production path for it; this page covers the compose overlays, the data directory
+convention, restricted-network build arguments, migrations, ports, and backups. For local
+development, see [Development](development.md); for the variables referenced here, see
 [Configuration](configuration.md).
+
+> [!NOTE]
+> A single person on their own machine does not need any of this: the [desktop app](desktop.md)
+> bootstraps its own single-machine backend (SQLite, no Docker, no login) on first launch.
 
 ## Compose files
 

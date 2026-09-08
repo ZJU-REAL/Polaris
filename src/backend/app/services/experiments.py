@@ -1,4 +1,4 @@
-"""Experiment Lab 业务逻辑（不 import fastapi，docs/api-m4.md §2/§3）。
+"""Experiment Lab 业务逻辑（不 import fastapi，docs/task-system.md §7（原 api-m4.md §2/§3））。
 
 - 创建实验：校验 idea promoted + 凭据属本人 → Experiment 与 kind=experiment 的 voyage 1:1；
 - 本地日志镜像：{data_dir}/experiments/<exp_id>/run_<seq>.log（logs API / SSE 只读本地镜像）；
@@ -134,7 +134,7 @@ def read_local_log_tail(path_str: str | None, tail: int) -> tuple[list[str], boo
     return lines[-tail:], True
 
 
-# ---- 本地图表镜像（docs/api-m5-a.md §1 figures 步骤拉回落盘） ----
+# ---- 本地图表镜像（docs/task-system.md §7（原 api-m5-a.md §1） figures 步骤拉回落盘） ----
 
 
 def figures_dir(experiment_id: uuid.UUID | str) -> Path:

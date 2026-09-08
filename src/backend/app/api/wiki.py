@@ -1,5 +1,5 @@
 """Research Wiki 附属路由：检索 / Obsidian 导出 / 引用导出 / 项目统计 / 图谱 / 文献库对话
-（docs/api-m2.md §3、§5、§6；docs/api-lit.md §6、§8）。"""
+（docs/task-system.md §7）。"""
 
 import json
 import logging
@@ -160,7 +160,7 @@ async def export_citations(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> Response:
-    """引用导出：BibTeX / CSL-JSON（docs/api-lit.md §6）。
+    """引用导出：BibTeX / CSL-JSON（docs/task-system.md §7（原 api-lit.md §6））。
 
     过滤参数与论文列表一致；缺省导出 status in (compiled, included)；
     ids 指定时按 id 精确导出（多选导出）。
@@ -217,7 +217,7 @@ async def chat_with_library(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> StreamingResponse:
-    """文献库对话（docs/api-lit.md §8）：跨文献检索 + stage=reading 流式回答。
+    """文献库对话（docs/task-system.md §7）：跨文献检索 + stage=reading 流式回答。
 
     事件：``sources``（引用来源清单）→ ``delta``* → ``done``；错误 ``error`` 后关流。
     """
@@ -372,7 +372,7 @@ async def rebuild_fulltext_index(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, Any]:
-    """重建全文分段索引（docs/api-lit.md §8）：给已有全文但缺分段的论文补分段并嵌入。
+    """重建全文分段索引（docs/task-system.md §7）：给已有全文但缺分段的论文补分段并嵌入。
 
     幂等：已有分段的论文跳过；新入库论文由 ingest 流水线自动处理，通常无需手动调用。
     """
