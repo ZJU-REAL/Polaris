@@ -63,7 +63,8 @@ test:           ## Backend tests + frontend unit tests + frontend build
 	pnpm --dir src/frontend run build
 
 lint:
-	cd src/backend && .venv/bin/ruff check app worker tests
+	# 范围与 python-ci.yml 的 ruff job 保持一致（#746），本地和 CI 判定不分家
+	cd src/backend && .venv/bin/ruff check app worker tests alembic
 	cd src/frontend && npx tsc --noEmit
 	cd src/desktop && npx tsc --noEmit
 

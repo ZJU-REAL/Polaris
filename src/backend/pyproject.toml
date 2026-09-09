@@ -49,7 +49,9 @@ dev = [
     "aiosqlite>=0.20",
     "fakeredis>=2.26",
     "respx>=0.22",
-    "ruff>=0.8",
+    # 上界不是洁癖：ruff 进 CI 闸门后（#746），1.0 前的小版本会加新规则，
+    # 不钉住就等于哪天 ruff 发版、所有不相干的 PR 一起变红。升版本是主动动作。
+    "ruff>=0.8,<0.17",
 ]
 
 [tool.setuptools.packages.find]
