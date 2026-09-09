@@ -31,7 +31,9 @@ async def _seed(client) -> tuple[uuid.UUID, str, str]:
     token = await register_and_login(client, email="scope@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     project = (
-        await client.post("/api/projects", json={"name": "Scope", "statement": "s"}, headers=headers)
+        await client.post(
+            "/api/projects", json={"name": "Scope", "statement": "s"}, headers=headers
+        )
     ).json()
     async with get_sessionmaker()() as session:
         user_id = (

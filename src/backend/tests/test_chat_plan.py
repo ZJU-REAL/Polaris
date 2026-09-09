@@ -235,7 +235,12 @@ def test_the_plan_frame_also_comes_from_submit_plan():
         ),
     )
     ev = ToolResultEvent(
-        id="t1", name="submit_plan", ok=True, summary="待审批的计划（1 步）", preview="", duration_ms=1
+        id="t1",
+        name="submit_plan",
+        ok=True,
+        summary="待审批的计划（1 步）",
+        preview="",
+        duration_ms=1,
     )
     steps = _plan_from(ev, result)
     assert steps is not None

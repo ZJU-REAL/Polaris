@@ -1,7 +1,10 @@
-# 后端全量 pytest 闸门（#728，堵住 #581「失败长期滞留 main」的口子）。
+# 后端全量 pytest 闸门（#728，堵住 #581「失败长期滞留 main」的口子）+ ruff 闸门（#746）。
 # 套件在 desktop 档位自足：conftest 自带 SQLite(aiosqlite) + fakeredis 与全部
 # POLARIS_* 环境变量，不需要 postgres/redis 服务容器。
 # docker_integration 用例（要真 docker + 镜像）由 pyproject 的 addopts 默认 deselect。
+#
+# ruff 单开一个 job 而不是塞进 pytest 的步骤里：lint 几秒出结果、套件二十多分钟，
+# 合在一起就意味着「格式问题要排队等全套跑完才报」，而且套件挂掉时 lint 结论会一起消失。
 name: python-ci
 
 on:
@@ -12,6 +15,28 @@ on:
   workflow_dispatch:
 
 jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: src/backend/pyproject.toml
+
+      - name: Install backend with dev extras
+        run: pip install -e "src/backend[dev]"
+
+      # 与 Makefile 的 lint 目标同范围（外加 alembic——pyproject 的 per-file-ignores
+      # 已经为 alembic/versions 写了规则，说明它本就在受检范围内）。本地与 CI 判定一致，
+      # 免得出现「本机 make lint 过了、CI 挂了」或者反过来。
+      - name: Run ruff
+        working-directory: src/backend
+        run: ruff check app worker tests alembic
+
   pytest:
     runs-on: ubuntu-latest
     # 本机容器全量约 25 分钟，CI 裸机估 15-30 分钟——45 兜底

@@ -539,7 +539,11 @@ async def test_collecting_libraries_lists_only_admitted_and_visible(client):
         paper = new_paper(source="arxiv", arxiv_id="2607.77001", title="Collected", abstract="x")
         session.add(paper)
         await session.flush()
-        me = (await session.execute(_select(User).where(User.email == "collect-owner@example.com"))).scalar_one()
+        me = (
+            await session.execute(
+                _select(User).where(User.email == "collect-owner@example.com")
+            )
+        ).scalar_one()
         libs = {}
         for name, status, is_public, score in (
             ("已收录公共库", "compiled", True, 0.91),
