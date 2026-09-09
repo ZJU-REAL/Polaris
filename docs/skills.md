@@ -91,15 +91,21 @@ On the **/skills** page (Library tab):
 
 ### The skill market
 
-The Market tab is deployment-internal sharing:
+The Market tab is local to this installation — the market lives on the device (or server) running
+Polaris, and nothing is distributed anywhere else. To share a skill across installations, use
+export/import (`polaris-skill@1` JSON packs).
 
-- **Publish to market** submits your skill's current version for review; an admin approves or
-  rejects it.
-- Approved listings can be **browsed, searched, and sorted** (newest or most-installed), **installed
-  to my skills** (installing copies the published version as your own editable skill), and **rated**
-  with a comment.
+- **Publish to market** lists your skill's current version immediately — there is no review step.
+  On a single-user desktop install, publishing freezes a version as an installable snapshot; on a
+  multi-account server, other accounts can install it too.
+- Listings can be **browsed, searched, and sorted** (newest or most-installed) and **installed to
+  my skills** (installing copies the published version as your own editable skill).
 - A listing always points at the exact version that was published — later edits to your skill do not
-  silently change what others install.
+  silently change what others install. The publisher can delist at any time.
+
+Note that plugins have a separate market of their own under **Settings → Plugins** — see
+[the convergence plan](#three-skill-systems-and-the-convergence-plan) below for how the two will
+eventually merge.
 
 ## Assistant skills (Buddy)
 
@@ -158,6 +164,32 @@ restriction never widens the existing DSH tool surface.
 
 See [Polaris for DeepSeek Harness](https://github.com/ZJU-REAL/Polaris/tree/main/integrations/deepseek-harness)
 for installation, token scopes, failure behavior, and configuration.
+
+## Three skill systems and the convergence plan
+
+Polaris currently carries three mechanisms that all answer "packaged agent behavior", accumulated
+in the order they were needed. This section states which is which and where they are going, so
+nobody has to reverse-engineer the plan from the code.
+
+| System | Storage | Status |
+| --- | --- | --- |
+| **v1 task skills** (this page's "Task skills": kinds, target stages, versions, the /skills market) | `skills` / `skill_versions` / `user_skills` / `skill_listings` | **Frozen.** Serves existing data and enablements only; no new feature writes these tables. |
+| **v2 assistant skills** (`SKILL.md`, progressive disclosure) | `agent_skills` / `agent_skill_files` | **Current main path** for new skill-shaped behavior. |
+| **Plugin market** (Settings → Plugins, desktop host) | installed plugin bundles + market index | **The destination.** Phase 4 of the plugin-market plan adds skills as a plugin `kind`, at which point market distribution converges here. |
+
+The convergence path, in order:
+
+1. **Stop new v1 writes** — done. The last feature still writing v1 rows (the interdisciplinary
+   research workflow's stage guidance) now lives in its own `guidance_documents` table; the v1
+   review-flow residue (`skill_listings.status/decided_by/comment`) is dropped, and a listing is
+   simply live until delisted.
+2. **v1 stays read-write for its own UI but frozen in scope** — the /skills library, market, and
+   enablements keep working for existing users; no new kinds, targets, or built-ins are added.
+3. **Skills become a plugin kind** (plugin-market plan, phase 4) — packaging, distribution, and
+   installation of skills move to the plugin market; the v2 `SKILL.md` shape is the payload format.
+4. **v1 retirement** is a separate, later project: migrate remaining v1 enablements onto their
+   successors, then drop the v1 tables. It will get its own migration plan and data move; nothing
+   in the current phase deletes user data.
 
 ## Tips and limits
 

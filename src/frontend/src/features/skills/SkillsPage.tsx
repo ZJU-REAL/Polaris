@@ -670,6 +670,10 @@ function MarketView() {
 
   return (
     <div>
+      {/* 两个市场互相指路（#741）：这里只管任务技能；插件有自己的市场 */}
+      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 10 }}>
+        {tr('这里是本机技能市场，存放你发布的任务技能；插件市场在 设置 → 插件。', 'This is the local skill market for the task skills you publish; the plugin market lives under Settings → Plugins.')}
+      </div>
       <div className="row gap10" style={{ marginBottom: 16 }}>
         <Segmented
           options={[
@@ -686,7 +690,7 @@ function MarketView() {
         {isError ? (
           <EmptyState icon="sparkle" title={tr('市场加载失败', 'Failed to load market')} desc={tr('后端服务未启动或版本过旧', 'Backend not running or too old')} />
         ) : isLoading ? null : (listings ?? []).length === 0 ? (
-          <EmptyState icon="sparkle" title={tr('市场还是空的', 'The market is empty')} desc={tr('在技能库把你的技能发布到市场，发布后大家就能安装', 'Publish your skills from the library so others can install them')} />
+          <EmptyState icon="sparkle" title={tr('市场还是空的', 'The market is empty')} desc={tr('在技能库把技能发布到市场，就会上架到这台设备（或服务器）的市场里，可随时安装回来', 'Publish a skill from the library to list it in the market on this device or server, ready to install')} />
         ) : (
           listings!.map((l) => <ListingCard key={l.id} l={l} onOpen={() => setOpenListing(l.id)} />)
         )}

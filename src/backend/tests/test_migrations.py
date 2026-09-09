@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "351c324f4f6b"  # Schema hygiene: retired columns + owner merge (#734)
+HEAD_REVISION = "a5b9c3d7e1f2"  # Skill-system convergence step 1 (#741)
+HYGIENE_REVISION = "351c324f4f6b"  # Schema hygiene: retired columns + owner merge (#734)
 SETTINGS_REVISION = "b737c1a2d3e4"  # User-preference settings move to users.settings (#737)
 RESOURCES_REVISION = "d2dcfc8b899f"  # Resources, leases, polymorphic credentials (#677)
 METHOD_VECTORS_REVISION = "e867fcbae4ea"  # Method purpose/mechanism vectors (#663)
@@ -135,6 +136,8 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "agent_skills",
                     "agent_skill_files",
                     "skills",
+                    "skill_listings",
+                    "guidance_documents",
                     "buddy_memories",
                     "view_events",
                     "integration_tokens",
@@ -317,8 +320,16 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"skills", "skill_versions", "user_skills"} <= columns["_tables"]
     assert "project_skills" not in columns["_tables"]
     assert "project_id" not in columns["skills"]
-    # 技能市场 S4：skill_listings 表（skill_ratings 已在 P1 去实验室化中移除）
+    # 技能市场 S4：skill_listings 表（skill_ratings 已在 P1 去实验室化中移除）；
+    # #741 起审核残列已删，「在架」只看 delisted_at
     assert "skill_listings" in columns["_tables"]
+    assert "delisted_at" in columns["skill_listings"]
+    assert not {"status", "decided_by", "comment"} & columns["skill_listings"]
+    # #741：跨学科指引搬离 v1，落 guidance_documents
+    assert "guidance_documents" in columns["_tables"]
+    assert {"slug", "version", "name", "body", "targets", "steps"} <= columns[
+        "guidance_documents"
+    ]
     # 发表机构列（高级检索）
     assert "affiliations" in columns["papers"]
     # 用户系统 U1：治理列已在 head 删除，只剩头像列
@@ -612,7 +623,16 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["paper_extractions"]
     assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
 
-    # 先退掉列卫生（#734）：退役快照列与 created_by 按原形状回来（数据不可恢复，
+    # 先退掉技能收敛第一步（#741）：审核残列按原形状回来，指引文档表消失。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == HYGIENE_REVISION
+    assert "guidance_documents" not in columns["_tables"]
+    assert {"status", "decided_by", "comment"} <= columns["skill_listings"]
+    assert "delisted_at" not in columns["skill_listings"]
+    assert "ix_skill_listings_status" in _index_names(db_path, "skill_listings")
+
+    # 再退掉列卫生（#734）：退役快照列与 created_by 按原形状回来（数据不可恢复，
     # created_by 从 submitted_by 回填——两列写入历史上恒等）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
@@ -1233,3 +1253,89 @@ def test_schema_hygiene_migration_merges_owner_and_purges_private_llm_rows(tmp_p
     finally:
         engine.dispose()
 
+
+def test_skill_convergence_data_move_and_roundtrip(tmp_path):
+    """#741 数据迁移：指引版本逐行拷进 guidance_documents、v1 行归档、
+    listings 的审核状态映射成 delisted_at；downgrade 全部按原形状还原。"""
+    import json
+
+    db_path = tmp_path / "skills.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, SETTINGS_REVISION)
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    skill_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01"
+    v1_id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb01"
+    v2_id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb02"
+    live_id = "cccccccccccccccccccccccccccccc01"
+    dead_id = "cccccccccccccccccccccccccccccc02"
+    manifest = {"targets": ["forge.generate"], "steps": [{"title": "s", "action": "llm.complete"}]}
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO skills (id, slug, kind, name, scope, is_archived, "
+                "created_at, updated_at) VALUES (:id, "
+                "'interdisciplinary-research-workflow', 'workflow', '跨学科研究工作流', "
+                "'builtin', 0, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            ),
+            {"id": skill_id},
+        )
+        for vid, ver, body in ((v1_id, 1, "body one"), (v2_id, 2, "body two")):
+            conn.execute(
+                text(
+                    "INSERT INTO skill_versions (id, skill_id, version, manifest, body, "
+                    "created_at, updated_at) VALUES (:id, :sid, :ver, :manifest, :body, "
+                    "'2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                ),
+                {"id": vid, "sid": skill_id, "ver": ver,
+                 "manifest": json.dumps(manifest), "body": body},
+            )
+        for lid, status in ((live_id, "approved"), (dead_id, "delisted")):
+            conn.execute(
+                text(
+                    "INSERT INTO skill_listings (id, skill_id, skill_version_id, status, "
+                    "install_count, created_at, updated_at) VALUES (:id, :sid, :vid, :status, "
+                    "0, '2026-01-01 00:00:00', '2026-02-02 00:00:00')"
+                ),
+                {"id": lid, "sid": skill_id, "vid": v1_id, "status": status},
+            )
+
+    command.upgrade(cfg, HEAD_REVISION)
+    with engine.connect() as conn:
+        docs = conn.execute(
+            text("SELECT id, version, name, body, targets, steps FROM guidance_documents "
+                 "ORDER BY version")
+        ).fetchall()
+        assert [(d.id, d.version, d.body) for d in docs] == [
+            (v1_id, 1, "body one"),  # id 沿用 skill_versions.id（存量 checkpoint 可对回）
+            (v2_id, 2, "body two"),
+        ]
+        assert json.loads(docs[0].targets) == ["forge.generate"]
+        assert json.loads(docs[0].steps) == manifest["steps"]
+        assert docs[0].name == "跨学科研究工作流"
+        # v1 行归档而非删除
+        archived = conn.execute(
+            text("SELECT is_archived FROM skills WHERE id = :id"), {"id": skill_id}
+        ).scalar_one()
+        assert archived == 1
+        rows = dict(
+            conn.execute(text("SELECT id, delisted_at FROM skill_listings")).fetchall()
+        )
+        assert rows[live_id] is None  # approved → 在架
+        assert rows[dead_id] is not None  # delisted → 下架时间取 updated_at
+
+    command.downgrade(cfg, "-1")
+    with engine.connect() as conn:
+        assert (
+            conn.execute(
+                text("SELECT name FROM sqlite_master WHERE name = 'guidance_documents'")
+            ).first()
+            is None
+        )
+        archived = conn.execute(
+            text("SELECT is_archived FROM skills WHERE id = :id"), {"id": skill_id}
+        ).scalar_one()
+        assert archived == 0  # 解除归档，v1 行整体还原
+        rows = dict(conn.execute(text("SELECT id, status FROM skill_listings")).fetchall())
+        assert rows == {live_id: "approved", dead_id: "delisted"}
+    engine.dispose()

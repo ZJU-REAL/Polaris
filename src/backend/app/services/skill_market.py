@@ -1,11 +1,15 @@
 """技能市场业务逻辑（docs/task-system.md §7（原 skill-system.md §4.3）；不 import fastapi）。
 
-部署内共享：发布即上架（approved）→ 浏览/安装。
+这是**本部署（这台设备或这台服务器）内**的市场：发布即上架 → 浏览/安装，没有审核流，
+也没有任何跨部署的分发（跨部署分享走技能导出/导入 JSON 包）。单用户桌面档位下，
+「发布」的意义是把某个版本定格成可安装的快照；多账号服务器档位下其他账号也能装。
+在架与否只看 delisted_at：为空 = 在架（#741 起不再有 status 状态机）。
 listing 永远指向发布时的具体 SkillVersion；安装 = 拷贝该版本为安装者的 user 技能。
 """
 
 import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -16,15 +20,13 @@ from app.models.skill import Skill, SkillListing, SkillVersion
 from app.schemas.skill import SkillPublishRequest
 from app.services import skills as skills_service
 
-ACTIVE_STATUSES = ("approved",)
-
 
 class ListingConflictError(Exception):
-    """同一技能已有待审/在架条目。"""
+    """同一技能已有在架条目。"""
 
 
 class ListingStateError(Exception):
-    """条目状态不允许该操作（如安装非 approved 条目）。"""
+    """条目状态不允许该操作（如安装已下架条目）。"""
 
 
 class NotOwnerError(Exception):
@@ -41,14 +43,13 @@ async def publish_skill(
     if version is None:
         raise ListingStateError(f"{skill.slug} has no version")
     stmt = select(SkillListing.id).where(
-        SkillListing.skill_id == skill.id, SkillListing.status.in_(ACTIVE_STATUSES)
+        SkillListing.skill_id == skill.id, SkillListing.delisted_at.is_(None)
     )
     if (await session.execute(stmt)).first() is not None:
         raise ListingConflictError(skill.slug)
     listing = SkillListing(
         skill_id=skill.id,
         skill_version_id=version.id,
-        status="approved",
         summary=data.summary or skill.description,
         tags=data.tags or None,
         published_by=user_id,
@@ -70,10 +71,9 @@ def _base_read(listing: SkillListing) -> dict[str, Any]:
         skill_version_id=listing.skill_version_id,
         summary=listing.summary,
         tags=listing.tags,
-        status=listing.status,
+        delisted_at=listing.delisted_at,
         install_count=listing.install_count,
         published_by=listing.published_by,
-        comment=listing.comment,
         created_at=listing.created_at,
         skill=SkillRead.model_validate(listing.skill) if listing.skill is not None else None,
         version=listing.version.version if listing.version is not None else None,
@@ -97,11 +97,10 @@ def _listing_query():
 async def list_market(
     session: AsyncSession,
     *,
-    status: str = "approved",
     q: str | None = None,
     sort: str = "-created_at",
 ) -> Sequence[SkillListing]:
-    stmt = _listing_query().where(SkillListing.status == status)
+    stmt = _listing_query().where(SkillListing.delisted_at.is_(None))
     if q:
         pattern = f"%{q}%"
         stmt = stmt.join(Skill, SkillListing.skill_id == Skill.id).where(
@@ -125,7 +124,7 @@ async def delist(
     # admin 全局下架旁路已随 role 移除（#614）：只有发布者本人能下架
     if listing.published_by != user_id:
         raise NotOwnerError(str(listing.id))
-    listing.status = "delisted"
+    listing.delisted_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(listing)
     return listing
@@ -135,8 +134,8 @@ async def install_listing(
     session: AsyncSession, listing: SkillListing, *, user_id: uuid.UUID
 ) -> Skill:
     """安装 = 拷贝发布版本为安装者的 user 技能（slug 冲突自动加后缀）。"""
-    if listing.status != "approved":
-        raise ListingStateError(listing.status)
+    if listing.delisted_at is not None:
+        raise ListingStateError("delisted")
     version = await session.get(SkillVersion, listing.skill_version_id)
     src_skill = listing.skill or await session.get(Skill, listing.skill_id)
     if version is None or src_skill is None:

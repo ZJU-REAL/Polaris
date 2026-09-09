@@ -44,7 +44,7 @@ async def test_publish_lists_immediately(client):
     headers_b = await _login(client, email="bob@example.com")
     market = (await client.get("/api/market/skills", headers=headers_b)).json()
     assert [m["id"] for m in market] == [listing_id]
-    assert market[0]["status"] == "approved"
+    assert market[0]["delisted_at"] is None  # 发布即上架（#741 起没有审核状态机）
     assert market[0]["skill"]["slug"] == "market-rubric"
     assert market[0]["version"] == 1
 
@@ -77,7 +77,7 @@ async def test_install_and_delist(client):
 
     # 发布者下架 → 市场不可见、安装 409
     resp = await client.delete(f"/api/market/skills/{listing_id}", headers=headers_a)
-    assert resp.json()["status"] == "delisted"
+    assert resp.json()["delisted_at"] is not None
     assert (await client.get("/api/market/skills", headers=headers_b)).json() == []
     assert (
         await client.post(f"/api/market/skills/{listing_id}/install", headers=headers_b)

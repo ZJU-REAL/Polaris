@@ -339,6 +339,10 @@ export function PluginsMarketSection() {
 
   return (
     <div>
+      {/* 两个市场互相指路（#741）：这里只管插件；AI 任务技能的市场在「技能」页 */}
+      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 10 }}>
+        {tr('这里是插件市场；AI 任务技能有自己的市场，在「技能」页。', 'This is the plugin market; AI task skills have their own market on the Skills page.')}
+      </div>
       {/* —— 索引源设置：小输入框 + 保存/恢复默认 + 刷新 —— */}
       <div className="row gap8" style={{ alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
         <span style={{ fontSize: 12, color: 'var(--text-2)', flexShrink: 0 }}>{tr('索引源', 'Source')}</span>

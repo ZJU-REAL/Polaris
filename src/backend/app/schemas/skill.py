@@ -241,10 +241,10 @@ class SkillListingRead(BaseModel):
     skill_version_id: uuid.UUID
     summary: str | None
     tags: list[str] | None
-    status: str  # pending | approved | rejected | delisted
+    # 在架 = delisted_at 为空（发布即上架，#741 起没有审核状态机）
+    delisted_at: datetime | None
     install_count: int
     published_by: uuid.UUID | None
-    comment: str | None
     created_at: datetime
     # 联表补充（service 填充）
     skill: SkillRead | None = None

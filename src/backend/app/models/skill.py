@@ -1,17 +1,30 @@
-"""技能系统（docs/task-system.md §7（原 skill-system.md））：可版本化、可装配的判断性任务指令包。
+"""技能系统 v1（docs/task-system.md §7（原 skill-system.md））：可版本化、可装配的判断性任务指令包。
+
+**已冻结（#741）**：本套只服务存量数据与既有功能，新功能一律不再写这几张表
+（收敛计划见 docs/skills.md「三套系统与收敛计划」）。跨学科工作流的指引
+已迁至 guidance_documents。
 
 - Skill：技能主体（builtin 内置只读 / user 个人）
 - SkillVersion：不可变版本（manifest JSON + markdown body），只增不改；
   「当前版本」= 该技能 version 最大的一行，不另存指针
 - UserSkill：全局启用记录：用户 × 技能 × 注入点，可 pin 版本与配置
   （技能不绑定课题，启用后对该用户所有新任务生效）
-- SkillListing：技能市场条目（发布指向具体版本，管理员审核后可安装）
+- SkillListing：技能市场条目（发布即上架，指向具体版本）
 """
 
 import uuid
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -101,16 +114,13 @@ class SkillListing(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     summary: Mapped[str | None] = mapped_column(Text)
     tags: Mapped[list[str] | None] = mapped_column(JSONVariant)
-    # pending | approved | rejected | delisted（管理员审核）
-    status: Mapped[str] = mapped_column(String(16), default="pending", index=True, nullable=False)
     install_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     published_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
-    decided_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL")
-    )
-    comment: Mapped[str | None] = mapped_column(Text)  # 审核意见
+    # 发布即上架（#592 起没有审核流）：在架 = delisted_at 为空；下架只记时间戳。
+    # 原 status/decided_by/comment 审核残列已删（#741）。
+    delisted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     skill: Mapped[Skill] = relationship()
     version: Mapped[SkillVersion] = relationship()
