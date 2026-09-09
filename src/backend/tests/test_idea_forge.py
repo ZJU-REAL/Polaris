@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import select
 
 from app.agents.voyage import VoyageEngine
+from app.agents.voyage.actions_ideas import _interleave_by_signal
 from app.core.db import get_sessionmaker
 from app.core.llm.fake import EMBEDDING_DIM, FakeProvider
 from app.core.llm.router import LLMRouter
@@ -454,3 +455,49 @@ async def test_idea_trash_flow(client):
     r = await client.post(f"/api/projects/{project_id}/ideas/trash/empty", headers=headers)
     assert r.json()["affected"] == 2
     assert (await client.get(f"/api/ideas/{ids[1]}", headers=headers)).status_code == 404
+
+
+def test_gap_list_interleaves_signals_instead_of_concatenating():
+    """#428：gap 清单按信号轮转铺开，靠后的信号不会整段被挤到尾巴上。
+
+    生成器只写 num_ideas（默认 8）条想法。顺序拼接时，排在最后的信号——包括
+    任何新加的信号——整段落在 20+ 条清单的尾部，再好也轮不到。
+    """
+    buckets = {
+        "survey_gap": [{"title": f"s{i}", "signal": "survey_gap"} for i in range(5)],
+        "concept_holes": [{"title": f"c{i}", "signal": "concept_holes"} for i in range(4)],
+        "trends": [{"title": "t0", "signal": "trends"}],
+        "limitations": [{"title": f"l{i}", "signal": "limitations"} for i in range(3)],
+    }
+
+    gaps = _interleave_by_signal(buckets)
+
+    # 一条不少、一条不多
+    assert len(gaps) == 13
+    assert {g["title"] for g in gaps} == {
+        *(f"s{i}" for i in range(5)),
+        *(f"c{i}" for i in range(4)),
+        "t0",
+        *(f"l{i}" for i in range(3)),
+    }
+
+    # 每个信号的第一条都排进前四位：只写 8 条也不会有信号完全落空
+    assert [g["title"] for g in gaps[:4]] == ["s0", "c0", "t0", "l0"]
+    # 只有一条的 trends 照样在最前面拿到名额（顺序拼接时它排在第 10 位）
+    assert {g["signal"] for g in gaps[:8]} == {
+        "survey_gap",
+        "concept_holes",
+        "trends",
+        "limitations",
+    }
+
+    # 信号内部原有顺序保持不变（相关性排序不能被打乱）
+    assert [g["title"] for g in gaps if g["signal"] == "survey_gap"] == [f"s{i}" for i in range(5)]
+
+
+def test_gap_interleave_tolerates_empty_and_missing_signals():
+    """信号缺席/为空是常态（无概念图、无全文、无近期趋势）——不留空洞。"""
+    assert _interleave_by_signal({}) == []
+    assert _interleave_by_signal({"trends": []}) == []
+    only_one = {"survey_gap": [{"title": "s0", "signal": "survey_gap"}], "trends": []}
+    assert [g["title"] for g in _interleave_by_signal(only_one)] == ["s0"]

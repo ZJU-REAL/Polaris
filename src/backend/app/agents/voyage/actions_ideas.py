@@ -19,6 +19,7 @@ import math
 import re
 import uuid
 from datetime import timedelta
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any
 
@@ -478,6 +479,21 @@ async def forge_collect_signals(ctx: ActionContext, params: dict[str, Any]) -> d
 # ---- forge 3. gap 综合（LLM 综述空白 + 确定性信号合并，stage=forge） ----
 
 
+def _interleave_by_signal(buckets: dict[str, list[dict[str, str]]]) -> list[dict[str, str]]:
+    """按信号轮转铺开 gap 清单，而不是一个信号接一个信号地拼（#428）。
+
+    生成器只写 num_ideas（默认 8）条想法，而 gap 清单常有 20+ 条。顺序拼接的
+    后果是排在后面的信号整段落在清单尾部——新加的信号无论质量多好，都大概率
+    根本轮不到。轮转之后每个信号的头几条都靠前，信号之间按「各自最好的那条」
+    竞争，而不是按谁先被拼进来。
+    """
+    ordered = [items for items in buckets.values() if items]
+    out: list[dict[str, str]] = []
+    for row in zip_longest(*ordered):
+        out.extend(item for item in row if item is not None)
+    return out
+
+
 @register("forge.gap_analysis")
 async def forge_gap_analysis(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     if isinstance(ctx.checkpoint.get("forge_gaps"), list):  # 断点幂等
@@ -488,7 +504,8 @@ async def forge_gap_analysis(ctx: ActionContext, params: dict[str, Any]) -> dict
         project = await _get_project(session, ctx)
         statement = _statement(project)
 
-    gaps: list[dict[str, str]] = []
+    # 按信号分桶收集，最后轮转铺开（#428）；插入顺序即轮转顺序，保持确定性
+    buckets: dict[str, list[dict[str, str]]] = {}
     if "survey_gap" in enabled:
 
         def validate(data: Any) -> list[dict[str, str]]:
@@ -508,20 +525,18 @@ async def forge_gap_analysis(ctx: ActionContext, params: dict[str, Any]) -> dict
                 )
             return normalized
 
-        gaps.extend(
-            await _complete_json(
-                ctx,
-                stage="forge",
-                system=GAP_SYSTEM_PROMPT + ctx.skill_guidance("forge.gap_analysis"),
-                user=_context_prompt(ctx, statement),
-                validate=validate,
-            )
+        buckets["survey_gap"] = await _complete_json(
+            ctx,
+            stage="forge",
+            system=GAP_SYSTEM_PROMPT + ctx.skill_guidance("forge.gap_analysis"),
+            user=_context_prompt(ctx, statement),
+            validate=validate,
         )
 
     # 确定性信号 → gap 条目（不经 LLM）
     signals = ctx.checkpoint.get("forge_signals") or {}
     for hole in signals.get("concept_holes") or []:
-        gaps.append(
+        buckets.setdefault("concept_holes", []).append(
             {
                 "title": f"概念组合空白：{hole['method']} × {hole['problem']}",
                 "description": (
@@ -533,7 +548,7 @@ async def forge_gap_analysis(ctx: ActionContext, params: dict[str, Any]) -> dict
             }
         )
     for trend in signals.get("trends") or []:
-        gaps.append(
+        buckets.setdefault("trends", []).append(
             {
                 "title": f"新兴主题：{trend['concept']}",
                 "description": (
@@ -544,8 +559,9 @@ async def forge_gap_analysis(ctx: ActionContext, params: dict[str, Any]) -> dict
             }
         )
     for gap in signals.get("limitations") or []:
-        gaps.append({**gap, "signal": "limitations"})
+        buckets.setdefault("limitations", []).append({**gap, "signal": "limitations"})
 
+    gaps = _interleave_by_signal(buckets)
     if not gaps:
         raise ValueError("没有可用的研究空白（所有信号源均为空）")
     ctx.checkpoint["forge_gaps"] = gaps
