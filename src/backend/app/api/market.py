@@ -1,7 +1,7 @@
 """技能市场路由（docs/task-system.md §7（原 skill-system.md §4.3））。
 
 - 发布：POST /skills/{id}/publish（技能主人）→ 直接上架
-- 浏览/详情/安装：登录即可；下架：发布者或管理员
+- 浏览/详情/安装：登录即可；下架：仅发布者本人
 """
 
 import uuid
@@ -67,8 +67,8 @@ async def list_market(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[SkillListingRead]:
-    """市场列表（仅已上架条目）。"""
-    listings = await market_service.list_market(session, status="approved", q=q, sort=sort)
+    """市场列表（仅在架条目）。"""
+    listings = await market_service.list_market(session, q=q, sort=sort)
     return [
         SkillListingRead(**d) for d in await market_service.annotate_listings(session, listings)
     ]
@@ -101,7 +101,7 @@ async def install_listing(
     try:
         skill = await market_service.install_listing(session, listing, user_id=user.id)
     except market_service.ListingStateError as e:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="LISTING_NOT_APPROVED") from e
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="LISTING_DELISTED") from e
     version = await skills_service.latest_version(session, skill.id)
     from app.schemas.skill import SkillVersionRead
 

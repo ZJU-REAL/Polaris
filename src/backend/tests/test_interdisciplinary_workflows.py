@@ -9,11 +9,10 @@ from app.agents.voyage.actions_experiment import _prompt_with_context
 from app.agents.voyage.engine import VoyageEngine
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
+from app.models.guidance_document import GuidanceDocument
 from app.models.project import Project
-from app.models.skill import Skill, SkillVersion
 from app.models.voyage import VoyageRun
-from app.services.interdisciplinary_workflows import SKILL_SLUG
-from app.services.skills import ensure_builtin_skills
+from app.services.interdisciplinary_workflows import SKILL_SLUG, ensure_guidance_documents
 from tests.conftest import RecordingBus, register_and_login
 
 
@@ -59,7 +58,7 @@ async def _project_and_profile(client) -> tuple[dict[str, str], str]:
 
 async def _snapshot_run(project_id: str) -> VoyageRun:
     async with get_sessionmaker()() as session:
-        await ensure_builtin_skills(session)
+        await ensure_guidance_documents(session)
         project = await session.get(Project, uuid.UUID(project_id))
         run = VoyageRun(
             kind="idea_forge",
@@ -99,20 +98,22 @@ async def test_run_pins_confirmed_profile_and_builtin_skill_versions(client):
     assert "Structural engineering" in _prompt_with_context("BASE", ctx)
 
     async with get_sessionmaker()() as session:
-        skill = await session.scalar(select(Skill).where(Skill.slug == SKILL_SLUG))
-        first_skill_version = await session.scalar(
-            select(SkillVersion).where(
-                SkillVersion.skill_id == skill.id,
-                SkillVersion.version == first_context["skill_version"],
+        # 指引文档搬离 v1 后（#741）版本演进 = 追加一行（slug, version+1）
+        current = await session.scalar(
+            select(GuidanceDocument)
+            .where(
+                GuidanceDocument.slug == SKILL_SLUG,
+                GuidanceDocument.version == first_context["skill_version"],
             )
         )
         session.add(
-            SkillVersion(
-                skill_id=skill.id,
-                version=first_skill_version.version + 1,
-                manifest=dict(first_skill_version.manifest),
-                body=f"{first_skill_version.body}\n\nVersion two guidance.",
-                changelog="Test workflow version pinning.",
+            GuidanceDocument(
+                slug=SKILL_SLUG,
+                version=current.version + 1,
+                name=current.name,
+                body=f"{current.body}\n\nVersion two guidance.",
+                targets=list(current.targets or []),
+                steps=[dict(step) for step in current.steps or []],
             )
         )
         await session.commit()

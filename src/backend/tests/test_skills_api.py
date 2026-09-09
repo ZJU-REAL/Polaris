@@ -117,9 +117,8 @@ async def test_builtin_seed_readonly_and_fork(client):
 
     builtin = (await client.get("/api/skills?scope=builtin", headers=headers)).json()
     assert len(builtin) == len(BUILTIN_SKILLS)
-    cross = next(s for s in builtin if s["slug"] == "interdisciplinary-research-workflow")
-    assert cross["kind"] == "workflow"
-    assert cross["name_en"] == "Interdisciplinary Research Workflow"
+    # 跨学科工作流指引已搬离 v1（#741）：不再作为 builtin 技能出现
+    assert all(s["slug"] != "interdisciplinary-research-workflow" for s in builtin)
     rubric = next(s for s in builtin if s["slug"] == "idea-scoring-rubric")
 
     # 内置只读：追加版本 / 归档均 403

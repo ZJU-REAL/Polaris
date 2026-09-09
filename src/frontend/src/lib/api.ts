@@ -3068,10 +3068,10 @@ export interface SkillListingRead {
   skill_version_id: string;
   summary: string | null;
   tags: string[] | null;
-  status: 'pending' | 'approved' | 'rejected' | 'delisted';
+  /** 在架 = null（发布即上架，没有审核状态机） */
+  delisted_at: string | null;
   install_count: number;
   published_by: string | null;
-  comment: string | null;
   created_at: string;
   skill: SkillRead | null;
   version: number | null;

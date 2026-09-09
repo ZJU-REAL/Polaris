@@ -1,0 +1,187 @@
+{
+  "context_fixed": {
+    "core_questions": [
+      "Which visual observables preserve mechanical meaning?"
+    ],
+    "evidence_balance": {
+      "Computer vision": 0.25,
+      "Structural engineering": 0.5
+    },
+    "evidence_boundary": "Use only validated structural and visual evidence.",
+    "primary_domain": "Structural engineering",
+    "profile_id": "22222222-2222-2222-2222-222222222222",
+    "profile_version": 3,
+    "profile_version_id": "33333333-3333-3333-3333-333333333333",
+    "project_id": "11111111-1111-1111-1111-111111111111",
+    "query_matrix": [
+      {
+        "discipline": "Structural engineering",
+        "query": "impact response",
+        "role": "primary"
+      },
+      {
+        "discipline": "Computer vision",
+        "query": "video segmentation",
+        "role": "associated"
+      }
+    ],
+    "related_domains": [
+      "Computer vision",
+      "Data science"
+    ],
+    "research_scope": "Couple structural mechanics and visual measurement.",
+    "schema_version": 1,
+    "skill_body": "跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。",
+    "skill_manifest": {
+      "config_schema": null,
+      "model_hint": null,
+      "output_contract": null,
+      "personas": [],
+      "steps": [
+        {
+          "acceptance": "输出主学科、关联学科、核心问题和证据边界，并标明待确认项",
+          "action": "llm.complete",
+          "params": {
+            "prompt": "读取课题已确认的主学科、关联学科、核心问题和证据边界。如果任一字段缺失，先提出最少的澄清问题，不要自行补全学科。",
+            "stage": "planning"
+          },
+          "requires_gate": null,
+          "title": "确认交叉研究范围"
+        },
+        {
+          "acceptance": "输出分学科证据表，并有跨学科合并后的去重文献清单",
+          "action": "llm.complete",
+          "params": {
+            "prompt": "先按主学科与各关联学科分别检索，再用统一 DOI/标题身份合并去重。每篇文献保留来源学科、贡献类型、相关性理由和句子级证据，不能把共享关键词当作跨学科关联。",
+            "stage": "librarian"
+          },
+          "requires_gate": null,
+          "title": "分学科检索并合并证据"
+        },
+        {
+          "acceptance": "每个想法都有机制差异、最小实验和证据引用",
+          "action": "llm.complete",
+          "params": {
+            "prompt": "基于已确认范围和分学科证据，生成有明确机制的交叉想法。每个想法必须说明主学科承担的核心问题、关联学科提供的不可替代方法、最小可行实验、风险和可证伪判据。",
+            "stage": "ideation"
+          },
+          "requires_gate": null,
+          "title": "生成可证伪研究想法"
+        },
+        {
+          "acceptance": "产物标注交叉研究上下文版本并保留可回溯引用",
+          "action": "llm.complete",
+          "params": {
+            "prompt": "后续实验计划、论文写作、PPT提纲和评审均携带同一交叉范围版本。所有引用采用文献编号+句子编号，找不到句子时退回段落或论文级，不得把某一学科的指标冒充另一学科的结论。",
+            "stage": "research"
+          },
+          "requires_gate": null,
+          "title": "贯穿实验、写作和评审"
+        }
+      ],
+      "targets": [
+        "navigator.free_plan",
+        "wiki.score_relevance",
+        "forge.generate",
+        "experiment.plan",
+        "writing.section",
+        "writing.related_work",
+        "review.referees",
+        "present.outline"
+      ],
+      "variables": []
+    },
+    "skill_name": "跨学科研究工作流",
+    "skill_slug": "interdisciplinary-research-workflow",
+    "skill_version": 1,
+    "validation_conditions": [
+      "Compare against independent impact experiments."
+    ]
+  },
+  "guidance_entries": [
+    {
+      "body": "Immutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。",
+      "config": {
+        "profile_version_id": "33333333-3333-3333-3333-333333333333"
+      },
+      "kind": "guidance",
+      "name": "跨学科研究工作流",
+      "output_contract": null,
+      "personas": [],
+      "slug": "interdisciplinary-research-workflow",
+      "steps": [],
+      "version": 1
+    }
+  ],
+  "navigator_entries": [
+    {
+      "body": "跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。",
+      "config": {
+        "profile_version_id": "33333333-3333-3333-3333-333333333333"
+      },
+      "kind": "workflow",
+      "name": "跨学科研究工作流",
+      "output_contract": null,
+      "personas": [],
+      "slug": "interdisciplinary-research-workflow",
+      "steps": [
+        {
+          "acceptance": "输出主学科、关联学科、核心问题和证据边界，并标明待确认项",
+          "action": "llm.complete",
+          "params": {
+            "prompt": "读取课题已确认的主学科、关联学科、核心问题和证据边界。如果任一字段缺失，先提出最少的澄清问题，不要自行补全学科。",
+            "stage": "planning"
+          },
+          "requires_gate": null,
+          "title": "确认交叉研究范围"
+        },
+        {
+          "acceptance": "输出分学科证据表，并有跨学科合并后的去重文献清单",
+          "action": "llm.complete",
+          "params": {
+            "prompt": "先按主学科与各关联学科分别检索，再用统一 DOI/标题身份合并去重。每篇文献保留来源学科、贡献类型、相关性理由和句子级证据，不能把共享关键词当作跨学科关联。",
+            "stage": "librarian"
+          },
+          "requires_gate": null,
+          "title": "分学科检索并合并证据"
+        },
+        {
+          "acceptance": "每个想法都有机制差异、最小实验和证据引用",
+          "action": "llm.complete",
+          "params": {
+            "prompt": "基于已确认范围和分学科证据，生成有明确机制的交叉想法。每个想法必须说明主学科承担的核心问题、关联学科提供的不可替代方法、最小可行实验、风险和可证伪判据。",
+            "stage": "ideation"
+          },
+          "requires_gate": null,
+          "title": "生成可证伪研究想法"
+        },
+        {
+          "acceptance": "产物标注交叉研究上下文版本并保留可回溯引用",
+          "action": "llm.complete",
+          "params": {
+            "prompt": "后续实验计划、论文写作、PPT提纲和评审均携带同一交叉范围版本。所有引用采用文献编号+句子编号，找不到句子时退回段落或论文级，不得把某一学科的指标冒充另一学科的结论。",
+            "stage": "research"
+          },
+          "requires_gate": null,
+          "title": "贯穿实验、写作和评审"
+        }
+      ],
+      "version": 1
+    }
+  ],
+  "rendered": {
+    "experiment.plan": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）",
+    "forge.gap_analysis": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）",
+    "forge.generate": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）",
+    "forge.score": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）",
+    "present.outline": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）",
+    "present.slides": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）",
+    "review.referees": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）",
+    "wiki.compile": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）",
+    "wiki.daily_digest": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）",
+    "wiki.score_relevance": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）",
+    "wiki.trend_synthesize": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）",
+    "writing.related_work": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）",
+    "writing.section": "\n\n【项目技能指引】以下技能由用户启用，作为本环节的补充判断标准；它们不改变上文规定的输出格式：\n### 技能：跨学科研究工作流（interdisciplinary-research-workflow v1）\nImmutable interdisciplinary research context for this run:\n- Profile version: 3 (33333333-3333-3333-3333-333333333333)\n- Primary discipline: Structural engineering\n- Associated disciplines: Computer vision, Data science\n- Research scope: Couple structural mechanics and visual measurement.\n- Core bridge questions:\n- Which visual observables preserve mechanical meaning?\n- Evidence boundary: Use only validated structural and visual evidence.\n- Validation conditions:\n- Compare against independent impact experiments.\n- Evidence balance: Structural engineering: 0.5, Computer vision: 0.25\n\n- Discipline query channels and terms:\n- [primary] Structural engineering: impact response\n- [associated] Computer vision: video segmentation\n\nApply these constraints throughout the output. Keep the primary discipline responsible for the scientific question, identify the non-substitutable contribution of each associated discipline, preserve discipline-specific evidence standards, and state whether every bridge claim has balanced supporting evidence.\n\nPinned workflow Skill v1:\n跨学科研究必须先确认范围资产，再进入后续流程。\n\n- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、外部标识和规范化标题去重。\n- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，不能静默改成无来源的摘要推断。\n- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。\n（本项目配置：profile_version_id=33333333-3333-3333-3333-333333333333）"
+  }
+}
