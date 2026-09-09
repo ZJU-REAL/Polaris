@@ -84,6 +84,10 @@ function launchEnv(overrides: Record<string, string>): Record<string, string> {
   // fake LLM 回退是严格显式 opt-in（#717）：基线环境必须干净，需要它的组
   // （组 A）在 overrides 里显式声明，其余组证明「不设就没有」。
   delete env.POLARIS_LLM_FAKE_FALLBACK;
+  // 同理（#687）：开发者机器上可能设了 POLARIS_DATABASE_URL 指向自己的库，
+  // 泄进来会让组 A 用错库、也会让其他组的引擎行为不可预期。基线清干净，
+  // 需要的组在 overrides 里显式声明。
+  delete env.POLARIS_DATABASE_URL;
   // 内部分发机器可能设了默认服务器：会让「未配置服务器」的断言失真
   delete env.POLARIS_DEFAULT_SERVER_URL;
   return { ...env, ...overrides };
@@ -150,9 +154,16 @@ async function groupEngine(): Promise<void> {
 
   // 容器名/端口随机化：默认名 polaris-desktop-engine 若被并行任务占着，
   // docker run 会直接撞名失败，回收时还可能误删别人的容器。
-  const container = `polaris-desktop-engine-e2e-${Math.random().toString(36).slice(2, 8)}`;
+  const runId = Math.random().toString(36).slice(2, 8);
+  const container = `polaris-desktop-engine-e2e-${runId}`;
   const port = 18100 + Math.floor(Math.random() * 1800);
   const userData = mkdtempSync(join(tmpdir(), 'polaris-e2e-a-'));
+  // 每轮一个独立数据库（#687）：docker 模式的引擎默认写挂载目录里的
+  // ./polaris_dev.db，跨轮留存——上一轮建的课题会让「全新库落到 /start」
+  // 的断言在第二轮直接失真。不能改成「跑前删 polaris_dev.db」：那是开发者
+  // 自己的本地库。库文件仍落在挂载目录里（容器只看得见这一处），但名字带
+  // 本轮 id，收尾时按名删除，互不干扰也不留垃圾。
+  const dbFile = `polaris-e2e-${runId}.db`;
   let app: ElectronApplication | null = null;
 
   try {
@@ -165,6 +176,9 @@ async function groupEngine(): Promise<void> {
         // 显式 opt-in：插件不再代设 fake 回退（#717），引擎容器经 docker 的
         // 无值 -e 透传拿到它——测试确定性由这里声明，而不是产品替我们开
         POLARIS_LLM_FAKE_FALLBACK: '1',
+        // 本轮专属库（#687），同样走无值 -e 透传。相对路径的基准是容器里的
+        // 工作目录 /srv/backend，也就是宿主的 BACKEND_DIR。
+        POLARIS_DATABASE_URL: `sqlite+aiosqlite:///./${dbFile}`,
       }),
     );
     app = r.app;
@@ -236,6 +250,11 @@ async function groupEngine(): Promise<void> {
       }
     }
     rmSync(userData, { recursive: true, force: true });
+    // 本轮的库连同 sqlite 的 -wal/-shm 边车一起清掉（#687）：不清就等于把
+    // 「跨轮留存」从一个文件名换成一堆文件名，仓库里还会攒垃圾。
+    for (const suffix of ['', '-wal', '-shm']) {
+      rmSync(join(BACKEND_DIR, `${dbFile}${suffix}`), { force: true });
+    }
   }
 }
 
