@@ -122,6 +122,14 @@ describe('legacy-engine buildEngineArgv (docker mode)', () => {
     expect(argv.join(' ')).not.toContain('POLARIS_LLM_FAKE_FALLBACK=')
   })
 
+  it('passes the database URL through without a value so the host can redirect it (#687)', () => {
+    const argv = buildEngineArgv(base, 18080)
+    // 不指定时后端仍用默认的 ./polaris_dev.db（挂载目录里那一个）；宿主
+    // （E2E、引导流程）显式设了才改道——插件不替任何人决定库放在哪
+    expect(argv).toContain('POLARIS_DATABASE_URL')
+    expect(argv.join(' ')).not.toContain('POLARIS_DATABASE_URL=')
+  })
+
   it('honors a custom containerName so parallel instances do not collide', () => {
     const argv = buildEngineArgv({ ...base, containerName: 'polaris-engine-e2e-x' }, 19000)
     expect(argv.slice(3, 5)).toEqual(['--name', 'polaris-engine-e2e-x'])

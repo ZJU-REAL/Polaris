@@ -104,6 +104,11 @@ export function buildEngineArgv(config: LegacyEngineConfig, port: number): strin
     // POLARIS_LLM_FAKE_FALLBACK（冒烟/E2E 的显式 opt-in）docker 才带进容器，
     // 没设则容器内同样不存在——与 command 模式继承宿主 env 的行为对齐。
     '-e', 'POLARIS_LLM_FAKE_FALLBACK',
+    // 数据库地址同样只做无值透传（#687）。docker 模式不设它时，后端用默认的
+    // ./polaris_dev.db——也就是挂载进来的后端源码目录里那一个，跨次运行留存。
+    // command 模式早就把库钉在 userData 下（engine-bootstrap 的启动器，#718），
+    // 这里补上同一个口子：宿主显式指定就用宿主的，不指定则维持原状不变。
+    '-e', 'POLARIS_DATABASE_URL',
     config.image,
     'sh', '-lc',
     // 先迁移后起服务：desktop 档位没有独立 worker 抢跑迁移的问题，串行即可
