@@ -7,6 +7,7 @@
 """
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from app.agents.voyage.actions import known_actions
@@ -77,6 +78,86 @@ WIKI_KINDS = ("wiki_bootstrap", "wiki_ingest")
 IDEA_KINDS = ("idea_forge", "idea_review", "idea_proposal")
 
 
+# ---------------------------------------------------------------------------
+# 计划模板注册表（#743，对齐 actions._REGISTRY / runners.registry 的形状）
+#
+# kind → 计划模板函数。原来是 Navigator.plan 里的一串 if 分支：每加一种任务
+# 都要改分派处，模板与分派耦合在方法体里。改成注册表后模板在定义处自挂载，
+# 分派只查表——这也是市场 workflow kind 插件的挂载缝：外部插件包 import 时
+# 调 register_plan(kind) 即可接入固定计划，无需碰 Navigator（与 #736 给 LLM
+# stage 留的插件命名空间缝同款远景）。
+#
+# 注意：未注册的 kind 不是错误——skills v1 的 custom 等自由目标任务落到
+# Navigator.plan 的 LLM 自由规划兜底路径（既有对外行为）。需要「必须有模板」
+# 语义的调用方走 get_plan_builder（未注册抛 UnknownPlanKindError，可诊断）。
+# ---------------------------------------------------------------------------
+
+# 计划模板：run → 步骤列表；确定性重规划：(run, failed_step, diagnosis) → 步骤列表
+PlanBuilder = Callable[[VoyageRun], list[dict[str, Any]]]
+ReplanBuilder = Callable[[VoyageRun, dict[str, Any], str], list[dict[str, Any]]]
+
+_PLAN_BUILDERS: dict[str, PlanBuilder] = {}
+_REPLAN_BUILDERS: dict[str, ReplanBuilder] = {}
+
+
+class UnknownPlanKindError(ValueError):
+    """严格查找时 kind 没有注册的计划模板（拼错/插件未安装）。"""
+
+    def __init__(self, kind: str, known: list[str]) -> None:
+        self.kind = kind
+        self.known = known
+        super().__init__(f"no plan builder for kind {kind!r}; known kinds: {', '.join(known)}")
+
+
+def _register(table: dict[str, Any], slot: str, kind: str, func: Any) -> None:
+    key = kind.strip()
+    if not key:
+        raise ValueError(f"{slot} kind must be non-empty")
+    # 重名直接拒绝——静默覆盖会把分派变成 import 顺序问题（同 runners.registry）
+    if key in table:
+        raise ValueError(f"{slot} already registered for kind: {key!r}")
+    table[key] = func
+
+
+def register_plan(kind: str) -> Callable[[PlanBuilder], PlanBuilder]:
+    """把固定计划模板挂到 kind 上（可叠放：一个模板服务多个 kind，如 wiki_*）。"""
+
+    def decorator(func: PlanBuilder) -> PlanBuilder:
+        _register(_PLAN_BUILDERS, "plan builder", kind, func)
+        return func
+
+    return decorator
+
+
+def register_replan(kind: str) -> Callable[[ReplanBuilder], ReplanBuilder]:
+    """把确定性重规划（不经 LLM）挂到 kind 上；未挂的 kind 走 LLM 重规划。"""
+
+    def decorator(func: ReplanBuilder) -> ReplanBuilder:
+        _register(_REPLAN_BUILDERS, "replan builder", kind, func)
+        return func
+
+    return decorator
+
+
+def known_plan_kinds() -> frozenset[str]:
+    """已注册固定计划模板的 kind 全集。"""
+    return frozenset(_PLAN_BUILDERS)
+
+
+def get_plan_builder(kind: str) -> PlanBuilder:
+    """严格查找：未注册抛 UnknownPlanKindError（带全量清单，可诊断）。
+
+    Navigator.plan 自身不用严格查找——未注册 kind 落 LLM 兜底是既有行为；
+    这个入口留给「必须有固定模板」的调用方（如未来 workflow kind 插件校验）。
+    """
+    builder = _PLAN_BUILDERS.get(kind)
+    if builder is None:
+        raise UnknownPlanKindError(kind, sorted(_PLAN_BUILDERS))
+    return builder
+
+
+@register_plan("wiki_bootstrap")
+@register_plan("wiki_ingest")
 def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """文献收集计划：每种模式只跑自己需要的步骤（docs/task-system.md §7（原 api-m2.md §7））。
 
@@ -139,6 +220,7 @@ def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
     ]
 
 
+@register_plan("daily_feed_sync")
 def daily_feed_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """每日新论文抓取固定四步计划（app/agents/voyage/actions_daily.py）。"""
     steps = [
@@ -161,6 +243,7 @@ def daily_feed_plan(run: VoyageRun) -> list[dict[str, Any]]:
     ]
 
 
+@register_plan("idea_forge")
 def forge_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """idea_forge 固定七步计划（docs/task-system.md §7 信号升级）。"""
     steps = [
@@ -226,6 +309,7 @@ def _proposal_body_steps() -> list[dict[str, Any]]:
     ]
 
 
+@register_plan("idea_proposal")
 def proposal_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """idea_proposal 固定计划（docs/task-system.md §7（原 api-idea2.md））：
     目标构建 →（显式 confirm_goal=True 时 idea_goal 闸门 + 修订）→ 方案深耕 → 评审修订。
@@ -256,6 +340,7 @@ _DIAG_NEEDS_DIFF = "NEEDS_DIFFERENTIATION"
 _DIAG_DUPLICATE = "DUPLICATE"
 
 
+@register_replan("idea_proposal")
 def proposal_replan(
     run: VoyageRun, failed_step: dict[str, Any], diagnosis: str
 ) -> list[dict[str, Any]]:
@@ -309,6 +394,7 @@ def proposal_replan(
     return tail_from(body[0]["action"], diagnosis)
 
 
+@register_plan("idea_review")
 def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """idea_review（辩论锦标赛）启动计划（docs/task-system.md §7）：
     配对 → 汇总；中间的 N 场辩论由 review.pair 的 plan_signal 按对局数展开成
@@ -385,6 +471,20 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
     return head + experiment_round_nodes(1)
 
 
+@register_plan("experiment")
+def _experiment_plan_entry(run: VoyageRun) -> list[dict[str, Any]]:
+    """experiment 的注册入口：流程包是本 builder 内的另一条计划来源（provider）。
+
+    流程包一期（#678，设计报告 §8.3）：创建实验时显式选了 process_pack 才走
+    「加载包 → 由 phases 生成计划」；不选包走 experiment_plan 模板原路径。
+    两条来源同属 experiment 一个 kind，收进同一个入口，不再散在分派处（#743）。
+    """
+    pack_name = ((run.checkpoint or {}).get("params") or {}).get("process_pack")
+    if pack_name:
+        return plan_from_pack(load_pack(str(pack_name)), run)
+    return experiment_plan(run)
+
+
 # voyage 级完成标准（docs/task-system.md §7）：engine 在规划时写入 run.done_criteria。
 # experiment 防"过早宣告完成"：迭代必须有明确终止判定、报告必须已生成
 _DONE_CRITERIA_BY_KIND: dict[str, dict[str, Any]] = {
@@ -421,6 +521,7 @@ _WRITING_SECTION_TITLES = {
 }
 
 
+@register_plan("paper_writing")
 def writing_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """paper_writing 固定计划（docs/task-system.md §7（原 api-m5-b.md §5））：
     分节固定顺序撰写 →（中期编译）→ Related Work（候选集内选引）→ 终编译。
@@ -480,6 +581,7 @@ def writing_plan(run: VoyageRun) -> list[dict[str, Any]]:
     return steps
 
 
+@register_plan("presentation")
 def presentation_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """presentation 固定四步计划（论文分享 PPT）：
     取材 → 大纲（LLM）→ 甲板内容（LLM）→ 版式渲染 + 规范/视觉反馈迭代。
@@ -505,6 +607,7 @@ def presentation_plan(run: VoyageRun) -> list[dict[str, Any]]:
     ]
 
 
+@register_plan("paper_review")
 def paper_review_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """paper_review 固定六步计划（docs/task-system.md §7（原 api-m5-c.md §1））：
     引用核验 → 事实查错 → 渲染稿件 → 评审员评审(×3) → 汇总(meta-review) → guardrail 校验。
@@ -533,6 +636,7 @@ def paper_review_plan(run: VoyageRun) -> list[dict[str, Any]]:
 
 
 
+@register_plan("discovery")
 def discovery_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """discovery 启动计划（#642，设计报告 §8.2，mode=loop）：**只有播种一步**。
 
@@ -553,6 +657,7 @@ def discovery_plan(run: VoyageRun) -> list[dict[str, Any]]:
     ]
 
 
+@register_plan("demo")
 def demo_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """demo 航程固定三步：分析目标 → 生成产物 → 总结。
 
@@ -754,35 +859,12 @@ class Navigator:
         raise NavigatorError(f"navigator produced invalid plan: {last_error}")
 
     async def plan(self, run: VoyageRun, context: dict[str, Any] | None = None) -> list[dict]:
-        """目标 → 步骤列表。demo / wiki_* kind 走固定计划模板，其余 kind 用 LLM 规划。"""
-        if run.kind == "demo":
-            return demo_plan(run)
-        if run.kind in WIKI_KINDS:
-            return wiki_plan(run)
-        if run.kind == "daily_feed_sync":
-            return daily_feed_plan(run)
-        if run.kind == "idea_forge":
-            return forge_plan(run)
-        if run.kind == "idea_review":
-            return review_plan(run)
-        if run.kind == "idea_proposal":
-            return proposal_plan(run)
-        if run.kind == "experiment":
-            # 流程包一期（#678，设计报告 §8.3）：创建实验时显式选了 process_pack
-            # 才走「加载包 → 由 phases 生成计划」；不选包走下面的原 plan 函数
-            # 原路径——直接 if 分支、不做任何抽象间接，保证行为逐字节不变（golden）。
-            pack_name = ((run.checkpoint or {}).get("params") or {}).get("process_pack")
-            if pack_name:
-                return plan_from_pack(load_pack(str(pack_name)), run)
-            return experiment_plan(run)
-        if run.kind == "paper_writing":
-            return writing_plan(run)
-        if run.kind == "paper_review":
-            return paper_review_plan(run)
-        if run.kind == "presentation":
-            return presentation_plan(run)
-        if run.kind == "discovery":
-            return discovery_plan(run)
+        """目标 → 步骤列表。注册了固定计划模板的 kind 查表分派，其余 kind 用 LLM 规划。"""
+        builder = _PLAN_BUILDERS.get(run.kind)
+        if builder is not None:
+            return builder(run)
+        # 未注册的 kind 落到 LLM 自由规划——这是既有兜底行为（skills v1 的 custom
+        # 等自由目标任务靠它），不是 unknown 错误；严格语义见 get_plan_builder。
         system = PLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
         workflows = skill_workflows(run.checkpoint or {})
         if workflows:
@@ -801,11 +883,12 @@ class Navigator:
     ) -> list[dict[str, Any]]:
         """验证失败后重规划：返回替换「失败步骤起的剩余计划」的新步骤列表。
 
-        idea_proposal 走确定性重规划（novelty 三档分支等），不经 LLM。
-        ``user_guidance``：用户在任务对话流里的未消费建议（优先遵循）。
+        注册了确定性重规划的 kind（idea_proposal：novelty 三档分支等）查表分派，
+        不经 LLM；``user_guidance``：用户在任务对话流里的未消费建议（优先遵循）。
         """
-        if run.kind == "idea_proposal":
-            return proposal_replan(run, failed_step, diagnosis)
+        deterministic = _REPLAN_BUILDERS.get(run.kind)
+        if deterministic is not None:
+            return deterministic(run, failed_step, diagnosis)
         allowed = allowed_edit_actions(run)
         system = REPLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(allowed))}
         user_prompt = (
