@@ -1,9 +1,11 @@
 """CRDT 协同房间（docs/task-system.md §7（原 api-m5-b.md §6），不 import fastapi）。
 
 - pycrdt.websocket WebsocketServer 单例（懒启动），房间名 = ManuscriptFile.id；
-- Y doc 结构：Text 命名 "content"；房间新建时从 ManuscriptFile.content 初始化；
-- 快照：文档更新防抖 2s 写回 ManuscriptFile.content（编译/AI/REST 读到的即最新），
-  服务重启后房间从库重建；
+- Y doc 结构：Text 命名 "content"；
+- 快照：文档更新防抖 2s 写回库，**content（纯文本投影）与 ydoc_state（CRDT 本体）
+  一起写**。房间重建走 ydoc_state 恢复原历史，只有它为空（首次连接、升级前的
+  存量文件）才退回用 content 播种——用文本重建等于另起一套历史，幸存标签页
+  一重连两套插入操作互不去重，整篇文档会变成两份首尾相接（#347）；
 - apply_ai_edit：写作 voyage 分节写入——有活跃房间时经 Y 事务区间替换（协同者实时
   可见）并立即快照落库，无房间时直接改库。
 """
@@ -61,6 +63,22 @@ def replace_section(content: str, section: str, body: str) -> str:
     return content[:start] + body + content[end:]
 
 
+def _replace_all(room: YRoom, text: Text, new_content: str) -> None:
+    """在**现有文档**里把全文换成 new_content（一个 Y 事务里删+插）。
+
+    关键是「现有文档」：删+插产生的仍是这套历史里的操作，重连的客户端合并后
+    收敛到同一份内容；换成新建文档灌文本就会造出第二套历史（#347）。
+    """
+    current = str(text)
+    if new_content == current:
+        return
+    with room.ydoc.transaction():
+        if current:
+            del text[0 : len(current.encode("utf-8"))]
+        if new_content:
+            text += new_content
+
+
 class CRDTRoomManager:
     """WebsocketServer 单例封装：房间生命周期 + 防抖快照 + AI 区间写入。"""
 
@@ -95,16 +113,31 @@ class CRDTRoomManager:
             return None
         return str(room.ydoc.get("content", type=Text))
 
-    async def connect(self, *, file_id: uuid.UUID, db_content: str) -> YRoom:
-        """取/建房间：新建时从库内容初始化 Text 并挂防抖快照观察者。"""
+    async def connect(
+        self, *, file_id: uuid.UUID, db_content: str, ydoc_state: bytes | None = None
+    ) -> YRoom:
+        """取/建房间：新建时恢复文档状态并挂防抖快照观察者。
+
+        ``ydoc_state`` 有值就按原 CRDT 历史恢复（#347）；没有才从 ``db_content``
+        纯文本播种——那是首次连接和升级前存量文件的路径。两者都做完再和库里的
+        文本对一次账：房间不在时有人直接改过库（AI 分节写入、版本回滚、REST 保存），
+        以库为准，但改法是在**已恢复的文档里**做区间替换，而不是另起一套历史。
+        """
         server = await self._ensure_server()
         name = str(file_id)
         room = await server.get_room(name)
         if name not in self._initialized:
             self._initialized.add(name)
             text = room.ydoc.get("content", type=Text)
-            if len(text) == 0 and db_content:
-                text += db_content
+            if len(text) == 0:
+                if ydoc_state:
+                    # 原历史恢复：重连的标签页带着同一套历史过来，合并即同一份内容
+                    room.ydoc.apply_update(ydoc_state)
+                    if str(text) != db_content:
+                        # 库文本在房间不在时被改过 → 以库为准，但留在同一套历史里
+                        _replace_all(room, text, db_content)
+                elif db_content:
+                    text += db_content
             loop = asyncio.get_running_loop()
             room.ydoc.observe(
                 lambda _event, fid=name: loop.call_soon_threadsafe(self._schedule_snapshot, fid)
@@ -134,14 +167,23 @@ class CRDTRoomManager:
             logger.exception("CRDT 快照落库失败：file=%s", fid)
 
     async def snapshot(self, file_id: uuid.UUID | str) -> None:
-        """把房间当前文本写回 ManuscriptFile.content（无房间/无变化则跳过）。"""
-        content = self.room_content(file_id)
-        if content is None:
+        """把房间当前状态写回库：content 是纯文本投影，ydoc_state 是 CRDT 本体。
+
+        两列必须一起写（#347）。只写 content 的话，重启后房间只能拿文本重建，
+        那是另一套历史——幸存标签页一重连就把整篇文档合并成两份。
+        """
+        room = self.active_room(file_id)
+        if room is None:
             return
+        content = str(room.ydoc.get("content", type=Text))
+        state = room.ydoc.get_update()
         async with get_sessionmaker()() as session:
             file = await session.get(ManuscriptFile, uuid.UUID(str(file_id)))
-            if file is not None and file.content != content:
+            if file is None:
+                return
+            if file.content != content or file.ydoc_state != state:
                 file.content = content
+                file.ydoc_state = state
                 await session.commit()
 
     async def flush(self, file_id: uuid.UUID | str) -> None:
@@ -264,14 +306,7 @@ class CRDTRoomManager:
         room = self.active_room(file_id)
         if room is None:
             return False
-        text = room.ydoc.get("content", type=Text)
-        current = str(text)
-        if new_content != current:
-            with room.ydoc.transaction():
-                if current:
-                    del text[0 : len(current.encode("utf-8"))]
-                if new_content:
-                    text += new_content
+        _replace_all(room, room.ydoc.get("content", type=Text), new_content)
         await self.flush(file_id)
         return True
 

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -80,6 +80,11 @@ class ManuscriptFile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     path: Mapped[str] = mapped_column(String(1024), nullable=False)  # e.g. main.tex
     content: Mapped[str] = mapped_column(Text, default="", nullable=False)  # latex（二进制时为空）
+    # CRDT 文档状态（#347）：content 是给所有「按纯文本读」的地方用的投影，
+    # 这一列存 Y 文档本身的更新字节。房间重建时必须从它恢复——重新用 content
+    # 灌一个空文档会造出第二套互不相干的 CRDT 历史，幸存的浏览器标签页一重连，
+    # 两套插入操作谁也去重不了谁，整篇文档就变成两份首尾相接。
+    ydoc_state: Mapped[bytes | None] = mapped_column(LargeBinary)
     # 模板样式文件（.sty/.cls/.bst）只读：不可改删、不开 CRDT 房间
     readonly: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # 二进制资源（图片/PDF/字体等）：content 为空，字节落磁盘

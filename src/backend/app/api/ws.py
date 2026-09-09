@@ -147,7 +147,7 @@ async def manuscript_crdt_ws(
         return
     await websocket.accept()
     rooms = get_crdt_rooms()
-    await rooms.connect(file_id=file.id, db_content=file.content)
+    await rooms.connect(file_id=file.id, db_content=file.content, ydoc_state=file.ydoc_state)
     try:
         await rooms.serve(_CRDTChannel(websocket, str(file.id)))
     except WebSocketDisconnect:
