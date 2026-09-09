@@ -11,7 +11,7 @@ import asyncio
 import uuid
 
 import pytest_asyncio
-from pycrdt import Text
+from pycrdt import Doc, Text
 
 from app.core.db import get_sessionmaker
 from app.models.manuscript import ManuscriptFile
@@ -125,6 +125,97 @@ async def test_room_snapshot_debounce_and_ai_edit(client, monkeypatch):
     room2 = await manager.connect(file_id=file_id, db_content="ignored")
     assert room2 is room
     assert str(room2.ydoc.get("content", type=Text)) == current
+
+
+async def test_room_rebuild_after_restart_does_not_duplicate_document(client):
+    """#347：进程重启后房间按原 CRDT 历史恢复，幸存标签页重连不把文档变成两份。
+
+    现场是「126 行变 249 行、\\documentclass 同时在第 3 行和第 127 行」。成因不是
+    合并算法出错，而是重建方式：拿纯文本往空文档里灌，产生的是一套全新历史，
+    和标签页手里那套互不认识——CRDT 忠实地把两套插入操作都保留下来，于是全文
+    出现两份。这里把那条时间线原样走一遍。
+    """
+    _, _, file_id = await _seed_file(client)
+    manager = get_crdt_rooms()
+
+    # 1) 编辑中：房间在，浏览器标签页持有同一套历史（y-websocket 同步的效果）
+    room = await manager.connect(file_id=file_id, db_content=SKELETON)
+    tab = Doc()
+    tab.apply_update(room.ydoc.get_update())
+    tab_text = tab.get("content", type=Text)
+    assert str(tab_text) == SKELETON
+
+    # 标签页里敲一笔，同步回房间；随后落库（编译前的 flush 就是这一步）
+    tab_text += "% typed in the tab\n"
+    room.ydoc.apply_update(tab.get_update())
+    await manager.flush(file_id)
+
+    async with get_sessionmaker()() as session:
+        file = await session.get(ManuscriptFile, file_id)
+        before = file.content
+        assert file.ydoc_state, "快照必须连 CRDT 状态一起落库，否则重启只能拿文本重建"
+
+    # 2) 进程重启：房间与内存态全没了，库里只剩两列
+    await reset_crdt_rooms()
+    manager = get_crdt_rooms()
+    assert manager.active_room(file_id) is None
+
+    # 3) 标签页自动重连：房间按 ydoc_state 恢复，两边互相同步
+    async with get_sessionmaker()() as session:
+        file = await session.get(ManuscriptFile, file_id)
+        room2 = await manager.connect(
+            file_id=file_id, db_content=file.content, ydoc_state=file.ydoc_state
+        )
+    room2.ydoc.apply_update(tab.get_update())
+    tab.apply_update(room2.ydoc.get_update())
+
+    merged = str(room2.ydoc.get("content", type=Text))
+    assert merged == before, "重连合并后内容必须与重启前一致"
+    assert merged == str(tab_text), "房间与标签页收敛到同一份"
+    # 逐份点名，别只看长度：重复时这些标记会各出现两次
+    assert merged.count("\\documentclass") == 1
+    assert merged.count("\\begin{document}") == 1
+    assert merged.count("\\end{document}") == 1
+    assert merged.count("% typed in the tab") == 1
+
+
+async def test_room_rebuild_without_state_still_seeds_from_text(client):
+    """存量文件（升级前落的库，ydoc_state 为 NULL）仍按老路子从文本播种。"""
+    _, _, file_id = await _seed_file(client)
+    manager = get_crdt_rooms()
+
+    room = await manager.connect(file_id=file_id, db_content=SKELETON, ydoc_state=None)
+    assert str(room.ydoc.get("content", type=Text)) == SKELETON
+
+
+async def test_room_rebuild_prefers_db_text_edited_while_closed(client):
+    """房间不在时库文本被直接改过（AI 分节写入 / 版本回滚 / REST 保存）：
+    以库为准，但替换发生在恢复出来的那套历史里，重连的标签页照样收敛。"""
+    _, _, file_id = await _seed_file(client)
+    manager = get_crdt_rooms()
+
+    room = await manager.connect(file_id=file_id, db_content=SKELETON)
+    tab = Doc()
+    tab.apply_update(room.ydoc.get_update())
+    await manager.flush(file_id)
+
+    await reset_crdt_rooms()
+    manager = get_crdt_rooms()
+
+    # 房间不在时有人直接改库（apply_ai_edit 的无房间路径就是这样）
+    edited = SKELETON.replace("old results body", "rewritten while the room was closed")
+    async with get_sessionmaker()() as session:
+        file = await session.get(ManuscriptFile, file_id)
+        state = file.ydoc_state
+        file.content = edited
+        await session.commit()
+
+    room2 = await manager.connect(file_id=file_id, db_content=edited, ydoc_state=state)
+    room2.ydoc.apply_update(tab.get_update())
+    merged = str(room2.ydoc.get("content", type=Text))
+    assert "rewritten while the room was closed" in merged
+    assert "old results body" not in merged
+    assert merged.count("\\documentclass") == 1
 
 
 async def test_stream_section_open_delta_replace(client):
