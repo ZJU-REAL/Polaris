@@ -475,7 +475,7 @@ export function LiteratureSearchSettingsPanel() {
           </>
         }
       >
-        <FormField label={tr('密钥标签', 'Credential label')} hint={tr('用于区分同一来源的多个密钥，例如“实验室主账号”。', 'Distinguishes keys in the same pool, such as “Lab primary”.')}>
+        <FormField label={tr('密钥标签', 'Credential label')} hint={tr('用于区分同一来源的多个密钥，例如“主账号”“备用”。', 'Distinguishes keys in the same pool, such as “Primary” or “Backup”.')}>
           <input className="input" maxLength={120} value={credentialDraft.label} placeholder={tr('可选', 'Optional')} onChange={(event) => setCredentialDraft({ ...credentialDraft, label: event.target.value })} />
         </FormField>
         <FormField
