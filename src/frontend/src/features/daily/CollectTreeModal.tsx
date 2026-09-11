@@ -356,9 +356,9 @@ export function CollectTreeModal({
         </div>
       ) : (
         <div className="col" style={{ gap: 2 }}>
-          {/* —— 实验室文献库 —— */}
+          {/* —— 文献库 —— */}
           <ParentRow
-            label={tr('实验室文献库', 'Shared libraries')}
+            label={tr('文献库', 'Libraries')}
             state={libState}
             expanded={libsOpen}
             onToggleExpand={() => setExpandLibs((o) => !o)}

@@ -26,8 +26,8 @@ const ENTRIES: { to: string; icon: IconName; zh: [string, string]; en: [string, 
   {
     to: '/libraries',
     icon: 'book',
-    zh: ['实验室文献库', '全实验室共享的方向文献库，可以浏览、检索、和文献对话。'],
-    en: ['Lab libraries', 'Shared topic libraries for the whole lab — browse, search and chat with the papers.'],
+    zh: ['文献库', '按研究方向组织的文献库，可以浏览、检索、和文献对话。'],
+    en: ['Libraries', 'Topic libraries — browse, search and chat with the papers.'],
   },
   {
     to: '/daily',

@@ -138,7 +138,7 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
           className="input"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder={tr('例如：实验室内部技术报告', 'e.g. Lab internal tech report')}
+          placeholder={tr('例如：内部技术报告', 'e.g. Internal tech report')}
         />
       </FormField>
 

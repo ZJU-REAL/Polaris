@@ -2385,7 +2385,7 @@ function DailyCategoriesSection() {
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 14 }}>
         {tr(
-          '每天从 arxiv 抓取这些分类下的新提交，全实验室共用一份。改动从下一次抓取开始生效。',
+          '每天从 arxiv 抓取这些分类下的新提交，本部署共用一份。改动从下一次抓取开始生效。',
           'New arxiv submissions in these categories are fetched daily and shared across the deployment. Changes apply from the next fetch.',
         )}
       </div>
