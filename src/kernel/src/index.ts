@@ -1,5 +1,12 @@
 export { Kernel, createKernel, type KernelOptions } from './kernel.ts'
 export {
+  createPluginHost,
+  marketPluginsDir,
+  type CreatePluginHostOptions,
+  type PluginHost,
+  type PluginHostLog,
+} from './host.ts'
+export {
   JsonRpcEndpoint,
   type JsonRpcEndpointOptions,
   type NotificationHandler,
