@@ -17,7 +17,6 @@ import {
   IPC_CHANNEL_INFO_SYNC,
   IPC_CHANNEL_RPC,
   type MethodName,
-  type PluginTreeExport,
   type RpcRequest,
 } from '../../shared/contract';
 import { capabilityManifest } from '../capabilities';
@@ -44,70 +43,13 @@ function asNumber(params: unknown, key: string): number {
   return value;
 }
 
-/**
- * 插件配置载荷：一律是纯对象。数组/原始值/null 在 schema 层面没有合法
- * 形状，在 IPC 边界先挡掉；对象内部的语义（__jsExpr、schema 匹配）归
- * kernel 层校验——两层各管一层，见 methods.plugins.ts 文件头。
- */
-function asPluginConfig(params: unknown): Record<string, unknown> {
-  const value = (params as Record<string, unknown> | null)?.['config'];
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${ERR_INVALID_PARAMS}: config must be a plain object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-/** 树导入嵌套上限。真实树两三层，16 层只为拦住构造出来的深递归载荷。 */
-const MAX_TREE_DEPTH = 16;
-
-function assertTreeEntryShape(value: unknown, path: string, depth: number): void {
-  if (depth > MAX_TREE_DEPTH) {
-    throw new Error(`${ERR_INVALID_PARAMS}: ${path} exceeds max tree depth ${MAX_TREE_DEPTH}`);
-  }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${ERR_INVALID_PARAMS}: ${path} must be an object`);
-  }
-  const entry = value as Record<string, unknown>;
-  if (typeof entry.id !== 'string' || !entry.id) {
-    throw new Error(`${ERR_INVALID_PARAMS}: ${path}.id must be a non-empty string`);
-  }
-  if (typeof entry.name !== 'string' || !entry.name) {
-    throw new Error(`${ERR_INVALID_PARAMS}: ${path}.name must be a non-empty string`);
-  }
-  if (entry.disabled !== undefined && typeof entry.disabled !== 'boolean') {
-    throw new Error(`${ERR_INVALID_PARAMS}: ${path}.disabled must be a boolean`);
-  }
-  if (entry.children !== undefined) {
-    if (!Array.isArray(entry.children)) {
-      throw new Error(`${ERR_INVALID_PARAMS}: ${path}.children must be an array`);
-    }
-    entry.children.forEach((child, index) =>
-      assertTreeEntryShape(child, `${path}.children[${index}]`, depth + 1),
-    );
-  }
-  // 多余字段/重复 id/__jsExpr 故意不在这里查：那是语义校验，kernel 的
-  // importTree 会用与装载完全相同的一套规则拒绝（校验不复制两份）
-}
-
-function asPluginTreeExport(params: unknown): PluginTreeExport {
-  const value = (params as Record<string, unknown> | null)?.['tree'];
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${ERR_INVALID_PARAMS}: tree must be an object`);
-  }
-  const tree = value as Record<string, unknown>;
-  if (tree.version !== 1) {
-    throw new Error(`${ERR_INVALID_PARAMS}: unsupported tree export version ${String(tree.version)}`);
-  }
-  if (!Array.isArray(tree.entries)) {
-    throw new Error(`${ERR_INVALID_PARAMS}: tree.entries must be an array`);
-  }
-  tree.entries.forEach((entry, index) => assertTreeEntryShape(entry, `entries[${index}]`, 0));
-  return value as unknown as PluginTreeExport;
-}
-
 type Handler = (params: unknown) => unknown | Promise<unknown>;
 
 const HANDLERS: Record<MethodName, Handler> = {
+  // plugins.*：守卫与语义都在 kernel 的 createPluginMethods 里（#754），两种
+  // 传输共用同一份；能力门槛（树不可达 → ERR_CAPABILITY_UNAVAILABLE）也在那里。
+  // 摊在最前面：下面的具名键是桌面独有的，任何重名都该以具名的为准。
+  ...plugins.pluginMethods,
   'host.info': () => host.hostInfo(),
   'host.setServerUrl': (p) => host.setServerUrl(asString(p, 'url')),
   'host.testServer': (p) => host.testServer(asString(p, 'url')),
@@ -120,15 +62,6 @@ const HANDLERS: Record<MethodName, Handler> = {
   'kernel.status': () => kernelStatus(),
   'kernel.localBackend': () => localBackend(),
   'kernel.engineBootstrapStatus': () => engineBootstrapStatus(),
-  // plugins.*：能力门槛（树不可达 → ERR_CAPABILITY_UNAVAILABLE）在实现里统一做
-  'plugins.list': () => plugins.pluginsList(),
-  'plugins.enable': (p) => plugins.pluginsEnable(asString(p, 'id')),
-  'plugins.disable': (p) => plugins.pluginsDisable(asString(p, 'id')),
-  'plugins.updateConfig': (p) => plugins.pluginsUpdateConfig(asString(p, 'id'), asPluginConfig(p)),
-  'plugins.validateConfig': (p) =>
-    plugins.pluginsValidateConfig(asString(p, 'name'), asPluginConfig(p)),
-  'plugins.exportTree': () => plugins.pluginsExportTree(),
-  'plugins.importTree': (p) => plugins.pluginsImportTree(asPluginTreeExport(p)),
   // plugins.market.*（#708）：包名/版本的语义校验（合法 npm 名、无路径字符）
   // 在 kernel 的安装引擎里，这里只做 IPC 形状
   'plugins.market.fetchIndex': () => market.marketFetchIndex(),

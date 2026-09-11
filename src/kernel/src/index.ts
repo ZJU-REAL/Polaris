@@ -13,6 +13,19 @@ export {
   type RpcHandler,
 } from './rpc/jsonrpc.ts'
 export {
+  ERR_CAPABILITY_UNAVAILABLE,
+  ERR_INVALID_PARAMS,
+  MAX_TREE_DEPTH,
+  asNumber,
+  asPluginConfig,
+  asPluginTreeExport,
+  asString,
+  createPluginMethods,
+  type PluginRpcDeps,
+  type PluginTreeExportShape,
+  type RpcMethod,
+} from './rpc/plugin-methods.ts'
+export {
   MemoryConfigTreeStore,
   type ConfigEntry,
   type ConfigTreeStore,
