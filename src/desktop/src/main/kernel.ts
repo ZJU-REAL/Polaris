@@ -25,24 +25,15 @@
    ============================================================ */
 
 import { app } from 'electron';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 import {
-  Loader,
-  MemoryConfigTreeStore,
-  SqliteTree,
-  createImportGuard,
-  createKernel,
-  registerBuiltins,
-  storage,
-  verifyInstalledEntries,
+  createPluginHost,
+  marketPluginsDir as kernelMarketPluginsDir,
   type ConfigEntry,
-  type ConfigTreeStore,
-  type InstallVerifyIssue,
   type Kernel,
   type LegacyEngineConfig,
   type PluginMetaStore,
+  type SqliteTree,
   type StorageService,
 } from '@polaris/kernel';
 
@@ -57,7 +48,7 @@ let kernel: Kernel | null = null;
  * import，必须是文件系统上的普通路径。
  */
 export function marketPluginsDir(): string {
-  return join(app.getPath('userData'), 'plugins');
+  return kernelMarketPluginsDir(app.getPath('userData'));
 }
 
 /**
@@ -161,76 +152,16 @@ async function doStartKernel(): Promise<Kernel> {
   // smoke 等场景会 stop 后再次 start：进度回到初始态，别让上一轮的
   // ready/failed 冒充本轮结论
   bootstrapStatus = { phase: 'starting', done: false };
-  const instance = createKernel({ name: 'polaris-desktop' });
-
-  // 持久层先于 loader 直挂：配置树就存在这里。失败不阻断启动——树退化
-  // 为内存 store（见下），壳仍可用；kernel.status 的 storage=false 会把
-  // 这件事暴露给渲染层与冒烟测试。
-  try {
-    await instance.ctx.plugin(storage, {
-      path: join(app.getPath('userData'), 'kernel', 'storage.db'),
-    });
-  } catch (err) {
-    console.error('[kernel] storage 持久层挂载失败，本次会话不落盘：', err);
-  }
-
-  // storage 挂载失败时的降级：MemoryConfigTreeStore 让 loader 树照常
-  // 工作（首启种子也照种），只是这次会话的改动不落盘。
-  const storageSvc = instance.ctx.get('storage') as StorageService | undefined;
-  const store: ConfigTreeStore = storageSvc?.configTree ?? new MemoryConfigTreeStore();
-  const pluginMeta = storageSvc?.pluginMeta;
-
-  // 三方插件动态 import 的解析基准（#708）：vendor loader 对相对 specifier
-  // 用 new URL(name, ctx.baseUrl) 解析（也是 internal loader 的 parentURL），
-  // EntryTree 构造时从父 ctx 拷贝，所以必须赶在 Loader/SqliteTree 装载之前
-  // 设到根 ctx 上。市场条目虽然存的是绝对 file:// URL 不依赖它，但这让
-  // 手写的相对条目（开发者本地插件）也有明确语义。尾部斜杠是 URL 基准
-  // 目录的规矩，少了最后一段会被当文件名换掉。
-  instance.ctx.baseUrl = `${pathToFileURL(marketPluginsDir()).href}/`;
-
-  // 装载前哈希复核（#708）主挂点：树装载之前扫一遍安装记录，被篡改的
-  // 安装物在打包态直接改持久树为 disabled——树装载用的是事务化 reconcile，
-  // 单条目 import 抛错会整树回滚，只有装载前改 store 能做到「坏的禁掉、
-  // 其余照常」。开发态仅告警（本地改入口文件是正常开发动作）。
-  let installIssues: InstallVerifyIssue[] = [];
-  if (pluginMeta) {
-    try {
-      installIssues = await verifyInstalledEntries({
-        metaStore: pluginMeta,
-        store,
-        strict: app.isPackaged,
-      });
-      for (const issue of installIssues) console.warn(`[kernel] ${issue.message}`);
-    } catch (err) {
-      console.error('[kernel] 安装记录哈希复核失败（跳过，不阻断启动）：', err);
-    }
-  }
-
-  let configTree: SqliteTree | undefined;
-  try {
-    if ((await store.load()).length === 0) await store.save(SEED_ENTRIES);
-    await instance.ctx.plugin(Loader);
-    registerBuiltins(instance.ctx.loader);
-    await instance.ctx.plugin(SqliteTree, {
-      store,
-      // 第二道闸：会话运行中被篡改、用户再点启用时在 import 阶段拒绝
-      //（enable 是单条目 update，失败只回滚它自己，错误经 IPC 给用户）
-      guardImport: pluginMeta
-        ? createImportGuard({
-            metaStore: pluginMeta,
-            strict: app.isPackaged,
-            warn: (message) => console.warn(`[kernel] ${message}`),
-          })
-        : undefined,
-    });
-    configTree = instance.ctx.get('configTree') as SqliteTree | undefined;
-    // 扫描结论挂到条目注记上：被强制禁用的条目要在插件列表里说清原因
-    for (const issue of installIssues) configTree?.warnings.set(issue.entryId, issue.message);
-  } catch (err) {
-    // 树挂不上（数据损坏 / 某条目装载失败整树回滚）只损失插件能力，壳必须
-    // 照常起：configTree 留空，引擎注入被跳过，前端按 localBackend=null 回落远端。
-    console.error('[kernel] 配置树装载失败，本次会话无插件树：', err);
-  }
+  // 装配顺序（storage → baseUrl → 哈希复核 → 种子 → Loader → SqliteTree）
+  // 住在 @polaris/kernel 的 createPluginHost 里，与服务器形态共用一份（#754）：
+  // 装哪些内置插件、树长什么样、三方包的 import 基准在哪，两个形态必须一致，
+  // 否则市场里同一个包在两边装出不同结果。桌面特有的部分（引擎注入）留在下面。
+  const { kernel: instance, configTree } = await createPluginHost({
+    name: 'polaris-desktop',
+    dataRoot: app.getPath('userData'),
+    seedEntries: SEED_ENTRIES,
+    strict: app.isPackaged,
+  });
 
   let engine = parseEngineSpec(process.env.POLARIS_DESKTOP_ENGINE);
   // 并行隔离（壳级 E2E / 同机多实例）：docker 容器名与宿主端口默认是固定值，
