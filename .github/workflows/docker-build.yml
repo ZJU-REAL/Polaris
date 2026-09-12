@@ -12,6 +12,9 @@ on:
       # 一个类型错就让整个前端镜像出不来。以前这里不含前端，于是 5a3cd37 带着编译错误
       # 合进 main，直到部署才发现——CI 全绿，因为它根本没跑。
       - "src/frontend/**"
+      # 内核镜像同理：它以 .ts 源码运行，构建成功不代表跑得起来（#754 实测两次
+      # 都是运行期才炸：包名解析不到、TS 语法擦不掉），所以下面除了 build 还要真起一下。
+      - "src/kernel/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/docker-build.yml"
   workflow_dispatch:
@@ -34,3 +37,30 @@ jobs:
 
       - name: Build worker image
         run: docker build -f docker/Dockerfile.worker -t polaris-worker .
+
+      - name: Build kernel image
+        run: docker build -f docker/Dockerfile.kernel -t polaris-kernel .
+
+      # 光 build 不够：内核跑的是 .ts 源码，两个真实故障（bare specifier 解析不到、
+      # 参数属性/namespace 擦不掉）都只在**启动时**才暴露，构建阶段一片绿。
+      - name: Kernel image actually starts and answers
+        run: |
+          docker run -d --name kernel-smoke \
+            -e POLARIS_KERNEL_TOKEN=ci-smoke-token \
+            -e POLARIS_KERNEL_HOST=0.0.0.0 \
+            -p 18770:8770 polaris-kernel
+          for i in $(seq 1 30); do
+            if curl -sS -o /tmp/status.json -X POST http://127.0.0.1:18770/rpc \
+                 -H 'x-polaris-kernel-token: ci-smoke-token' \
+                 -H 'content-type: application/json' \
+                 -d '{"method":"kernel.status"}'; then break; fi
+            sleep 2
+          done
+          docker logs kernel-smoke
+          cat /tmp/status.json
+          grep -q '"started":true' /tmp/status.json
+          # 没有密钥必须被拒，而不是放行
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18770/rpc \
+                   -H 'content-type: application/json' -d '{"method":"kernel.status"}')
+          test "$code" = '401'
+          docker rm -f kernel-smoke
