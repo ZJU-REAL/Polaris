@@ -25,5 +25,13 @@ ENV POLARIS_KERNEL_DATA_DIR=/srv/data \
 
 EXPOSE 8770
 
-# --experimental-strip-types：内核以 .ts 源码发布（workspace 内部包，不预编译）
-CMD ["node", "--experimental-strip-types", "-e", "import('@polaris/kernel/src/server/main.ts').then(m => m.main())"]
+# 按路径跑而不是按包名：pnpm 只把工作区包链进依赖它的包的 node_modules，
+# 镜像里没有任何东西依赖 @polaris/kernel，所以根目录没有那个软链，
+# import('@polaris/kernel/...') 会 ERR_MODULE_NOT_FOUND。
+# --experimental-transform-types 而不是 strip-types：内核以 .ts 源码发布（workspace
+# 内部包，不预编译），而它用了两处**只擦类型擦不掉**的语法——SqliteTree 的
+# `export namespace`（schemastery/cordis 的 Xxx.Config 惯例，全生态都这么写）与
+# 构造函数参数属性。这两样需要真正的代码生成，strip-only 模式会直接报
+# ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX。改代码去迎合 strip-only 会把 cordis 的惯用
+# 写法拧坏，不值得。
+CMD ["node", "--experimental-transform-types", "src/kernel/src/server/start.ts"]
