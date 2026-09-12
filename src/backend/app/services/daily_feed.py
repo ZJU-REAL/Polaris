@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import Date, Float, String, case, cast, delete, func, literal, or_, select, text
@@ -47,8 +48,13 @@ logger = logging.getLogger(__name__)
 
 # 订阅分类是用户偏好（#737 配置分层）：存 owner 用户的 settings['daily.categories']，
 # 旧 system_settings 键只作迁移期只读回退（deprecated，一期后连旧行一起删）。
+# 每日池的默认源。它不再是「唯一的源」，只是历史扁平配置归一化时的归属。
+ARXIV_SOURCE = "arxiv"
+
 CATEGORIES_SETTING_KEY = "daily_feed_categories"
 CATEGORIES_USER_KEY = "daily.categories"
+# 非 arXiv 源的订阅单独一个键：旧键的形状与 legacy 读路径因此完全不受影响
+SUBSCRIPTIONS_USER_KEY = "daily.subscriptions"
 
 # 注：论文级向量的管理员开关已升格为平台总闸并改名（daily_feed_embed_enabled →
 # 默认关意味着每日推送的论文连论文级向量都没有、语义检索里根本搜不到；而只管每日推送
@@ -82,6 +88,98 @@ def _today_utc() -> dt.date:
 
 
 # ---- 订阅分类配置 ----
+
+
+@dataclass(frozen=True, slots=True)
+class Subscription:
+    """一条订阅：在哪个源上、订哪些词。
+
+    arxiv 的「词」是分类（cs.AI）；别的源是检索词（「structural engineering」）。
+    两者形状相同、语义由源自己解释——每日池不该假定全世界都用 arXiv 的分类体系。
+    """
+
+    source: str
+    terms: tuple[str, ...]
+
+
+def _normalize_extra(value: Any) -> list[Subscription]:
+    """归一化非 arXiv 源的订阅（新键 ``daily.subscriptions`` 的内容）。
+
+    坏行跳过而不是整段作废：这份配置是人写的，一行写错不该让整个每日池停摆。
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[Subscription] = []
+    for row in value:
+        if not isinstance(row, dict):
+            continue
+        source = str(row.get("source") or "").strip().lower()
+        raw_terms = row.get("terms")
+        if not source or source == ARXIV_SOURCE or not isinstance(raw_terms, list):
+            continue
+        terms = tuple(str(t).strip() for t in raw_terms if str(t).strip())
+        if terms:
+            out.append(Subscription(source=source, terms=terms))
+    return out
+
+
+async def get_subscriptions(session: AsyncSession) -> list[Subscription]:
+    """全部订阅 = arXiv（旧键，形状不变）+ 其余源（新键）。
+
+    **arXiv 的订阅仍存在原来的键、仍是扁平分类列表。** 第一版我把它改成了统一的
+    ``[{source, terms}]`` 一起塞回旧键，结果是既有测试大面积翻车——那不是测试的
+    问题：那个键有 legacy 读路径，换形状等于让老读者看见它不认识的东西。新概念
+    用新键承载，旧键一个字节都不动，存量部署因此不需要任何迁移。
+    """
+    subs: list[Subscription] = []
+    arxiv_terms = await get_categories(session)
+    if arxiv_terms:
+        subs.append(Subscription(source=ARXIV_SOURCE, terms=tuple(arxiv_terms)))
+    extra = await owner_settings.read_setting(session, SUBSCRIPTIONS_USER_KEY, legacy_key=None)
+    subs.extend(_normalize_extra(extra))
+    return subs
+
+
+async def set_subscriptions(
+    session: AsyncSession, subscriptions: list[Subscription], *, user: User | None = None
+) -> list[Subscription]:
+    """写回订阅：arXiv 那条走旧键（校验分类格式），其余源走新键（自由检索词）。"""
+    arxiv_terms: list[str] = []
+    others: list[Subscription] = []
+    for sub in subscriptions:
+        source = sub.source.strip().lower()
+        if not source:
+            continue
+        terms: list[str] = []
+        for raw in sub.terms:
+            term = raw.strip()
+            if term and term not in terms:
+                terms.append(term)
+        if not terms:
+            continue
+        if source == ARXIV_SOURCE:
+            # arXiv 的词是分类，格式固定（set_categories 会校验）
+            arxiv_terms.extend(terms)
+        else:
+            # 别的源是自由检索词：拿 arXiv 分类正则去校验它，只会把
+            # 「structural engineering」这种完全正当的订阅挡在门外
+            others.append(Subscription(source=source, terms=tuple(terms)))
+
+    saved_arxiv = await set_categories(session, arxiv_terms, user=user)
+    await owner_settings.write_setting(
+        session,
+        SUBSCRIPTIONS_USER_KEY,
+        [{"source": s.source, "terms": list(s.terms)} for s in others],
+        legacy_key=None,
+        user=user,
+    )
+    await session.commit()
+
+    out: list[Subscription] = []
+    if saved_arxiv:
+        out.append(Subscription(source=ARXIV_SOURCE, terms=tuple(saved_arxiv)))
+    out.extend(others)
+    return out
 
 
 async def get_categories(session: AsyncSession) -> list[str]:
@@ -303,35 +401,57 @@ async def fetch_new_by_category(
 
     状态取值：``ok``（抓到了，可能是 0 篇——周末/无公告是正常的）、``error``。
     """
-    categories = await get_categories(session)
-    # 经源注册表取 arXiv 适配器；get_arxiv_client 模块属性保留为客户端注入缝
-    client = literature_sources.require_source("arxiv", client=get_arxiv_client())
+    subscriptions = await get_subscriptions(session)
+    # 能干这件事的源由注册表回答（能力探测），而不是这里写死一个 id。
+    # get_arxiv_client 模块属性保留为客户端注入缝。
+    capable = dict(
+        literature_sources.sources_with_capability(
+            "fetch_new", clients={ARXIV_SOURCE: get_arxiv_client()}
+        )
+    )
+    categories: list[str] = []
     by_category: dict[str, list[dict[str, Any]]] = {}
     statuses: dict[str, dict[str, Any]] = {}
-    for category in categories:
-        try:
-            entries, batch_at = await client.fetch_new(category)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001 — 单分类失败不打断其余分类
-            logger.warning("daily feed RSS failed for %s", category, exc_info=True)
-            by_category[category] = []
+    for sub in subscriptions:
+        client = capable.get(sub.source)
+        for category in sub.terms:
+            categories.append(category)
+            if client is None:
+                # 订了一个当前拿不到/不支持日更的源：如实报出来，而不是静默少抓。
+                # 「这个源没装」和「这个源今天没有新论文」必须可区分。
+                by_category[category] = []
+                statuses[category] = {
+                    "count": 0,
+                    "status": "error",
+                    "detail": f"source {sub.source!r} 不可用或不支持每日新增",
+                }
+                continue
+            try:
+                entries, batch_at = await client.fetch_new(category)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — 单个订阅词失败不打断其余
+                logger.warning(
+                    "daily feed fetch failed for %s/%s", sub.source, category, exc_info=True
+                )
+                by_category[category] = []
+                statuses[category] = {
+                    "count": 0,
+                    "status": "error",
+                    "detail": f"{type(e).__name__}: {e}"[:200],
+                }
+                continue
+            by_category[category] = entries
+            batch_date = batch_at.astimezone(dt.UTC).date() if batch_at else None
             statuses[category] = {
-                "count": 0,
-                "status": "error",
-                "detail": f"{type(e).__name__}: {e}"[:200],
+                "count": len(entries),
+                "status": "ok",
+                "detail": None,
+                # 源自己声明这批是哪天的（arXiv 有公告日；没有的源给 None）；
+                # 调用方据此判断有没有抓早了
+                "batch_date": batch_date.isoformat() if batch_date else None,
+                "stale": bool(batch_date and batch_date < _today_utc()),
             }
-            continue
-        by_category[category] = entries
-        batch_date = batch_at.astimezone(dt.UTC).date() if batch_at else None
-        statuses[category] = {
-            "count": len(entries),
-            "status": "ok",
-            "detail": None,
-            # arXiv 自己声明这批是哪天的公告；调用方据此判断有没有抓早了
-            "batch_date": batch_date.isoformat() if batch_date else None,
-            "stale": bool(batch_date and batch_date < _today_utc()),
-        }
     return categories, by_category, statuses
 
 
@@ -385,15 +505,20 @@ async def upsert_entries(
         for entry in entries:
             title = (entry.get("title") or "").strip()
             arxiv_id = entry.get("arxiv_id")
-            if not title or not arxiv_id:
+            doi = entry.get("doi")
+            # 身份不再限定 arXiv id：非 arXiv 的源给不出 arxiv_id，以前会在这里被
+            # 静默丢掉——抓回来了、也解析了，然后一条不落地。有 DOI 就够定位一篇
+            # 论文（find_pool_paper / pool_dedup_key 本来就按 arxiv → doi → 标题哈希
+            # 级联）。两者都没有才真的无从去重，跳过。
+            if not title or not (arxiv_id or doi):
                 continue
             paper = await find_pool_paper(
                 session,
                 arxiv_id=arxiv_id,
-                doi=entry.get("doi"),
+                doi=doi,
                 dedup_key=pool_dedup_key(
                     arxiv_id=arxiv_id,
-                    doi=entry.get("doi"),
+                    doi=doi,
                     title=title,
                     year=entry.get("year"),
                     authors=entry.get("authors"),
@@ -1724,18 +1849,26 @@ async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | Non
     找到一个没收过的就够了，所以命中即返回：常态下 cs.AI 有新论文，仍然只发一次
     请求；只有像那天一样首个分类全中时才会继续往后问。
     """
-    categories = await get_categories(session)
-    if not categories:
-        # 没订阅任何分类：无可收之物，不该开一轮同步（空转还会把当天锁死）
+    subscriptions = await get_subscriptions(session)
+    probes = [(sub.source, term) for sub in subscriptions for term in sub.terms]
+    if not probes:
+        # 没订阅任何东西：无可收之物，不该开一轮同步（空转还会把当天锁死）
         return False, None
 
+    capable = dict(
+        literature_sources.sources_with_capability(
+            "fetch_new", clients={ARXIV_SOURCE: get_arxiv_client()}
+        )
+    )
     today = _today_utc()
     latest: dt.date | None = None
-    for category in categories:
+    for source_id, category in probes:
+        client = capable.get(source_id)
+        if client is None:
+            # 源不可用：探测不下结论，交给正式抓取去如实报错
+            return True, None
         try:
-            entries, batch_at = await literature_sources.require_source(
-                "arxiv", client=get_arxiv_client()
-            ).fetch_new(category)
+            entries, batch_at = await client.fetch_new(category)
         except Exception:  # noqa: BLE001 — 探测失败不下结论，交给正式抓取去报错
             logger.warning("daily feed probe failed for %s", category, exc_info=True)
             return True, None

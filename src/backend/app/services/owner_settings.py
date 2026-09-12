@@ -39,19 +39,22 @@ async def owner_user(session: AsyncSession) -> User | None:
     return await session.get(User, owner_id)
 
 
-async def read_setting(session: AsyncSession, key: str, *, legacy_key: str) -> Any:
+async def read_setting(session: AsyncSession, key: str, *, legacy_key: str | None) -> Any:
     """读 owner 的命名空间偏好；新键缺席时回读旧 system_settings 行。
 
     回退只此一期（deprecated）：数据迁移已把存量拷进 owner.settings，这里兜的是
     「迁移后才从备份恢复出旧行」之类的残局。下一期删回退时连 legacy 行一起清。
     取值合法性不在这里管——各业务 getter 自带「非法回落默认」。
+
+    ``legacy_key=None``：这个键是本期新增的，没有旧行可回读——不该逼着新键
+    去编一个从来不存在的 legacy 名字。
     """
     owner = await owner_user(session)
     if owner is not None:
         value = (owner.settings or {}).get(key, _MISSING)
         if value is not _MISSING:
             return value
-    row = await session.get(SystemSetting, legacy_key)
+    row = await session.get(SystemSetting, legacy_key or key)
     return row.value if row is not None else None
 
 
@@ -60,7 +63,7 @@ async def write_setting(
     key: str,
     value: Any,
     *,
-    legacy_key: str,
+    legacy_key: str | None,
     user: User | None = None,
 ) -> None:
     """把偏好写到 owner 的 settings 上（不 commit，沿用调用方的提交时机）。
@@ -75,8 +78,12 @@ async def write_setting(
         # 整字典替换而不是就地改：JSON 列的变更检测认的是赋值
         target.settings = {**(target.settings or {}), key: value}
         return
-    row = await session.get(SystemSetting, legacy_key)
+    # 还没有任何用户时仍要落盘：写丢了就是「设了订阅、下次打开没了」。
+    # 本期新增的键没有 legacy 名字，就用键名自己当行名——回退行的意义是
+    # 「别丢」，不是「必须叫某个历史名字」。
+    row_key = legacy_key or key
+    row = await session.get(SystemSetting, row_key)
     if row is None:
-        session.add(SystemSetting(key=legacy_key, value=value))
+        session.add(SystemSetting(key=row_key, value=value))
     else:
         row.value = value
