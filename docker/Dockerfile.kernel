@@ -1,0 +1,29 @@
+# 插件内核宿主（#754）：裸 Node 跑 @polaris/kernel 的服务器入口。
+#
+# 不带 Electron、不带 Python：内核包本身就是 electron-free 的（由
+# src/kernel/tests/electron-free.test.ts 机械把关），所以这里只要一个 Node。
+#
+# node:22 而不是 alpine：storage 插件用的是 node:sqlite（Node ≥ 22 内建），
+# alpine 的 musl 下这条零编译路径不保证可用，而「零编译」正是选它的理由。
+FROM node:22-slim
+
+WORKDIR /srv
+
+# 只装内核与它依赖的 vendor 包：前端/桌面的依赖树与这个进程无关
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY vendor ./vendor
+COPY src/kernel ./src/kernel
+
+RUN corepack enable \
+    && pnpm install --frozen-lockfile --filter @polaris/kernel... \
+    && pnpm store prune
+
+# 数据根由 compose 挂载；端口不发布，只在内部网络可达（见 rpc-http.ts 的信任边界）
+ENV POLARIS_KERNEL_DATA_DIR=/srv/data \
+    POLARIS_KERNEL_PORT=8770 \
+    POLARIS_KERNEL_HOST=0.0.0.0
+
+EXPOSE 8770
+
+# --experimental-strip-types：内核以 .ts 源码发布（workspace 内部包，不预编译）
+CMD ["node", "--experimental-strip-types", "-e", "import('@polaris/kernel/src/server/main.ts').then(m => m.main())"]
