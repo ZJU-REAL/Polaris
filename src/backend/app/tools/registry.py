@@ -123,6 +123,33 @@ def tool(
     return decorator
 
 
+def register_spec(spec: ToolSpec, *, replace: bool = False) -> None:
+    """登记一个已经构造好的 ToolSpec（外部来源的工具用，见 services/mcp_hub）。
+
+    ``@tool`` 装饰器服务的是**编译期就写死**的内置工具，重名直接报错——那种重名
+    是代码写错了。外部 MCP 服务器的工具是**运行期发现**的：服务器升级、重连、
+    重新同步都会再登记一遍同一批名字，所以这里显式给一个 replace 开关，而不是
+    让调用方去 try/except 重名错误。
+    """
+    if not replace and spec.name in _REGISTRY:
+        raise ValueError(f"工具重复注册：{spec.name}")
+    _REGISTRY[spec.name] = spec
+
+
+def unregister_prefix(prefix: str) -> list[str]:
+    """摘掉所有以 prefix 开头的工具，返回被摘掉的名字。
+
+    外部服务器撤下/重新同步时用：按前缀整批摘，避免留下指向已不存在的远端工具的
+    幽灵条目（那种条目要调用到才报错，排查起来很绕）。
+    """
+    if not prefix:
+        raise ValueError("prefix 不能为空——那会清空整张注册表")
+    dropped = [name for name in _REGISTRY if name.startswith(prefix)]
+    for name in dropped:
+        del _REGISTRY[name]
+    return dropped
+
+
 def get_tool(name: str) -> ToolSpec | None:
     return _REGISTRY.get(name)
 
