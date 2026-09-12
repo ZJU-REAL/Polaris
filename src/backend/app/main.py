@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
             await ensure_guidance_documents(session)
     except Exception:  # noqa: BLE001
         logger.warning("builtin skill seeding failed (migrations pending?)", exc_info=True)
-    # 学科包：把抽取 schema 的注册缝接到磁盘（内置包 + <data_dir>/packs/disciplines）。
+    # 学科包：把抽取 schema 的注册缝接到磁盘（内置包 + <data_dir>/disciplines）。
     # 纯文件读取、不碰数据库，所以不跟着上面的 DB 种子一起 try
     load_disciplines()
     # AI 起草流式镜像订阅（worker 发布 → 写活跃 CRDT 房间；连不上 redis 自动放弃）

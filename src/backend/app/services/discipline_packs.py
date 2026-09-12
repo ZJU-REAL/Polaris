@@ -21,7 +21,7 @@ protocol——这是机器学习论文的形状。一个做结构工程的人需
 
 ## 用户目录
 
-除了仓内的内置包，还读 ``<data_dir>/packs/disciplines/*.yaml``。这是 file-over-app
+除了仓内的内置包，还读 ``<data_dir>/disciplines/*.yaml``。这是 file-over-app
 的落点：用户自己写的学科包和他的 PDF、笔记放在一起，复制走就带走了。
 """
 
@@ -44,7 +44,9 @@ from app.services.extraction.schemas import (
 
 logger = logging.getLogger("polaris.disciplines")
 
-BUILTIN_DISCIPLINES_DIR = Path(__file__).resolve().parents[1] / "packs" / "disciplines"
+# 刻意不放在 app/packs/ 下：process_packs 用 rglob 递归扫那棵树，任何放进去的
+# 非流程包 YAML 都会被它当流程包解析并校验失败。两种包不共享一棵被递归扫描的树。
+BUILTIN_DISCIPLINES_DIR = Path(__file__).resolve().parents[1] / "disciplines"
 
 # 字段上限：既防着写坏的包，也防着 prompt 被撑爆——抽取是「整篇正文进、短 JSON 出」，
 # 字段太多太长会让模型顾此失彼，抽取质量反而掉。
@@ -162,8 +164,11 @@ def read_pack_file(path: Path) -> DisciplinePack:
 
 
 def user_disciplines_dir() -> Path:
-    """用户自己的学科包目录（file-over-app：与 PDF、笔记同处一棵树）。"""
-    return Path(get_settings().data_dir) / "packs" / "disciplines"
+    """用户自己的学科包目录（file-over-app：与 PDF、笔记同处一棵树）。
+
+    与内置目录同名同层级（disciplines/），两处路径形状一致，少一处要记的例外。
+    """
+    return Path(get_settings().data_dir) / "disciplines"
 
 
 def pack_dirs() -> list[Path]:

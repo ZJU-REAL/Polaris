@@ -5,7 +5,7 @@
 # 需要的是构件与材料、边界与载荷、分析手段、以及"拿什么验证的"。这个包不改一行代码
 # 就把方法卡换成他要的口径。
 #
-# 放进 <data_dir>/packs/disciplines/ 的同名文件会覆盖本包，所以用户可以从它改起。
+# 放进 <data_dir>/disciplines/ 的同名文件会覆盖本包，所以用户可以从它改起。
 name: structural
 title: 结构工程
 description: >-

@@ -121,7 +121,7 @@ def test_user_directory_packs_are_discovered(tmp_path, monkeypatch):
     from app.core.config import get_settings
 
     monkeypatch.setattr(get_settings(), "data_dir", str(tmp_path), raising=False)
-    user_dir = tmp_path / "packs" / "disciplines"
+    user_dir = tmp_path / "disciplines"
     user_dir.mkdir(parents=True)
     (user_dir / "mine.yaml").write_text(
         yaml.safe_dump(_minimal(name="mine"), allow_unicode=True), encoding="utf-8"
@@ -137,7 +137,7 @@ def test_a_broken_pack_does_not_stop_the_others(tmp_path, monkeypatch):
     from app.core.config import get_settings
 
     monkeypatch.setattr(get_settings(), "data_dir", str(tmp_path), raising=False)
-    user_dir = tmp_path / "packs" / "disciplines"
+    user_dir = tmp_path / "disciplines"
     user_dir.mkdir(parents=True)
     (user_dir / "broken.yaml").write_text("name: [this is not a mapping", encoding="utf-8")
     (user_dir / "good.yaml").write_text(
