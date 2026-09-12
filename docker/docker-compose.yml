@@ -34,6 +34,9 @@ services:
     env_file: ../.env
     environment:
       POLARIS_DATA_DIR: /srv/data   # PDF/产物写挂载卷，勿写进代码树（会触发 --watch 重载）
+      # 插件内核（#754）：api 是唯一被允许调它的人，密钥两边同一个
+      POLARIS_KERNEL_URL: http://kernel:8770
+      POLARIS_KERNEL_TOKEN: ${POLARIS_KERNEL_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,6 +69,20 @@ services:
       - appdata:/srv/data
       - tectonic-cache:/root/.cache/Tectonic   # tectonic 宏包缓存（与 api 共享）
 
+  # 插件内核宿主（#754）。**刻意不发布端口**：它只认共享密钥、不做用户认证，
+  # 认证在 api 那侧用 owner 守卫做（见 app/api/plugins.py）。端口一旦对外，
+  # 拿到密钥就等于拿到在服务端装插件的权限。
+  kernel:
+    image: ${POLARIS_IMAGE_PREFIX:-tricktreat}/polaris-kernel:${POLARIS_IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.kernel
+    restart: unless-stopped
+    environment:
+      POLARIS_KERNEL_TOKEN: ${POLARIS_KERNEL_TOKEN:?set POLARIS_KERNEL_TOKEN in .env}
+    volumes:
+      - kerneldata:/srv/data
+
   frontend:
     image: ${POLARIS_IMAGE_PREFIX:-tricktreat}/polaris-frontend:${POLARIS_IMAGE_TAG:-latest}
     build:
@@ -81,4 +98,5 @@ volumes:
   pgdata:
   redisdata:
   appdata:
+  kerneldata:
   tectonic-cache:

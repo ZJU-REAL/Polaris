@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     # 注意：前端拼 new-issue 链接用的是自己写死的 REPO_URL 常量，不读这里。
     github_repo: str = "ZJU-REAL/Polaris"
 
+    # ---- Plugin kernel (#754) ----
+    # 服务器形态下插件内核是独立的 Node 进程（compose 服务 kernel，不发布端口）。
+    # 后端只做代理：浏览器带会话打后端，后端用 owner 守卫判权限，通过后带共享密钥
+    # 转发到内核。两个值都为空 = 这个部署没接内核，plugins.* 整族按不可用处理。
+    kernel_url: str | None = None
+    kernel_token: str | None = None
+
     # ---- Database / Cache ----
     # 默认回退 sqlite+aiosqlite，便于无 docker 的本地开发与测试；生产用 postgresql+asyncpg
     database_url: str = "sqlite+aiosqlite:///./polaris_dev.db"

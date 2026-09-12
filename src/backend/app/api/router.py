@@ -31,6 +31,7 @@ from app.api import (
     notes,
     paper_assets,
     papers,
+    plugins,
     presentations,
     projects,
     publications,
@@ -92,3 +93,4 @@ api_router.include_router(evidence.router)
 api_router.include_router(experiments.router)
 api_router.include_router(manuscripts.router)
 api_router.include_router(export.router)
+api_router.include_router(plugins.router)
