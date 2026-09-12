@@ -391,6 +391,25 @@ def require_source(source_id: str, *, client: Any | None = None) -> Any:
     return adapter
 
 
+def sources_with_capability(
+    capability: str, *, clients: dict[str, Any] | None = None
+) -> list[tuple[str, Any]]:
+    """按注册顺序给出实现了某项能力的源（id, adapter）。
+
+    能力模型见模块头：search 必选，其余按源实现、调用方 hasattr 探测。此前每个
+    旁路调用点都是自己写死一个源 id 去取适配器——「谁能干这件事」这个问题于是
+    散落在各处，加一个源要改所有调用点。这里把探测收成一处。
+
+    ``clients`` 让调用方沿用自己的客户端注入缝（daily_feed 的 get_arxiv_client 等）。
+    """
+    found: list[tuple[str, Any]] = []
+    for source_id in _SPECS:
+        adapter = get_source(source_id, client=(clients or {}).get(source_id))
+        if adapter is not None and hasattr(adapter, capability):
+            found.append((source_id, adapter))
+    return found
+
+
 def resolvers_for(kind: str) -> tuple[str, ...]:
     """能解析某类标识的源 id，按 resolve_priority 升序（= 级联尝试顺序）。
 
