@@ -41,7 +41,7 @@ import { BuddySettings } from './BuddySettings';
 import { ExtensionApiKeySettings } from './ExtensionApiKeySettings';
 import { FullExportSettings } from './FullExportSettings';
 import { PluginsSettings } from './PluginsSettings';
-import { CAPABILITY_PLUGINS_MANAGE, hasHost, isCapabilityAvailable, loadCapabilities } from '../../lib/host';
+import { CAPABILITY_PLUGINS_MANAGE, isCapabilityAvailable, loadCapabilities } from '../../lib/host';
 import { AdminSpeechSettings, PersonalSpeechSettings } from './SpeechSettings';
 
 /* ============================================================
@@ -2759,13 +2759,13 @@ export function SettingsPage() {
     param !== null && PERSONAL_TABS.includes(param as Tab) ? (param as Tab) : 'personal',
   );
 
-  // 「插件」tab 只在桌面端 plugins.manage 能力可用时出现。能力清单由 App.tsx
-  // 启动时异步拉取，本页可能先于它渲染完——这里自己再 loadCapabilities() 一次
-  // （主进程侧就是读内存清单，重复调用便宜）并在拿到结果后重读，避免首次进
-  // 设置页时 tab 闪失。web 端无桥，直接维持 false，零请求。
+  // 「插件」tab 在 plugins.manage 能力可用时出现——桌面端看主进程清单，服务器
+  // 形态（#754）看后端：接了内核且当前用户是主人才为真。能力清单由 App.tsx 启动时
+  // 异步拉取，本页可能先于它渲染完，这里再取一次并在拿到结果后重读，避免首次进
+  // 设置页时 tab 闪失。没接内核的部署探测失败即维持 false，页面上就没有这个 tab。
   const [pluginsAvailable, setPluginsAvailable] = useState(() => isCapabilityAvailable(CAPABILITY_PLUGINS_MANAGE));
   useEffect(() => {
-    if (pluginsAvailable || !hasHost()) return;
+    if (pluginsAvailable) return;
     let alive = true;
     void loadCapabilities().then(() => {
       if (alive) setPluginsAvailable(isCapabilityAvailable(CAPABILITY_PLUGINS_MANAGE));

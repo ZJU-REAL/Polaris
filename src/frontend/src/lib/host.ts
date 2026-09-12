@@ -46,6 +46,49 @@ function bridge(): HostBridge | undefined {
     : (window as unknown as { polaris?: HostBridge }).polaris;
 }
 
+/* —— 插件传输（#754）——
+   插件管理在两种形态下走两条完全不同的路：桌面经 Electron 桥直连主进程里的
+   内核；服务器经 /api/plugins/rpc 由后端判权限后转给内核进程。
+
+   只给 plugins.* 开这条 web 路，**不给 host.\***：那些（改服务器地址、开外链、
+   Dock 角标、装更新）在网页里本来就没有意义，让它们继续安全 no-op。所以这里
+   是独立的一层，而不是在 web 端伪造一个完整的 HostBridge。 */
+
+/** 后端是否真的能管插件（配了内核 + 当前用户是主人）。loadCapabilities 探测后置位。 */
+let webPlugins = false;
+
+function pluginsOverHttp(): boolean {
+  return !bridge() && webPlugins;
+}
+
+async function httpPluginInvoke(method: string, params?: unknown): Promise<unknown> {
+  const { getToken } = await import('./api');
+  const { apiBase } = await import('./endpoint');
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${apiBase()}/plugins/rpc`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ method, params }),
+  });
+  const body: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    // 后端把内核的方法错误原样透出（detail 里带 MarketError 的码），
+    // 抛成 Error 让调用方与桌面端同一套 try/catch 处理
+    const detail = (body as { detail?: string } | null)?.detail;
+    throw new Error(detail ?? `plugin rpc failed: ${res.status}`);
+  }
+  return body;
+}
+
+/** 插件调用的实际出口：桌面用 Electron 桥，服务器用后端代理，都没有则不可用。 */
+function pluginBridge(): { invoke(method: string, params?: unknown): Promise<unknown> } | undefined {
+  const b = bridge();
+  if (b) return b;
+  return pluginsOverHttp() ? { invoke: httpPluginInvoke } : undefined;
+}
+
 /** 桌面端平台标识；web 端返回 null。 */
 export function hostPlatform(): 'darwin' | 'win32' | 'linux' | null {
   const info = typeof window === 'undefined' ? undefined : window.__POLARIS__;
@@ -136,11 +179,35 @@ export async function engineBootstrapStatus(): Promise<EngineBootstrapStatus | n
 
 let manifest: CapabilityManifest | null = null;
 
-/** 拉一次能力清单并缓存；web 端返回 null。 */
+/**
+ * 拉一次能力清单并缓存。
+ *
+ * 桌面端问主进程要完整清单。web 端没有宿主，但服务器形态可能接了插件内核
+ * （#754）——能不能管插件不是前端能算出来的（要同时满足「部署接了内核」与
+ * 「当前用户是主人」），所以直接问后端：拿 kernel.status 探一次，成功即可用。
+ * 403（不是主人）/503（没接内核）/网络故障都折叠成不可用，前端因此不显示插件页。
+ */
 export async function loadCapabilities(): Promise<CapabilityManifest | null> {
   const b = bridge();
-  if (!b) return null;
-  manifest = (await b.invoke('host.capabilities')) as CapabilityManifest;
+  if (b) {
+    manifest = (await b.invoke('host.capabilities')) as CapabilityManifest;
+    return manifest;
+  }
+
+  webPlugins = false;
+  try {
+    await httpPluginInvoke('kernel.status');
+    webPlugins = true;
+  } catch {
+    return null;
+  }
+  // web 端只合成这一项：其余能力都是桌面宿主的事，这里没有也不该有
+  manifest = {
+    hostVersion: 'server',
+    platform: 'web',
+    contract: 1,
+    capabilities: { [CAPABILITY_PLUGINS_MANAGE]: { available: true } },
+  };
   return manifest;
 }
 
@@ -149,9 +216,9 @@ export function isCapabilityAvailable(capability: string): boolean {
   return manifest?.capabilities[capability]?.available === true;
 }
 
-/** 供 invoke 的通用出口（host-jobs 等内部模块用）。 */
+/** 供 invoke 的通用出口（host-jobs 等内部模块用）。web 端只有插件这一条路。 */
 export async function invokeHost(method: string, params?: unknown): Promise<unknown> {
-  const b = bridge();
+  const b = pluginBridge();
   if (!b) throw new Error('desktop host unavailable');
   return await b.invoke(method, params);
 }
@@ -185,12 +252,40 @@ export async function applyUpdate(): Promise<{ jobId: string } | null> {
   return (await b.invoke('host.update.apply')) as { jobId: string };
 }
 
-/** 订阅宿主事件，返回取消订阅函数（web 端返回 no-op）。 */
+/**
+ * 订阅宿主事件，返回取消订阅函数。
+ *
+ * 桌面走 Electron 桥。服务器形态下唯一存在的事件就是插件安装的 job.*，
+ * 从后端的 SSE 中继（/plugins/events）取——所以 invokeJob 与市场页的进度条
+ * 两边同一套代码。没接内核的部署仍是 no-op、零请求。
+ */
 export function onHostEvent(handler: (event: HostEvent) => void): () => void {
   const b = bridge();
-  if (!b) return () => {};
-  const id = b.subscribe(handler);
-  return () => b.unsubscribe(id);
+  if (b) {
+    const id = b.subscribe(handler);
+    return () => b.unsubscribe(id);
+  }
+  if (!pluginsOverHttp()) return () => {};
+
+  let stop: (() => void) | null = null;
+  let cancelled = false;
+  void import('./sse').then(({ subscribeSse }) => {
+    if (cancelled) return;
+    stop = subscribeSse('/plugins/events', {
+      onEvent: (_event: string, data: string) => {
+        // 坏帧不该掀翻订阅：安装进度丢一条无所谓，收尾的 job.done/error 会给结论
+        try {
+          handler(JSON.parse(data) as HostEvent);
+        } catch {
+          /* ignore malformed frame */
+        }
+      },
+    });
+  });
+  return () => {
+    cancelled = true;
+    stop?.();
+  };
 }
 
 /* —— 插件管理（plugins.*，#705；contract.ts 的手工镜像）——
@@ -237,21 +332,21 @@ export interface PluginTreeExport {
 
 /** 全部插件条目 + 运行态；web 端返回 null。 */
 export async function listPlugins(): Promise<PluginEntryInfo[] | null> {
-  const b = bridge();
+  const b = pluginBridge();
   if (!b) return null;
   return (await b.invoke('plugins.list')) as PluginEntryInfo[];
 }
 
 /** 启用插件，返回变更后的条目；启动失败时抛错（主进程侧树已回滚）。 */
 export async function enablePlugin(id: string): Promise<PluginEntryInfo | null> {
-  const b = bridge();
+  const b = pluginBridge();
   if (!b) return null;
   return (await b.invoke('plugins.enable', { id })) as PluginEntryInfo;
 }
 
 /** 禁用插件（fiber 级联回收），返回变更后的条目。 */
 export async function disablePlugin(id: string): Promise<PluginEntryInfo | null> {
-  const b = bridge();
+  const b = pluginBridge();
   if (!b) return null;
   return (await b.invoke('plugins.disable', { id })) as PluginEntryInfo;
 }
@@ -261,7 +356,7 @@ export async function updatePluginConfig(
   id: string,
   config: Record<string, unknown>,
 ): Promise<PluginValidationResult | null> {
-  const b = bridge();
+  const b = pluginBridge();
   if (!b) return null;
   return (await b.invoke('plugins.updateConfig', { id, config })) as PluginValidationResult;
 }
@@ -271,21 +366,21 @@ export async function validatePluginConfig(
   name: string,
   config: Record<string, unknown>,
 ): Promise<PluginValidationResult | null> {
-  const b = bridge();
+  const b = pluginBridge();
   if (!b) return null;
   return (await b.invoke('plugins.validateConfig', { name, config })) as PluginValidationResult;
 }
 
 /** 导出整棵配置树（备份/迁移）；web 端返回 null。 */
 export async function exportPluginTree(): Promise<PluginTreeExport | null> {
-  const b = bridge();
+  const b = pluginBridge();
   if (!b) return null;
   return (await b.invoke('plugins.exportTree')) as PluginTreeExport;
 }
 
 /** 全量替换整树。主进程导入前自动留 last-good 快照、失败回滚。 */
 export async function importPluginTree(tree: PluginTreeExport): Promise<void> {
-  await bridge()?.invoke('plugins.importTree', { tree });
+  await pluginBridge()?.invoke('plugins.importTree', { tree });
 }
 
 /* —— 插件市场（plugins.market.*，#708；contract.ts 的手工镜像）——
@@ -317,7 +412,7 @@ export type MarketUninstallResult =
 
 /** 拉取市场索引（源地址是主进程的持久配置）；web 端返回 null。 */
 export async function fetchMarketIndex(): Promise<MarketIndexEntry[] | null> {
-  const b = bridge();
+  const b = pluginBridge();
   if (!b) return null;
   return (await b.invoke('plugins.market.fetchIndex')) as MarketIndexEntry[];
 }
@@ -328,7 +423,7 @@ export async function installMarketPlugin(
   name: string,
   version: string,
 ): Promise<{ jobId: string } | null> {
-  const b = bridge();
+  const b = pluginBridge();
   if (!b) return null;
   return (await b.invoke('plugins.market.install', { name, version })) as { jobId: string };
 }
@@ -337,21 +432,21 @@ export async function installMarketPlugin(
     name 收 npm 包名或树条目 id 皆可（kernel 侧双解析）——前端列表里
     可靠可得的只有条目 id，传 id 即可。 */
 export async function uninstallMarketPlugin(name: string): Promise<MarketUninstallResult | null> {
-  const b = bridge();
+  const b = pluginBridge();
   if (!b) return null;
   return (await b.invoke('plugins.market.uninstall', { name })) as MarketUninstallResult;
 }
 
 /** 当前索引源；web 端返回 null。 */
 export async function getMarketEndpoint(): Promise<MarketEndpoint | null> {
-  const b = bridge();
+  const b = pluginBridge();
   if (!b) return null;
   return (await b.invoke('plugins.market.getEndpoint')) as MarketEndpoint;
 }
 
 /** 设置索引源；空串复位官方默认源。 */
 export async function setMarketEndpoint(endpoint: string): Promise<MarketEndpoint | null> {
-  const b = bridge();
+  const b = pluginBridge();
   if (!b) return null;
   return (await b.invoke('plugins.market.setEndpoint', { endpoint })) as MarketEndpoint;
 }
