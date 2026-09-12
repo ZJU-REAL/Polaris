@@ -12,6 +12,14 @@ export {
   type NotificationHandler,
   type RpcHandler,
 } from './rpc/jsonrpc.ts'
+export { JobBus, type JobEvent } from './rpc/jobs.ts'
+export {
+  MARKET_ENDPOINT_META_KEY,
+  createMarketMethods,
+  type MarketEndpointInfo,
+  type MarketMethods,
+  type MarketRpcDeps,
+} from './rpc/market-methods.ts'
 export {
   ERR_CAPABILITY_UNAVAILABLE,
   ERR_INVALID_PARAMS,

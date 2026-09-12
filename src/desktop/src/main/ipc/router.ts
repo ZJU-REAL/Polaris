@@ -50,6 +50,9 @@ const HANDLERS: Record<MethodName, Handler> = {
   // 传输共用同一份；能力门槛（树不可达 → ERR_CAPABILITY_UNAVAILABLE）也在那里。
   // 摊在最前面：下面的具名键是桌面独有的，任何重名都该以具名的为准。
   ...plugins.pluginMethods,
+  // plugins.market.*（#708）：守卫与语义同样在 kernel（#754）；包名/版本的
+  // 语义校验本来就在安装引擎里，这一层只管形状
+  ...market.marketMethods,
   'host.info': () => host.hostInfo(),
   'host.setServerUrl': (p) => host.setServerUrl(asString(p, 'url')),
   'host.testServer': (p) => host.testServer(asString(p, 'url')),
@@ -62,13 +65,6 @@ const HANDLERS: Record<MethodName, Handler> = {
   'kernel.status': () => kernelStatus(),
   'kernel.localBackend': () => localBackend(),
   'kernel.engineBootstrapStatus': () => engineBootstrapStatus(),
-  // plugins.market.*（#708）：包名/版本的语义校验（合法 npm 名、无路径字符）
-  // 在 kernel 的安装引擎里，这里只做 IPC 形状
-  'plugins.market.fetchIndex': () => market.marketFetchIndex(),
-  'plugins.market.install': (p) => market.marketInstall(asString(p, 'name'), asString(p, 'version')),
-  'plugins.market.uninstall': (p) => market.marketUninstall(asString(p, 'name')),
-  'plugins.market.getEndpoint': () => market.marketGetEndpoint(),
-  'plugins.market.setEndpoint': (p) => market.marketSetEndpoint(asString(p, 'endpoint')),
   // 取消是 main 内的簿记（events.ts 的 job 注册表），不涉及任何外部进程
   'local.job.cancel': (p) => cancelJob(asString(p, 'jobId')),
 };

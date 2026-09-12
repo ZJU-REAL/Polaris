@@ -1,74 +1,36 @@
 /* ============================================================
-   plugins.market.* 的实现（#708）：市场索引 + 安装/卸载 + 源配置。
+   plugins.market.* 在桌面侧的绑定（#708，#754 起实现搬进 kernel）。
 
-   语义全部住在 kernel（@polaris/kernel 的 market/）里，这里只负责：
-   - 能力门槛：与 plugins.* 同一事实源（kernelConfigTree），install/
-     uninstall 额外要求 pluginMeta 在位——安装记录进不了持久层，装载前
-     哈希复核链路就是断的，宁可拒装也不装出「无记录安装物」；
-   - install 的长任务化：invoke 立刻返回 JobHandle，kernel 的四个安装
-     阶段（下载/校验/解压/登记）翻译成 job.progress，成败走 job.done/
-     job.error（错误码用 MarketError.code，前端可分流展示）；
-   - 索引源持久化（#737 配置分层）：市场源配置的是 kernel 的行为（索引
-     从哪拉、装什么包），归内核持久层——存 PluginMetaStore（kernel 的
-     SQLite KV）键 'market:endpoint'。旧 electron store 的 marketEndpoint
-     只作读穿回退：KV 无值时读旧 store，非默认值顺手迁移写入 KV（一期
-     后删）。KV 不可用的降级会话（storage 挂载失败）退回旧 store，壳的
-     换源能力不因持久层故障消失。空串复位官方默认。
+   语义与守卫都住在 @polaris/kernel 的 rpc/market-methods.ts，服务器形态用
+   的是同一份。这里只接三样桌面独有的东西：
 
-   fetch 经模块级变量注入：smoke 测试把它换成离线替身跑完整安装链路，
-   生产路径永远是 globalThis.fetch（不换源不叠代理，网络语义与索引
-   拉取保持一致）。
+   - 宿主句柄（树 / 持久层 / 安装物目录）——都是模块级单例，传函数现读；
+   - job 事件的落点——桌面经 webContents 推给渲染进程（events.ts）；
+   - 旧 electron store 的索引源读穿——一次性迁移，服务器没有这回事，
+     所以在 kernel 那边是可选依赖。
+
+   fetch 替身仍由本模块持有：冒烟把它换成离线实现跑完整安装链路，
+   生产路径永远是 globalThis.fetch。
    ============================================================ */
 
 import {
-  MarketError,
-  fetchIndex,
-  installAndRegister,
-  uninstallAndRemove,
+  MARKET_ENDPOINT_META_KEY as KERNEL_MARKET_ENDPOINT_META_KEY,
+  OFFICIAL_INDEX_URL,
+  createMarketMethods,
   type FetchImpl,
-  type SqliteTree,
+  type RpcMethod,
 } from '@polaris/kernel';
 
 import {
-  ERR_CAPABILITY_UNAVAILABLE,
-  ERR_INVALID_PARAMS,
   MARKET_ENDPOINT_DEFAULT,
-  type JobHandle,
   type MarketEndpoint,
   type MarketIndexEntry,
   type MarketUninstallResult,
+  type MethodName,
 } from '../../shared/contract';
 import { kernelConfigTree, kernelPluginMeta, marketPluginsDir } from '../kernel';
 import { readConfig, writeConfig } from '../store';
-import { fail, finish, progress, startJob } from './events';
-
-/** 市场索引源在 kernel 持久层（PluginMetaStore）里的键（#737）。 */
-export const MARKET_ENDPOINT_META_KEY = 'market:endpoint';
-
-/** 当前生效的索引源：优先 kernel KV，读穿旧 electron store（见文件头）。 */
-function readEndpoint(): string {
-  const meta = kernelPluginMeta();
-  const stored = meta?.get(MARKET_ENDPOINT_META_KEY);
-  if (typeof stored === 'string' && stored) return stored;
-  const legacy = readConfig().marketEndpoint;
-  // 迁移写入只搬「用户改过源」这个事实；默认值不落 KV，让「从未配置」
-  // 与「显式选了官方源」保持可区分（也避免每次读都白写一行）。
-  if (meta && legacy !== MARKET_ENDPOINT_DEFAULT) meta.set(MARKET_ENDPOINT_META_KEY, legacy);
-  return legacy;
-}
-
-function writeEndpoint(endpoint: string): void {
-  const meta = kernelPluginMeta();
-  if (meta) {
-    meta.set(MARKET_ENDPOINT_META_KEY, endpoint);
-    return;
-  }
-  // 持久层不可用（内存树会话）：退回旧 store，至少本机仍能换源
-  writeConfig({ marketEndpoint: endpoint });
-}
-
-/** 安装阶段 → job.progress 的进度分子（分母恒为 4）。 */
-const PHASE_STEP: Record<string, number> = { download: 1, verify: 2, extract: 3, register: 4 };
+import { jobBus } from './events';
 
 let fetchImpl: FetchImpl | undefined;
 
@@ -77,86 +39,57 @@ export function setMarketFetchForTesting(impl: FetchImpl | undefined): void {
   fetchImpl = impl;
 }
 
+const market = createMarketMethods({
+  configTree: () => kernelConfigTree(),
+  pluginMeta: () => kernelPluginMeta(),
+  pluginsDir: () => marketPluginsDir(),
+  jobs: jobBus,
+  fetchImpl: () => fetchImpl,
+  legacyEndpoint: {
+    read: () => readConfig().marketEndpoint,
+    write: (endpoint) => writeConfig({ marketEndpoint: endpoint }),
+  },
+});
+
+type MarketMethodName = Extract<MethodName, `plugins.market.${string}`>;
+
+export const marketMethods = market.methods as Record<MarketMethodName, RpcMethod>;
+
 /** 尚未落定的安装任务，仅供 smoke 等待 job 收尾（生产走 job.* 事件）。 */
-const pendingInstalls = new Map<string, Promise<void>>();
-
 export function awaitInstallForTesting(jobId: string): Promise<void> {
-  return pendingInstalls.get(jobId) ?? Promise.resolve();
+  return market.awaitInstall(jobId);
 }
 
-function requireMarket(): { tree: SqliteTree; meta: NonNullable<ReturnType<typeof kernelPluginMeta>> } {
-  const tree = kernelConfigTree();
-  if (!tree) {
-    throw new Error(`${ERR_CAPABILITY_UNAVAILABLE}: plugins.manage — kernel 配置树不可用`);
-  }
-  const meta = kernelPluginMeta();
-  if (!meta) {
-    // storage 挂载失败的内存树会话：没有持久层就没有安装记录，
-    // 哈希复核无从谈起，市场写操作整体不可用
-    throw new Error(`${ERR_CAPABILITY_UNAVAILABLE}: plugins.market — 持久层不可用，无法记录安装`);
-  }
-  return { tree, meta };
-}
+/* 具名直调入口：冒烟在主进程内不经 IPC 驱动这几个方法。 */
 
-export async function marketFetchIndex(): Promise<MarketIndexEntry[]> {
-  // 读索引不需要树/持久层，网络与校验失败原样抛给前端展示
-  return await fetchIndex(readEndpoint(), { fetchImpl });
-}
-
-export function marketInstall(name: string, version: string): JobHandle {
-  const { tree, meta } = requireMarket(); // 门槛在返回 JobHandle 之前查：装不了就立刻报错
-  const jobId = startJob('plugins.market.install');
-  const run = (async () => {
-    try {
-      const { entryId, record } = await installAndRegister({
-        name,
-        version,
-        pluginsDir: marketPluginsDir(),
-        fetchImpl,
-        tree,
-        metaStore: meta,
-        onPhase: (phase) => progress(jobId, phase, PHASE_STEP[phase] ?? 0, 4),
-      });
-      finish(jobId, { entryId, name: record.name, version: record.version });
-    } catch (err) {
-      // MarketError.code 透传给前端分流（integrity-mismatch / registry-http…）
-      const code = err instanceof MarketError ? err.code : 'install-failed';
-      fail(jobId, code, err instanceof Error ? err.message : String(err));
-    } finally {
-      pendingInstalls.delete(jobId);
-    }
-  })();
-  pendingInstalls.set(jobId, run);
-  return { jobId };
-}
-
-export async function marketUninstall(name: string): Promise<MarketUninstallResult> {
-  const { tree, meta } = requireMarket();
-  return await uninstallAndRemove({
-    name,
-    pluginsDir: marketPluginsDir(),
-    tree,
-    metaStore: meta,
-  });
+export function marketFetchIndex(): Promise<MarketIndexEntry[]> {
+  return marketMethods['plugins.market.fetchIndex'](undefined) as Promise<MarketIndexEntry[]>;
 }
 
 export function marketGetEndpoint(): MarketEndpoint {
-  const endpoint = readEndpoint();
-  return { endpoint, isDefault: endpoint === MARKET_ENDPOINT_DEFAULT };
+  return marketMethods['plugins.market.getEndpoint'](undefined) as MarketEndpoint;
 }
 
 export function marketSetEndpoint(endpoint: string): MarketEndpoint {
-  // 空串 = 复位默认源（UI 的「恢复官方源」不需要知道默认值是什么）
-  const next = endpoint === '' ? MARKET_ENDPOINT_DEFAULT : endpoint;
-  let parsed: URL;
-  try {
-    parsed = new URL(next);
-  } catch {
-    throw new Error(`${ERR_INVALID_PARAMS}: endpoint must be a valid URL`);
-  }
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    throw new Error(`${ERR_INVALID_PARAMS}: endpoint must be http(s)`);
-  }
-  writeEndpoint(next);
-  return { endpoint: next, isDefault: next === MARKET_ENDPOINT_DEFAULT };
+  return marketMethods['plugins.market.setEndpoint']({ endpoint }) as MarketEndpoint;
+}
+
+// 默认索引源的字面量在两处各有一份：kernel 的 OFFICIAL_INDEX_URL（isDefault
+// 判定用它）与渲染层契约的 MARKET_ENDPOINT_DEFAULT。两边漂了的话，「恢复官方源」
+// 会写进一个前端永远认不出是默认值的地址——安静地坏掉。启动即对账，宁可炸在这里。
+if (MARKET_ENDPOINT_DEFAULT !== OFFICIAL_INDEX_URL) {
+  throw new Error(
+    `market endpoint default drifted: contract=${MARKET_ENDPOINT_DEFAULT} kernel=${OFFICIAL_INDEX_URL}`,
+  );
+}
+
+/** 市场索引源在持久层里的键；冒烟直接查这一行，从 kernel 转出保持单一来源。 */
+export const MARKET_ENDPOINT_META_KEY = KERNEL_MARKET_ENDPOINT_META_KEY;
+
+export function marketInstall(name: string, version: string): { jobId: string } {
+  return marketMethods['plugins.market.install']({ name, version }) as { jobId: string };
+}
+
+export function marketUninstall(name: string): Promise<MarketUninstallResult> {
+  return marketMethods['plugins.market.uninstall']({ name }) as Promise<MarketUninstallResult>;
 }
