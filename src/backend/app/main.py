@@ -18,6 +18,7 @@ from app.mcp import mcp_router
 from app.services.builtin_agent_skills import ensure_builtin_agent_skills
 from app.services.crdt_rooms import reset_crdt_rooms
 from app.services.crdt_stream import get_crdt_stream_subscriber, stop_crdt_stream_subscriber
+from app.services.discipline_packs import load_disciplines
 from app.services.interdisciplinary_workflows import ensure_guidance_documents
 from app.services.skills import ensure_builtin_skills
 
@@ -43,6 +44,9 @@ async def lifespan(app: FastAPI):
             await ensure_guidance_documents(session)
     except Exception:  # noqa: BLE001
         logger.warning("builtin skill seeding failed (migrations pending?)", exc_info=True)
+    # 学科包：把抽取 schema 的注册缝接到磁盘（内置包 + <data_dir>/packs/disciplines）。
+    # 纯文件读取、不碰数据库，所以不跟着上面的 DB 种子一起 try
+    load_disciplines()
     # AI 起草流式镜像订阅（worker 发布 → 写活跃 CRDT 房间；连不上 redis 自动放弃）
     get_crdt_stream_subscriber().start()
     yield

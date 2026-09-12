@@ -51,6 +51,10 @@ class DirectionLibrary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(24), default="standard", server_default="standard", nullable=False
     )
     interdisciplinary_domains: Mapped[list[str] | None] = mapped_column(JSONVariant)
+    # 学科包名（app/packs/disciplines 或 <data_dir>/packs/disciplines 里的 name）。
+    # 不是展示用的标签，是**抽取口径的选择**：本库的论文除了内置 schema，还按这个
+    # 学科包的 schema 抽一遍。为空 = 只用跨学科通用的内置 schema。
+    discipline: Mapped[str | None] = mapped_column(String(64))
     interdisciplinary_project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("projects.id", ondelete="SET NULL"), index=True
     )

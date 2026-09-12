@@ -64,6 +64,11 @@ class ExtractionSchema:
     #   按 extract_skeleton 的路由调用，再没有就跟随 default。
     #   要自定 tier/fallback，先自行调用 router.register_plugin_stage 再 register_schema。
     stage: str = "extract_skeleton"
+    #: 来自哪个学科包；None = 内置（跨学科通用）。
+    #: 这不是标签，是**作用范围**：内置 schema 对所有论文都抽，学科 schema 只在
+    #: 声明了该学科的文献库里抽。否则装一个学科包就等于给每篇论文——包括别的
+    #: 学科的——多加一次 LLM 抽取，代价随装包数线性上涨而收益为零。
+    pack: str | None = None
 
     def field_spec_text(self) -> str:
         """字段清单的自然语言描述（进 prompt，确定性生成，与 fields 永不漂移）。"""
@@ -226,6 +231,23 @@ def get_schema(schema_id: str) -> ExtractionSchema:
 
 def list_schemas() -> list[ExtractionSchema]:
     return list(_REGISTRY.values())
+
+
+def builtin_schemas() -> list[ExtractionSchema]:
+    """跨学科通用的 schema（pack 为 None）：任何论文都抽这些。"""
+    return [s for s in _REGISTRY.values() if s.pack is None]
+
+
+def schemas_for(discipline: str | None) -> list[ExtractionSchema]:
+    """某个学科下该抽的全部 schema = 内置 + 该学科包自己的。
+
+    discipline 为 None（库没声明学科，或个人书架导入没有库上下文）时只有内置——
+    学科包必须由库显式选用才生效，装上不等于到处生效。
+    """
+    out = builtin_schemas()
+    if discipline:
+        out += [s for s in _REGISTRY.values() if s.pack == discipline]
+    return sorted(out, key=lambda item: item.id)
 
 
 register_schema(SKELETON_SCHEMA)

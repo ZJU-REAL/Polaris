@@ -1,0 +1,56 @@
+# 结构工程学科包（示例，同时是写自己学科包的模板）。
+#
+# 存在的意义不是"多支持一个学科"，而是证明那条路是通的：内置方法卡 method@1 抽的是
+# purpose / mechanism / baseline / dataset / protocol——机器学习论文的形状。做结构的人
+# 需要的是构件与材料、边界与载荷、分析手段、以及"拿什么验证的"。这个包不改一行代码
+# 就把方法卡换成他要的口径。
+#
+# 放进 <data_dir>/packs/disciplines/ 的同名文件会覆盖本包，所以用户可以从它改起。
+name: structural
+title: 结构工程
+description: >-
+  面向结构/土木方向的抽取口径：把论文的做法按「结构对象 — 作用 — 分析手段 — 验证」
+  拆开，替代以数据集与基线为中心的机器学习口径。
+
+schemas:
+  # 方法卡的结构工程版。字段与内置 method@1 一一对位但换了轴：
+  #   purpose/mechanism  → 保留（这两根轴是跨学科的，方法库的类比检索靠它们）
+  #   baseline/dataset   → 换成 validation/structure（结构领域没有"数据集"这回事，
+  #                        对应物是"拿什么算例或试验验证的"）
+  #   protocol           → 换成 analysis（分析类型、求解器、网格/单元、时间步）
+  - id: method
+    version: 1
+    prompt: |
+      POLARIS_EXTRACT_METHOD
+      你是结构工程论文的方法卡抽取器。根据给定论文的标题与正文，把它的做法拆成方法卡，
+      全部字段用中文表述（专有名词、软件名、规范号保留原文）：
+      {fields_spec}
+      其中 "purpose" 只写这项工作要解决的结构问题（不写怎么做）；
+      "mechanism" 只写解决它的核心手段（不复述目标）；
+      "structure" 写研究对象的构件形式与材料（如「钢-混组合梁，Q355 + C40」）；
+      "actions" 写考虑的作用与工况（如「爆炸冲击」「地震动，El Centro」「疲劳荷载」）；
+      "analysis" 写分析手段与关键设置（如「显式动力学，LS-DYNA，六面体单元，1mm」）；
+      "validation" 写结论靠什么验证（如「1:2 缩尺落锤试验」「与规范 GB50017 对比」）。
+      只输出一个 JSON 对象，键为上述字段名，另加 "confidence"（0 到 1，
+      你对整份抽取的把握）。只依据原文，不引入外部知识。
+    fields:
+      - name: purpose
+        kind: text
+        max_len: 400
+      - name: mechanism
+        kind: text
+        max_len: 400
+      - name: structure
+        kind: text
+        max_len: 400
+      - name: actions
+        kind: list
+        max_len: 200
+        max_items: 5
+      - name: analysis
+        kind: text
+        max_len: 600
+      - name: validation
+        kind: list
+        max_len: 200
+        max_items: 5
