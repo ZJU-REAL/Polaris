@@ -32,7 +32,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.library_direction import LibraryPaper
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper
 from app.models.paper_extraction import PaperExtraction
 from app.models.vectors import MethodVector
@@ -40,6 +40,28 @@ from app.models.vectors import MethodVector
 logger = logging.getLogger(__name__)
 
 METHOD_SCHEMA_ID = "method"
+
+#: 学科包里参与方法库的那条 schema 的约定名：``<包名>.method``。
+#: 方法库的「同目的异机制」检索骑在 purpose / mechanism 两根轴上，这两根轴是跨学科的；
+#: 学科包换掉的是其余字段（结构工程换成构件/载荷/分析/验证）。
+DISCIPLINE_METHOD_SUFFIX = ".method"
+
+
+async def method_schema_ids(session: AsyncSession, library_id: uuid.UUID | None) -> list[str]:
+    """这个库的方法卡该从哪些 schema 里取：内置 method@1 +（若声明了学科）该学科的。
+
+    不带学科时只有内置，行为与学科包出现之前完全一致。带学科时必须**并上**而不是
+    替换——一个库里往往既有该学科的论文，也有跨学科的综述，两种卡都得能检索到。
+    """
+    ids = [METHOD_SCHEMA_ID]
+    if library_id is None:
+        return ids
+    discipline = await session.scalar(
+        select(DirectionLibrary.discipline).where(DirectionLibrary.id == library_id)
+    )
+    if discipline:
+        ids.append(f"{discipline}{DISCIPLINE_METHOD_SUFFIX}")
+    return ids
 
 #: 双轴：进向量的两个 text 字段。list 字段（baseline/dataset）与 protocol 只做
 #: 展示与关键词降级，不进向量——它们是复现要素，不是语义轴。
@@ -76,10 +98,13 @@ async def refresh_paper_method_index(
     重抽可能把某根轴抽没了，幽灵向量会让这篇论文继续在该轴命中。嵌入不可用时
     抛 NotImplementedError（调用方按 skipped 处理），此时不动存量。
     """
+    # 学科库里这篇论文的方法卡可能是该学科的（structural.method 等）；
+    # 只认内置 id 会让学科卡抽出来了却索引不到——装了学科包等于没装
+    schema_ids = await method_schema_ids(session, library_id)
     row = await session.scalar(
         select(PaperExtraction).where(
             PaperExtraction.paper_id == paper.id,
-            PaperExtraction.schema_id == METHOD_SCHEMA_ID,
+            PaperExtraction.schema_id.in_(schema_ids),
         )
     )
     texts = _axis_texts(row.payload) if row is not None else {}
@@ -114,15 +139,19 @@ async def refresh_paper_method_index(
 async def _method_rows(
     session: AsyncSession, library_id: uuid.UUID
 ) -> list[tuple[Paper, PaperExtraction]]:
-    """库内（相关性达标、不含回收站）有 method@1 产物的论文，按入库时间倒序。"""
+    """库内（相关性达标、不含回收站）有方法卡的论文，按入库时间倒序。
+
+    方法卡 = 内置 method@1 或本库学科的方法卡（见 method_schema_ids）。
+    """
     from app.services.papers import PAPER_STATUS_GROUPS
 
+    schema_ids = await method_schema_ids(session, library_id)
     stmt = (
         select(Paper, PaperExtraction)
         .join(PaperExtraction, PaperExtraction.paper_id == Paper.id)
         .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
         .where(
-            PaperExtraction.schema_id == METHOD_SCHEMA_ID,
+            PaperExtraction.schema_id.in_(schema_ids),
             LibraryPaper.library_id == library_id,
             LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
         )

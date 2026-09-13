@@ -17,6 +17,8 @@ class DirectionLibrarySummary(BaseModel):
     name: str
     library_kind: str = "standard"
     interdisciplinary_domains: list[str] | None = None
+    # 学科包名：决定本库论文按哪套抽取 schema 走（None = 只用跨学科通用的内置）
+    discipline: str | None = None
     statement: str | None
     # 过渡期隐式库回指的课题；未来共享库可为 None
     project_id: uuid.UUID | None
@@ -103,6 +105,9 @@ class DirectionLibraryUpdate(BaseModel):
     in_scope: list[Any] | None = None
     out_of_scope: list[Any] | None = None
     questions: list[Any] | None = None
+    #: 学科包名。传 null 清空（回到只用内置 schema）；未知包名由 API 层拒绝，
+    #: 免得存进一个永远匹配不到任何 schema 的名字。
+    discipline: str | None = Field(default=None, max_length=64)
     # 共享开关（#619）：审批流移除后创建者直接设置「公开给所有人」；None = 不改
     is_public: bool | None = None
 

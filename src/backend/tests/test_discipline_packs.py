@@ -45,7 +45,11 @@ def _minimal(name: str = "demo", schema_id: str = "method") -> dict:
             {
                 "id": schema_id,
                 "prompt": "抽取：\n{fields_spec}\n只输出 JSON。",
-                "fields": [{"name": "purpose", "kind": "text", "max_len": 200}],
+                # method 卡必须带两根跨学科的检索轴，否则方法库索引不到
+                "fields": [
+                    {"name": "purpose", "kind": "text", "max_len": 200},
+                    {"name": "mechanism", "kind": "text", "max_len": 200},
+                ],
             }
         ],
     }
@@ -102,7 +106,8 @@ def test_duplicate_field_names_are_rejected():
 
 
 def test_entries_field_requires_entry_keys():
-    bad = _minimal(name="entriesbad")
+    # 用非 method 的 schema，免得撞上「method 必须带两根轴」那条约束
+    bad = _minimal(name="entriesbad", schema_id="gaps")
     bad["schemas"][0]["fields"] = [{"name": "items", "kind": "entries", "max_items": 3}]
     pack = dp.parse_pack(bad, origin="t")
     with pytest.raises(dp.DisciplinePackError):
@@ -188,3 +193,19 @@ def test_discipline_schema_does_not_leak_into_other_libraries():
 def test_builtin_schemas_carry_no_pack():
     for schema in schemas_for(None):
         assert schema.pack is None
+
+
+def test_discipline_method_card_must_carry_the_retrieval_axes():
+    """缺了 purpose/mechanism 不会报错，只会让方法卡检索不到——装了等于没装。"""
+    bad = _minimal(name="noaxes")
+    bad["schemas"][0]["fields"] = [{"name": "structure", "kind": "text", "max_len": 200}]
+    pack = dp.parse_pack(bad, origin="t")
+    with pytest.raises(dp.DisciplinePackError) as exc:
+        dp.register_pack(pack)
+    assert "purpose" in str(exc.value) and "mechanism" in str(exc.value)
+
+
+def test_non_method_schemas_are_free_to_use_any_fields():
+    """只有 method 那条参与方法库；别的 schema 不该被这条约束绑住。"""
+    pack = dp.parse_pack(_minimal(name="freeform", schema_id="gaps"), origin="t")
+    assert dp.register_pack(pack) == ["freeform.gaps"]

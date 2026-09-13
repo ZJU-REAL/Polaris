@@ -102,6 +102,7 @@
     "definition": {
       "statement": "Deterministic golden-transcript library for the hypothesis pipeline."
     },
+    "discipline": null,
     "id": "<uuid-2>",
     "interdisciplinary_domains": null,
     "is_mine": false,

@@ -386,6 +386,7 @@ def _overview_dict(
         "name": library.name,
         "library_kind": library.library_kind,
         "interdisciplinary_domains": library.interdisciplinary_domains,
+        "discipline": library.discipline,
         "statement": library.statement,
         "cadence": library.cadence,
         "monthly_budget": library.monthly_budget,
@@ -643,6 +644,9 @@ async def update_library(
         library.name = fields["name"]  # name 非空约束：显式 null/空串视为不改名
     if "monthly_budget" in fields:
         library.monthly_budget = fields["monthly_budget"]
+    if "discipline" in fields:
+        # 落标量列（不进 definition）：它不是收录配置，是抽取口径的选择
+        library.discipline = fields["discipline"] or None
     # 共享开关（#619）：审批流移除后由创建者直接设置；None（显式传 null）视为不改——
     # 这个开关没有「清空」语义，误清成 False 会把公共库悄悄藏起来。
     if fields.get("is_public") is not None:
