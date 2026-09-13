@@ -4,7 +4,8 @@
 流程包把流程定义收进 YAML：phases（引用注册表里的 action）+ checks/rubrics +
 loop 拓扑 + guidance 软知识。本期范围（其余按 deferral 决策明确不做）：
 
-- 只读内置包目录（``app/packs/``，file-over-app）；用户数据目录的包后续接入；
+- 包目录 = 内置 ``app/packs/`` + 用户 ``<data_dir>/packs/``（file-over-app），
+  同名时用户包覆盖内置；
 - ``gates`` / ``irreversible`` 字段进 schema 但**惰性**：IRB 类学科现实需要表达力，
   schema 先收下占位，引擎本期不消费（deferral 决策，见 #678）；预算闸门仍沿用
   params 开关（与原 plan 函数逐字节一致）；
@@ -15,6 +16,7 @@ loop 拓扑 + guidance 软知识。本期范围（其余按 deferral 决策明�
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -22,6 +24,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.models.voyage import VoyageRun
+
+logger = logging.getLogger("polaris.process_packs")
 
 # 内置包目录（随 app 包分发，见 pyproject [tool.setuptools.package-data]）
 BUILTIN_PACKS_DIR = Path(__file__).resolve().parents[1] / "packs"
@@ -121,20 +125,50 @@ def _read_pack_file(path: Path) -> ProcessPack:
         raise ProcessPackError(f"流程包 {path.name} schema 校验失败：{e}") from e
 
 
-def _load_all() -> dict[str, ProcessPack]:
-    """读入包目录下全部 YAML，按 name 索引。
+def user_packs_dir() -> Path:
+    """用户自己的流程包目录（file-over-app：与 PDF、笔记、学科包同处一棵树）。"""
+    from app.core.config import get_settings
 
-    不缓存：包是磁盘上的数据（file-over-app），目录很小，每次现读省掉
-    「改了包文件测试/进程还拿旧缓存」一整类坑。
+    return Path(get_settings().data_dir) / "packs"
+
+
+def _load_dir(directory: Path, *, strict: bool) -> dict[str, ProcessPack]:
+    """读一个目录下的全部 YAML。
+
+    ``strict`` 决定坏包的处置，这个不对称是有意的：
+    - 内置目录（strict）：坏包是**仓库的 bug**，早炸早知道；
+    - 用户目录（非 strict）：手写的包写坏了是常态，一个坏文件不该让别的包连同
+      整个实验流程一起停摆——跳过它并告警，其余照常。
     """
     packs: dict[str, ProcessPack] = {}
-    if not BUILTIN_PACKS_DIR.is_dir():
+    if not directory.is_dir():
         return packs
-    for path in sorted(BUILTIN_PACKS_DIR.rglob("*.yaml")):
-        pack = _read_pack_file(path)
+    for path in sorted(directory.rglob("*.yaml")):
+        try:
+            pack = _read_pack_file(path)
+        except ProcessPackError:
+            if strict:
+                raise
+            logger.warning("跳过无法解析的流程包：%s", path, exc_info=True)
+            continue
         if pack.name in packs:
             raise ProcessPackError(f"流程包重名 {pack.name!r}（{path.name}）")
         packs[pack.name] = pack
+    return packs
+
+
+def _load_all() -> dict[str, ProcessPack]:
+    """读入内置 + 用户目录下全部 YAML，按 name 索引。
+
+    不缓存：包是磁盘上的数据（file-over-app），目录很小，每次现读省掉
+    「改了包文件测试/进程还拿旧缓存」一整类坑。
+
+    同名时**用户包覆盖内置**：磁盘上的文件是真相，这是 file-over-app 的意思。
+    代价是用户可以覆盖 base/experiment（它与原 plan 函数逐字节一致、有 golden 护着），
+    但那是他显式放了一个同名文件的结果，可预测胜过替他做主。
+    """
+    packs = _load_dir(BUILTIN_PACKS_DIR, strict=True)
+    packs.update(_load_dir(user_packs_dir(), strict=False))
     return packs
 
 
