@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "c4a1d8e93b57"  # Manuscript CRDT state persistence (#347)
+HEAD_REVISION = "d7b2e4c81a35"  # Library declares its discipline (discipline packs)
+CRDT_STATE_REVISION = "c4a1d8e93b57"  # Manuscript CRDT state persistence (#347)
 SKILLS_CONVERGENCE_REVISION = "a5b9c3d7e1f2"  # Skill-system convergence step 1 (#741)
 HYGIENE_REVISION = "351c324f4f6b"  # Schema hygiene: retired columns + owner merge (#734)
 SETTINGS_REVISION = "b737c1a2d3e4"  # User-preference settings move to users.settings (#737)
@@ -188,6 +189,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
+    # 学科包：文献库声明学科，决定本库论文按哪套 schema 抽
+    assert "discipline" in columns["direction_libraries"]
     # 协同文档 CRDT 状态（#347）：房间重建靠它，不能只留纯文本投影
     assert "ydoc_state" in columns["manuscript_files"]
     # 列卫生（#734）：退役快照列与归属副本列在 head 已删
@@ -626,7 +629,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["paper_extractions"]
     assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
 
-    # 先退掉协同文档 CRDT 状态列（#347）。
+    # 先退掉文献库的学科列。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == CRDT_STATE_REVISION
+    assert "discipline" not in columns["direction_libraries"]
+
+    # 再退掉协同文档 CRDT 状态列（#347）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == SKILLS_CONVERGENCE_REVISION

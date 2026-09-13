@@ -307,11 +307,13 @@ async def enrich_paper(
     # best-effort（一个 schema 失败不拖垮其余）；runtime 对无全文论文如实 skip、
     # 不调 LLM——bibtex 导入等 golden 链路因此零输出零副作用。
     from app.services.extraction.runtime import extract_paper
-    from app.services.extraction.schemas import list_schemas
+    from app.services.extraction.schemas import schemas_for
     from app.services.method_index import METHOD_SCHEMA_ID, refresh_paper_method_index
 
     method_extracted = False
-    for schema in sorted(list_schemas(), key=lambda item: item.id):
+    # 内置 schema 对所有论文都抽；学科 schema 只在声明了该学科的库里抽（#754 后续：
+    # 学科包）。装一个学科包不该让别的学科的论文也多跑一次抽取。
+    for schema in schemas_for(getattr(target, "discipline", None)):
         try:
             outcome = await extract_paper(
                 session,
