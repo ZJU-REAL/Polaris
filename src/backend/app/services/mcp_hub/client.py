@@ -22,6 +22,8 @@ task 从头托到尾，其余 task 只借用已经建好的 session 发请求—
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -188,10 +190,10 @@ class McpSession:
         self._task = None
         if task is not None and not task.done():
             task.cancel()
-            try:
+            # 关闭路径不再抛：外部进程可能已经死了、传输可能半开，这些都不该让
+            # 「断开一台服务器」变成调用方要处理的异常
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001 — 关闭不再抛
-                pass
         self._session = None
 
 
@@ -212,8 +214,23 @@ def normalize_call_result(result: Any) -> dict[str, Any]:
         text = getattr(block, "text", None)
         if isinstance(text, str) and text:
             texts.append(text)
-    if texts and "text" not in payload:
-        payload["text"] = "\n".join(texts)
+    joined = "\n".join(texts)
+
+    if joined and not payload:
+        # 很多服务器**不填 structured_content**，把 JSON 直接放进文本块（实测官方
+        # SDK 的 MCPServer 对返回 dict 的工具就是如此）。不解析的话，求解器返回的
+        # {"displacement": 2.0} 对 agent 就只是一段字符串——它拿不到数值去做下一步
+        # 判断。只在解析出**对象**时展开：数组/标量没有可合并的键。
+        try:
+            parsed = json.loads(joined)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            payload.update(parsed)
+
+    if joined and "text" not in payload:
+        # 原文始终保留：人读的摘要、以及解析不出结构时的唯一线索
+        payload["text"] = joined
 
     if getattr(result, "is_error", False):
         payload["is_error"] = True

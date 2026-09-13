@@ -9,9 +9,10 @@
 
 import sys
 
-from mcp.server.fastmcp import FastMCP
+# mcp 2.x：FastMCP 更名为 MCPServer（SDK 的 ModuleNotFoundError 直接给了迁移指引）
+from mcp.server.mcpserver import MCPServer
 
-mcp = FastMCP("fake-cae")
+mcp = MCPServer("fake-cae")
 
 _state: dict[str, object] = {}
 

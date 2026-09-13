@@ -42,6 +42,12 @@ dependencies = [
 simulation = [
     "fmpy>=0.3.20",
 ]
+# 外部 MCP 服务器接入（对外调用方向）：让专业软件成为 agent 可调的工具。
+# 用官方 SDK 而不是自己实现协议——这条链路的全部价值就是与真实 MCP 服务器互通，
+# 手写客户端的兼容性风险正好抵消它的意义。
+mcp = [
+    "mcp>=2.2,<3",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
@@ -52,6 +58,8 @@ dev = [
     # 上界不是洁癖：ruff 进 CI 闸门后（#746），1.0 前的小版本会加新规则，
     # 不钉住就等于哪天 ruff 发版、所有不相干的 PR 一起变红。升版本是主动动作。
     "ruff>=0.8,<0.17",
+    # MCP 接入的测试要对着真的 SDK 服务器跑，不 mock 协议
+    "mcp>=2.2,<3",
 ]
 
 [tool.setuptools.packages.find]
