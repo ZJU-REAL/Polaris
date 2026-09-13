@@ -132,6 +132,16 @@ def _to_extraction_schema(pack: DisciplinePack, spec: PackSchema) -> ExtractionS
     names = [f.name for f in fields]
     if len(set(names)) != len(names):
         raise DisciplinePackError(f"{pack.name}.{spec.id}：字段重名 {names}")
+    # 名为 method 的 schema 参与方法库检索，而检索骑在 purpose / mechanism 两根
+    # 跨学科的轴上。缺了它们不会报错，只会让这个学科的方法卡抽出来、进了库、
+    # 却一条都检索不到——「装了等于没装」，而且毫无线索。宁可装载时就说清楚。
+    if spec.id == "method":
+        missing = {"purpose", "mechanism"} - set(names)
+        if missing:
+            raise DisciplinePackError(
+                f"{pack.name}.method 缺少方法库检索所需的轴：{sorted(missing)}。"
+                "这两根轴是跨学科的（同目的、异机制），学科包该换的是其余字段。"
+            )
 
     kwargs: dict[str, Any] = {
         "id": f"{pack.name}.{spec.id}",
@@ -214,3 +224,12 @@ def load_disciplines() -> dict[str, list[str]]:
     if loaded:
         logger.info("学科包已加载：%s", ", ".join(sorted(loaded)))
     return loaded
+
+
+def known_disciplines() -> set[str]:
+    """当前可选的学科包名（内置 + 用户目录）。
+
+    每次现扫而不是缓存：包是磁盘上的数据（file-over-app），用户丢一个 YAML 进去
+    就该能立刻选到，不必重启。目录很小，这点开销换掉「改了包还得重启」一整类困惑。
+    """
+    return {pack.name for pack in discover_packs()}

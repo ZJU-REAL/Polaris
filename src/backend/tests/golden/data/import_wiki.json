@@ -50,6 +50,7 @@
     "definition": {
       "statement": "Deterministic golden-transcript library covering reproducible plumbing."
     },
+    "discipline": null,
     "id": "<uuid-2>",
     "interdisciplinary_domains": null,
     "is_mine": false,

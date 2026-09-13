@@ -233,6 +233,35 @@ def list_schemas() -> list[ExtractionSchema]:
     return list(_REGISTRY.values())
 
 
+_disciplines_loaded = False
+
+
+def _ensure_disciplines_loaded() -> None:
+    """首次被问到 schema 时把学科包装进来（幂等）。
+
+    刻意**不**依赖启动钩子：抽取跑在 worker 进程里，而 worker 的 on_startup 与
+    API 的 lifespan 是两套入口。挂在其中一处就意味着另一处静默拿不到学科 schema
+    ——表现是「选了学科、抽取却没按那套口径走」，而且不会报任何错。谁问谁触发，
+    哪个进程都不会漏。
+
+    函数内 import：discipline_packs 反过来 import 本模块，顶层会成环。
+    """
+    global _disciplines_loaded
+    if _disciplines_loaded:
+        return
+    # 先置位再加载：加载失败不该让之后每次调用都重试一遍（日志会刷屏，且多半是
+    # 同一个坏包）。坏包本来就在 discover_packs 里被逐个跳过了。
+    _disciplines_loaded = True
+    try:
+        from app.services.discipline_packs import load_disciplines
+
+        load_disciplines()
+    except Exception:  # noqa: BLE001 — 学科包加载失败不该拖垮抽取本身
+        import logging
+
+        logging.getLogger("polaris.disciplines").warning("学科包加载失败", exc_info=True)
+
+
 def builtin_schemas() -> list[ExtractionSchema]:
     """跨学科通用的 schema（pack 为 None）：任何论文都抽这些。"""
     return [s for s in _REGISTRY.values() if s.pack is None]
@@ -244,6 +273,7 @@ def schemas_for(discipline: str | None) -> list[ExtractionSchema]:
     discipline 为 None（库没声明学科，或个人书架导入没有库上下文）时只有内置——
     学科包必须由库显式选用才生效，装上不等于到处生效。
     """
+    _ensure_disciplines_loaded()
     out = builtin_schemas()
     if discipline:
         out += [s for s in _REGISTRY.values() if s.pack == discipline]

@@ -334,6 +334,19 @@ async def update_library(
     """
     library = await _get_managed_library(session, library_id, user)
     fields = data.model_dump(exclude_unset=True)
+    # 学科名必须对应一个真的已装学科包：存一个匹配不到任何 schema 的名字，
+    # 表现是「选了学科但抽取口径没变」——看起来生效了，其实静默无效。
+    discipline = fields.get("discipline")
+    if discipline:
+        from app.services.discipline_packs import known_disciplines
+
+        available = known_disciplines()
+        if discipline not in available:
+            installed = ", ".join(sorted(available)) or "无"
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f"UNKNOWN_DISCIPLINE: {discipline}（已装：{installed}）",
+            )
     if fields:
         library = await libraries_service.update_library(session, library=library, fields=fields)
     row = await libraries_service.library_overview(session, library=library, user=user)
