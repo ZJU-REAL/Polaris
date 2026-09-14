@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d7b2e4c81a35"  # Library declares its discipline (discipline packs)
+HEAD_REVISION = "e8c3f1a92d40"  # External MCP server registry (#754)
+LIBRARY_DISCIPLINE_REVISION = "d7b2e4c81a35"  # Library declares its discipline
 CRDT_STATE_REVISION = "c4a1d8e93b57"  # Manuscript CRDT state persistence (#347)
 SKILLS_CONVERGENCE_REVISION = "a5b9c3d7e1f2"  # Skill-system convergence step 1 (#741)
 HYGIENE_REVISION = "351c324f4f6b"  # Schema hygiene: retired columns + owner merge (#734)
@@ -140,6 +141,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "skills",
                     "skill_listings",
                     "guidance_documents",
+                    "mcp_servers",
                     "buddy_memories",
                     "view_events",
                     "integration_tokens",
@@ -189,6 +191,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
+    # 外部 MCP 服务器登记（#754）：env 整体加密，命令可审计
+    assert {"slug", "transport", "env_encrypted", "enabled"} <= columns["mcp_servers"]
     # 学科包：文献库声明学科，决定本库论文按哪套 schema 抽
     assert "discipline" in columns["direction_libraries"]
     # 协同文档 CRDT 状态（#347）：房间重建靠它，不能只留纯文本投影
@@ -629,7 +633,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["paper_extractions"]
     assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
 
-    # 先退掉文献库的学科列。
+    # 先退掉外部 MCP 服务器登记表。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == LIBRARY_DISCIPLINE_REVISION
+    assert "mcp_servers" not in columns["_tables"]
+
+    # 再退掉文献库的学科列。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == CRDT_STATE_REVISION

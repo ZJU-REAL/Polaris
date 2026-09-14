@@ -39,6 +39,7 @@ from app.models.manuscript import (
     ManuscriptFileVersion,
     ManuscriptTemplate,
 )
+from app.models.mcp_server import McpServer
 from app.models.paper import (
     Concept,
     Paper,
@@ -90,6 +91,7 @@ __all__ = [
     "ExperimentRun",
     "Gate",
     "GuidanceDocument",
+    "McpServer",
     "HypothesisNode",
     "Idea",
     "InterdisciplinaryResearchProfile",
