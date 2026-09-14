@@ -120,11 +120,29 @@ class ComparisonTable:
 
 
 def _render_value(raw: object, kind: str) -> str | None:
-    """把抽取产物的一个字段拍成展示串：text 原样，list 用中文分号串起来。
+    """把抽取产物的一个字段拍成展示串：text 原样，list 用中文分号串起来，
+    entries 每条内部用「·」连、条与条之间用分号连。
 
-    拍成串而不是把 list 透传给前端：对比表和 CSV 导出都按「一格一段文字」
+    拍成串而不是把结构透传给前端：对比表和 CSV 导出都按「一格一段文字」
     消费，渲染口径收在后端一处，两端不会各拼各的。
+
+    entries 这一支是学科包带来的（合成包的 指标/数值/条件、临床包的 指标/效应量/
+    区间）。对比表原先不可能出现这个 kind——内置 skeleton 与 method 都没有——
+    所以缺这一支时它会掉进末尾的 ``str(raw)``，格子里出现 Python 的字面量
+    ``[{'metric': '产率', ...}]``，CSV 导出同样。
     """
+    if kind == "entries":
+        if not isinstance(raw, list) or not raw:
+            return None
+        rendered = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            # 键名不重复展示：列头已经说明这一行是什么，条目内部按声明序拼值即可
+            parts = [str(v).strip() for v in item.values() if str(v).strip()]
+            if parts:
+                rendered.append(" · ".join(parts))
+        return "；".join(rendered) or None
     if kind == "list":
         if not isinstance(raw, list) or not raw:
             return None

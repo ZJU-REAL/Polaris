@@ -479,3 +479,38 @@ async def test_the_gap_ledger_reads_a_disciplines_own_gap_card(client):
     async with get_sessionmaker()() as session:
         entries = await gap_ledger.library_gaps(session, library_id)
     assert [e.statement for e in entries] == ["接缝滞回规律未知"]
+
+
+def test_entries_fields_render_as_text_not_a_python_literal():
+    """学科包带来的 entries 字段（合成包的 指标/数值/条件）。缺这一支时它会掉进
+    末尾的 str(raw)，格子里出现 ``[{'metric': ...}]``，CSV 导出同样。"""
+    from app.services.comparison import _render_value
+
+    rendered = _render_value(
+        [
+            {"metric": "产率", "value": "82%", "condition": "1 M KOH"},
+            {"metric": "过电位", "value": "270 mV", "condition": "10 mA/cm²"},
+        ],
+        "entries",
+    )
+    assert rendered == "产率 · 82% · 1 M KOH；过电位 · 270 mV · 10 mA/cm²"
+    assert "{" not in rendered and "'" not in rendered
+
+
+def test_an_empty_entries_field_renders_as_absent():
+    from app.services.comparison import _render_value
+
+    assert _render_value([], "entries") is None
+    assert _render_value(None, "entries") is None
+    # 形状不对的老产物不该炸接口，也不该显示成半个字面量
+    assert _render_value(["not a dict"], "entries") is None
+
+
+def test_entries_skip_empty_keys_inside_one_item():
+    """临床包里「原文没报告区间就留空」是有意的：空键不该在格子里留一个孤零零的分隔符。"""
+    from app.services.comparison import _render_value
+
+    rendered = _render_value(
+        [{"measure": "全因死亡率", "effect": "HR 0.78", "interval": ""}], "entries"
+    )
+    assert rendered == "全因死亡率 · HR 0.78"
