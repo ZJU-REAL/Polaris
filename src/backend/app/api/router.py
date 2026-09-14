@@ -30,6 +30,7 @@ from app.api import (
     mcp_meta,
     notes,
     paper_assets,
+    mcp_servers,
     papers,
     plugins,
     presentations,
@@ -94,3 +95,4 @@ api_router.include_router(experiments.router)
 api_router.include_router(manuscripts.router)
 api_router.include_router(export.router)
 api_router.include_router(plugins.router)
+api_router.include_router(mcp_servers.router)
