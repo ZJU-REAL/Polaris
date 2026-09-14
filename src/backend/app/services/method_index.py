@@ -47,6 +47,16 @@ METHOD_SCHEMA_ID = "method"
 DISCIPLINE_METHOD_SUFFIX = ".method"
 
 
+def is_method_schema_id(schema_id: str) -> bool:
+    """这个 schema 产出的是方法卡吗——内置 ``method`` 或任一学科包的 ``<包名>.method``。
+
+    抽取侧靠它决定要不要刷双轴索引。写成 ``schema_id == METHOD_SCHEMA_ID`` 会漏掉
+    学科卡：库先导论文、之后才选学科时，内置卡是「已抽过」跳过、学科卡刚抽出来，
+    于是索引一次都不刷——那张卡没有向量，检索里等于不存在。
+    """
+    return schema_id == METHOD_SCHEMA_ID or schema_id.endswith(DISCIPLINE_METHOD_SUFFIX)
+
+
 async def method_schema_ids(session: AsyncSession, library_id: uuid.UUID | None) -> list[str]:
     """这个库的方法卡该从哪些 schema 里取：内置 method@1 +（若声明了学科）该学科的。
 
@@ -101,12 +111,23 @@ async def refresh_paper_method_index(
     # 学科库里这篇论文的方法卡可能是该学科的（structural.method 等）；
     # 只认内置 id 会让学科卡抽出来了却索引不到——装了学科包等于没装
     schema_ids = await method_schema_ids(session, library_id)
-    row = await session.scalar(
-        select(PaperExtraction).where(
-            PaperExtraction.paper_id == paper.id,
-            PaperExtraction.schema_id.in_(schema_ids),
+    rows = (
+        (
+            await session.execute(
+                select(PaperExtraction).where(
+                    PaperExtraction.paper_id == paper.id,
+                    PaperExtraction.schema_id.in_(schema_ids),
+                )
+            )
         )
+        .scalars()
+        .all()
     )
+    # 学科库里两张卡可能同时在表上（内置的 + 该学科的）。取哪一张进向量必须是**定的**：
+    # 不排序地取一行，同一篇论文在两次刷新之间可能换一张卡，检索结果随之漂移。
+    # method_schema_ids 从通用到具体排列，越靠后越具体——学科卡就是给这个库写的，优先它。
+    by_id = {row.schema_id: row for row in rows}
+    row = next((by_id[sid] for sid in reversed(schema_ids) if sid in by_id), None)
     texts = _axis_texts(row.payload) if row is not None else {}
 
     from app.services.embedding import embed_documents, upsert_method_vector
