@@ -389,6 +389,40 @@ async def cleanup_expired(session: AsyncSession, *, today: dt.date | None = None
     return len(expired_ids)
 
 
+def _merge_status(
+    statuses: dict[str, dict[str, Any]], category: str, state: dict[str, Any]
+) -> None:
+    """把一个源对某个订阅词的抓取状态并进去，而不是覆盖前一个源的。
+
+    订阅词不是天然全局唯一的：arXiv 的分类名（``cs.AI``）恰好是，但一个按关键词取的
+    源订成 ``machine learning`` 就会和任何同词订阅撞上。直接赋值的话后跑的源顶掉先跑
+    的，那个源当天的论文一篇不进池，而每一步都报成功——每日池是所有文献库的唯一供给，
+    公告只出现一次，这种丢失补不回来。
+
+    只有一个源供这个词时原样写入，与合并出现之前逐字节一致（今天所有部署都是这样）。
+    """
+    existing = statuses.get(category)
+    if existing is None:
+        statuses[category] = state
+        return
+    merged: dict[str, Any] = {
+        "count": existing["count"] + state["count"],
+        # 任一源失败就报 error：这个词今天的论文会残缺，而静默残缺比整体失败更危险
+        "status": "error" if "error" in (existing["status"], state["status"]) else "ok",
+        "detail": "；".join(
+            d for d in (existing.get("detail"), state.get("detail")) if d
+        )
+        or None,
+    }
+    dates = [d for d in (existing.get("batch_date"), state.get("batch_date")) if d]
+    if dates:
+        # 取最早的那个，不取最新：源各自滞后时取最新会把落后的那批也标成当天，
+        # 等于把「抓早了」这个故障重新藏起来（同 batch_dates_from_statuses 的理由）
+        merged["batch_date"] = min(dates)
+        merged["stale"] = bool(existing.get("stale") or state.get("stale"))
+    statuses[category] = merged
+
+
 async def fetch_new_by_category(
     session: AsyncSession,
 ) -> tuple[list[str], dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]]]:
@@ -400,6 +434,11 @@ async def fetch_new_by_category(
     分类的全部论文。每日池是所有文献库的唯一供给，这种丢失是补不回来的。
 
     状态取值：``ok``（抓到了，可能是 0 篇——周末/无公告是正常的）、``error``。
+
+    几个源订了**同一个词**时条目并起来、状态合并（见 :func:`_merge_status`），而不是
+    后一个源顶掉前一个。键仍是词本身：它会落进 ``DailyFeedEntry.primary_category``
+    （``String(32)``）并由前端当作分类标签展示，换成 ``源:词`` 会改写存量、撑爆列宽，
+    也改掉用户看到的东西。
     """
     subscriptions = await get_subscriptions(session)
     # 能干这件事的源由注册表回答（能力探测），而不是这里写死一个 id。
@@ -415,16 +454,21 @@ async def fetch_new_by_category(
     for sub in subscriptions:
         client = capable.get(sub.source)
         for category in sub.terms:
-            categories.append(category)
+            if category not in by_category:
+                categories.append(category)
+                by_category[category] = []
             if client is None:
                 # 订了一个当前拿不到/不支持日更的源：如实报出来，而不是静默少抓。
                 # 「这个源没装」和「这个源今天没有新论文」必须可区分。
-                by_category[category] = []
-                statuses[category] = {
-                    "count": 0,
-                    "status": "error",
-                    "detail": f"source {sub.source!r} 不可用或不支持每日新增",
-                }
+                _merge_status(
+                    statuses,
+                    category,
+                    {
+                        "count": 0,
+                        "status": "error",
+                        "detail": f"source {sub.source!r} 不可用或不支持每日新增",
+                    },
+                )
                 continue
             try:
                 entries, batch_at = await client.fetch_new(category)
@@ -434,24 +478,31 @@ async def fetch_new_by_category(
                 logger.warning(
                     "daily feed fetch failed for %s/%s", sub.source, category, exc_info=True
                 )
-                by_category[category] = []
-                statuses[category] = {
-                    "count": 0,
-                    "status": "error",
-                    "detail": f"{type(e).__name__}: {e}"[:200],
-                }
+                _merge_status(
+                    statuses,
+                    category,
+                    {
+                        "count": 0,
+                        "status": "error",
+                        "detail": f"{type(e).__name__}: {e}"[:200],
+                    },
+                )
                 continue
-            by_category[category] = entries
+            by_category[category].extend(entries)
             batch_date = batch_at.astimezone(dt.UTC).date() if batch_at else None
-            statuses[category] = {
-                "count": len(entries),
-                "status": "ok",
-                "detail": None,
-                # 源自己声明这批是哪天的（arXiv 有公告日；没有的源给 None）；
-                # 调用方据此判断有没有抓早了
-                "batch_date": batch_date.isoformat() if batch_date else None,
-                "stale": bool(batch_date and batch_date < _today_utc()),
-            }
+            _merge_status(
+                statuses,
+                category,
+                {
+                    "count": len(entries),
+                    "status": "ok",
+                    "detail": None,
+                    # 源自己声明这批是哪天的（arXiv 有公告日；没有的源给 None）；
+                    # 调用方据此判断有没有抓早了
+                    "batch_date": batch_date.isoformat() if batch_date else None,
+                    "stale": bool(batch_date and batch_date < _today_utc()),
+                },
+            )
     return categories, by_category, statuses
 
 
