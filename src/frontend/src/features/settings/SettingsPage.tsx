@@ -24,6 +24,7 @@ import {
   isPluginStage,
   type AffiliationMode,
   type ChatBotPlatform,
+  type DailySubscription,
   type DailySyncScope,
   LLM_EFFORT_LEVELS,
   type LlmCallLogRow,
@@ -2351,6 +2352,9 @@ function DailyCategoriesSection() {
       toast(tr('订阅分类已保存', 'Subscribed categories saved'), 'ok');
       setCats(res.categories);
       void queryClient.invalidateQueries({ queryKey: ['daily-categories'] });
+      // 下面「其他来源」那节保存时是整份替换，会把它手里的 arXiv 副本一起发回去。
+      // 不在这里失效的话，那份副本还是改动之前的，于是那节一保存就把这次的改动顶回去
+      void queryClient.invalidateQueries({ queryKey: ['daily-subscriptions'] });
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 422) {
@@ -2740,6 +2744,10 @@ export function DailyCategoriesTab() {
       <div style={{ marginBottom: 20 }}>
         <DailyCategoriesSection />
       </div>
+      {/* arxiv 以外的来源按检索词订阅（#778）；同样独占整行 */}
+      <div style={{ marginBottom: 20 }}>
+        <DailyOtherSourcesSection />
+      </div>
       {/* 抓取节奏与向量补建互不相干，并排放 */}
       <div className="settings-2col">
         <DailySyncSection />
@@ -2818,6 +2826,214 @@ export function SettingsPage() {
       {effectiveTab === 'mcp' && <McpToolsContent />}
       {effectiveTab === 'export' && <FullExportSettings />}
       {effectiveTab === 'plugins' && <PluginsSettings />}
+    </div>
+  );
+}
+
+// ---------------- 每日新论文：arXiv 以外的来源（owner，#778） ----------------
+
+/**
+ * 保存这一节时要发出去的完整订阅。
+ *
+ * PUT /daily/subscriptions 是**整份替换**，所以 arXiv 那条必须原样带回去——只发本节
+ * 编辑的那些，等于在保存「其他来源」时把上面那节的分类订阅全部清空。每日池是所有
+ * 文献库的唯一供给，这种清空当天就会表现为「池子空了」，而操作的人只是加了个检索词。
+ */
+export function dailySubscriptionPayload(
+  arxiv: DailySubscription[],
+  others: DailySubscription[],
+): { source: string; terms: string[] }[] {
+  return [...arxiv, ...others].map((r) => ({ source: r.source, terms: r.terms }));
+}
+
+/** arXiv 的订阅走上面那一节（分类格式固定、有 legacy 读路径）；这一节管其余的源。 */
+function DailyOtherSourcesSection() {
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['daily-subscriptions'],
+    queryFn: () => api.getDailySubscriptions(),
+    retry: false,
+  });
+
+  // 本地编辑副本：首次拿到数据后接管，避免 refetch 覆盖未保存的改动
+  const [rows, setRows] = useState<DailySubscription[] | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (data && rows === null) setRows(data.subscriptions.filter((s) => s.source !== 'arxiv'));
+  }, [data, rows]);
+
+  const shown = rows ?? [];
+  const arxiv = data?.subscriptions.filter((s) => s.source === 'arxiv') ?? [];
+  // 可订的源问后端要，前端不自带名单：装上一个能日更的源就该立刻出现在这里
+  const addable = (data?.available_sources ?? []).filter(
+    (s) => s !== 'arxiv' && !shown.some((r) => r.source === s),
+  );
+  const dirty =
+    !!data &&
+    JSON.stringify(shown) !==
+      JSON.stringify(data.subscriptions.filter((s) => s.source !== 'arxiv'));
+
+  const save = useMutation({
+    // arXiv 那条原样带回去，否则保存这一节会把上面那节的订阅清空
+    mutationFn: () => api.setDailySubscriptions(dailySubscriptionPayload(arxiv, shown)),
+    onSuccess: (res) => {
+      toast(tr('订阅已保存', 'Subscriptions saved'), 'ok');
+      setRows(res.subscriptions.filter((s) => s.source !== 'arxiv'));
+      void queryClient.invalidateQueries({ queryKey: ['daily-subscriptions'] });
+      void queryClient.invalidateQueries({ queryKey: ['daily-categories'] });
+    },
+    onError: (e) =>
+      toast(
+        `${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`,
+        'error',
+      ),
+  });
+
+  const addTerm = (source: string) => {
+    const v = (drafts[source] ?? '').trim();
+    if (!v) return;
+    setRows(
+      shown.map((r) =>
+        r.source === source && !r.terms.includes(v) ? { ...r, terms: [...r.terms, v] } : r,
+      ),
+    );
+    setDrafts({ ...drafts, [source]: '' });
+  };
+
+  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
+  if (isError) {
+    return (
+      <div className="empty">
+        {tr('无法加载订阅（后端不可用）', 'Failed to load subscriptions (backend unavailable)')}
+      </div>
+    );
+  }
+
+  return (
+    <div className="card card-pad">
+      <div className="section-h" style={{ marginBottom: 6 }}>
+        <Icon name="book" size={15} style={{ color: 'var(--accent)' }} />
+        {tr('每日新论文：其他来源', 'Daily papers: other sources')}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 14 }}>
+        {tr(
+          'arxiv 以外的来源按检索词订阅，而不是分类——各家的分类体系不一样，写自己领域的词就行（如 neuroscience）。只有能提供每日新增的来源会出现在这里。',
+          'Sources other than arxiv are subscribed by search term rather than category — taxonomies differ between them, so just write terms from your field (e.g. neuroscience). Only sources that can supply daily increments appear here.',
+        )}
+      </div>
+
+      {shown.length === 0 && (
+        <div style={{ fontSize: 12, color: 'var(--text-4)', marginBottom: 12 }}>
+          {tr('还没有订阅其他来源。', 'No other sources subscribed yet.')}
+        </div>
+      )}
+
+      <div className="col gap12">
+        {shown.map((row) => (
+          <div key={row.source} className="col gap6">
+            <div className="row gap6" style={{ alignItems: 'center' }}>
+              <strong style={{ fontSize: 13 }}>{row.source}</strong>
+              {/* 订了一个供不了日更的源：池子会一直空着而界面上看不出原因 */}
+              {!row.supports_daily && (
+                <span style={{ fontSize: 11, color: 'var(--warn, var(--text-3))' }}>
+                  {tr(
+                    '这个来源当前无法提供每日新增，订阅不会有论文进来',
+                    'This source cannot supply daily papers right now — nothing will arrive',
+                  )}
+                </span>
+              )}
+              <button
+                className="btn ghost sm"
+                style={{ marginLeft: 'auto' }}
+                onClick={() => setRows(shown.filter((r) => r.source !== row.source))}
+              >
+                {tr('移除来源', 'Remove source')}
+              </button>
+            </div>
+            <div className="row gap6 wrap">
+              {row.terms.map((t) => (
+                <span
+                  key={t}
+                  className="pill sm"
+                  style={{ background: 'var(--surface-3)', gap: 4, paddingRight: 5 }}
+                >
+                  {t}
+                  <button
+                    title={tr('移除', 'Remove')}
+                    onClick={() =>
+                      setRows(
+                        shown.map((r) =>
+                          r.source === row.source
+                            ? { ...r, terms: r.terms.filter((x) => x !== t) }
+                            : r,
+                        ),
+                      )
+                    }
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      cursor: 'pointer',
+                      color: 'var(--text-3)',
+                      display: 'inline-flex',
+                      padding: 1,
+                    }}
+                  >
+                    <Icon name="x" size={10} />
+                  </button>
+                </span>
+              ))}
+            </div>
+            <div className="row gap6">
+              <input
+                className="input sm"
+                style={{ maxWidth: 280 }}
+                placeholder={tr('添加检索词…', 'Add a search term…')}
+                value={drafts[row.source] ?? ''}
+                onChange={(e) => setDrafts({ ...drafts, [row.source]: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') addTerm(row.source);
+                }}
+              />
+              <button className="btn sm" onClick={() => addTerm(row.source)}>
+                {tr('添加', 'Add')}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="row gap6" style={{ marginTop: 14, alignItems: 'center' }}>
+        {addable.length > 0 ? (
+          <select
+            className="input sm"
+            style={{ maxWidth: 200 }}
+            value=""
+            onChange={(e) => {
+              const source = e.target.value;
+              if (source) setRows([...shown, { source, terms: [], supports_daily: true }]);
+            }}
+          >
+            <option value="">{tr('添加来源…', 'Add a source…')}</option>
+            {addable.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span style={{ fontSize: 12, color: 'var(--text-4)' }}>
+            {tr('没有更多可订的来源了。', 'No further sources available to subscribe.')}
+          </span>
+        )}
+        <button
+          className="btn btn-primary sm"
+          style={{ marginLeft: 'auto' }}
+          disabled={!dirty || save.isPending}
+          onClick={() => save.mutate()}
+        >
+          {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+        </button>
+      </div>
     </div>
   );
 }

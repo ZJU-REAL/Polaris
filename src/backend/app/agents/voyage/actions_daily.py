@@ -98,9 +98,11 @@ async def fetch(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
         )
     elif not categories:
         # 一个分类都没订阅：不是故障，但必须说破——池子永远空着，所有文献库都断供
+        # 不再说「arXiv 分类」：PubMed 等源按检索词订阅（#778），照旧那么写等于
+        # 把一个已经存在的入口藏起来——非 CS 的人会以为这里只能填 arXiv 分类
         result["note"] = (
-            "还没有订阅任何 arXiv 分类，每日池不会有新论文进来；"
-            "请在 设置 → 每日新论文订阅分类 里添加要跟踪的分类。"
+            "还没有订阅任何来源，每日池不会有新论文进来；"
+            "请在 设置 → 每日新论文 里添加要跟踪的 arXiv 分类，或为其他来源添加检索词。"
         )
         await ctx.log(result["note"], level="warning")
     elif fetched == 0:
