@@ -308,7 +308,7 @@ async def enrich_paper(
     # 不调 LLM——bibtex 导入等 golden 链路因此零输出零副作用。
     from app.services.extraction.runtime import extract_paper
     from app.services.extraction.schemas import schemas_for
-    from app.services.method_index import METHOD_SCHEMA_ID, refresh_paper_method_index
+    from app.services.method_index import is_method_schema_id, refresh_paper_method_index
 
     method_extracted = False
     # 内置 schema 对所有论文都抽；学科 schema 只在声明了该学科的库里抽（#754 后续：
@@ -325,7 +325,7 @@ async def enrich_paper(
             )
             if outcome.status == "extracted":
                 await session.commit()
-                if schema.id == METHOD_SCHEMA_ID:
+                if is_method_schema_id(schema.id):
                     method_extracted = True
         except asyncio.CancelledError:
             raise

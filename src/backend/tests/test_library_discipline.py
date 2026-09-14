@@ -97,3 +97,190 @@ async def test_declared_discipline_scopes_extraction(client, discipline):
     ids = {s.id for s in schemas_for(discipline)}
     assert "structural.method" in ids
     assert {"skeleton", "method", "gaps"} <= ids
+
+
+# ---- 抽取侧的闭环：学科卡抽出来之后，双轴索引必须跟着刷 ----
+
+
+async def test_a_discipline_method_card_counts_as_a_method_card():
+    """``<包名>.method`` 和内置 ``method`` 一样是方法卡；别的 schema 不是。"""
+    assert method_index.is_method_schema_id("method")
+    assert method_index.is_method_schema_id("structural.method")
+    assert not method_index.is_method_schema_id("skeleton")
+    assert not method_index.is_method_schema_id("gaps")
+
+
+async def test_index_refreshes_when_only_the_discipline_card_is_new(client, tmp_path):
+    """先导论文、之后才给库选学科——学科包最常见的用法，也是最容易静默失效的一条。
+
+    第二遍富集时内置 method 是「已抽过」跳过，只有学科卡是新的。如果刷索引只认内置
+    id，这一遍就一次都不刷：学科卡落了表却没有向量，方法库里查不到它，且**没有任何
+    报错**。用例先清空向量再跑第二遍，向量回来才算这条线通。
+    """
+    import uuid as _uuid
+
+    from sqlalchemy import delete, select
+
+    from app.core.db import get_sessionmaker
+    from app.models.library_direction import DirectionLibrary
+    from app.models.paper import Paper
+    from app.models.paper_extraction import PaperExtraction
+    from app.models.vectors import MethodVector
+    from app.services import paper_enrich
+    from tests.conftest import add_paper
+
+    async def _noop_emit(stage, status, detail=None):  # noqa: ARG001
+        return None
+
+    token = await register_and_login(client, email="discmethod@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, library_id = await make_project_with_library(
+        client, headers, name="discmethod-proj"
+    )
+
+    full_text = tmp_path / "paper.txt"
+    full_text.write_text(
+        "Discipline Method Paper\n\nIntroduction\n\n"
+        "We probe how the method schema behaves under deterministic extraction.\n\n"
+        "Method\n\nA deterministic mechanism section with enough prose to look like a paper.\n",
+        encoding="utf-8",
+    )
+
+    async with get_sessionmaker()() as session:
+        paper = await add_paper(
+            session,
+            project_id=_uuid.UUID(project_id),
+            title="Discipline Method Paper",
+            full_text_path=str(full_text),
+        )
+        await session.commit()
+        paper_id = paper.id
+
+    # 第一遍：库还没选学科，只抽内置 schema
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, library_id)
+        paper = await session.get(Paper, paper_id)
+        await paper_enrich.enrich_paper(
+            session, paper, target=library, user_id=None, project_id=None, emit=_noop_emit
+        )
+
+    async with get_sessionmaker()() as session:
+        ids = (
+            (
+                await session.execute(
+                    select(PaperExtraction.schema_id).where(
+                        PaperExtraction.paper_id == paper_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert "structural.method" not in ids
+        # 清空向量，好让第二遍「有没有刷」变成一个可观测的事实
+        await session.execute(delete(MethodVector).where(MethodVector.paper_id == paper_id))
+        library = await session.get(DirectionLibrary, library_id)
+        library.discipline = "structural"
+        await session.commit()
+
+    # 第二遍：内置卡已抽过被跳过，新的只有学科卡
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, library_id)
+        paper = await session.get(Paper, paper_id)
+        await paper_enrich.enrich_paper(
+            session, paper, target=library, user_id=None, project_id=None, emit=_noop_emit
+        )
+
+    async with get_sessionmaker()() as session:
+        ids = set(
+            (
+                await session.execute(
+                    select(PaperExtraction.schema_id).where(
+                        PaperExtraction.paper_id == paper_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        axes = sorted(
+            (
+                await session.execute(
+                    select(MethodVector.axis).where(MethodVector.paper_id == paper_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert "structural.method" in ids, "选了学科之后该抽学科方法卡"
+    assert axes, "学科卡抽出来了却没刷索引——方法库里查不到它，而且不报错"
+
+
+async def test_the_discipline_card_wins_when_both_cards_are_on_the_table(client):
+    """学科库里两张方法卡并存时，进向量的必须是**定的**那一张，否则检索结果会漂移。
+
+    学科卡是为这个库写的，更具体，优先它。用例让两张卡的轴数不同，好让「取了哪一张」
+    变成一个能断言的事实。
+    """
+    import uuid as _uuid
+
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.library_direction import DirectionLibrary
+    from app.models.paper import Paper
+    from app.models.paper_extraction import PaperExtraction
+    from app.models.vectors import MethodVector
+    from tests.conftest import add_paper
+
+    token = await register_and_login(client, email="discpick@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, library_id = await make_project_with_library(
+        client, headers, name="discpick-proj"
+    )
+
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, library_id)
+        library.discipline = "structural"
+        paper = await add_paper(
+            session, project_id=_uuid.UUID(project_id), title="Two Cards", status="scored"
+        )
+        session.add_all(
+            [
+                # 内置卡：只有 purpose
+                PaperExtraction(
+                    paper_id=paper.id,
+                    schema_id="method",
+                    payload={"purpose": "generic machine learning purpose"},
+                ),
+                # 学科卡：两根轴都有
+                PaperExtraction(
+                    paper_id=paper.id,
+                    schema_id="structural.method",
+                    payload={
+                        "purpose": "predict beam column joint failure under seismic load",
+                        "mechanism": "explicit finite element simulation with shell elements",
+                    },
+                ),
+            ]
+        )
+        await session.commit()
+        paper_id = paper.id
+
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, paper_id)
+        await method_index.refresh_paper_method_index(session, paper, library_id=library_id)
+        await session.commit()
+
+    async with get_sessionmaker()() as session:
+        axes = sorted(
+            (
+                await session.execute(
+                    select(MethodVector.axis).where(MethodVector.paper_id == paper_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    # 两根轴 = 取的是学科卡；只有 purpose 说明取到了内置卡
+    assert axes == ["mechanism", "purpose"]
