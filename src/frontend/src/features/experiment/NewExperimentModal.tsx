@@ -147,7 +147,9 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         .filter((qa) => qa.answer !== '');
       return api.createExperiment(pid, {
         idea_id: ideaId,
-        credential_id: credentialId,
+        // 不需要凭据的后端这里是空串，而后端的 credential_id 是 UUID|None——
+        // 发空串会 422。不选就整个不发这个键
+        ...(credentialId ? { credential_id: credentialId } : {}),
         params: {
           ...(intake.length > 0 ? { intake } : {}),
           // 不选就不带键：缺省后端 / 原计划路径，与这个选择器出现之前完全一致
@@ -274,10 +276,15 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         />
       </FormField>
 
-      {packs.length > 0 && (
+      {(packs.length > 0 || packsQuery.isError) && (
         <FormField
           label={tr('流程包', 'Process pack')}
           en="process pack"
+          error={
+            packsQuery.isError
+              ? tr('无法加载流程包列表，将按常规计划路径规划。', 'Could not load the process pack list — the regular planning path will be used.')
+              : null
+          }
           hint={
             processPack
               ? tr(
