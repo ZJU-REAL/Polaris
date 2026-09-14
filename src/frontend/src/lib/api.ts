@@ -1377,6 +1377,21 @@ export interface ConceptRelinkResult {
 // P5c · 共享方向库（/libraries，全实验室可读）
 // ============================================================
 
+/** 一条每日订阅：在哪个源上、订哪些词。 */
+export interface DailySubscription {
+  source: string;
+  /** arXiv 的词是分类（cs.AI），别的源是自由检索词 */
+  terms: string[];
+  /** 这个源当前能不能供日更。false = 订了但供不了，池子会一直空着 */
+  supports_daily: boolean;
+}
+
+export interface DailySubscriptions {
+  subscriptions: DailySubscription[];
+  /** 当前能供日更的源 id，由后端按能力探测给出 */
+  available_sources: string[];
+}
+
 export interface DirectionLibrarySummary {
   id: string;
   name: string;
@@ -5598,6 +5613,21 @@ export const api = {
   /** 更新订阅分类（admin）。 */
   setDailyCategories(categories: string[]): Promise<{ categories: string[] }> {
     return requestJson<{ categories: string[] }>('/daily/categories', 'PUT', { categories });
+  },
+  /**
+   * 全部每日订阅（arXiv 分类 + 其余源的检索词）。
+   *
+   * /daily/categories 只管 arXiv 那一条；这个端点是多源全景。可订的源由后端按能力
+   * 探测给出（available_sources），前端不自带名单——装上一个能日更的源就该立刻可订。
+   */
+  getDailySubscriptions(): Promise<DailySubscriptions> {
+    return request<DailySubscriptions>('/daily/subscriptions');
+  },
+  /** 整份替换订阅（owner）。空数组 = 取消全部订阅。 */
+  setDailySubscriptions(
+    subscriptions: { source: string; terms: string[] }[],
+  ): Promise<DailySubscriptions> {
+    return requestJson<DailySubscriptions>('/daily/subscriptions', 'PUT', { subscriptions });
   },
   /**
    * 手动触发一次每日新论文抓取（admin）。抓取在任务系统里跑，返回的 voyage_id
