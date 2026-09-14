@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b4d91f7a2c08"  # Hypothesis node creation sequence (#784)
+HEAD_REVISION = "c5e02a9b31d7"  # Method vectors scoped to their card (#772)
+HYPOTHESIS_SEQ_REVISION = "b4d91f7a2c08"  # Hypothesis node creation sequence (#784)
 MCP_SERVERS_REVISION = "e8c3f1a92d40"  # External MCP server registry (#754)
 LIBRARY_DISCIPLINE_REVISION = "d7b2e4c81a35"  # Library declares its discipline
 CRDT_STATE_REVISION = "c4a1d8e93b57"  # Manuscript CRDT state persistence (#347)
@@ -621,6 +622,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "model",
         "text_version",
         "built_at",
+        # 向量出自哪张卡（#772）：多学科库并存时算分与显示必须同源
+        "schema_id",
     } <= columns["method_vectors"]
     assert "ix_method_vectors_space" in _index_names(db_path, "method_vectors")
 
@@ -637,7 +640,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["paper_extractions"]
     assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
 
-    # 先退掉假设节点的创建序号列。
+    # 先退掉方法向量的卡作用域。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == HYPOTHESIS_SEQ_REVISION
+    assert "schema_id" not in columns["method_vectors"]
+
+    # 再退掉假设节点的创建序号列。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == MCP_SERVERS_REVISION
@@ -1440,7 +1449,9 @@ def test_hypothesis_seq_backfill_follows_the_previous_best_effort_order(tmp_path
         ).scalar_one()
     assert other == 1, "序号按 run 各自计数；跨 run 连续会让人误以为两个 run 有关系"
 
-    command.downgrade(cfg, "-1")
+    # 显式指定目标而不是 "-1"：链头之上再加一档时，"-1" 退掉的是那一档，
+    # 本用例会莫名其妙地断言失败，而失败信息完全不提真正的原因
+    command.downgrade(cfg, MCP_SERVERS_REVISION)
     _version, columns = _inspect_db(db_path)
     assert "seq" not in columns["hypothesis_nodes"]
     # 回退不该带走数据行
