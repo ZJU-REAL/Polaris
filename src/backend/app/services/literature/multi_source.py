@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from itertools import count
 from threading import Lock
 from typing import Any
@@ -122,6 +122,11 @@ def _pubmed_abstracts(xml_text: str) -> dict[str, str]:
         if pmid and parts:
             result[pmid] = "\n".join(parts)
     return result
+
+
+#: 每日池向 PubMed 回看几天。见 MultiSourceClient.fetch_new_pubmed 的理由：
+#: 一天的窗口在凌晨跑时几乎总是空的，而漏掉的那天补不回来。
+PUBMED_DAILY_WINDOW_DAYS = 2
 
 
 class MultiSourceClient:
@@ -264,21 +269,53 @@ class MultiSourceClient:
             return None
         return payload if isinstance(payload, dict) else None
 
+    async def fetch_new_pubmed(
+        self, term: str, *, days: int = PUBMED_DAILY_WINDOW_DAYS, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        """PubMed 近几天**新进库**的记录，供每日池（#778）。
+
+        用 ``[edat]``（Entrez 收录日）而不是 ``[pdat]``（出版日）：出版日是期刊印在
+        论文上的日期，一篇 2025 年 12 月出版的文章可能 2026 年 3 月才进 PubMed，
+        按出版日查「今天」会把它永远漏掉。收录日才是 arXiv「今天公告了什么」的对应物。
+
+        窗口默认两天而不是一天：PubMed 全天滚动收录，凌晨跑的话当天几乎是空的；
+        而每日池是所有文献库的唯一供给，漏掉的那天补不回来。重复看到昨天的记录无害
+        ——入池按论文身份去重，已有条目只会合并分类、不动 feed_date。
+        """
+        until = datetime.now(UTC).date()
+        since = until - timedelta(days=max(days - 1, 0))
+        query = f"({term}) AND ({since:%Y/%m/%d}:{until:%Y/%m/%d}[edat])"
+        return await self._pubmed_rows(query, limit=limit, sort="date")
+
     async def _search_pubmed(self, request: Any) -> list[dict[str, Any]]:
-        settings = get_settings()
-        api_key = self._key("pubmed", settings.pubmed_api_key)
         start, end = _date_window(request)
         query = request.query
         if start or end:
             lo = start or 1800
             hi = end or datetime.now(UTC).year
             query = f"({query}) AND ({lo}:{hi}[pdat])"
+        return await self._pubmed_rows(query, limit=request.limit, sort="relevance")
+
+    async def _pubmed_rows(
+        self,
+        query: str,
+        *,
+        limit: int,
+        sort: str,
+    ) -> list[dict[str, Any]]:
+        """esearch → esummary → efetch 三段式，检索与日更共用。
+
+        抽出来是因为日更要的只是**换一个 term 与排序**；复制一份的话，PubMed 改了
+        字段或者密钥参数加了一项，两边就会不声不响地走岔。
+        """
+        settings = get_settings()
+        api_key = self._key("pubmed", settings.pubmed_api_key)
         params = {
             "db": "pubmed",
             "term": query,
             "retmode": "json",
-            "retmax": min(request.limit, 1000),
-            "sort": "relevance",
+            "retmax": min(limit, 1000),
+            "sort": sort,
         }
         if api_key:
             params["api_key"] = api_key

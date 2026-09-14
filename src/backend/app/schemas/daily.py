@@ -149,6 +149,36 @@ class DailyCategoriesUpdate(BaseModel):
     categories: list[str] = Field(min_length=1)
 
 
+class DailySubscriptionRead(BaseModel):
+    """一条订阅：在哪个源上、订哪些词。
+
+    arXiv 的「词」是分类（cs.AI），别的源是自由检索词（「structural engineering」）。
+    形状相同、语义由源自己解释——每日池不该假定全世界都用 arXiv 的分类体系。
+    """
+
+    source: str
+    terms: list[str]
+    #: 这个源当前**能不能**供日更。订了一个供不了的源，池子会一直空着而界面上看不出
+    #: 原因，所以这件事要摆在明面上，而不是等每天抓取时失败一次。
+    supports_daily: bool = True
+
+
+class DailySubscriptionsRead(BaseModel):
+    subscriptions: list[DailySubscriptionRead]
+    #: 当前能供日更的源 id，供界面只让人订得了的那些
+    available_sources: list[str]
+
+
+class DailySubscriptionWrite(BaseModel):
+    source: str = Field(min_length=1, max_length=64)
+    terms: list[str] = Field(min_length=1)
+
+
+class DailySubscriptionsUpdate(BaseModel):
+    #: 整份替换。空列表 = 取消全部订阅（池子从此不再进新论文，是合法意图）
+    subscriptions: list[DailySubscriptionWrite]
+
+
 class DailySyncStatus(BaseModel):
     """每日论文池的同步健康状况（每日页顶部展示）。"""
 

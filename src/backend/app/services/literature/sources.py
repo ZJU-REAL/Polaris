@@ -212,6 +212,22 @@ class MultiSourceAdapter:
         )
 
 
+class PubMedAdapter(MultiSourceAdapter):
+    """PubMed：除了检索，还能供每日池（#778）。
+
+    单独一个类而不是把 fetch_new 加到 MultiSourceAdapter 上——能力探测走的是
+    ``hasattr``，加在基类上等于 crossref、hal、core 一起声称自己能日更，然后每天
+    在每个订阅词上失败一次。能干这件事的只有实现了它的那个源。
+    """
+
+    async def fetch_new(self, term: str) -> tuple[list[dict[str, Any]], datetime | None]:
+        """返回 (条目, 批次日期)。批次日期恒为 None：PubMed 全天滚动收录，没有
+        arXiv 那种「今天这批」的概念，报一个日期就是编的——调用方据此跳过「抓早了」
+        的判断，而那个判断对滚动收录的源本来就不成立。"""
+        rows = await self.client.fetch_new_pubmed(term)
+        return rows, None
+
+
 def _candidate_from_openalex(row: Mapping[str, Any]) -> LiteratureCandidate:
     return validate_candidate(
         LiteratureCandidate(
@@ -528,6 +544,15 @@ register_source(
         resolve_priority=0,  # arXiv 号先问 arXiv 本尊，限流才轮到 OpenAlex
     )
 )
-for _name in ("pubmed", "crossref", "europepmc", "hal", "core", "base", "sciverse"):
+register_source(
+    SourceSpec(
+        id="pubmed",
+        build=lambda ctx: PubMedAdapter("pubmed", ctx.multi_source),
+        default_factory=lambda client: PubMedAdapter(
+            "pubmed", client or _shared_multi_source()
+        ),
+    )
+)
+for _name in ("crossref", "europepmc", "hal", "core", "base", "sciverse"):
     register_source(_multi_source_spec(_name))
 register_source(_multi_source_spec("unpaywall", selectable=False))

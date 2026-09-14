@@ -42,6 +42,9 @@ from app.schemas.daily import (
     DailyProbeAttemptsUpdate,
     DailyRetentionRead,
     DailyRetentionUpdate,
+    DailySubscriptionRead,
+    DailySubscriptionsRead,
+    DailySubscriptionsUpdate,
     DailySyncStatus,
     DailySyncTimeRead,
     DailySyncTimeUpdate,
@@ -469,6 +472,80 @@ async def set_categories(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"INVALID_CATEGORY:{exc.category}"
         ) from exc
     return DailyCategoriesRead(categories=categories)
+
+
+def _daily_capable_sources() -> list[str]:
+    """当前能供日更的源 id。
+
+    问注册表而不是写死一份名单：装上一个能日更的源就该立刻可订，撤掉就该立刻显示
+    「订了但供不了」——名单写死的话，这两件事都要改代码才生效。
+    """
+    from app.services.literature import sources as literature_sources
+
+    return [sid for sid, _ in literature_sources.sources_with_capability("fetch_new")]
+
+
+@router.get("/subscriptions", response_model=DailySubscriptionsRead)
+async def get_subscriptions(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> DailySubscriptionsRead:
+    """全部订阅（arXiv 分类 + 其余源的检索词）。
+
+    /categories 只管 arXiv 那一条，形状是扁平分类列表且有 legacy 读路径，所以不动它；
+    这个端点是多源订阅的全景视图。
+    """
+    capable = set(_daily_capable_sources())
+    subs = await daily_service.get_subscriptions(session)
+    return DailySubscriptionsRead(
+        subscriptions=[
+            DailySubscriptionRead(
+                source=sub.source,
+                terms=list(sub.terms),
+                supports_daily=sub.source in capable,
+            )
+            for sub in subs
+        ],
+        available_sources=sorted(capable),
+    )
+
+
+@router.put("/subscriptions", response_model=DailySubscriptionsRead)
+async def set_subscriptions(
+    payload: DailySubscriptionsUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_owner),
+) -> DailySubscriptionsRead:
+    """整份替换。
+
+    订一个供不了日更的源**不拒绝**：源可能只是暂时没配密钥或被撤下，而把订阅一起
+    丢掉等于让人重填。回读时 supports_daily=False 就地说明，界面据此提示。
+    """
+    try:
+        saved = await daily_service.set_subscriptions(
+            session,
+            [
+                daily_service.Subscription(source=row.source, terms=tuple(row.terms))
+                for row in payload.subscriptions
+            ],
+            user=user,
+        )
+    except daily_service.InvalidCategoryError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"INVALID_CATEGORY:{exc.category}"
+        ) from exc
+    capable = set(_daily_capable_sources())
+    return DailySubscriptionsRead(
+        subscriptions=[
+            DailySubscriptionRead(
+                source=sub.source,
+                terms=list(sub.terms),
+                supports_daily=sub.source in capable,
+            )
+            for sub in saved
+        ],
+        available_sources=sorted(capable),
+    )
 
 
 @router.post("/chat")
