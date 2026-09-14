@@ -67,6 +67,7 @@ export default withMermaid(
                   { text: 'Development', link: '/docs/development' },
                   { text: 'Desktop app', link: '/docs/desktop' },
                   { text: 'Plugins', link: '/docs/plugins' },
+                  { text: 'Discipline packs', link: '/docs/discipline-packs' },
                 ],
               },
               {
