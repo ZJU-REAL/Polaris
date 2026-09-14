@@ -160,13 +160,25 @@ async def refresh_paper_method_index(
 async def _method_rows(
     session: AsyncSession, library_id: uuid.UUID
 ) -> list[tuple[Paper, PaperExtraction]]:
-    """库内（相关性达标、不含回收站）有方法卡的论文，按入库时间倒序。
+    """库内（相关性达标、不含回收站）有方法卡的论文，按入库时间倒序，**一篇一张卡**。
 
-    方法卡 = 内置 method@1 或本库学科的方法卡（见 method_schema_ids）。
+    方法卡 = 内置 method@1 或本库学科的方法卡（见 method_schema_ids）。学科库里两张
+    卡同时存在，取更具体的那张（学科卡）——理由与 refresh_paper_method_index 取哪张
+    建向量完全相同，而且必须是同一张：向量取学科卡、卡片显示内置卡的话，界面上那个
+    相似度是**用另一段文本算出来的**。
+
+    不去重的后果是同一篇论文在结果里出现两次（领域口径一次、它本该替换掉的机器学习
+    口径一次），且 limit 实际减半——要 20 条方法，学科库里只覆盖到 10 篇论文。
+
+    ``method_schema_ids`` 保持并集是对的：库里既有按本学科读的论文，也有只有内置卡的
+    跨学科综述，两者都要检索得到。并集属于「哪些 schema 算方法卡」，不属于「一篇论文
+    贡献几行」。
     """
     from app.services.papers import PAPER_STATUS_GROUPS
 
     schema_ids = await method_schema_ids(session, library_id)
+    # 从通用到具体；越靠后越具体，同一篇论文按这个顺序取最后一张命中的
+    specificity = {schema_id: rank for rank, schema_id in enumerate(schema_ids)}
     stmt = (
         select(Paper, PaperExtraction)
         .join(PaperExtraction, PaperExtraction.paper_id == Paper.id)
@@ -178,7 +190,15 @@ async def _method_rows(
         )
         .order_by(LibraryPaper.created_at.desc())
     )
-    return [(paper, ext) for paper, ext in (await session.execute(stmt)).all()]
+    chosen: dict[uuid.UUID, tuple[Paper, PaperExtraction]] = {}
+    for paper, ext in (await session.execute(stmt)).all():
+        current = chosen.get(paper.id)
+        if current is None or specificity.get(ext.schema_id, -1) > specificity.get(
+            current[1].schema_id, -1
+        ):
+            chosen[paper.id] = (paper, ext)
+    # dict 保插入序 = 仍是入库时间倒序
+    return list(chosen.values())
 
 
 def _card(paper: Paper, ext: PaperExtraction) -> dict[str, Any]:
