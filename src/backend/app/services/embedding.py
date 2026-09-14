@@ -174,11 +174,16 @@ async def upsert_method_vector(
     axis: str,
     vector: list[float],
     space: EmbeddingSpace,
+    *,
+    schema_id: str,
 ) -> None:
-    """写入/覆盖方法卡某根轴的向量（#663，调用方负责 commit）。
+    """写入/覆盖某张方法卡某根轴的向量（#663/#772，调用方负责 commit）。
 
-    主键多了一段 axis，故经 ``extra_key`` 走同一个真 upsert 路径——方法卡重抽与
-    多库并发同步会撞同一 (paper_id, axis, space)，「先查后插」在这里同样会炸。
+    主键多了 axis 与 schema_id 两段，故经 ``extra_key`` 走同一个真 upsert 路径——
+    方法卡重抽与多库并发同步会撞同一键，「先查后插」在这里同样会炸。
+
+    schema_id 必须由调用方显式给：向量出自哪张卡是**检索时算分的依据**，默认成
+    内置卡的话，学科库的分数会悄悄用另一套文本算出来。
     """
     await _upsert(
         session,
@@ -187,7 +192,7 @@ async def upsert_method_vector(
         paper_id,
         vector,
         space,
-        extra_key={"axis": axis},
+        extra_key={"axis": axis, "schema_id": schema_id},
     )
 
 

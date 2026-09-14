@@ -71,10 +71,21 @@ class PaperChunkVector(_VectorColumns, Base):
 
 
 class MethodVector(_VectorColumns, Base):
-    """方法卡双轴向量（#663）：每篇论文的 method@1 产物按 purpose / mechanism 两根轴
+    """方法卡双轴向量（#663）：每篇论文的方法卡产物按 purpose / mechanism 两根轴
     各建一条。轴分开存不是冗余——「同目的异机制」检索要在 purpose 轴找近邻、再按
-    mechanism 轴排远近，两根轴必须独立可查。与 paper_extractions 同口径不带
-    library_id：论文是全平台共享的内容池，库的边界在检索时经 library_papers 圈定。
+    mechanism 轴排远近，两根轴必须独立可查。
+
+    **不带 library_id**：论文是全平台共享的内容池，库的边界在检索时经 library_papers
+    圈定，与 paper_extractions 同口径。
+
+    **带 schema_id**（#772）：学科包出现后，同一篇论文可能有多张方法卡（内置的 +
+    某学科的），各自是**对这篇论文的一种读法**。只按 (paper, axis) 存的话，两个声明
+    了不同学科的库刷同一篇论文会互相覆盖，检索时算分用的是另一个领域的文本——而
+    界面上显示的是本库那张卡（#786 修好的正是同一个毛病，这里是它的跨库版本）。
+
+    按 schema_id 分开存，只在**读法真的不同**时才多一份向量：一篇论文只有一张卡时
+    行数与从前一致；三个都声明同一学科的库共用同一份。加 library_id 才是错的——
+    那会让用同一张卡的两个库各存一份完全相同的向量。
     """
 
     __tablename__ = "method_vectors"
@@ -85,6 +96,10 @@ class MethodVector(_VectorColumns, Base):
     )
     # "purpose" | "mechanism"（services/method_index.py 的 AXES）
     axis: Mapped[str] = mapped_column(String(16), primary_key=True)
+    #: 这份向量出自哪张卡（"method" | "<包名>.method"）
+    schema_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, server_default="method"
+    )
 
 
 class IdeaVector(_VectorColumns, Base):

@@ -514,3 +514,160 @@ async def test_the_builtin_card_shape_is_unchanged(client):
     card = cards[0]
     assert {"purpose", "mechanism", "baseline", "dataset", "protocol"} <= set(card)
     assert card["schema_id"] == "structural.method"
+
+
+# ---- 向量按卡分作用域（#772）----
+
+
+async def _two_discipline_libraries(client):
+    """一篇论文同时进两个库：一个声明结构工程、一个声明合成化学，各有自己的方法卡。
+
+    这正是 #772 的场景——两个库对同一篇论文有两种读法。
+    """
+    import uuid as _uuid
+
+    from app.core.db import get_sessionmaker
+    from app.models.library_direction import DirectionLibrary, LibraryPaper
+    from app.models.paper import Paper
+    from app.models.paper_extraction import PaperExtraction
+    from tests.conftest import add_paper
+
+    token = await register_and_login(client, email="vecscope@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    project_a, lib_a = await make_project_with_library(client, headers, name="vs-a")
+    _project_b, lib_b = await make_project_with_library(client, headers, name="vs-b")
+
+    async with get_sessionmaker()() as session:
+        (await session.get(DirectionLibrary, lib_a)).discipline = "structural"
+        (await session.get(DirectionLibrary, lib_b)).discipline = "synthesis"
+        paper = await add_paper(
+            session,
+            project_id=_uuid.UUID(project_a),
+            title="Shared across two fields",
+            status="scored",
+        )
+        await session.flush()
+        # 同一篇也进 B 库
+        session.add(LibraryPaper(library_id=lib_b, paper_id=paper.id, status="scored"))
+        session.add_all(
+            [
+                PaperExtraction(
+                    paper_id=paper.id,
+                    schema_id="structural.method",
+                    payload={
+                        "purpose": "resist blast loading on beams",
+                        "mechanism": "explicit finite element simulation",
+                    },
+                ),
+                PaperExtraction(
+                    paper_id=paper.id,
+                    schema_id="synthesis.method",
+                    payload={
+                        "purpose": "prepare a palladium single atom catalyst",
+                        "mechanism": "solvothermal synthesis in ethylene glycol",
+                    },
+                ),
+            ]
+        )
+        await session.commit()
+        paper_id = paper.id
+
+    # 两个库各自刷一次索引——改之前后刷的那次会覆盖先刷的
+    for library_id in (lib_a, lib_b):
+        async with get_sessionmaker()() as session:
+            paper = await session.get(Paper, paper_id)
+            await method_index.refresh_paper_method_index(
+                session, paper, library_id=library_id
+            )
+            await session.commit()
+    return lib_a, lib_b, paper_id
+
+
+async def test_two_libraries_keep_their_own_reading_of_the_same_paper(client):
+    """只按 (论文, 轴) 存的话，后刷的库覆盖先刷的：一份向量，两个库共用。"""
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.vectors import MethodVector
+
+    _lib_a, _lib_b, paper_id = await _two_discipline_libraries(client)
+    async with get_sessionmaker()() as session:
+        schema_ids = (
+            (
+                await session.execute(
+                    select(MethodVector.schema_id).where(
+                        MethodVector.paper_id == paper_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert set(schema_ids) == {"structural.method", "synthesis.method"}
+
+
+async def test_each_library_scores_against_its_own_card(client):
+    """显示与算分必须同源。取错向量不会报错，只是这一篇的排序由另一个领域的文本决定。"""
+    from app.core.db import get_sessionmaker
+
+    lib_a, lib_b, paper_id = await _two_discipline_libraries(client)
+
+    async with get_sessionmaker()() as session:
+        cards_a, _mode = await method_index.search_methods(
+            session, lib_a, "blast loading on beams"
+        )
+        cards_b, _mode = await method_index.search_methods(
+            session, lib_b, "palladium catalyst preparation"
+        )
+    assert [c["paper_id"] for c in cards_a] == [paper_id]
+    assert [c["paper_id"] for c in cards_b] == [paper_id]
+    # 各自显示本库那张卡
+    assert cards_a[0]["schema_id"] == "structural.method"
+    assert cards_b[0]["schema_id"] == "synthesis.method"
+    # 各自的查询命中自己那张卡时分数更高——取错向量这条断言必然翻车
+    assert cards_a[0]["similarity"] > 0
+    assert cards_b[0]["similarity"] > 0
+
+
+async def test_refreshing_one_library_does_not_wipe_the_others_vectors(client):
+    """清理幽灵轴时按论文清的话，会把另一个库的读法一并抹掉，那个库下次检索少一篇论文。"""
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.paper import Paper
+    from app.models.paper_extraction import PaperExtraction
+    from app.models.vectors import MethodVector
+
+    lib_a, _lib_b, paper_id = await _two_discipline_libraries(client)
+
+    # A 库这张卡重抽后把 mechanism 抽没了
+    async with get_sessionmaker()() as session:
+        row = await session.scalar(
+            select(PaperExtraction).where(
+                PaperExtraction.paper_id == paper_id,
+                PaperExtraction.schema_id == "structural.method",
+            )
+        )
+        row.payload = {"purpose": "resist blast loading on beams"}
+        await session.commit()
+
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, paper_id)
+        await method_index.refresh_paper_method_index(session, paper, library_id=lib_a)
+        await session.commit()
+
+    async with get_sessionmaker()() as session:
+        remaining = sorted(
+            (
+                await session.execute(
+                    select(MethodVector.schema_id, MethodVector.axis).where(
+                        MethodVector.paper_id == paper_id
+                    )
+                )
+            ).all()
+        )
+    # A 的 mechanism 走了，B 的两根轴一根没少
+    assert ("structural.method", "mechanism") not in remaining
+    assert ("structural.method", "purpose") in remaining
+    assert ("synthesis.method", "mechanism") in remaining
+    assert ("synthesis.method", "purpose") in remaining

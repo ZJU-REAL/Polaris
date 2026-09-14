@@ -143,15 +143,31 @@ async def refresh_paper_method_index(
             library_id=library_id,
         )
         for axis, vector in zip(axes, vectors, strict=True):
-            await upsert_method_vector(session, paper.id, axis, vector, space)
+            await upsert_method_vector(
+                session, paper.id, axis, vector, space, schema_id=row.schema_id
+            )
             wrote = True
 
-    # 没抽到的轴清掉（全部空间：旧空间的幽灵在切回旧模型时同样是错的）
+    # 没抽到的轴清掉（全部空间：旧空间的幽灵在切回旧模型时同样是错的）。
+    # **只清这张卡的**（#772）：同一篇论文在另一个学科的库里还有自己的那份向量，
+    # 按论文清会把别的库的读法一并抹掉，那个库下次检索就少一篇论文，且无从察觉。
     stale = [a for a in AXES if a not in texts]
-    if stale:
+    if stale and row is not None:
         await session.execute(
             delete(MethodVector).where(
-                MethodVector.paper_id == paper.id, MethodVector.axis.in_(stale)
+                MethodVector.paper_id == paper.id,
+                MethodVector.axis.in_(stale),
+                MethodVector.schema_id == row.schema_id,
+            )
+        )
+    elif stale and row is None:
+        # 一张卡都没有了：这篇论文在本库口径下的向量全都该走，
+        # 但别的学科的读法不归这次刷新管
+        await session.execute(
+            delete(MethodVector).where(
+                MethodVector.paper_id == paper.id,
+                MethodVector.axis.in_(stale),
+                MethodVector.schema_id.in_(schema_ids),
             )
         )
     return wrote
@@ -325,18 +341,21 @@ async def search_methods(
             )
         )
     ).scalars()
-    vectors: dict[tuple[uuid.UUID, str], list[float]] = {
-        (v.paper_id, v.axis): list(v.embedding) for v in vec_rows
+    # 按 (论文, 轴, 卡) 索引（#772）：一篇论文在另一个学科的库里还有自己那份向量，
+    # 只按 (论文, 轴) 取的话，本库显示的是这张卡、算分却可能用了另一个领域的文本
+    vectors: dict[tuple[uuid.UUID, str, str], list[float]] = {
+        (v.paper_id, v.axis, v.schema_id): list(v.embedding) for v in vec_rows
     }
 
     scored: list[dict[str, Any]] = []
     for paper, ext in rows:
-        purpose_vec = vectors.get((paper.id, "purpose"))
+        # 这篇论文这一行用的是哪张卡，分数就取哪张卡的向量——显示与算分必须同源
+        purpose_vec = vectors.get((paper.id, "purpose", ext.schema_id))
         if purpose_vec is None:
             continue
         card = _card(paper, ext)
         card["similarity"] = _cosine(query_vector, purpose_vec)
-        mechanism_vec = vectors.get((paper.id, "mechanism"))
+        mechanism_vec = vectors.get((paper.id, "mechanism", ext.schema_id))
         if mechanism_vec is not None:
             card["mechanism_similarity"] = _cosine(query_vector, mechanism_vec)
         elif mode == "different_mechanism":
