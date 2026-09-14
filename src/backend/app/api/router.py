@@ -10,6 +10,7 @@ from app.api import (
     chat_bots,
     concepts,
     daily,
+    disciplines,
     download_client,
     evidence,
     experiments,
@@ -96,3 +97,4 @@ api_router.include_router(manuscripts.router)
 api_router.include_router(export.router)
 api_router.include_router(plugins.router)
 api_router.include_router(mcp_servers.router)
+api_router.include_router(disciplines.router)
