@@ -31,9 +31,9 @@ EXPECTED_FIELDS = [
 
 
 def test_comparison_fields_order():
-    assert [f for f, _, _ in COMPARISON_FIELDS] == EXPECTED_FIELDS
+    assert [f for f, _, _, _ in COMPARISON_FIELDS] == EXPECTED_FIELDS
     # 字段归属：前四行 skeleton，后五行 method
-    assert [s for _, _, s in COMPARISON_FIELDS] == ["skeleton"] * 4 + ["method"] * 5
+    assert [s for _, _, s, _ in COMPARISON_FIELDS] == ["skeleton"] * 4 + ["method"] * 5
 
 
 async def _seed_papers(session, project_id, specs):
@@ -290,3 +290,227 @@ async def test_comparison_endpoint_personal_library_hidden(client):
     )
     assert resp.status_code == 404
     assert resp.json()["detail"] == "LIBRARY_NOT_FOUND"
+
+
+# ---- 对比表与缺口台账按库的学科走（#790）----
+
+
+def test_comparison_rows_are_builtin_only_without_a_discipline():
+    """没声明学科的库，行集与学科包出现之前完全一致。"""
+    from app.services.comparison import comparison_fields
+
+    schema_ids = {schema_id for _n, _k, schema_id, _l in comparison_fields(None)}
+    # 缺口台账不进对比表：逐条挂原文出处的清单横向并排读没有意义
+    assert schema_ids == {"skeleton", "method"}
+
+
+def test_comparison_rows_pick_up_the_declared_discipline():
+    """结构工程库该比的是 构件/作用/分析/验证，而不是它根本不抽的 baseline/dataset。"""
+    from app.services.comparison import comparison_fields
+
+    names = {name for name, _k, _s, _l in comparison_fields("structural")}
+    assert {"structure", "actions", "analysis", "validation"} <= names
+
+
+def test_comparison_rows_carry_the_packs_label():
+    """行按字段名键控；``structure`` 这种机器名当行头读起来像半成品。"""
+    from app.services.comparison import comparison_fields
+
+    labels = {name: label for name, _k, _s, label in comparison_fields("structural")}
+    assert labels["structure"] == "结构对象"
+
+
+def test_the_skeleton_stays_the_first_rows():
+    """骨架是任何学科都答得上的四问，排在最前是有意的阅读顺序。"""
+    from app.services.comparison import comparison_fields
+
+    first = comparison_fields("structural")[0]
+    assert first[2] == "skeleton"
+
+
+def test_comparison_fields_is_computed_per_call_not_at_import():
+    """模块级常量必然早于任何包装载——这正是旧代码漏掉学科字段的原因。"""
+    from app.services import comparison as comparison_module
+    from app.services import discipline_packs as dp
+
+    before = {name for name, _k, _s, _l in comparison_module.comparison_fields("latecomer")}
+    assert "widget" not in before
+
+    dp.register_pack(
+        dp.parse_pack(
+            {
+                "name": "latecomer",
+                "title": "迟到的包",
+                "schemas": [
+                    {
+                        "id": "method",
+                        "prompt": "抽取：\n{fields_spec}\n只输出 JSON。",
+                        "fields": [
+                            {"name": "purpose", "kind": "text", "max_len": 200},
+                            {"name": "mechanism", "kind": "text", "max_len": 200},
+                            {"name": "widget", "kind": "text", "max_len": 200},
+                        ],
+                    }
+                ],
+            },
+            origin="t",
+        )
+    )
+    after = {name for name, _k, _s, _l in comparison_module.comparison_fields("latecomer")}
+    assert "widget" in after, "注册后仍看不到 = 清单被冻在 import 期了"
+
+
+async def test_the_comparison_table_of_a_discipline_library_uses_its_axes(client):
+    """端到端：走一遍真的对比接口。"""
+    import uuid as _uuid
+
+    from app.core.db import get_sessionmaker
+    from app.models.library_direction import DirectionLibrary
+    from app.models.paper_extraction import PaperExtraction
+    from app.services import comparison as comparison_service
+    from tests.conftest import add_paper, make_project_with_library, register_and_login
+
+    token = await register_and_login(client, email="cmp@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, library_id = await make_project_with_library(client, headers, name="cmp")
+
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, library_id)
+        library.discipline = "structural"
+        paper = await add_paper(
+            session,
+            project_id=_uuid.UUID(project_id),
+            title="Blast response",
+            status="scored",
+        )
+        session.add(
+            PaperExtraction(
+                paper_id=paper.id,
+                schema_id="structural.method",
+                payload={
+                    "purpose": "p",
+                    "mechanism": "m",
+                    "structure": "steel concrete composite beam",
+                },
+            )
+        )
+        await session.commit()
+        paper_id = paper.id
+
+    async with get_sessionmaker()() as session:
+        table = await comparison_service.build_comparison(session, library_id, [paper_id])
+
+    by_field = {row.field: row for row in table.rows}
+    assert "structure" in by_field, "学科字段连行都没有"
+    assert by_field["structure"].label == "结构对象"
+    assert by_field["structure"].cells[0].value == "steel concrete composite beam"
+    assert by_field["structure"].cells[0].present is True
+
+
+async def test_the_gap_ledger_reads_a_disciplines_own_gap_card(client):
+    """包格式允许 ``<包名>.gaps``；写死内置 id 的话它抽出来了却静默不进台账。"""
+    import uuid as _uuid
+
+    from app.core.db import get_sessionmaker
+    from app.models.library_direction import DirectionLibrary
+    from app.models.paper_extraction import PaperExtraction
+    from app.services import discipline_packs as dp
+    from app.services import gap_ledger
+    from tests.conftest import add_paper, make_project_with_library, register_and_login
+
+    dp.register_pack(
+        dp.parse_pack(
+            {
+                "name": "structural",
+                "title": "结构工程",
+                "schemas": [
+                    {
+                        "id": "gaps",
+                        "prompt": "抽取：\n{fields_spec}\n只输出 JSON。",
+                        "fields": [
+                            {
+                                "name": "entries",
+                                "kind": "entries",
+                                "max_items": 5,
+                                "entry_keys": [
+                                    {"name": "kind", "max_len": 32},
+                                    {"name": "statement", "max_len": 200},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+            origin="t",
+        )
+    )
+
+    token = await register_and_login(client, email="gapdisc@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, library_id = await make_project_with_library(client, headers, name="gapd")
+
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, library_id)
+        library.discipline = "structural"
+        paper = await add_paper(
+            session,
+            project_id=_uuid.UUID(project_id),
+            title="Blast gaps",
+            status="scored",
+            year=2026,
+        )
+        session.add(
+            PaperExtraction(
+                paper_id=paper.id,
+                schema_id="structural.gaps",
+                payload={
+                    "entries": [
+                        {
+                            "kind": "gap",
+                            "statement": "接缝滞回规律未知",
+                            "source_span": "原文：节点滞回性能尚缺系统试验",
+                        }
+                    ]
+                },
+            )
+        )
+        await session.commit()
+
+    async with get_sessionmaker()() as session:
+        entries = await gap_ledger.library_gaps(session, library_id)
+    assert [e.statement for e in entries] == ["接缝滞回规律未知"]
+
+
+def test_entries_fields_render_as_text_not_a_python_literal():
+    """学科包带来的 entries 字段（合成包的 指标/数值/条件）。缺这一支时它会掉进
+    末尾的 str(raw)，格子里出现 ``[{'metric': ...}]``，CSV 导出同样。"""
+    from app.services.comparison import _render_value
+
+    rendered = _render_value(
+        [
+            {"metric": "产率", "value": "82%", "condition": "1 M KOH"},
+            {"metric": "过电位", "value": "270 mV", "condition": "10 mA/cm²"},
+        ],
+        "entries",
+    )
+    assert rendered == "产率 · 82% · 1 M KOH；过电位 · 270 mV · 10 mA/cm²"
+    assert "{" not in rendered and "'" not in rendered
+
+
+def test_an_empty_entries_field_renders_as_absent():
+    from app.services.comparison import _render_value
+
+    assert _render_value([], "entries") is None
+    assert _render_value(None, "entries") is None
+    # 形状不对的老产物不该炸接口，也不该显示成半个字面量
+    assert _render_value(["not a dict"], "entries") is None
+
+
+def test_entries_skip_empty_keys_inside_one_item():
+    """临床包里「原文没报告区间就留空」是有意的：空键不该在格子里留一个孤零零的分隔符。"""
+    from app.services.comparison import _render_value
+
+    rendered = _render_value(
+        [{"measure": "全因死亡率", "effect": "HR 0.78", "interval": ""}], "entries"
+    )
+    assert rendered == "全因死亡率 · HR 0.78"

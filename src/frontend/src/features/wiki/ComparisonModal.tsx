@@ -19,10 +19,12 @@ import { saveBlob } from './shared';
    格子灰显「未抽取」——缺口摆出来，比悄悄留空诚实。
    ============================================================ */
 
-function fieldLabel(field: string): string {
+function fieldLabel(field: string, label?: string): string {
   const meta = COMPARISON_FIELD_META[field];
-  // 后端 schema 演进先于前端标签表时兜底显示字段名，不至于空一格
-  return meta ? tr(meta.zh, meta.en) : field;
+  if (meta) return tr(meta.zh, meta.en);
+  // 学科包换上的字段：标签表里没有，用包自己写的那个（structure → 结构对象）。
+  // 只回退到字段名的话，非 CS 用户看到的整列行头都是机器名
+  return label || field;
 }
 
 function CellContent({ cell }: { cell: ComparisonCell }) {
@@ -178,7 +180,7 @@ export function ComparisonModal({
                       verticalAlign: 'top',
                     }}
                   >
-                    {fieldLabel(row.field)}
+                    {fieldLabel(row.field, row.label)}
                   </td>
                   {row.cells.map((cell, i) => (
                     <td

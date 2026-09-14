@@ -19,22 +19,63 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.library_direction import LibraryPaper
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper
 from app.models.paper_extraction import PaperExtraction
-from app.services.extraction.schemas import METHOD_SCHEMA, SKELETON_SCHEMA
+from app.services.extraction.schemas import SKELETON_SCHEMA
 
 # 对比上限：表格是横向并排读的，10 列已经到「一屏放不下、肉眼对不过来」的边缘；
 # 更多论文的横向归纳属于综述场景，本批次刻意不做（见模块 docstring）。
 MAX_COMPARISON_PAPERS = 10
 
-# 行序 = skeleton 四字段在前（任何学科都答得上的骨架），method 五字段在后
-# （复现要素）。直接从 schema 定义推导，字段集演进时对比表自动跟上，不留手抄副本。
-COMPARISON_FIELDS: tuple[tuple[str, str, str], ...] = tuple(
-    (field.name, field.kind, schema.id)
-    for schema in (SKELETON_SCHEMA, METHOD_SCHEMA)
-    for field in schema.fields
-)
+def comparison_fields(discipline: str | None = None) -> tuple[tuple[str, str, str, str], ...]:
+    """对比表的行：(字段名, kind, schema id, 界面标签)。
+
+    行序 = skeleton 四字段在前（任何学科都答得上的骨架），其余按 schema 注册序在后。
+    从 schema 定义推导而不是手抄，字段集演进时对比表自动跟上。
+
+    **每次现算，不做模块级常量**（#790）：学科包是惰性注册的，import 期算出来的清单
+    必然早于任何包装载——于是结构工程库里的对比表比的是 baseline / dataset 这些该库
+    根本不抽的轴（整列「未抽取」），而它真正在用的 构件/作用/分析/验证 连行都没有。
+    对比恰恰是领域字段最要紧的地方：「这三篇都算爆炸荷载，差别在单元类型和拿什么验证」
+    正是要问的问题，而旧表达不出来。
+    """
+    from app.services.extraction.schemas import schemas_for
+    from app.services.method_index import METHOD_SCHEMA_ID
+
+    available = {schema.id: schema for schema in schemas_for(discipline)}
+
+    def pick(base_id: str):
+        """同一件事有两张卡时取更具体的那张：``<学科>.<id>`` 优先于内置 ``<id>``。
+
+        按 id 字母序取末位是错的——``latecomer.method`` 排在 ``method`` 前面，
+        于是「更具体」反而选中了内置卡。具体性要按学科名显式算，不能指望排序。
+        """
+        if discipline and f"{discipline}.{base_id}" in available:
+            return available[f"{discipline}.{base_id}"]
+        return available.get(base_id)
+
+    # 方法卡只取一张：学科库里内置卡与学科卡并存，两张都排进去会让同一件事比两遍
+    # （而其中一张正是这个包要替换掉的那套字段）
+    chosen = [
+        schema
+        for schema in (pick(SKELETON_SCHEMA.id), pick(METHOD_SCHEMA_ID))
+        if schema is not None
+    ]
+    # 缺口台账不进对比表：它是逐条挂原文出处的清单，横向并排读没有意义
+    # （范围与本函数出现之前一致：skeleton + method）
+    return tuple(
+        (field.name, field.kind, schema.id, field.label or field.name)
+        for schema in chosen
+        for field in schema.fields
+    )
+
+
+#: 兼容旧引用（无学科口径 = 内置字段集）。求值时机在 import 之后，与 DEFAULT_TOOL_NAMES 同款。
+def __getattr__(name: str) -> object:
+    if name == "COMPARISON_FIELDS":
+        return comparison_fields()
+    raise AttributeError(name)
 
 
 class PaperNotInLibraryError(LookupError):
@@ -59,6 +100,8 @@ class ComparisonCell:
 @dataclass(slots=True)
 class ComparisonRow:
     field: str
+    #: 给人看的行名。学科包自己写（``structure`` → 结构对象）；没写就等于 field
+    label: str
     schema_id: str
     cells: list[ComparisonCell]
 
@@ -77,11 +120,29 @@ class ComparisonTable:
 
 
 def _render_value(raw: object, kind: str) -> str | None:
-    """把抽取产物的一个字段拍成展示串：text 原样，list 用中文分号串起来。
+    """把抽取产物的一个字段拍成展示串：text 原样，list 用中文分号串起来，
+    entries 每条内部用「·」连、条与条之间用分号连。
 
-    拍成串而不是把 list 透传给前端：对比表和 CSV 导出都按「一格一段文字」
+    拍成串而不是把结构透传给前端：对比表和 CSV 导出都按「一格一段文字」
     消费，渲染口径收在后端一处，两端不会各拼各的。
+
+    entries 这一支是学科包带来的（合成包的 指标/数值/条件、临床包的 指标/效应量/
+    区间）。对比表原先不可能出现这个 kind——内置 skeleton 与 method 都没有——
+    所以缺这一支时它会掉进末尾的 ``str(raw)``，格子里出现 Python 的字面量
+    ``[{'metric': '产率', ...}]``，CSV 导出同样。
     """
+    if kind == "entries":
+        if not isinstance(raw, list) or not raw:
+            return None
+        rendered = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            # 键名不重复展示：列头已经说明这一行是什么，条目内部按声明序拼值即可
+            parts = [str(v).strip() for v in item.values() if str(v).strip()]
+            if parts:
+                rendered.append(" · ".join(parts))
+        return "；".join(rendered) or None
     if kind == "list":
         if not isinstance(raw, list) or not raw:
             return None
@@ -131,7 +192,13 @@ async def build_comparison(
     if missing:
         raise PaperNotInLibraryError(f"papers not in library: {missing}")
 
-    schema_ids = {SKELETON_SCHEMA.id, METHOD_SCHEMA.id}
+    # 这个库按哪套口径抽，对比就按哪套比（#790）。library_id 本来就在手上——
+    # 上面的成员校验就是拿它做的，学科只差一次查询
+    discipline = await session.scalar(
+        select(DirectionLibrary.discipline).where(DirectionLibrary.id == library_id)
+    )
+    fields = comparison_fields(discipline)
+    schema_ids = {schema_id for _name, _kind, schema_id, _label in fields}
     extractions = (
         (
             await session.execute(
@@ -148,7 +215,7 @@ async def build_comparison(
     by_key = {(row.paper_id, row.schema_id): row for row in extractions}
 
     table_rows: list[ComparisonRow] = []
-    for field_name, kind, schema_id in COMPARISON_FIELDS:
+    for field_name, kind, schema_id, label in fields:
         cells: list[ComparisonCell] = []
         for pid in ordered_ids:
             extraction = by_key.get((pid, schema_id))
@@ -165,7 +232,9 @@ async def build_comparison(
                     extracted_at=extraction.updated_at if extraction is not None else None,
                 )
             )
-        table_rows.append(ComparisonRow(field=field_name, schema_id=schema_id, cells=cells))
+        table_rows.append(
+            ComparisonRow(field=field_name, label=label, schema_id=schema_id, cells=cells)
+        )
 
     return ComparisonTable(
         papers=[
