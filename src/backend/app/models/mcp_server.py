@@ -14,7 +14,6 @@ stdio 服务器常常要靠环境变量拿许可证或 API key（``LSDYNA_LICENS
 藏起来只会让「这个 agent 能跑什么」变得不可复核。
 """
 
-import uuid
 from typing import Any
 
 from sqlalchemy import Boolean, String, Text, UniqueConstraint

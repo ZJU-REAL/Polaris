@@ -13,7 +13,6 @@ from app.models.evidence import PaperEvidenceAnchor
 from app.models.experiment import Experiment, ExperimentRun
 from app.models.gate import Gate
 from app.models.guidance_document import GuidanceDocument
-from app.models.mcp_server import McpServer
 from app.models.hypothesis import HypothesisNode
 from app.models.idea import Idea
 from app.models.integration_token import IntegrationToken
@@ -40,6 +39,7 @@ from app.models.manuscript import (
     ManuscriptFileVersion,
     ManuscriptTemplate,
 )
+from app.models.mcp_server import McpServer
 from app.models.paper import (
     Concept,
     Paper,

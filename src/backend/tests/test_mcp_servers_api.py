@@ -156,7 +156,12 @@ async def test_a_server_that_cannot_start_reports_instead_of_500(client):
     headers = await _owner(client)
     resp = await client.post(
         "/api/mcp-servers",
-        json=_payload(slug="broken", command=sys.executable, args=["-c", "raise SystemExit(1)"], enabled=True),
+        json=_payload(
+            slug="broken",
+            command=sys.executable,
+            args=["-c", "raise SystemExit(1)"],
+            enabled=True,
+        ),
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
