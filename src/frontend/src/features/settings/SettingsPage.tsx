@@ -2352,6 +2352,9 @@ function DailyCategoriesSection() {
       toast(tr('订阅分类已保存', 'Subscribed categories saved'), 'ok');
       setCats(res.categories);
       void queryClient.invalidateQueries({ queryKey: ['daily-categories'] });
+      // 下面「其他来源」那节保存时是整份替换，会把它手里的 arXiv 副本一起发回去。
+      // 不在这里失效的话，那份副本还是改动之前的，于是那节一保存就把这次的改动顶回去
+      void queryClient.invalidateQueries({ queryKey: ['daily-subscriptions'] });
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 422) {
