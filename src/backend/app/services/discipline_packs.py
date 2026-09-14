@@ -117,6 +117,26 @@ class DisciplinePack(BaseModel):
     schemas: tuple[PackSchema, ...] = Field(min_length=1, max_length=8)
 
 
+def _builtin_stage(schema_id: str) -> str | None:
+    """同名内置 schema 跑在哪个环节。没有同名内置时返回 None。
+
+    包里叫 ``method`` 的那条干的就是内置 method@1 那件事，所以默认该走同一个环节
+    （``extract_method``），而不是 ``ExtractionSchema.stage`` 的类缺省
+    ``extract_skeleton``——那个缺省是给骨架类 schema 写的，不是为学科包挑的。
+
+    差别不在超时（两者同一个 call_profile 档），而在**模型路由**：环节是 owner 在
+    设置页逐个配模型的粒度。把 extract_method 指到强模型的人，本意正是「方法卡值得
+    好模型」；而学科方法卡恰恰最需要——它抽的是陌生领域的术语，不是熟悉的 ML 形状。
+    路由不一致不会报错，只会让那批卡悄悄由另一个模型产出。
+
+    从内置注册表现查而不是写一张映射表：以后新增内置 schema 自动享有这条规则，
+    不必指望有人回来补表。
+    """
+    from app.services.extraction.schemas import builtin_schemas
+
+    return next((s.stage for s in builtin_schemas() if s.id == schema_id), None)
+
+
 def _to_extraction_schema(pack: DisciplinePack, spec: PackSchema) -> ExtractionSchema:
     """把包里的一条声明变成注册表认识的 ExtractionSchema。
 
@@ -153,6 +173,10 @@ def _to_extraction_schema(pack: DisciplinePack, spec: PackSchema) -> ExtractionS
     }
     if spec.stage:
         kwargs["stage"] = spec.stage
+    else:
+        inherited = _builtin_stage(spec.id)
+        if inherited:
+            kwargs["stage"] = inherited
     return ExtractionSchema(**kwargs)
 
 

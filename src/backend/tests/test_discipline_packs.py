@@ -307,3 +307,52 @@ def test_entries_fields_declare_their_entry_keys():
             for field in schema.fields:
                 if field.kind == "entries":
                     assert field.entry_keys, (pack.name, schema.id, field.name)
+
+
+# ---- 运行环节继承（#781）----
+
+
+def test_a_pack_method_card_runs_on_the_method_stage():
+    """包里叫 method 的那条干的就是内置 method@1 那件事，该走同一个环节。
+
+    环节是 owner 在设置页逐个配模型的粒度。走 extract_skeleton 的后果不是报错，
+    是那批卡悄悄由另一个模型产出——而把 extract_method 指到强模型的人，本意正是
+    「方法卡值得好模型」。
+    """
+    pack = dp.parse_pack(_minimal(name="stageinherit"), origin="t")
+    dp.register_pack(pack)
+    assert get_schema("stageinherit.method").stage == "extract_method"
+
+
+def test_a_pack_schema_named_like_another_builtin_inherits_that_one():
+    """规则是「同名同工」，不是给 method 开的特例。"""
+    pack = dp.parse_pack(_minimal(name="gapsinherit", schema_id="gaps"), origin="t")
+    dp.register_pack(pack)
+    assert get_schema("gapsinherit.gaps").stage == get_schema("gaps").stage
+
+
+def test_a_pack_schema_with_no_builtin_namesake_keeps_the_default():
+    """内置里没有同名的就没有可继承的口径，回到类缺省。"""
+    data = _minimal(name="novel", schema_id="protocol")
+    pack = dp.parse_pack(data, origin="t")
+    dp.register_pack(pack)
+    assert get_schema("novel.protocol").stage == "extract_skeleton"
+
+
+def test_an_explicit_stage_still_wins():
+    """包自己声明了环节就尊重它——包括挂一个自己的 plugin:<包>:<环节> 命名空间。"""
+    data = _minimal(name="ownstage")
+    data["schemas"][0]["stage"] = "plugin:ownstage:extract"
+    pack = dp.parse_pack(data, origin="t")
+    dp.register_pack(pack)
+    assert get_schema("ownstage.method").stage == "plugin:ownstage:extract"
+
+
+def test_every_builtin_pack_method_card_routes_like_the_builtin_one():
+    """随包目录走，将来加包自动受检。"""
+    dp.load_disciplines()
+    for pack in _builtin_packs():
+        for schema in pack.schemas:
+            if schema.id != "method":
+                continue
+            assert get_schema(f"{pack.name}.method").stage == "extract_method", pack.name
