@@ -14,6 +14,27 @@ import { tr } from '../../lib/i18n';
    ============================================================ */
 
 /** 卡片里的一段字段：无内容不渲染（后端约定：没抽到就缺键）。 */
+/** 内置口径的五项：界面对它们有自己的中英文案，不走包提供的 label。 */
+const BUILTIN_FIELD_NAMES = new Set(['purpose', 'mechanism', 'baseline', 'dataset', 'protocol']);
+
+/** 包字段的值可能是文本、字符串数组，或结构化条目（如「指标/数值/条件」三元组）。 */
+function renderFieldValue(value: unknown): ReactNode {
+  if (value === null || value === undefined) return null;
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+    if (typeof value[0] === 'string') return (value as string[]).join(tr('；', '; '));
+    // entries：每条是白名单键的对象，按键序拼成一行，键名不再重复展示
+    return (value as Record<string, unknown>[])
+      .map((entry) =>
+        Object.values(entry)
+          .filter((v) => v !== null && v !== undefined && v !== '')
+          .join(' · '),
+      )
+      .join(tr('；', '; '));
+  }
+  return String(value);
+}
+
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div style={{ fontSize: 12, lineHeight: 1.6 }}>
@@ -71,6 +92,15 @@ function MethodCardView({
         <Field label={tr('数据集', 'Datasets')}>{card.dataset.join(tr('；', '; '))}</Field>
       )}
       {card.protocol && <Field label={tr('流程', 'Protocol')}>{card.protocol}</Field>}
+      {/* 学科包换上的字段。上面五项是内置口径、界面有自己的中英文案，所以这里
+          只补它们之外的——写死五项的话，结构工程的 构件/作用/分析/验证 一个都不显示 */}
+      {(card.fields ?? [])
+        .filter((f) => !BUILTIN_FIELD_NAMES.has(f.name))
+        .map((f) => (
+          <Field key={f.name} label={f.label || f.name}>
+            {renderFieldValue(f.value)}
+          </Field>
+        ))}
     </div>
   );
 }

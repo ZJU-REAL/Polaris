@@ -419,3 +419,98 @@ async def test_a_review_with_only_the_builtin_card_is_still_found(client):
     found = {c["paper_id"] for c in cards}
     assert found == {first_paper, review_id}
     assert len(cards) == 2, "每篇仍是一张卡"
+
+
+# ---- 卡片内容：学科包换上的字段必须真的到达用户 ----
+
+
+async def test_the_card_carries_the_packs_own_fields(client):
+    """写死内置五键的话，结构工程的 构件/作用/分析/验证 在 API 边界就被丢掉——
+    装了包、选了学科、每篇多付一次抽取，界面上却只有目的和机制两行。"""
+    from app.core.db import get_sessionmaker
+
+    library_id, _paper_id = await _library_with_two_cards(client, "cardf1@example.com")
+    async with get_sessionmaker()() as session:
+        cards = await method_index.list_methods(session, library_id)
+    assert cards
+    names = {f["name"] for f in cards[0]["fields"]}
+    assert "structure" in names, "学科字段没进卡片"
+    by_name = {f["name"]: f for f in cards[0]["fields"]}
+    assert by_name["structure"]["value"] == "steel concrete composite beam"
+
+
+async def test_a_field_carries_the_label_the_pack_declared(client):
+    """``structure`` 这种机器名在中文界面下读起来像半成品；包自己写标签。"""
+    from app.core.db import get_sessionmaker
+
+    library_id, _paper_id = await _library_with_two_cards(client, "cardf2@example.com")
+    async with get_sessionmaker()() as session:
+        cards = await method_index.list_methods(session, library_id)
+    by_name = {f["name"]: f for f in cards[0]["fields"]}
+    assert by_name["structure"]["label"] == "结构对象"
+
+
+async def test_a_field_with_no_label_falls_back_to_its_name(client):
+    """包没写标签不该让这一行没名字。"""
+    from app.services import discipline_packs as dp
+    from app.services.extraction.schemas import get_schema
+
+    pack = dp.parse_pack(
+        {
+            "name": "nolabel",
+            "title": "无标签包",
+            "schemas": [
+                {
+                    "id": "method",
+                    "prompt": "抽取：\n{fields_spec}\n只输出 JSON。",
+                    "fields": [
+                        {"name": "purpose", "kind": "text", "max_len": 200},
+                        {"name": "mechanism", "kind": "text", "max_len": 200},
+                        {"name": "widget", "kind": "text", "max_len": 200},
+                    ],
+                }
+            ],
+        },
+        origin="t",
+    )
+    dp.register_pack(pack)
+    field = next(f for f in get_schema("nolabel.method").fields if f.name == "widget")
+    assert field.label is None
+    from app.services.method_index import _declared_fields
+
+    rendered = _declared_fields("nolabel.method", {"widget": "x"})
+    assert rendered == [
+        {"name": "widget", "label": "widget", "kind": "text", "value": "x"}
+    ]
+
+
+async def test_empty_fields_are_left_off_the_card(client):
+    """没抽到的字段不进卡片：渲染一个空段落比不渲染更糟。"""
+    from app.services.method_index import _declared_fields
+
+    rendered = _declared_fields(
+        "structural.method",
+        {"purpose": "p", "mechanism": "", "structure": None, "actions": []},
+    )
+    assert [f["name"] for f in rendered] == ["purpose"]
+
+
+async def test_a_card_whose_pack_was_uninstalled_still_renders(client):
+    """包被卸载了，卡还在表上。读不出字段声明不该让整张卡消失。"""
+    from app.services.method_index import _declared_fields
+
+    rendered = _declared_fields("gone.method", {"purpose": "p", "structure": "s"})
+    assert {f["name"] for f in rendered} == {"purpose", "structure"}
+    assert all(f["label"] == f["name"] for f in rendered)
+
+
+async def test_the_builtin_card_shape_is_unchanged(client):
+    """内置五键保留：现有前端与用例按这个形状读。"""
+    from app.core.db import get_sessionmaker
+
+    library_id, _paper_id = await _library_with_two_cards(client, "cardf3@example.com")
+    async with get_sessionmaker()() as session:
+        cards = await method_index.list_methods(session, library_id)
+    card = cards[0]
+    assert {"purpose", "mechanism", "baseline", "dataset", "protocol"} <= set(card)
+    assert card["schema_id"] == "structural.method"

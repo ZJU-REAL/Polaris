@@ -1794,6 +1794,16 @@ export interface LibraryQaResponse {
 export type MethodSearchMode = 'same_purpose' | 'different_mechanism';
 
 /** 一张方法卡：method@1 抽取产物的五元组 + 检索时的双轴相似度。 */
+/** 方法卡上按 schema 声明抽到的一个字段。学科包换上的字段全在这里。 */
+export interface MethodCardField {
+  /** schema 里的字段名（machine id） */
+  name: string;
+  /** 界面标签；包没写就等于 name。包的一部分，不参与中英切换 */
+  label: string;
+  kind: 'text' | 'list' | 'entries' | string;
+  value: unknown;
+}
+
 export interface MethodCard {
   paper_id: string;
   title: string;
@@ -1802,6 +1812,13 @@ export interface MethodCard {
   baseline: string[];
   dataset: string[];
   protocol: string | null;
+  /** 这张卡按哪套口径读出来的；学科库里是 "<包名>.method" */
+  schema_id: string;
+  /**
+   * 该 schema 声明的全部字段（含内置五项）。写死五项渲染的话，学科包换上的字段
+   * 一个都不显示——装了包、选了学科、每篇多付一次抽取，界面上却只有目的和机制。
+   */
+  fields: MethodCardField[];
   /** purpose 轴与查询的相似度（列表视图为 null） */
   similarity: number | null;
   /** mechanism 轴与查询的相似度（「找异类机制」下越低排得越前） */

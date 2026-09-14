@@ -201,16 +201,58 @@ async def _method_rows(
     return list(chosen.values())
 
 
+def _declared_fields(schema_id: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """这张卡按它自己的 schema 声明有哪些字段、各自抽到了什么。
+
+    ``_card`` 原本只读内置那五个键，于是学科包换上的字段（结构工程的 构件/作用/
+    分析/验证）在 API 边界就被丢掉了——装了包、选了学科、每篇多付一次抽取，
+    界面上却只有目的和机制两行。整条链只剩这最后一步是坏的，而它恰好是用户唯一
+    看得见的一步。
+
+    按 schema 的字段顺序给全量（含内置五项）：客户端要什么自己挑，而不是由这里
+    替它猜。schema 已经不在注册表里（包被卸载）时退回 payload 本身的键序——
+    卡还在表上，读不出字段声明不该让它整张消失。
+    """
+    from app.services.extraction.schemas import get_schema
+
+    try:
+        schema = get_schema(schema_id)
+    except ValueError:
+        return [
+            {"name": key, "label": key, "kind": "text", "value": value}
+            for key, value in payload.items()
+            if value not in (None, "", [], {})
+        ]
+    out: list[dict[str, Any]] = []
+    for field in schema.fields:
+        value = payload.get(field.name)
+        if value in (None, "", [], {}):
+            continue
+        out.append(
+            {
+                "name": field.name,
+                "label": field.label or field.name,
+                "kind": field.kind,
+                "value": value,
+            }
+        )
+    return out
+
+
 def _card(paper: Paper, ext: PaperExtraction) -> dict[str, Any]:
     payload = ext.payload or {}
     return {
         "paper_id": paper.id,
         "title": paper.title,
+        # 内置五键保留：现有前端与用例按这个形状读，学科卡上它们多半为空
         "purpose": payload.get("purpose"),
         "mechanism": payload.get("mechanism"),
         "baseline": payload.get("baseline") or [],
         "dataset": payload.get("dataset") or [],
         "protocol": payload.get("protocol"),
+        # 这张卡是按哪套口径读出来的；学科库里是 "<包名>.method"
+        "schema_id": ext.schema_id,
+        "fields": _declared_fields(ext.schema_id, payload),
         "similarity": None,
         "mechanism_similarity": None,
     }
