@@ -16,6 +16,11 @@ export interface ComparisonCell {
 
 export interface ComparisonRow {
   field: string;
+  /**
+   * 后端给的行名。内置字段前端有自己的中英文案，用不上它；学科包换上的字段只有
+   * 它——包自己写的标签，不参与界面的中英切换。
+   */
+  label?: string;
   schema_id: string;
   /** 与 papers 同序同长 */
   cells: ComparisonCell[];
@@ -67,13 +72,14 @@ export function comparisonColumnTitle(paper: ComparisonPaper): string {
 export function comparisonToCsv(
   table: ComparisonTable,
   opts: {
-    fieldLabel?: (field: string) => string;
+    /** 第二个参数是后端给的行名：学科包换上的字段只有它 */
+    fieldLabel?: (field: string, label?: string) => string;
     absentText?: string;
     /** 左上角表头（默认 'field'；界面导出时传「字段」的当前语言文案） */
     fieldColumnTitle?: string;
   } = {},
 ): string {
-  const label = opts.fieldLabel ?? ((f: string) => f);
+  const label = opts.fieldLabel ?? ((f: string, l?: string) => l || f);
   const absent = opts.absentText ?? '';
   const lines: string[] = [];
   lines.push(
@@ -84,7 +90,7 @@ export function comparisonToCsv(
   for (const row of table.rows) {
     lines.push(
       [
-        label(row.field),
+        label(row.field, row.label),
         ...row.cells.map((cell) => (cell.present && cell.value != null ? cell.value : absent)),
       ]
         .map(csvEscape)

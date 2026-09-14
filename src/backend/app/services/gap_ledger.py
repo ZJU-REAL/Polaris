@@ -62,6 +62,23 @@ def _entry_sort_key(entry: GapEntry) -> tuple:
     return (-score, -(entry.year or 0), entry.statement)
 
 
+async def _gap_schema_ids(session: AsyncSession, library_id: uuid.UUID) -> list[str]:
+    """这个库的缺口卡该从哪些 schema 里取：内置 gaps@1 +（若声明了学科）该学科的。
+
+    与 method_index.method_schema_ids 同一条规则、同一个理由：并集而不是替换——
+    库里既有按本学科读的论文，也有只带内置卡的跨学科综述。
+    """
+    from app.models.library_direction import DirectionLibrary
+
+    ids = [GAPS_SCHEMA.id]
+    discipline = await session.scalar(
+        select(DirectionLibrary.discipline).where(DirectionLibrary.id == library_id)
+    )
+    if discipline:
+        ids.append(f"{discipline}.{GAPS_SCHEMA.id}")
+    return ids
+
+
 async def library_gaps(
     session: AsyncSession,
     library_id: uuid.UUID,
@@ -76,6 +93,9 @@ async def library_gaps(
     """
     if kind is not None and kind not in GAP_KINDS:
         raise ValueError(f"unknown gap kind: {kind!r}")
+    # 内置 gaps@1 + 本库学科包自己的 gaps（#790）。写死内置 id 的话，包作者写了
+    # 一张学科缺口卡、抽出来了、进了表，台账却静默忽略它——和方法卡此前一样的形状
+    schema_ids = await _gap_schema_ids(session, library_id)
     stmt = (
         select(PaperExtraction, Paper)
         .join(Paper, Paper.id == PaperExtraction.paper_id)
@@ -83,7 +103,7 @@ async def library_gaps(
         .where(
             LibraryPaper.library_id == library_id,
             LibraryPaper.status != "excluded",
-            PaperExtraction.schema_id == GAPS_SCHEMA.id,
+            PaperExtraction.schema_id.in_(schema_ids),
         )
     )
     entries: list[GapEntry] = []

@@ -358,7 +358,9 @@ class ComparisonCellRead(BaseModel):
 class ComparisonRowRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    field: str  # skeleton/method 的字段名（problem/method/…/protocol）
+    field: str  # schema 里的字段名（problem/method/…/protocol、学科包的 structure 等）
+    #: 给人看的行名。学科包自己写；没写就等于 field
+    label: str = ""
     schema_id: str
     cells: list[ComparisonCellRead] = []
 
