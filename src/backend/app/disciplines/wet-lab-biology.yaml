@@ -1,0 +1,53 @@
+# 实验生物学学科包。
+#
+# 与结构工程包一起构成这套格式的第二个证据点：那个包换的是"结构对象—作用—分析—验证"，
+# 这个包换的是"体系—扰动—读出—对照"。两者除了跨学科的 purpose / mechanism 两根轴之外
+# 没有一个字段重合——格式如果只够用来描述一种学科，这里就会露馅。
+#
+# 放进 <data_dir>/disciplines/ 的同名文件会覆盖本包。
+name: wetlab
+title: 实验生物学
+description: >-
+  面向分子/细胞/动物实验的抽取口径：把论文的做法按「生物体系 — 扰动 — 读出 — 对照」
+  拆开。生命科学论文的可复现性几乎全压在对照设置上，所以它是独立字段而不是塞进方法描述。
+
+schemas:
+  - id: method
+    version: 1
+    prompt: |
+      POLARIS_EXTRACT_METHOD
+      你是实验生物学论文的方法卡抽取器。根据给定论文的标题与正文，把它的做法拆成方法卡，
+      全部字段用中文表述（物种名、基因名、试剂与仪器型号、细胞系名保留原文）：
+      {fields_spec}
+      其中 "purpose" 只写这项工作要回答的生物学问题（不写怎么做）；
+      "mechanism" 只写回答它的核心实验策略（不复述问题）；
+      "system" 写生物体系（如「小鼠 C57BL/6J，海马区」「HEK293T 细胞」「拟南芥 Col-0」）；
+      "perturbation" 写施加的扰动（如「Cre-loxP 条件性敲除 Grin1」「10 μM 雷帕霉素处理 24h」），
+      观察性研究没有扰动就留空，不要编一个；
+      "readout" 写测量什么、用什么测（如「膜片钳记录 mEPSC」「10x 单细胞转录组」）；
+      "controls" 写对照与重复设置（如「同窝野生型对照」「n=6 只/组，三次独立实验」）——
+      原文没写清楚就如实留空，这本身是重要信息，不要替作者补全。
+      只输出一个 JSON 对象，键为上述字段名，另加 "confidence"（0 到 1，
+      你对整份抽取的把握）。只依据原文，不引入外部知识。
+    fields:
+      - name: purpose
+        kind: text
+        max_len: 400
+      - name: mechanism
+        kind: text
+        max_len: 400
+      - name: system
+        kind: text
+        max_len: 400
+      - name: perturbation
+        kind: list
+        max_len: 200
+        max_items: 6
+      - name: readout
+        kind: list
+        max_len: 200
+        max_items: 6
+      - name: controls
+        kind: list
+        max_len: 200
+        max_items: 6

@@ -14,6 +14,7 @@ import pytest
 import yaml
 
 from app.services import discipline_packs as dp
+from app.services.extraction import schemas as schemas_module
 from app.services.extraction.schemas import (
     _REGISTRY,
     get_schema,
@@ -30,11 +31,18 @@ def _restore_schema_registry():
 
     不还的后果很具体——test_paper_extraction 断言 enrich 抽出的 schema 集合，
     本文件泄漏进去的学科 schema 会让那条用例莫名多出一行。
+
+    ``_disciplines_loaded`` 一起还原：它是与注册表脱钩的「已装过」标志位，只还注册表
+    的话，本文件把学科 schema 摘掉之后标志位仍是 True，惰性加载从此不再重试——后面
+    任何一条依赖学科 schema 的用例都会莫名其妙地看不到它们，而且报的是断言失败，
+    一点也不像「上一个文件没收拾干净」。
     """
     snapshot = dict(_REGISTRY)
+    loaded = schemas_module._disciplines_loaded
     yield
     _REGISTRY.clear()
     _REGISTRY.update(snapshot)
+    schemas_module._disciplines_loaded = loaded
 
 
 def _minimal(name: str = "demo", schema_id: str = "method") -> dict:
@@ -209,3 +217,93 @@ def test_non_method_schemas_are_free_to_use_any_fields():
     """只有 method 那条参与方法库；别的 schema 不该被这条约束绑住。"""
     pack = dp.parse_pack(_minimal(name="freeform", schema_id="gaps"), origin="t")
     assert dp.register_pack(pack) == ["freeform.gaps"]
+
+
+# ---- 对全部内置包生效的检查 ----
+#
+# 逐个包写死断言的问题是没人会记得回来加：新包只要不解析崩，就悄悄少受一层检查。
+# 下面这几条遍历目录，将来加包自动进网。
+
+
+def _builtin_packs():
+    return [
+        dp.read_pack_file(path)
+        for path in sorted(dp.BUILTIN_DISCIPLINES_DIR.glob("*.yaml"))
+    ]
+
+
+def test_every_builtin_pack_parses():
+    packs = _builtin_packs()
+    assert len(packs) >= 2, "只有一个包时，这套格式能不能描述别的学科是没被验证过的"
+
+
+def test_builtin_pack_names_are_unique():
+    """包名是 schema 的命名空间前缀，重名等于两个学科的方法卡互相顶掉。"""
+    names = [p.name for p in _builtin_packs()]
+    assert len(names) == len(set(names)), names
+
+
+def test_every_builtin_method_card_keeps_the_two_retrieval_axes():
+    """缺了这两根轴，那个学科的方法卡抽出来、进了库、却一条都检索不到。"""
+    for pack in _builtin_packs():
+        for schema in pack.schemas:
+            if schema.id != "method":
+                continue
+            names = {f.name for f in schema.fields}
+            assert {"purpose", "mechanism"} <= names, pack.name
+
+
+def test_no_builtin_pack_ships_the_machine_learning_axes():
+    """学科包的意义就是换掉 baseline/dataset 这套口径；带着它们等于白装。"""
+    for pack in _builtin_packs():
+        for schema in pack.schemas:
+            names = {f.name for f in schema.fields}
+            assert not ({"baseline", "dataset"} & names), (pack.name, schema.id)
+
+
+def test_the_packs_actually_differ_from_each_other():
+    """两个包除了跨学科的两根轴之外还共用大部分字段的话，这套格式其实只描述了一种学科。"""
+    method_fields = {
+        pack.name: {f.name for f in schema.fields}
+        for pack in _builtin_packs()
+        for schema in pack.schemas
+        if schema.id == "method"
+    }
+    axes = {"purpose", "mechanism"}
+    domain = {name: fields - axes for name, fields in method_fields.items()}
+    seen = list(domain.items())
+    for i, (name_a, fields_a) in enumerate(seen):
+        for name_b, fields_b in seen[i + 1 :]:
+            assert not (fields_a & fields_b), (
+                f"{name_a} 与 {name_b} 的领域字段重合：{sorted(fields_a & fields_b)}"
+            )
+
+
+def test_all_builtin_packs_register_side_by_side():
+    """四个包同时装上互不干扰，各自的 schema 都带包名前缀进注册表。"""
+    dp.load_disciplines()
+    registered = {s.id for s in list_schemas()}
+    for pack in _builtin_packs():
+        for schema in pack.schemas:
+            assert f"{pack.name}.{schema.id}" in registered
+
+
+def test_a_library_only_ever_sees_its_own_packs_schemas():
+    """装了四个包，声明某一个学科的库只多拿到那一个的 schema——否则每篇论文都要
+    为所有已装学科各付一次 LLM 调用。"""
+    dp.load_disciplines()
+    packs = _builtin_packs()
+    for pack in packs:
+        ids = {s.id for s in schemas_for(pack.name)}
+        others = [p.name for p in packs if p.name != pack.name]
+        for other in others:
+            assert not any(i.startswith(f"{other}.") for i in ids), (pack.name, other)
+
+
+def test_entries_fields_declare_their_entry_keys():
+    """entries 字段不声明 entry_keys 会在注册时才炸；包一加进来就该被挡下。"""
+    for pack in _builtin_packs():
+        for schema in pack.schemas:
+            for field in schema.fields:
+                if field.kind == "entries":
+                    assert field.entry_keys, (pack.name, schema.id, field.name)

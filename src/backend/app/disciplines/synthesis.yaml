@@ -1,0 +1,60 @@
+# 合成化学与材料制备学科包。
+#
+# 这个包比前两个多做一件事：用 entries 字段装性能指标。合成类论文的结论几乎总是
+# 「在某条件下某指标达到某值」，拆成三列（指标 / 数值 / 条件）才检索得动——压成一段
+# 文字的话，「哪些工作的产率超过 80%」这种问题就只能靠全文搜关键词碰运气。
+#
+# 放进 <data_dir>/disciplines/ 的同名文件会覆盖本包。
+name: synthesis
+title: 合成化学与材料
+description: >-
+  面向合成/制备类工作的抽取口径：把论文的做法按「目标物 — 路线与条件 — 表征 — 性能」
+  拆开。性能指标按条目存（指标/数值/条件），而不是压成一段描述。
+
+schemas:
+  - id: method
+    version: 1
+    prompt: |
+      POLARIS_EXTRACT_METHOD
+      你是合成化学/材料论文的方法卡抽取器。根据给定论文的标题与正文，把它的做法拆成方法卡，
+      全部字段用中文表述（化合物名、试剂、溶剂、仪器与表征方法缩写保留原文）：
+      {fields_spec}
+      其中 "purpose" 只写这项工作要得到什么或解决什么制备难题（不写怎么做）；
+      "mechanism" 只写实现它的核心化学或工艺策略（不复述目标）；
+      "target" 写目标化合物或材料及其形态（如「Pd 单原子催化剂，负载于 N 掺杂碳」）；
+      "route" 写关键步骤与条件（如「溶剂热，180 °C，12 h，乙二醇体系」）；
+      "characterization" 写用到的表征手段（如「XRD」「HAADF-STEM」「XPS」）；
+      "performance" 写报告的性能指标，每条拆成三项：
+        metric 指标名（如「产率」「过电位」「循环稳定性」）、
+        value 数值与单位（如「82%」「270 mV @ 10 mA/cm²」）、
+        condition 测试条件（如「1 M KOH」「室温，N2 氛围」）；
+      原文没有明确报告的指标不要推算，也不要凭常识补。
+      只输出一个 JSON 对象，键为上述字段名，另加 "confidence"（0 到 1，
+      你对整份抽取的把握）。只依据原文，不引入外部知识。
+    fields:
+      - name: purpose
+        kind: text
+        max_len: 400
+      - name: mechanism
+        kind: text
+        max_len: 400
+      - name: target
+        kind: text
+        max_len: 300
+      - name: route
+        kind: text
+        max_len: 600
+      - name: characterization
+        kind: list
+        max_len: 120
+        max_items: 8
+      - name: performance
+        kind: entries
+        max_items: 8
+        entry_keys:
+          - name: metric
+            max_len: 80
+          - name: value
+            max_len: 80
+          - name: condition
+            max_len: 160

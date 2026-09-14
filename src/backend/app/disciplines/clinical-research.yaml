@@ -1,0 +1,62 @@
+# 临床与流行病学研究学科包。
+#
+# 这个学科自己就有一套成熟的受控词表（PICO：人群/干预/对照/结局），所以它检验的是
+# 另一件事：格式能不能承载一个**本来就存在**的领域约定，而不是逼着人把它改写成
+# 别的形状。结局按条目存（指标/效应量/区间），因为「效应量多大、可信区间是否跨 1」
+# 正是读这类论文时唯一真正要比的东西。
+#
+# 放进 <data_dir>/disciplines/ 的同名文件会覆盖本包。
+name: clinical
+title: 临床与流行病学
+description: >-
+  面向临床试验与观察性研究的抽取口径，按 PICO 拆解：研究人群、干预、对照、结局，
+  外加研究设计。结局按条目存（指标/效应量/区间），便于跨研究比较效应大小而不是只看结论。
+
+schemas:
+  - id: method
+    version: 1
+    prompt: |
+      POLARIS_EXTRACT_METHOD
+      你是临床/流行病学论文的方法卡抽取器。根据给定论文的标题与正文，把它的做法拆成方法卡，
+      全部字段用中文表述（药名、量表名、注册号、统计方法名保留原文）：
+      {fields_spec}
+      其中 "purpose" 只写这项研究要回答的临床问题（不写怎么做）；
+      "mechanism" 只写回答它的核心研究策略（不复述问题）；
+      "design" 写研究设计（如「多中心双盲随机对照试验」「回顾性队列」「病例对照」），
+      并在同一句里写清样本量与随访时长（如「n=1204，随访 24 个月」）；
+      "population" 写研究人群与关键纳入排除标准；
+      "intervention" 写干预与对照分别是什么（单臂研究就写明没有对照组）；
+      "outcomes" 写报告的结局，每条拆成三项：
+        measure 结局指标（如「全因死亡率」「HbA1c 变化」）、
+        effect 效应量（如「HR 0.78」「均差 -0.6%」）、
+        interval 区间或显著性（如「95% CI 0.64–0.95」「P=0.013」）；
+        主要结局排在前面；原文没报告区间就留空，不要用 P 值替代。
+      只依据原文，不引入外部知识，尤其不要根据常识判断某个结论是否成立。
+      只输出一个 JSON 对象，键为上述字段名，另加 "confidence"（0 到 1，
+      你对整份抽取的把握）。
+    fields:
+      - name: purpose
+        kind: text
+        max_len: 400
+      - name: mechanism
+        kind: text
+        max_len: 400
+      - name: design
+        kind: text
+        max_len: 400
+      - name: population
+        kind: text
+        max_len: 600
+      - name: intervention
+        kind: text
+        max_len: 400
+      - name: outcomes
+        kind: entries
+        max_items: 8
+        entry_keys:
+          - name: measure
+            max_len: 120
+          - name: effect
+            max_len: 80
+          - name: interval
+            max_len: 80
