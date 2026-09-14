@@ -18,7 +18,7 @@ validated / refuted / pruned 均为终态；剪枝级联整个子树（被剪分
 import uuid
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
@@ -64,7 +64,18 @@ async def create_node(
         if parent is None or parent.run_id != run.id:
             # 跨 run 挂父等同于父不存在：树是 run 私有资产，不能互相嫁接
             raise ValueError(f"parent node {parent_id} not found in run {run.id}")
+    # run 内创建序号。多取一次 MAX 是划算的：这个函数本来就每建一个节点提交一次，
+    # 而顺序如果继续押在墙钟上，恢复就没有确定起点（#784）。
+    # 同一 run 只由一个 worker 循环驱动，不存在并发插入争抢同一个 seq。
+    next_seq = (
+        await session.scalar(
+            select(func.coalesce(func.max(HypothesisNode.seq), 0)).where(
+                HypothesisNode.run_id == run.id
+            )
+        )
+    ) + 1
     node = HypothesisNode(
+        seq=next_seq,
         run_id=run.id,
         parent_id=parent_id,
         kind=kind,
@@ -174,14 +185,15 @@ async def tree_for_run(
 ) -> list[HypothesisNode]:
     """一次查询拉平返回 run 的全部节点（父子拼装交给 API/前端）。
 
-    created_at 再按 id 定序：同秒批量建的兄弟节点也要有稳定顺序。
+    按 run 内创建序号定序，不按 created_at：后者是 Python 侧 utcnow()，同秒批量建
+    的兄弟节点会并列，时钟回拨时还会前后颠倒（#784）。
     """
     return list(
         (
             await session.execute(
                 select(HypothesisNode)
                 .where(HypothesisNode.run_id == run_id)
-                .order_by(HypothesisNode.created_at, HypothesisNode.id)
+                .order_by(HypothesisNode.seq)
             )
         )
         .scalars()
@@ -194,16 +206,18 @@ async def best_open_node(
 ) -> HypothesisNode | None:
     """score 最高的 open 节点（D2 恢复语义的地基）；空树/无 open 返回 None。
 
-    score 为空的节点排最后（还没评分不代表最优）；同分按 created_at 取早的，
-    保证恢复起点确定性。
+    score 为空的节点排最后（还没评分不代表最优）；同分按 run 内创建序号取早的。
+
+    序号而不是 created_at（#784）：created_at 来自 Python 侧 utcnow()，不单调。
+    NTP 步进或回拨会让后建的节点拿到更小的时间戳，于是「取先建」选出的是后建的
+    那个；同一微秒并列时更是由数据库随意返回。两种情况都不报错，只是这次恢复
+    走进了另一棵子树——而「确定的恢复起点」正是这个函数存在的理由。
     """
     return (
         await session.execute(
             select(HypothesisNode)
             .where(HypothesisNode.run_id == run_id, HypothesisNode.status == "open")
-            .order_by(
-                HypothesisNode.score.desc().nulls_last(), HypothesisNode.created_at
-            )
+            .order_by(HypothesisNode.score.desc().nulls_last(), HypothesisNode.seq)
             .limit(1)
         )
     ).scalar_one_or_none()

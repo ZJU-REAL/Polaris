@@ -9,7 +9,7 @@ Navigator 在树上做分支/剪枝决策而非线性 plan：每个节点是一�
 import uuid
 from typing import Any
 
-from sqlalchemy import Float, ForeignKey, String, Text
+from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -25,6 +25,8 @@ HYPOTHESIS_NODE_STATUSES = ("open", "expanded", "pruned", "validated", "refuted"
 
 class HypothesisNode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "hypothesis_nodes"
+    # 两个读路径都按 (run_id, seq) 取：树读取全量排序、恢复取最优里的最早一个
+    __table_args__ = (Index("ix_hypothesis_nodes_run_seq", "run_id", "seq"),)
 
     run_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("voyage_runs.id", ondelete="CASCADE"), index=True, nullable=False
@@ -45,3 +47,13 @@ class HypothesisNode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         String(16), default="open", index=True, nullable=False
     )  # HYPOTHESIS_NODE_STATUSES
+    #: run 内的创建序号（1 起）。存在的理由只有一个：**顺序不能靠墙钟**。
+    #:
+    #: 恢复语义（best_open_node）说「同分取先建」，而 created_at 是 Python 侧
+    #: ``utcnow()``——不单调。NTP 步进或回拨会让后建的节点拿到更小的时间戳，
+    #: 于是「先建」选出的是后建的那个；同一微秒并列时更是完全无序。两种情况都不
+    #: 报错，只是这次恢复走进了另一棵子树。
+    #:
+    #: 按 run 计数而不是全局自增：序号的意义是「这棵树里的第几个」，跨 run 连续
+    #: 只会让读日志的人误以为两个 run 之间有关系。
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
