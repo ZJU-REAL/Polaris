@@ -327,7 +327,8 @@ async def update_library(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
-    """编辑库定义（可管理者）：name/monthly_budget/is_public（公开给所有人）与收录
+    """编辑库定义（可管理者）：name/monthly_budget/is_public（公开给所有人）、
+    学科口径（discipline，决定本库论文按哪套抽取 schema 走）与收录
     配置（statement/cadence/rubric/anchors/keywords/goals/scope/questions）。
 
     P8a：收录配置写入 library.definition（ingest 唯一权威源），不再写回起源课题。

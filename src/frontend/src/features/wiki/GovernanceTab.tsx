@@ -461,6 +461,9 @@ function DisciplineCard({
   const options = packs.data ?? [];
   const current = options.find((p) => p.name === value);
   const dirty = (lib.discipline ?? '') !== value;
+  // 库里存着一个已经被卸载的包名：不补这一项的话，下拉框找不到匹配值会显示成空白，
+  // 看起来像「通用」，而库里其实还存着那个名字、抽取又确实不按它走。得说破。
+  const missing = !!value && !packs.isLoading && !current;
 
   return (
     <section className="card" style={{ padding: 18 }}>
@@ -497,6 +500,12 @@ function DisciplineCard({
             style={{ maxWidth: 360 }}
           >
             <option value="">{tr('通用（不限学科）', 'General (no discipline)')}</option>
+            {missing && (
+              <option value={value}>
+                {value}
+                {tr('（学科包已不在）', ' (pack no longer installed)')}
+              </option>
+            )}
             {options.map((p) => (
               <option key={p.name} value={p.name}>
                 {p.title}
@@ -506,6 +515,14 @@ function DisciplineCard({
           {current?.description && (
             <p className="muted" style={{ fontSize: 12, margin: 0 }}>
               {current.description}
+            </p>
+          )}
+          {missing && (
+            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+              {tr(
+                '这个库选的学科包已经不在数据目录里了，抽取已回到通用口径。把 YAML 放回去，或改选一个别的。',
+                'The pack this library selected is no longer in the data directory, so extraction has fallen back to the general fields. Put the YAML back, or pick another.',
+              )}
             </p>
           )}
           {/* 装了包却一条 schema 都没有 = 选了也没效果。与其让人以为生效了，不如说破 */}
