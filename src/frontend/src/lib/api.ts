@@ -1377,6 +1377,16 @@ export interface ConceptRelinkResult {
 // P5c · 共享方向库（/libraries，全实验室可读）
 // ============================================================
 
+/** 一个已装的学科包，供库设置里的学科选择器展示。 */
+export interface DisciplinePackSummary {
+  /** 写进库里的那个值 */
+  name: string;
+  title: string;
+  description: string;
+  /** 这个包带来几条抽取 schema；为 0 等于装了没效果 */
+  schema_count: number;
+}
+
 export interface DirectionLibrarySummary {
   id: string;
   name: string;
@@ -1384,6 +1394,12 @@ export interface DirectionLibrarySummary {
   library_kind: 'standard' | 'interdisciplinary' | string;
   /** 专属交叉库当前确认的学科范围。 */
   interdisciplinary_domains: string[] | null;
+  /**
+   * 学科包名：本库论文按哪套抽取口径走（null = 只用跨学科通用的内置 schema）。
+   * 与 interdisciplinary_domains 是两回事——那个说的是「这个库跨哪几个领域」，
+   * 这个说的是「抽取方法卡时用谁的字段」。
+   */
+  discipline: string | null;
   statement: string | null;
   /** 背后课题（过渡期隐式库 1:1 回指；未来共享库可为 null） */
   project_id: string | null;
@@ -4059,6 +4075,13 @@ export const api = {
     const qs = params.toString();
     return request<DirectionLibrarySummary[]>(`/libraries${qs ? `?${qs}` : ''}`);
   },
+  /**
+   * 装了哪些学科包。**每次现问后端**而不是在前端写死一份名单：包是磁盘上的数据，
+   * 用户往 <data_dir>/disciplines/ 丢一个 YAML 就该能在选择器里看到它。
+   */
+  listDisciplines(): Promise<DisciplinePackSummary[]> {
+    return request<DisciplinePackSummary[]>('/disciplines');
+  },
   getLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}`);
   },
@@ -4234,6 +4257,8 @@ export const api = {
       questions?: string[] | null;
       /** 公开给所有人（创建者直接设置，无审批）；不传 = 不改 */
       is_public?: boolean;
+      /** 学科包名；传 null 清空（回到内置口径），不传 = 不改 */
+      discipline?: string | null;
     },
   ): Promise<DirectionLibraryDetail> {
     return requestJson<DirectionLibraryDetail>(`/libraries/${id}`, 'PATCH', input);
