@@ -31,23 +31,29 @@ schemas:
       你对整份抽取的把握）。只依据原文，不引入外部知识。
     fields:
       - name: purpose
+        label: 目的
         kind: text
         max_len: 400
       - name: mechanism
+        label: 机制
         kind: text
         max_len: 400
       - name: system
+        label: 生物体系
         kind: text
         max_len: 400
       - name: perturbation
+        label: 扰动
         kind: list
         max_len: 200
         max_items: 6
       - name: readout
+        label: 读出
         kind: list
         max_len: 200
         max_items: 6
       - name: controls
+        label: 对照设置
         kind: list
         max_len: 200
         max_items: 6

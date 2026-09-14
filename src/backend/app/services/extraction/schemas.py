@@ -46,6 +46,10 @@ class SchemaField:
     max_items: int | None = None  # list / entries：最多保留几条
     # 仅 entries：条目键的白名单规格；模型输出里不在其中的键直接丢弃
     entry_keys: tuple[EntryKey, ...] | None = None
+    #: 给人看的字段名（界面标签）。不给就退回 name——``structure`` 这种机器名在
+    #: 英文界面尚可，中文界面下读起来像半成品。学科包作者用自己工作的语言写即可：
+    #: 这是包的一部分，不是平台文案，不参与界面的中英切换。
+    label: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,11 +137,13 @@ METHOD_SCHEMA = ExtractionSchema(
     id="method",
     version=1,
     fields=(
-        SchemaField("purpose", "text", max_len=400),
-        SchemaField("mechanism", "text", max_len=400),
-        SchemaField("baseline", "list", max_len=200, max_items=5),
-        SchemaField("dataset", "list", max_len=200, max_items=5),
-        SchemaField("protocol", "text", max_len=600),
+        # label 给通用客户端用（方法卡的 fields 列表）。现有前端对这五项有自己的
+        # 中英切换文案，不读这里——所以加上它不改变任何既有渲染。
+        SchemaField("purpose", "text", max_len=400, label="目的"),
+        SchemaField("mechanism", "text", max_len=400, label="机制"),
+        SchemaField("baseline", "list", max_len=200, max_items=5, label="基线"),
+        SchemaField("dataset", "list", max_len=200, max_items=5, label="数据集"),
+        SchemaField("protocol", "text", max_len=600, label="流程"),
     ),
     prompt_template=(
         "POLARIS_EXTRACT_METHOD\n"

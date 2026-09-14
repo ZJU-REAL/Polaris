@@ -33,22 +33,28 @@ schemas:
       你对整份抽取的把握）。只依据原文，不引入外部知识。
     fields:
       - name: purpose
+        label: 目的
         kind: text
         max_len: 400
       - name: mechanism
+        label: 机制
         kind: text
         max_len: 400
       - name: target
+        label: 目标物
         kind: text
         max_len: 300
       - name: route
+        label: 路线与条件
         kind: text
         max_len: 600
       - name: characterization
+        label: 表征手段
         kind: list
         max_len: 120
         max_items: 8
       - name: performance
+        label: 性能指标
         kind: entries
         max_items: 8
         entry_keys:

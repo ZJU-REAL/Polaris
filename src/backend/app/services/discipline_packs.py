@@ -71,6 +71,9 @@ class PackField(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=64)
+    #: 界面标签。不给就用 name——``structure`` 在中文界面下读起来像半成品。
+    #: 用包作者自己的语言写：这是包的一部分，不参与界面的中英切换。
+    label: str | None = Field(default=None, max_length=64)
     kind: Literal["text", "list", "entries"] = "text"
     max_len: int = Field(default=800, gt=0, le=MAX_TEXT_LEN)
     max_items: int | None = Field(default=None, gt=0, le=MAX_ITEMS)
@@ -81,6 +84,7 @@ class PackField(BaseModel):
             raise DisciplinePackError(f"字段 {self.name!r} 是 entries，必须声明 entry_keys")
         return SchemaField(
             name=self.name,
+            label=self.label,
             kind=self.kind,
             max_len=self.max_len,
             max_items=self.max_items,

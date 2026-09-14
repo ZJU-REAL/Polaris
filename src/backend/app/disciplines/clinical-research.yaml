@@ -36,21 +36,27 @@ schemas:
       你对整份抽取的把握）。
     fields:
       - name: purpose
+        label: 目的
         kind: text
         max_len: 400
       - name: mechanism
+        label: 机制
         kind: text
         max_len: 400
       - name: design
+        label: 研究设计
         kind: text
         max_len: 400
       - name: population
+        label: 研究人群
         kind: text
         max_len: 600
       - name: intervention
+        label: 干预与对照
         kind: text
         max_len: 400
       - name: outcomes
+        label: 结局
         kind: entries
         max_items: 8
         entry_keys:

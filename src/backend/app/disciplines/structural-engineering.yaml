@@ -35,22 +35,28 @@ schemas:
       你对整份抽取的把握）。只依据原文，不引入外部知识。
     fields:
       - name: purpose
+        label: 目的
         kind: text
         max_len: 400
       - name: mechanism
+        label: 机制
         kind: text
         max_len: 400
       - name: structure
+        label: 结构对象
         kind: text
         max_len: 400
       - name: actions
+        label: 作用与工况
         kind: list
         max_len: 200
         max_items: 5
       - name: analysis
+        label: 分析手段
         kind: text
         max_len: 600
       - name: validation
+        label: 验证方式
         kind: list
         max_len: 200
         max_items: 5
