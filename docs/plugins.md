@@ -7,6 +7,10 @@ This page documents the loading model, the marketplace, and how to write a plugi
 plugin [`plugins/polaris-plugin-hello`](https://github.com/ZJU-REAL/Polaris/tree/main/plugins/polaris-plugin-hello)
 is the living template — everything below is demonstrated there and exercised end-to-end in CI.
 
+This page covers the **desktop** kernel. Polaris also extends through plain files under the data
+directory, which need no packaging and no kernel: [Discipline packs](discipline-packs.md) replace the
+method card's fields with the ones your field uses.
+
 ## The loading model: the config tree is the source of truth
 
 The kernel does not load "whatever is on disk". A persistent **config tree** (stored in the

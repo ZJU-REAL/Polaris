@@ -6,7 +6,9 @@ get scored against your research direction, downloaded, read by an LLM, and turn
 cross-linked **Research Wiki** — one illustrated wiki page per paper, plus a growing dictionary of
 concepts. This page is the user guide; the internals live in
 [Literature Management](literature-management.md), [Wikis & Concepts](wiki-and-concepts.md), and
-[Embedding & Retrieval](embedding-and-retrieval.md).
+[Embedding & Retrieval](embedding-and-retrieval.md). Outside machine learning, the questions a method
+card should ask are different ones — [Discipline packs](discipline-packs.md) replace its fields with
+your field's.
 
 ## The building blocks
 
