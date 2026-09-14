@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e8c3f1a92d40"  # External MCP server registry (#754)
+HEAD_REVISION = "b4d91f7a2c08"  # Hypothesis node creation sequence (#784)
+MCP_SERVERS_REVISION = "e8c3f1a92d40"  # External MCP server registry (#754)
 LIBRARY_DISCIPLINE_REVISION = "d7b2e4c81a35"  # Library declares its discipline
 CRDT_STATE_REVISION = "c4a1d8e93b57"  # Manuscript CRDT state persistence (#347)
 SKILLS_CONVERGENCE_REVISION = "a5b9c3d7e1f2"  # Skill-system convergence step 1 (#741)
@@ -220,8 +221,11 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "feasibility",
         "score",
         "status",
+        # run 内创建序号（#784）：恢复顺序不能押在墙钟上
+        "seq",
     } <= columns["hypothesis_nodes"]
     assert "ix_hypothesis_nodes_run_id" in _index_names(db_path, "hypothesis_nodes")
+    assert "ix_hypothesis_nodes_run_seq" in _index_names(db_path, "hypothesis_nodes")
     # 课题成员表已随个人化定位删除（#625）：归属只看 projects.owner_id
     assert "project_members" not in columns["_tables"]
     assert "owner_id" in columns["projects"]
@@ -633,7 +637,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["paper_extractions"]
     assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
 
-    # 先退掉外部 MCP 服务器登记表。
+    # 先退掉假设节点的创建序号列。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == MCP_SERVERS_REVISION
+    assert "seq" not in columns["hypothesis_nodes"]
+
+    # 再退掉外部 MCP 服务器登记表。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == LIBRARY_DISCIPLINE_REVISION
@@ -1369,4 +1379,72 @@ def test_skill_convergence_data_move_and_roundtrip(tmp_path):
         assert archived == 0  # 解除归档，v1 行整体还原
         rows = dict(conn.execute(text("SELECT id, status FROM skill_listings")).fetchall())
         assert rows == {live_id: "approved", dead_id: "delisted"}
+    engine.dispose()
+
+
+def test_hypothesis_seq_backfill_follows_the_previous_best_effort_order(tmp_path):
+    """回填按 (created_at, id) 编号——那正是改之前的排序键，所以存量数据的读取顺序
+    一字不变；而新列让顺序不再依赖墙钟（#784）。
+
+    刻意把第三个节点的 created_at 造成**早于**第二个（时钟回拨的样子）：回填按
+    created_at 排，它就该拿到更小的 seq。这条断言钉的是「回填忠实于旧顺序」，
+    而不是「回填替旧数据纠错」——存量顺序对不对不是迁移该管的事。
+    """
+    import json  # noqa: F401 — 与文件内其余用例同款惰性导入
+
+    db_path = tmp_path / "hypseq.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, MCP_SERVERS_REVISION)
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    run_id = "00000000-0000-0000-0000-0000000000aa"
+    other_run = "00000000-0000-0000-0000-0000000000bb"
+    with engine.begin() as conn:
+        for node_id, run, created in [
+            ("00000000-0000-0000-0000-000000000001", run_id, "2026-01-01 10:00:00"),
+            # 时钟回拨：后插入的行拿到更早的时间戳
+            ("00000000-0000-0000-0000-000000000002", run_id, "2026-01-01 10:00:02"),
+            ("00000000-0000-0000-0000-000000000003", run_id, "2026-01-01 10:00:01"),
+            # 另一个 run：序号按 run 各自从 1 起，不跨 run 连续
+            ("00000000-0000-0000-0000-000000000004", other_run, "2026-01-01 09:00:00"),
+        ]:
+            conn.execute(
+                text(
+                    "INSERT INTO hypothesis_nodes"
+                    " (id, run_id, parent_id, kind, statement, status, created_at, updated_at)"
+                    " VALUES (:id, :run, NULL, 'hypothesis', :stmt, 'open', :ts, :ts)"
+                ),
+                {"id": node_id, "run": run, "stmt": node_id[-1], "ts": created},
+            )
+
+    command.upgrade(cfg, "head")
+    version, columns = _inspect_db(db_path)
+    assert version == HEAD_REVISION
+    assert "seq" in columns["hypothesis_nodes"]
+
+    with engine.connect() as conn:
+        rows = dict(
+            conn.execute(
+                text("SELECT id, seq FROM hypothesis_nodes WHERE run_id = :r"),
+                {"r": run_id},
+            ).fetchall()
+        )
+    # 按 created_at 升序编号：3 号的时间戳比 2 号早，所以它拿 2、2 号拿 3
+    assert rows["00000000-0000-0000-0000-000000000001"] == 1
+    assert rows["00000000-0000-0000-0000-000000000003"] == 2
+    assert rows["00000000-0000-0000-0000-000000000002"] == 3
+
+    with engine.connect() as conn:
+        other = conn.execute(
+            text("SELECT seq FROM hypothesis_nodes WHERE run_id = :r"), {"r": other_run}
+        ).scalar_one()
+    assert other == 1, "序号按 run 各自计数；跨 run 连续会让人误以为两个 run 有关系"
+
+    command.downgrade(cfg, "-1")
+    _version, columns = _inspect_db(db_path)
+    assert "seq" not in columns["hypothesis_nodes"]
+    # 回退不该带走数据行
+    with engine.connect() as conn:
+        n = conn.execute(text("SELECT COUNT(*) FROM hypothesis_nodes")).scalar_one()
+    assert n == 4
     engine.dispose()
