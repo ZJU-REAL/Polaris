@@ -6,7 +6,7 @@ import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
 import { SelectMenu } from '../../components/ui/SelectMenu';
-import { api, type ExperimentIntakeQuestion } from '../../lib/api';
+import { api, type ExperimentIntakeQuestion, type RunnerBackendSummary } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { topicPath } from '../../app/project';
 
@@ -25,6 +25,25 @@ export interface NewExperimentModalProps {
   initialIdeaId?: string | null;
 }
 
+/**
+ * 这个后端要不要 SSH 凭据。
+ *
+ * 容器类后端（ngspice/openfoam/fmu）的 credential_kinds 是空的——后端 #716 已按
+ * manifest 放宽，前端这道硬门是把它们挡在外面的最后一道。
+ *
+ * **清单还没加载出来时按「需要」处理**：那是今天的行为。反过来默认「不需要」的话，
+ * 列表慢一拍就会放行一个没选凭据的 python-ml 实验，提交之后才发现跑不起来——而那
+ * 时想法、开题问答都已经填完了。
+ */
+export function backendNeedsSsh(
+  backends: RunnerBackendSummary[],
+  selected: string,
+): boolean {
+  const chosen =
+    backends.find((b) => b.backend === selected) ?? backends.find((b) => b.is_default);
+  return chosen ? chosen.credential_kinds.includes('ssh') : true;
+}
+
 export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExperimentModalProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -33,6 +52,9 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
   const [credentialId, setCredentialId] = useState('');
   const [maxHours, setMaxHours] = useState('');
   const [maxRuns, setMaxRuns] = useState('10');
+  // 空串 = 用缺省后端/不选流程包，params 里就不带这两个键——存量行为逐字节不变
+  const [backend, setBackend] = useState('');
+  const [processPack, setProcessPack] = useState('');
   const [questions, setQuestions] = useState<ExperimentIntakeQuestion[]>([]);
   const [answers, setAnswers] = useState<string[]>([]);
   const [intakeState, setIntakeState] = useState<'idle' | 'loading' | 'ready' | 'skipped'>('idle');
@@ -49,8 +71,26 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
     enabled: open,
     retry: false,
   });
+  // 后端与流程包都问服务端要：装一个后端就该自动可选，用户自己写的流程包也一样
+  const backendsQuery = useQuery({
+    queryKey: ['experiment-backends'],
+    queryFn: () => api.listExperimentBackends(),
+    enabled: open,
+    retry: false,
+  });
+  const packsQuery = useQuery({
+    queryKey: ['process-packs'],
+    queryFn: () => api.listProcessPacks(),
+    enabled: open,
+    retry: false,
+  });
   const ideas = ideasQuery.data ?? [];
   const creds = credsQuery.data ?? [];
+  const backends = backendsQuery.data ?? [];
+  const packs = packsQuery.data ?? [];
+  const chosenBackend =
+    backends.find((b) => b.backend === backend) ?? backends.find((b) => b.is_default);
+  const needsSsh = backendNeedsSsh(backends, backend);
 
   // 打开时重置表单 + 应用深链预选
   useEffect(() => {
@@ -58,6 +98,8 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
     setIdeaId(initialIdeaId ?? '');
     setMaxHours('');
     setMaxRuns('10');
+    setBackend('');
+    setProcessPack('');
     setQuestions([]);
     setAnswers([]);
     setIntakeState('idle');
@@ -108,6 +150,9 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         credential_id: credentialId,
         params: {
           ...(intake.length > 0 ? { intake } : {}),
+          // 不选就不带键：缺省后端 / 原计划路径，与这个选择器出现之前完全一致
+          ...(backend ? { backend } : {}),
+          ...(processPack ? { process_pack: processPack } : {}),
           budget: {
             // 留空 = 无限时（后端 0 = 不设时限）
             max_hours: Number.isFinite(hours) && hours > 0 ? hours : 0,
@@ -129,7 +174,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
 
   const noIdeas = !ideasQuery.isLoading && ideas.length === 0;
   const noCreds = !credsQuery.isLoading && creds.length === 0;
-  const canSubmit = !!ideaId && !!credentialId && !mutation.isPending;
+  const canSubmit = !!ideaId && (!needsSsh || !!credentialId) && !mutation.isPending;
 
   return (
     <Modal
@@ -185,14 +230,92 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
       )}
 
       <FormField
+        label={tr('执行后端', 'Execution backend')}
+        en="runner backend"
+        hint={
+          chosenBackend
+            ? [
+                chosenBackend.side_effects === 'physical'
+                  ? tr('会操作真实设备。', 'Drives real hardware.')
+                  : '',
+                chosenBackend.licenses.length > 0
+                  ? tr(
+                      `需要 License 席位：${chosenBackend.licenses.join('、')}。`,
+                      `Needs a licence seat: ${chosenBackend.licenses.join(', ')}.`,
+                    )
+                  : '',
+                needsSsh
+                  ? tr('在下面选的服务器上运行。', 'Runs on the server selected below.')
+                  : tr('在容器里运行，不需要 SSH 凭据。', 'Runs in a container — no SSH credential needed.'),
+              ]
+                .filter(Boolean)
+                .join(' ')
+            : undefined
+        }
+        error={
+          backendsQuery.isError
+            ? tr('无法加载后端列表，将使用缺省后端。', 'Could not load the backend list — the default will be used.')
+            : null
+        }
+      >
+        <SelectMenu
+          value={backend}
+          disabled={backendsQuery.isLoading || backendsQuery.isError}
+          placeholder={
+            backendsQuery.isLoading
+              ? tr('加载中…', 'Loading…')
+              : tr('— 缺省后端 —', '— default backend —')
+          }
+          options={backends.map((b) => ({
+            value: b.backend,
+            label: b.is_default ? `${b.backend}（${tr('缺省', 'default')}）` : b.backend,
+          }))}
+          onChange={setBackend}
+        />
+      </FormField>
+
+      {packs.length > 0 && (
+        <FormField
+          label={tr('流程包', 'Process pack')}
+          en="process pack"
+          hint={
+            processPack
+              ? tr(
+                  `按这条流程规划：${(packs.find((p) => p.name === processPack)?.phases ?? []).join(' → ')}`,
+                  `Planned along: ${(packs.find((p) => p.name === processPack)?.phases ?? []).join(' → ')}`,
+                )
+              : tr('不选则按常规计划路径规划。', 'Leave empty to use the regular planning path.')
+          }
+        >
+          <SelectMenu
+            value={processPack}
+            placeholder={tr('— 不使用流程包 —', '— no process pack —')}
+            options={packs.map((p) => ({ value: p.name, label: p.name }))}
+            onChange={setProcessPack}
+          />
+        </FormField>
+      )}
+
+      <FormField
         label={tr('SSH 凭据', 'SSH credential')}
         en="ssh credential"
-        hint={noCreds ? undefined : tr('实验将在该服务器的 ~/polaris_runs/ 下建隔离环境运行。', 'The experiment runs in an isolated environment under ~/polaris_runs/ on that server.')}
-        error={noCreds ? tr('还没有 SSH 凭据，请先到设置页添加。', 'No SSH credentials yet — add one in Settings first.') : null}
+        hint={
+          !needsSsh
+            ? tr('所选后端在容器里运行，不需要凭据。', 'The selected backend runs in a container and needs no credential.')
+            : noCreds
+              ? undefined
+              : tr('实验将在该服务器的 ~/polaris_runs/ 下建隔离环境运行。', 'The experiment runs in an isolated environment under ~/polaris_runs/ on that server.')
+        }
+        error={
+          // 后端不吃凭据时「还没有凭据」不是错误，只是无关
+          needsSsh && noCreds
+            ? tr('还没有 SSH 凭据，请先到设置页添加。', 'No SSH credentials yet — add one in Settings first.')
+            : null
+        }
       >
         <SelectMenu
           value={credentialId}
-          disabled={noCreds}
+          disabled={noCreds || !needsSsh}
           placeholder={credsQuery.isLoading ? tr('加载中…', 'Loading…') : credsQuery.isError ? tr('（无法加载凭据列表）', '(could not load credentials)') : tr('— 选择凭据 —', '— pick a credential —')}
           options={creds.map((c) => ({ value: c.id, label: `${c.name}（${c.username}@${c.host}:${c.port}）` }))}
           onChange={setCredentialId}

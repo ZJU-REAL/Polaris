@@ -12,6 +12,7 @@ from app.api import (
     daily,
     download_client,
     evidence,
+    experiment_backends,
     experiments,
     export,
     gates,
@@ -96,3 +97,4 @@ api_router.include_router(manuscripts.router)
 api_router.include_router(export.router)
 api_router.include_router(plugins.router)
 api_router.include_router(mcp_servers.router)
+api_router.include_router(experiment_backends.router)

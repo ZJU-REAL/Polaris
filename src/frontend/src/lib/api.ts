@@ -2607,6 +2607,30 @@ export interface ExperimentIntakeQuestion {
   options: string[];
 }
 
+/** 一个可选的执行后端。字段是 manifest 的投影——选之前必须知道的那几件事。 */
+export interface RunnerBackendSummary {
+  /** 写进 params.backend 的值 */
+  backend: string;
+  /** batch=一次跑完 / session=会话交互 / streaming=持续流式 */
+  interaction: string;
+  /** none / filesystem / network / physical（physical=动真设备） */
+  side_effects: string;
+  /** 含 "ssh" 表示要先配 SSH 凭据才跑得起来；为空的后端（容器类）不吃连接凭据 */
+  credential_kinds: string[];
+  /** 需要的 License feature 名；空 = 无 license 要求 */
+  licenses: string[];
+  /** 不选时跑的就是它 */
+  is_default: boolean;
+}
+
+/** 一个可选的流程包。name 是写进 params.process_pack 的值。 */
+export interface ProcessPackSummary {
+  name: string;
+  /** 阶段 id，按顺序——选包等于选一条流程 */
+  phases: string[];
+  extends: string | null;
+}
+
 export interface CreateExperimentInput {
   idea_id: string;
   /** 与 resource_id 二选一（后端要求至少给一个）；现有 UI 只走凭据路径 */
@@ -4693,6 +4717,17 @@ export const api = {
   },
 
   // —— M4 · Experiments ——
+  /**
+   * 已注册的执行后端。**问后端要，不在前端写死**：装一个后端就该自动可选，
+   * 撤一个就该自动消失。
+   */
+  listExperimentBackends(): Promise<RunnerBackendSummary[]> {
+    return request<RunnerBackendSummary[]>('/experiment-backends');
+  },
+  /** 可选的流程包（内置 + 数据目录里用户自己写的）。 */
+  listProcessPacks(): Promise<ProcessPackSummary[]> {
+    return request<ProcessPackSummary[]>('/experiment-backends/process-packs');
+  },
   createExperiment(projectId: string, input: CreateExperimentInput): Promise<ExperimentRead> {
     return requestJson<ExperimentRead>(`/projects/${projectId}/experiments`, 'POST', input);
   },
