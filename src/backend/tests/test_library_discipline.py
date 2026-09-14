@@ -284,3 +284,138 @@ async def test_the_discipline_card_wins_when_both_cards_are_on_the_table(client)
         )
     # 两根轴 = 取的是学科卡；只有 purpose 说明取到了内置卡
     assert axes == ["mechanism", "purpose"]
+
+
+# ---- 闭环的最后一跳：方法库检索真的返回学科卡 ----
+#
+# 本文件开头写的判据是「建库时选学科 → 抽取按该学科口径 → **方法库检索得到**」。
+# 前两环各有用例，最后一跳此前一次都没跑过——而 bug 恰恰在那里（#786）。
+
+
+async def _library_with_two_cards(client, email):
+    """建一个声明了学科的库，放一篇同时有内置卡和学科卡的论文，两张卡都建好向量。"""
+    import uuid as _uuid
+
+    from app.core.db import get_sessionmaker
+    from app.models.library_direction import DirectionLibrary
+    from app.models.paper import Paper
+    from app.models.paper_extraction import PaperExtraction
+    from tests.conftest import add_paper
+
+    token = await register_and_login(client, email=email)
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, library_id = await make_project_with_library(client, headers, name="dup")
+
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, library_id)
+        library.discipline = "structural"
+        paper = await add_paper(
+            session,
+            project_id=_uuid.UUID(project_id),
+            title="Blast response of composite beams",
+            status="scored",
+        )
+        session.add_all(
+            [
+                PaperExtraction(
+                    paper_id=paper.id,
+                    schema_id="method",
+                    payload={
+                        "purpose": "improve blast resistance of beams",
+                        "mechanism": "generic machine learning surrogate",
+                    },
+                ),
+                PaperExtraction(
+                    paper_id=paper.id,
+                    schema_id="structural.method",
+                    payload={
+                        "purpose": "improve blast resistance of beams",
+                        "mechanism": "explicit finite element simulation",
+                        "structure": "steel concrete composite beam",
+                    },
+                ),
+            ]
+        )
+        await session.commit()
+        paper_id = paper.id
+
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, paper_id)
+        await method_index.refresh_paper_method_index(
+            session, paper, library_id=library_id
+        )
+        await session.commit()
+    return library_id, paper_id
+
+
+async def test_a_paper_with_both_cards_appears_once(client):
+    """不去重的话同一篇会出现两次：一次领域口径，一次它本该替换掉的机器学习口径。"""
+    from app.core.db import get_sessionmaker
+
+    library_id, paper_id = await _library_with_two_cards(client, "dup1@example.com")
+    async with get_sessionmaker()() as session:
+        cards, _mode = await method_index.search_methods(
+            session, library_id, "blast resistance of beams"
+        )
+    assert [c["paper_id"] for c in cards] == [paper_id]
+
+
+async def test_the_card_shown_is_the_discipline_one(client):
+    """显示的必须是向量所依据的那张。取学科卡建向量、却显示内置卡的话，
+    界面上那个相似度是用另一段文本算出来的。"""
+    from app.core.db import get_sessionmaker
+
+    library_id, _paper_id = await _library_with_two_cards(client, "dup2@example.com")
+    async with get_sessionmaker()() as session:
+        cards, _mode = await method_index.search_methods(
+            session, library_id, "blast resistance of beams"
+        )
+    assert cards and cards[0]["mechanism"] == "explicit finite element simulation"
+
+
+async def test_a_review_with_only_the_builtin_card_is_still_found(client):
+    """并集是对的：学科库里也有只带内置卡的跨学科综述，它们不能因为去重被挤掉。"""
+    from app.core.db import get_sessionmaker
+    from app.models.paper import Paper
+    from app.models.paper_extraction import PaperExtraction
+    from tests.conftest import add_paper
+
+    library_id, first_paper = await _library_with_two_cards(client, "dup3@example.com")
+
+    async with get_sessionmaker()() as session:
+        from app.models.library_direction import DirectionLibrary
+
+        library = await session.get(DirectionLibrary, library_id)
+        review = await add_paper(
+            session,
+            project_id=library.project_id,
+            title="A cross-disciplinary review",
+            status="scored",
+        )
+        session.add(
+            PaperExtraction(
+                paper_id=review.id,
+                schema_id="method",
+                payload={
+                    "purpose": "survey blast resistance approaches",
+                    "mechanism": "narrative synthesis",
+                },
+            )
+        )
+        await session.commit()
+        review_id = review.id
+
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, review_id)
+        await method_index.refresh_paper_method_index(
+            session, paper, library_id=library_id
+        )
+        await session.commit()
+
+    async with get_sessionmaker()() as session:
+        cards, _mode = await method_index.search_methods(
+            session, library_id, "blast resistance"
+        )
+    found = {c["paper_id"] for c in cards}
+    assert found == {first_paper, review_id}
+    assert len(cards) == 2, "每篇仍是一张卡"
