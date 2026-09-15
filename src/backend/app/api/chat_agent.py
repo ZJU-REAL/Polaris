@@ -47,9 +47,8 @@ from app.schemas.chat_agent import (
     MemoryCreate,
     MemoryToggle,
     MessageRead,
-    SkillImportRequest,
 )
-from app.services import agent_skills, buddy
+from app.services import buddy
 from app.services import conversations as store
 from app.services import projects as projects_service
 from app.tools.context import ToolContext
@@ -193,62 +192,6 @@ async def list_messages(
     return [MessageRead.model_validate(r, from_attributes=True) for r in rows]
 
 
-@router.get("/skills")
-async def list_skills(
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> list[dict[str, Any]]:
-    """我能看到的技能：内置的 + 自己的。目录预算有限，界面上要能看到谁占着位置。"""
-    _require_enabled()
-    from app.models.agent_skill import as_dict
-
-    rows = await agent_skills.visible_skills(session, user_id=user.id)
-    return [as_dict(r) | {"is_builtin": r.scope == "builtin"} for r in rows]
-
-
-@router.post("/skills", status_code=201)
-async def import_skill(
-    payload: SkillImportRequest,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> dict[str, Any]:
-    """从 SKILL.md 建/更新自己的技能（同 slug 覆盖自己的那份，碰不到内置的）。"""
-    _require_enabled()
-    from app.models.agent_skill import as_dict
-    from app.services.agent_skills import SkillParseError
-
-    try:
-        skill = await agent_skills.upsert_from_md(
-            session, text=payload.skill_md, user_id=user.id, files=payload.files or {}
-        )
-    except SkillParseError as e:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
-    await session.commit()
-    return as_dict(skill)
-
-
-@router.delete("/skills/{slug}", status_code=204)
-async def delete_skill(
-    slug: str,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> None:
-    """删自己的技能。内置技能删不掉（404）：它是代码的一部分，想改就导入同名覆盖不了、
-    只能建自己的。"""
-    _require_enabled()
-    from sqlalchemy import select as _select
-
-    from app.models.agent_skill import AgentSkill
-
-    row = await session.scalar(
-        _select(AgentSkill).where(AgentSkill.slug == slug, AgentSkill.owner_id == user.id)
-    )
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SKILL_NOT_FOUND")
-    await session.delete(row)
-    await session.commit()
-
-
 @router.get("/memories")
 async def list_memories(
     session: AsyncSession = Depends(get_session),
@@ -307,13 +250,11 @@ async def capabilities(
     界面上要能回答「它现在到底能干什么」。此前这个问题只能靠读代码——工具白名单写在
     常量里，技能目录只在提示词里出现过，MCP 那套工具面是不是同一批也没人说得清。
 
-    三件事在这里合并成一个答案，因为它们本来就是同一件事的三个侧面：**平台的工具面**
-    （对内给 Buddy、对外给 MCP 客户端，是同一批），**技能**（按需加载的用法说明），
-    以及 MCP 的暴露状况。
+    两件事在这里合并成一个答案，因为它们本来就是同一件事的两个侧面：**平台的工具面**
+    （对内给 Buddy、对外给 MCP 客户端，是同一批），以及 MCP 的暴露状况。
     """
     _require_enabled()
     from app.mcp.dispatch import tool_definitions as mcp_tool_definitions
-    from app.models.agent_skill import as_dict
     from app.tools.registry import get_tool
 
     names = list(default_tool_names(memory_enabled=buddy.memory_enabled(user)))
@@ -325,22 +266,9 @@ async def capabilities(
         tools.append(
             {"name": spec.name, "description": spec.description, "read_only": spec.read_only}
         )
-    skills = [
-        as_dict(r) | {"is_builtin": r.scope == "builtin"}
-        for r in await agent_skills.visible_skills(session, user_id=user.id)
-    ]
     mcp_tools = mcp_tool_definitions()
     return {
         "tools": tools,
-        "skills": [
-            {
-                "slug": s["slug"],
-                "name": s.get("name") or s["slug"],
-                "description": s.get("description") or "",
-                "is_builtin": s["is_builtin"],
-            }
-            for s in skills
-        ],
         # Polaris 自己就是 MCP 服务端：Buddy 用的工具与外部客户端（Claude Desktop 等）
         # 拿到的是同一批，只是外部那边只给只读的。如实说清楚，别让界面上多出一个
         # 并不存在的「已连接的 MCP 服务器」列表。
@@ -412,10 +340,7 @@ async def run_turn(
     history = await store.replay(
         session, conversation_id=conv.id, budget_chars=budget_chars
     )
-    # L1：技能目录进 system prompt（每个技能只占一行）。正文由 skill_load 按需取，
-    # 绝不写进 system——那会作废整个 prompt cache 前缀。
-    catalog = await agent_skills.render_catalog(session, user_id=user.id)
-    # 长期记忆随 extra_system 追加在末尾（与方向说明、技能目录同处）：稳定前缀不动，
+    # 长期记忆随 extra_system 追加在末尾（与方向说明同处）：稳定前缀不动，
     # 缓存前缀才不会每轮作废。
     memories = await buddy.render_memories(session, user_id=user.id)
     # 目标随会话存着：用户设过一次之后每轮都带上，不必重述，模型也不会在第三轮忘了
@@ -475,7 +400,6 @@ async def run_turn(
         tool_names=tool_names,
         max_rounds=payload.max_rounds,
         statement=payload.statement,
-        skill_catalog=catalog,
         extra_system="\n\n".join(x for x in (memories, mode_note) if x),
         page_context=buddy.render_page_context(payload.page_kind, payload.page_id),
     )

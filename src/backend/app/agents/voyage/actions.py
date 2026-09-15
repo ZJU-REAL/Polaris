@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.agents.voyage.skillset import skill_guidance, skill_personas
+from app.agents.voyage.guidance import workflow_guidance
 from app.core.events import EventBus
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
@@ -53,13 +53,9 @@ class ActionContext:
                 },
             )
 
-    def skill_guidance(self, *targets: str) -> str:
-        """注入点上项目启用技能的补充指引（docs/task-system.md §7）；无技能返回空串。"""
-        return skill_guidance(self.checkpoint, *targets)
-
-    def skill_personas(self, target: str) -> list[dict[str, Any]] | None:
-        """persona 技能人设列表；None = 用调用方内置默认。"""
-        return skill_personas(self.checkpoint, target)
+    def workflow_guidance(self, *targets: str) -> str:
+        """注入点上跨学科工作流的补充指引；没有则返回空串。"""
+        return workflow_guidance(self.checkpoint, *targets)
 
     def evidence_guidance(self) -> str:
         """返回本次 Voyage 固定的授权全文证据；未配置时为空。"""

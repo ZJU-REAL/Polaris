@@ -98,16 +98,6 @@ class VoyageRead(BaseModel):
     updated_at: datetime
 
 
-class VoyageSkillUse(BaseModel):
-    """本次任务快照中的一个技能（docs/task-system.md §7（原 skill-system.md §4.4））。"""
-
-    slug: str
-    name: str
-    kind: str
-    version: int
-    target: str
-
-
 class VoyagePlanEvent(BaseModel):
     """一次计划调整的留痕（checkpoint["plan_history"]，engine 记录）。"""
 
@@ -176,8 +166,6 @@ class VoyageTerminalLogRead(BaseModel):
 
 class VoyageDetailRead(VoyageRead):
     steps: list[VoyageStepRead]
-    # checkpoint["skills"] 快照摘要（路由填充；无快照为 []）
-    skills: list[VoyageSkillUse] = Field(default_factory=list)
     # 计划调整历史（路由从 checkpoint["plan_history"] 填充；无调整为 []）
     plan_history: list[VoyagePlanEvent] = Field(default_factory=list)
     # 当前等回答的提问（paused_ask 时非空；路由填充）

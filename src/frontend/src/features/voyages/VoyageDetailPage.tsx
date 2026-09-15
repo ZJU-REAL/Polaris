@@ -287,23 +287,6 @@ export function VoyageDetailPage() {
       {voyage.kind === 'discovery' && <DiscoveryPanel voyage={voyage} />}
 
       {/* 本次任务使用的技能（启动时快照，中途改技能不影响） */}
-      {(voyage.skills ?? []).length > 0 && (
-        <div className="card card-pad" style={{ marginBottom: 20 }}>
-          <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>{tr('本次任务使用的技能：', 'Skills used in this task:')}</span>
-            {voyage.skills!.map((s) => (
-              <span
-                key={`${s.slug}-${s.target}`}
-                className="pill sm"
-                style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
-                title={`${s.slug} v${s.version} · ${s.target}`}
-              >
-                {s.name} v{s.version}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* 步骤时间线（任务板：清单序渲染，计划调整插入分隔条目，作废步骤可选显示） */}
       <div className="row" style={{ marginBottom: 12 }}>

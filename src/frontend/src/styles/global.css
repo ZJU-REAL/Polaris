@@ -1082,21 +1082,6 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   flex-shrink: 0; display: flex; align-items: center; gap: 10px;
   padding: 8px 14px; border-bottom: 0.5px solid var(--border); min-height: 44px;
 }
-.chat-skillbar { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; overflow-x: auto; }
-.chat-skillbar::-webkit-scrollbar { height: 0; }
-.chat-skill-label { font-size: 10px; color: var(--text-4); flex-shrink: 0; letter-spacing: 0.04em; }
-.chat-skill {
-  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
-  height: 21px; padding: 0 8px; border-radius: 11px; font-size: 11px; font-weight: 550;
-  background: var(--violet-bg); color: var(--violet-tx); white-space: nowrap;
-}
-.chat-skill svg { color: var(--violet); }
-
-.chat-hint {
-  flex-shrink: 0; margin: 10px 14px 0; padding: 6px 10px; border-radius: 8px;
-  background: var(--surface-2); font-size: 11px; color: var(--text-3); line-height: 1.5;
-  display: flex; align-items: center; gap: 8px;
-}
 
 .chat-msgs { flex: 1; overflow-y: auto; padding: 14px 16px; }
 .chat-empty-wrap { max-width: 560px; margin: 30px auto 0; }

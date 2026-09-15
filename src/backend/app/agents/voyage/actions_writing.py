@@ -503,7 +503,7 @@ async def writing_section(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         file_id=file_id,
         section=section,
         system=SECTION_SYSTEM_PROMPT
-        + ctx.skill_guidance("writing.section", f"writing.section({section})"),
+        + ctx.workflow_guidance("writing.section", f"writing.section({section})"),
         user=user,
         fact_pack=fact_pack,
     )
@@ -640,7 +640,7 @@ async def writing_related_work(ctx: ActionContext, params: dict[str, Any]) -> di
         manuscript_id=manuscript_id,
         file_id=file_id,
         section="related_work",
-        system=RELATED_WORK_SYSTEM_PROMPT + ctx.skill_guidance("writing.related_work"),
+        system=RELATED_WORK_SYSTEM_PROMPT + ctx.workflow_guidance("writing.related_work"),
         user=user,
         fact_pack=fact_pack_for_validation,
     )

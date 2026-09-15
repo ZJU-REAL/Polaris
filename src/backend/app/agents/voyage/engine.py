@@ -47,7 +47,6 @@ from app.models.gate import Gate
 from app.models.llm_config import LLMUsage
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep, mode_for_kind
 from app.services import interdisciplinary_workflows
-from app.services import skills as skills_service
 from app.services import voyage_messages as messages_service
 from app.services.ai_evidence_context import (
     attach_observation_evidence,
@@ -615,7 +614,7 @@ class VoyageEngine:
                 if run.mode != expected_mode:
                     run.mode = expected_mode
                     await session.commit()
-                await self._ensure_skills_snapshot(session, run)
+                await self._ensure_guidance_snapshot(session, run)
                 # 已回答的提问先变成行为（可能重置计划 / 扩展计划 / 直接收束）
                 if not await self._consume_answered_asks(session, run):
                     return
@@ -629,28 +628,27 @@ class VoyageEngine:
                 # 外部 cancel：补发一次终态事件后安静退出
                 await self._emit_status(run)
 
-    async def _ensure_skills_snapshot(self, session: AsyncSession, run: VoyageRun) -> None:
-        """首次驱动时把任务创建人的生效技能内容快照进 checkpoint["skills"]。
+    async def _ensure_guidance_snapshot(self, session: AsyncSession, run: VoyageRun) -> None:
+        """首次驱动时把本课题的跨学科工作流指引快照进 checkpoint["guidance"]。
 
-        技能全局启用（不绑定课题）；此后本次 run 只读快照：中途改技能不影响进行中任务，
-        断点恢复无需再查技能表，且事后可回放「本次任务用了哪些技能的哪个版本」。
+        此后本次 run 只读快照：中途改配置不影响进行中任务，断点恢复无需再查表，
+        且事后可回放「本次任务按哪一版指引跑的」。
+
+        用户技能功能移除后（插件覆盖了那块能力），这份快照只剩跨学科工作流一个
+        生产者；键名从 "skills" 改成 "guidance"，读取侧同时认旧键，进行中的任务
+        不会在中途丢掉指引。
         """
-        if "skills" in (run.checkpoint or {}):
+        if "guidance" in (run.checkpoint or {}) or "skills" in (run.checkpoint or {}):
             return
-        # 系统发起（无创建人）的任务不注入个人技能，快照留空。
-        snapshot = (
-            await skills_service.snapshot_for_user(session, run.created_by)
-            if run.created_by is not None
-            else {}
-        )
         checkpoint = dict(run.checkpoint or {})
+        snapshot: dict[str, list[dict[str, Any]]] = {}
         interdisciplinary = await interdisciplinary_workflows.snapshot_for_project(
             session, run.project_id
         )
         if interdisciplinary is not None:
-            interdisciplinary_workflows.apply_to_skill_snapshot(snapshot, interdisciplinary)
+            interdisciplinary_workflows.apply_to_guidance(snapshot, interdisciplinary)
             checkpoint["interdisciplinary_context"] = interdisciplinary
-        checkpoint["skills"] = snapshot
+        checkpoint["guidance"] = snapshot
         run.checkpoint = checkpoint
         await session.commit()
 

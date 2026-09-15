@@ -1,7 +1,6 @@
 """SQLAlchemy 模型包。import 本包即可把全部表注册进 Base.metadata（create_all / alembic 用）。"""
 
 from app.models.activity import Activity
-from app.models.agent_skill import AgentSkill, AgentSkillFile
 from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.buddy_memory import BuddyMemory
 from app.models.chat_bot import ChatBotConfig
@@ -66,7 +65,6 @@ from app.models.publication import UserAuthorProfile, UserPublication
 from app.models.research_digest import LibraryResearchDigest
 from app.models.resource import Resource, ResourceLease
 from app.models.review import ReviewMessage, ReviewSession
-from app.models.skill import Skill, SkillListing, SkillVersion, UserSkill
 from app.models.ssh_credential import ConnectionCredential, SSHCredential
 from app.models.system_setting import SystemSetting
 from app.models.topic_shelf import TopicPaper
@@ -76,9 +74,7 @@ from app.models.voyage import VoyageMessage, VoyageRun, VoyageStep
 
 __all__ = [
     "Activity",
-    "AgentSkill",
     "BuddyMemory",
-    "AgentSkillFile",
     "ChatBotConfig",
     "Conversation",
     "ConversationMessage",
@@ -145,9 +141,6 @@ __all__ = [
     "Resource",
     "ResourceLease",
     "SSHCredential",
-    "Skill",
-    "SkillListing",
-    "SkillVersion",
     "SystemSetting",
     "TimestampMixin",
     "TopicPaper",
@@ -156,7 +149,6 @@ __all__ = [
     "UserLibraryEntry",
     "UserPaperTag",
     "UserPublication",
-    "UserSkill",
     "UUIDPrimaryKeyMixin",
     "VoyageMessage",
     "VoyageRun",
