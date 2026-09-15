@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { SpeechPlayer } from '../../components/ui/SpeechPlayer';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
-import { ApiError, api, skillKindLabel, type ChatTurn } from '../../lib/api';
+import { ApiError, api, type ChatTurn } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { useIsMobile } from '../../lib/useBreakpoint';
 import { useChatHistory } from './useChatHistory';
@@ -107,14 +106,6 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
   const stickBottomRef = useRef(true);
   // 提交后待发的分享目标（回答完成时触发平台用户提示或群机器人真实投递）
   const pendingShareRef = useRef<MentionTarget | null>(null);
-
-  const skillsQ = useQuery({
-    queryKey: ['user-skills'],
-    queryFn: () => api.listUserSkills(),
-    retry: false,
-    staleTime: 60_000,
-  });
-  const enabledSkills = (skillsQ.data ?? []).filter((s) => s.enabled && s.skill);
 
   // 用 ref 保持最新 msgs 供 SSE 回调闭包读取（避免 stale）
   const activeMsgsRef = useRef<ChatMsg[]>(activeMsgs);
@@ -337,27 +328,6 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
           >
             <Icon name="sidebar" size={15} />
           </button>
-          {enabledSkills.length > 0 ? (
-            <div className="chat-skillbar scroll">
-              <span className="chat-skill-label mono">{tr('已启用技能', 'Active skills')}</span>
-              {enabledSkills.map((s) => (
-                <span
-                  key={s.id}
-                  className="chat-skill"
-                  title={`${s.skill?.name ?? ''} · ${skillKindLabel(s.skill!.kind)}`}
-                >
-                  <Icon name="sparkle" size={10} />
-                  {s.skill?.name}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <div className="chat-skillbar">
-              <span className="chat-skill-label mono" style={{ opacity: 0.7 }}>
-                {tr('未启用技能', 'No active skills')}
-              </span>
-            </div>
-          )}
           {cfg.headerAction}
         </div>
 

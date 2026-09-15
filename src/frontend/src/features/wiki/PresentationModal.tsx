@@ -84,7 +84,7 @@ export function PresentationModal({
       title={tr('生成论文分享 PPT', 'Generate paper sharing PPT')}
       sub={tr(
         '按实验室模板生成，模板规范可在技能页调整',
-        'Generated from the lab template — tweak the template rules on the Skills page',
+        'Generated from the built-in template',
       )}
       footer={
         <>

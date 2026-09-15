@@ -13,83 +13,6 @@ import { tr } from '../../lib/i18n';
    分散在三处的话，用户要调整 Buddy 的行为就得先猜去哪儿找。
    ============================================================ */
 
-function SkillsCard() {
-  const queryClient = useQueryClient();
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['buddy-skills'],
-    queryFn: () => api.listAssistantSkills(),
-    retry: false,
-  });
-  const remove = useMutation({
-    mutationFn: (slug: string) => api.deleteAssistantSkill(slug),
-    onSuccess: () => {
-      toast(tr('技能已删除', 'Skill deleted'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['buddy-skills'] });
-    },
-    onError: (e) => toast(e instanceof Error ? e.message : String(e), 'error'),
-  });
-
-  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
-  if (isError) {
-    return (
-      <div className="empty">
-        {tr('无法加载技能（助手未启用或后端不可用）', 'Cannot load skills (assistant off or backend down)')}
-      </div>
-    );
-  }
-  const skills = data ?? [];
-
-  return (
-    <div className="card card-pad">
-      <div className="section-h" style={{ marginBottom: 6 }}>
-        <Icon name="sparkle" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('技能', 'Skills')}
-      </div>
-      {skills.length === 0 && <div className="empty">{tr('还没有技能', 'No skills yet')}</div>}
-      <div className="col gap8">
-        {skills.map((skill) => (
-          <div
-            key={skill.slug}
-            className="row gap8"
-            style={{
-              alignItems: 'flex-start',
-              padding: '8px 10px',
-              border: '0.5px solid var(--border-2)',
-              borderRadius: 8,
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="row gap6" style={{ alignItems: 'center' }}>
-                <span className="mono" style={{ fontSize: 12.5 }}>
-                  {skill.slug}
-                </span>
-                {skill.is_builtin && (
-                  <span className="pill sm" style={{ background: 'var(--surface-3)' }}>
-                    {tr('内置', 'built-in')}
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize: 11.5, color: 'var(--text-4)', lineHeight: 1.6, marginTop: 2 }}>
-                {skill.description}
-              </div>
-            </div>
-            {/* 内置技能删不掉：它是代码的一部分，改了下次启动又会被种回来。
-                与其让按钮点了没反应，不如不给按钮。 */}
-            {!skill.is_builtin && (
-              <button
-                className="btn btn-ghost sm"
-                onClick={() => remove.mutate(skill.slug)}
-                style={{ height: 24, fontSize: 11 }}
-              >
-                {tr('删除', 'Delete')}
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function MemoryCard() {
   const queryClient = useQueryClient();
@@ -231,7 +154,6 @@ export function BuddySettings() {
   return (
     <div className="col gap14">
       <MemoryCard />
-      <SkillsCard />
       <McpCard />
     </div>
   );

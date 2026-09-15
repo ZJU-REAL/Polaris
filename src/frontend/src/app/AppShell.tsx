@@ -59,7 +59,6 @@ const NAV_MAIN: NavEntry[] = [
 // 个人区：跨课题的个人页面（设置入口在底部头像菜单里，不重复占位）
 const NAV_PERSONAL: NavEntry[] = [
   { to: '/library', icon: 'bookmark', zh: '我的文献库', en: 'My Library' },
-  { to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' },
 ];
 
 const NAV_PIPE: NavEntry[] = [
@@ -151,7 +150,6 @@ function crumbsFor(
 
     // —— 个人区 ——
     if (p === '/library') return [personal, e('/library')];
-    if (p === '/skills') return [personal, e('/skills')];
     if (p === '/settings') return [personal, { label: tr('设置', 'Settings') }];
     if (p === '/admin') return [{ label: tr('管理', 'Manage') }];
     return [{ label: 'Polaris' }];

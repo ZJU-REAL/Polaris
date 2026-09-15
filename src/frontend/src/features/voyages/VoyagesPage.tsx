@@ -66,7 +66,7 @@ export const KIND_META: Record<string, KindMeta> = {
   paper_review: { zh: '论文评审', en: 'Paper review', icon: 'check', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
   presentation: { zh: '论文分享', en: 'Paper slides', icon: 'chart', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
   discovery: { zh: '假设探索', en: 'Hypothesis discovery', icon: 'compass', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
-  custom: { zh: '流程技能', en: 'Workflow skill', icon: 'sparkle', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
+  custom: { zh: '自定义流程', en: 'Custom workflow', icon: 'sparkle', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
   demo: { zh: '演示', en: 'Demo', icon: 'play', bg: 'var(--surface-3)', tx: 'var(--text-2)' },
   daily_feed_sync: { zh: '每日新论文', en: 'Daily paper sync', icon: 'refresh', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
 };
