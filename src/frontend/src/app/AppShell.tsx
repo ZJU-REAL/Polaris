@@ -153,7 +153,6 @@ function crumbsFor(
     if (p === '/library') return [personal, e('/library')];
     if (p === '/skills') return [personal, e('/skills')];
     if (p === '/settings') return [personal, { label: tr('设置', 'Settings') }];
-    if (p === '/admin') return [{ label: tr('管理', 'Manage') }];
     return [{ label: 'Polaris' }];
   })();
 
@@ -449,7 +448,8 @@ export function AppShell() {
   // 路由出口下面那一层则要真重挂载，见下面 <Fragment key={lang}>。
   const lang = useLang();
   const location = useLocation();
-  const navigate = useNavigate();
+  // 壳层自己不再有跳转按钮（「管理」入口随 #755 撤除，设置走底部头像菜单）；
+  // 各子组件有各自的 useNavigate
   const queryClient = useQueryClient();
 
   // —— 审批抽屉 ——
@@ -920,15 +920,6 @@ export function AppShell() {
               Buddy 拉开之后视口没变，变窄的是主区，按视口判会一直以为还很宽。 */}
           {topbarRoomy ? (
             <>
-              <button
-                className="icon-btn"
-                onClick={() => navigate('/admin')}
-                title={tr('管理', 'Manage')}
-                aria-label={tr('管理', 'Manage')}
-                style={location.pathname === '/admin' ? { color: 'var(--accent)', background: 'var(--surface-2)' } : undefined}
-              >
-                <Icon name="settings" size={16} />
-              </button>
               <LangToggle />
               <FeedbackLink />
               <UpdateBadge />
@@ -971,9 +962,6 @@ export function AppShell() {
                     }}
                     onClick={() => setTopbarMoreOpen(false)}
                   >
-                    <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => navigate('/admin')}>
-                      <Icon name="settings" size={14} /> {tr('管理', 'Manage')}
-                    </button>
                     <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => openGates(null)}>
                       <Icon name="bell" size={14} /> {tr('审批中心', 'Approvals')}
                       {pending.length > 0 && <span className="badge" style={{ position: 'static', marginLeft: 'auto' }}>{pending.length}</span>}
