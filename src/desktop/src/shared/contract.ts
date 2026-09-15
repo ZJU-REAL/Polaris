@@ -21,8 +21,16 @@ export interface HostInfo {
   appVersion: string;
 }
 
-/** 契约版本。前端读到比自己新的 host 时按能力表降级，而不是按版本号写特判。 */
-export const CONTRACT_VERSION = 1;
+/**
+ * 契约版本。前端读到比自己新的 host 时按能力表降级，而不是按版本号写特判。
+ *
+ * 2（#705 起）：方法表换过一轮——local.* 去掉，kernel.status 与 plugins.* 进来。
+ * 界面热更新走的就是这个号：CI 把它写进包名（renderer-<版本>-c<契约>.tar.gz），
+ * 老外壳看到比自己大的号就不收这份界面，改走安装器。这一步不能省——插件页按能力
+ * 表自动隐藏，老外壳装上新界面**不会报错**，只会悄悄少一块功能，然后因为版本号
+ * 已经追平而不再提示更新，用户就永远停在收不到插件的外壳上了。
+ */
+export const CONTRACT_VERSION = 2;
 
 /** 单个能力的可用性。detail 给前端做提示（如 tectonic 装了但缓存是空的）。 */
 export interface CapabilityState {

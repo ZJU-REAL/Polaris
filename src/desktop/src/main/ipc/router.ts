@@ -69,6 +69,14 @@ const HANDLERS: Record<MethodName, Handler> = {
   'local.job.cancel': (p) => cancelJob(asString(p, 'jobId')),
 };
 
+/**
+ * 当前外壳实际提供的方法名。冒烟用它盯住方法表——表一变就失败，改的人必须回头
+ * 想一遍 CONTRACT_VERSION 要不要跟着涨（见 shared/contract.ts 的说明）。
+ */
+export function registeredMethods(): string[] {
+  return Object.keys(HANDLERS).sort();
+}
+
 export function installIpc(): void {
   // preload 用 sendSync 取静态事实，必须早于一切 renderer 脚本
   ipcMain.on(IPC_CHANNEL_INFO_SYNC, (event) => {
