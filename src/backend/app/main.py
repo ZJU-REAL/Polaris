@@ -15,12 +15,10 @@ from app.core.db import create_all, dispose_engine, get_sessionmaker
 from app.core.llm.router import LLMNotConfiguredError
 from app.core.redis import close_redis
 from app.mcp import mcp_router
-from app.services.builtin_agent_skills import ensure_builtin_agent_skills
 from app.services.crdt_rooms import reset_crdt_rooms
 from app.services.crdt_stream import get_crdt_stream_subscriber, stop_crdt_stream_subscriber
 from app.services.discipline_packs import load_disciplines
 from app.services.interdisciplinary_workflows import ensure_guidance_documents
-from app.services.skills import ensure_builtin_skills
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +34,12 @@ async def lifespan(app: FastAPI):
     # 仅 sqlite（无 docker 的本地 dev）在启动时建表；postgres 走 alembic migration
     if settings.is_sqlite:
         await create_all()
-    # 内置技能种子（按 slug 幂等）；失败不阻断启动（如 migration 未跑）
+    # 跨学科工作流的指引文档种子（按 slug 幂等）；失败不阻断启动（如 migration 未跑）
     try:
         async with get_sessionmaker()() as session:
-            await ensure_builtin_skills(session)
-            await ensure_builtin_agent_skills(session)
             await ensure_guidance_documents(session)
     except Exception:  # noqa: BLE001
-        logger.warning("builtin skill seeding failed (migrations pending?)", exc_info=True)
+        logger.warning("guidance document seeding failed (migrations pending?)", exc_info=True)
     # 学科包：把抽取 schema 的注册缝接到磁盘（内置包 + <data_dir>/disciplines）。
     # 纯文件读取、不碰数据库，所以不跟着上面的 DB 种子一起 try
     load_disciplines()

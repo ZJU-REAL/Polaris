@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "c5e02a9b31d7"  # Method vectors scoped to their card (#772)
+HEAD_REVISION = "d7f4a16c8e29"  # Skills feature removed (#755)
+VECTOR_SCOPE_REVISION = "c5e02a9b31d7"  # Method vectors scoped to their card (#772)
 HYPOTHESIS_SEQ_REVISION = "b4d91f7a2c08"  # Hypothesis node creation sequence (#784)
 MCP_SERVERS_REVISION = "e8c3f1a92d40"  # External MCP server registry (#754)
 LIBRARY_DISCIPLINE_REVISION = "d7b2e4c81a35"  # Library declares its discipline
@@ -124,6 +125,14 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "paper_chunks",
                     "paper_vectors",
                     "method_vectors",  # head 新增（#663）；downgrade 后不存在，列检查自动跳过
+                    # 技能表在 head 上已删（#755），但降级走回旧 revision 时它们还在，
+                    # 那几档的列断言要查它们。清单里留着：查不到会自动跳过
+                    "skills",
+                    "skill_versions",
+                    "user_skills",
+                    "skill_listings",
+                    "agent_skills",
+                    "agent_skill_files",
                     "paper_wikis",
                     "library_papers",
                     "daily_feed_entries",
@@ -138,10 +147,6 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "library_research_digests",
                     "conversations",
                     "conversation_messages",
-                    "agent_skills",
-                    "agent_skill_files",
-                    "skills",
-                    "skill_listings",
                     "guidance_documents",
                     "mcp_servers",
                     "buddy_memories",
@@ -234,8 +239,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 对话搬到服务端：agent 一轮里可能调好几次工具，历史不能只活在浏览器 localStorage
     assert {"conversations", "conversation_messages"} <= columns["_tables"]
     # Skills v2：技能是「一句 description 常驻 + 正文按需加载」，附件单独一张表
-    assert {"agent_skills", "agent_skill_files"} <= columns["_tables"]
-    assert {"slug", "description", "body", "allowed_tools", "invocation"} <= columns["agent_skills"]
+    # 技能功能整体移除（#755）：两套表都不该再存在
+    assert not {"agent_skills", "agent_skill_files"} & columns["_tables"]
     assert {"scope_kind", "scope_id", "usage", "active_stream_id"} <= columns["conversations"]
     assert {"blocks", "text", "seq", "status", "sources"} <= columns["conversation_messages"]
     # deprecated（#734 停写）：列保留一期防在途回滚，下一次列卫生迁移删除
@@ -331,15 +336,11 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"depth", "research_type", "goal", "evidence", "seed_idea_id"} <= columns["ideas"]
     # 文献知识底座：paper_chunks 表
     assert "paper_chunks" in columns["_tables"]
-    # 技能系统 S1 + 技能全局化：skills / skill_versions / user_skills 表（project_skills 已删）
-    assert {"skills", "skill_versions", "user_skills"} <= columns["_tables"]
-    assert "project_skills" not in columns["_tables"]
-    assert "project_id" not in columns["skills"]
+    # 技能系统整体移除（#755）：v1 三张表与课题绑定表都不该再存在
+    assert not {"skills", "skill_versions", "user_skills", "project_skills"} & columns["_tables"]
     # 技能市场 S4：skill_listings 表（skill_ratings 已在 P1 去实验室化中移除）；
     # #741 起审核残列已删，「在架」只看 delisted_at
-    assert "skill_listings" in columns["_tables"]
-    assert "delisted_at" in columns["skill_listings"]
-    assert not {"status", "decided_by", "comment"} & columns["skill_listings"]
+    assert "skill_listings" not in columns["_tables"]
     # #741：跨学科指引搬离 v1，落 guidance_documents
     assert "guidance_documents" in columns["_tables"]
     assert {"slug", "version", "name", "body", "targets", "steps"} <= columns[
@@ -640,7 +641,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["paper_extractions"]
     assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
 
-    # 先退掉方法向量的卡作用域。
+    # 先退掉技能表的删除（downgrade 会把空表建回来）。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == VECTOR_SCOPE_REVISION
+    assert {"skills", "agent_skills"} <= columns["_tables"]
+
+    # 再退掉方法向量的卡作用域。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == HYPOTHESIS_SEQ_REVISION

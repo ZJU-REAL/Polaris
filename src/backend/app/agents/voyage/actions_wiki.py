@@ -998,7 +998,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         membership_ids = [mid for mid, _ in rows]
         paper_ids = [pid for _, pid in rows]
 
-    guidance = ctx.skill_guidance("wiki.score_relevance")
+    guidance = ctx.workflow_guidance("wiki.score_relevance")
     total = len(membership_ids)
     progress = {"n": 0}
     project_id = ctx.run.project_id
@@ -1279,7 +1279,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
         membership_ids = [mid for mid, _ in rows]
         paper_ids = [pid for _, pid in rows]
 
-    guidance = ctx.skill_guidance("wiki.compile")
+    guidance = ctx.workflow_guidance("wiki.compile")
     total = len(membership_ids)
     progress = {"n": 0}
     project_id = ctx.run.project_id
@@ -1489,7 +1489,7 @@ async def daily_digest(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             checkpoint=ctx.checkpoint,
             llm=ctx.llm,
             user_id=_ingest_billing_owner(library),
-            extra_guidance=ctx.skill_guidance("wiki.daily_digest"),
+            extra_guidance=ctx.workflow_guidance("wiki.daily_digest"),
         )
     ctx.checkpoint["daily_digest_id"] = str(digest.id)
     await ctx.log(f"每日简报已生成：{digest.report_date.isoformat()}", level="success")
@@ -1517,7 +1517,7 @@ async def trend_synthesize(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             library=library,
             llm=ctx.llm,
             user_id=_ingest_billing_owner(library),
-            extra_guidance=ctx.skill_guidance("wiki.trend_synthesize"),
+            extra_guidance=ctx.workflow_guidance("wiki.trend_synthesize"),
         )
     ctx.checkpoint["trend_digest_id"] = str(digest.id)
     await ctx.log(f"滚动趋势已更新：{len(digest.rolling_trends)} 条主线", level="success")

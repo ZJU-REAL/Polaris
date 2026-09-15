@@ -104,31 +104,6 @@ async def _setup(client):
     return headers, resp.json()["id"]
 
 
-async def test_import_skill_md(client):
-    headers, _ = await _setup(client)
-    resp = await client.post(
-        "/api/skills/import-md",
-        json={"content": SKILL_MD, "targets": ["present.slides", "present.outline"]},
-        headers=headers,
-    )
-    assert resp.status_code == 201, resp.text
-    skill = resp.json()
-    assert skill["name"] == "论文分享 PPT 制作"
-    assert skill["kind"] == "guidance"
-    assert skill["current_version"]["manifest"]["targets"] == [
-        "present.slides",
-        "present.outline",
-    ]
-    assert "标题短一点" in skill["current_version"]["body"]
-    # 再导入一次：slug 自动加后缀
-    resp = await client.post(
-        "/api/skills/import-md",
-        json={"content": SKILL_MD, "targets": ["present.slides"]},
-        headers=headers,
-    )
-    assert resp.status_code == 201
-    assert resp.json()["slug"] != skill["slug"]
-
 
 async def test_create_presentation_voyage(client, queue_stub):
     headers, project_id = await _setup(client)

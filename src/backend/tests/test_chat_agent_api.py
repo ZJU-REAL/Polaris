@@ -343,25 +343,17 @@ async def test_the_resolved_project_sticks_to_the_conversation(client, agent_on)
         assert str(conv.project_id) == project_id, "第一轮解析出的课题要存回会话"
 
 
-async def test_capabilities_reports_tools_skills_and_mcp(client, agent_on):
+async def test_capabilities_reports_tools_and_mcp(client, agent_on):
     """「它现在到底能干什么」要有一个能问的地方。
 
-    此前只能靠读代码：工具白名单在常量里，技能目录只出现在提示词里，对外 MCP 暴露的
-    是不是同一批也没人说得清。
+    此前只能靠读代码：工具白名单在常量里，对外 MCP 暴露的是不是同一批也没人说得清。
     """
-    from app.services.builtin_agent_skills import ensure_builtin_agent_skills
-
     headers = await _headers(client, "caps@example.com")
-    async with get_sessionmaker()() as session:
-        await ensure_builtin_agent_skills(session)  # 生产上由启动钩子种入
     body = (await client.get("/api/chat/capabilities", headers=headers)).json()
 
     names = {t["name"] for t in body["tools"]}
     assert "search_papers" in names and "update_plan" in names
     assert all(t["read_only"] for t in body["tools"]), "只读期不该有写工具混进来"
-    # 内置技能种子在启动时就位
-    assert body["skills"], "技能目录是空的"
-    assert {s["slug"] for s in body["skills"]} & {"polaris-search-playbook", "paper-deep-read"}
     # MCP：如实说明 Polaris 是服务端，不编一个「已连接的服务器」列表
     assert body["mcp"]["role"] == "server"
     assert body["mcp"]["exposed_tools"] > 0

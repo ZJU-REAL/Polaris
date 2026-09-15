@@ -4,15 +4,14 @@
 1. observation.error → 直接 fail；
 2. 动作自带机械验收结论 self_check → 直接采信；
 3. 步骤声明了结构化 checks → 检查注册表执行（确定性先跑，llm_rubric 最后）；
-4. 无 checks 的遗留路径：确定性动作白名单（sleep/artifact.write）→ 技能
-   output_contract → 验收标准文字走 LLM 判定 → 无标准但有产出默认通过。
+4. 无 checks 的遗留路径：确定性动作白名单（sleep/artifact.write）→ 验收标准
+   文字走 LLM 判定 → 无标准但有产出默认通过。
 """
 
 import json
 from typing import Any
 
 from app.agents.voyage.checks import run_deterministic_checks
-from app.agents.voyage.skillset import check_output_contract, skill_output_contract
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
 from app.models.voyage import VoyageRun
@@ -88,12 +87,6 @@ class Sextant:
         content = observation.get("content")
         if not content:
             return {"passed": False, "reason": "步骤无产出（observation.content 为空）"}, {}
-
-        # 技能 output_contract：先做确定性校验（docs/task-system.md §7），
-        # 不通过直接 fail（不花 LLM），通过后仍走 LLM 对照验收标准
-        contract = skill_output_contract(run.checkpoint, action)
-        if contract and (error := check_output_contract(contract, str(content))):
-            return {"passed": False, "reason": f"产出不符合技能约定：{error}"}, {}
 
         if not acceptance:
             return {"passed": True, "reason": "未声明验收标准，且步骤有产出，默认通过"}, {}

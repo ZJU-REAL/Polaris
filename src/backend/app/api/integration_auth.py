@@ -12,7 +12,7 @@ from app.models.user import User
 from app.services import integration_tokens as token_service
 
 _bearer = HTTPBearer(auto_error=False)
-_JWT_INTEGRATION_SCOPES = frozenset({"skills:read", "mcp:read"})
+_JWT_INTEGRATION_SCOPES = frozenset({"mcp:read"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,5 +78,4 @@ def require_integration_scope(scope: str):
     return dependency
 
 
-require_skills_read = require_integration_scope("skills:read")
 require_mcp_read = require_integration_scope("mcp:read")

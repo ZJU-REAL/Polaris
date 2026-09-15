@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-IntegrationScope = Literal["skills:read", "mcp:read", "mcp:write"]
+IntegrationScope = Literal["mcp:read", "mcp:write"]
 
 
 class IntegrationTokenCreate(BaseModel):
@@ -14,7 +14,7 @@ class IntegrationTokenCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=80)
     scopes: list[IntegrationScope] = Field(
-        default_factory=lambda: ["skills:read", "mcp:read"], min_length=1, max_length=3
+        default_factory=lambda: ["mcp:read"], min_length=1, max_length=2
     )
     expires_in_days: int = Field(default=90, ge=1, le=3650)
 

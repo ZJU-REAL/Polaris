@@ -528,7 +528,7 @@ async def forge_gap_analysis(ctx: ActionContext, params: dict[str, Any]) -> dict
         buckets["survey_gap"] = await _complete_json(
             ctx,
             stage="forge",
-            system=GAP_SYSTEM_PROMPT + ctx.skill_guidance("forge.gap_analysis"),
+            system=GAP_SYSTEM_PROMPT + ctx.workflow_guidance("forge.gap_analysis"),
             user=_context_prompt(ctx, statement),
             validate=validate,
         )
@@ -639,7 +639,7 @@ async def forge_generate(ctx: ActionContext, params: dict[str, Any]) -> dict[str
     candidates = await _complete_json(
         ctx,
         stage="forge_generate",
-        system=GENERATE_SYSTEM_PROMPT + ctx.skill_guidance("forge.generate"),
+        system=GENERATE_SYSTEM_PROMPT + ctx.workflow_guidance("forge.generate"),
         user=user_prompt,
         validate=validate,
     )
@@ -693,7 +693,7 @@ async def forge_score(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
             scores, rationale = await _complete_json(
                 ctx,
                 stage="forge",
-                system=SCORE_SYSTEM_PROMPT + ctx.skill_guidance("forge.score"),
+                system=SCORE_SYSTEM_PROMPT + ctx.workflow_guidance("forge.score"),
                 user=user_prompt,
                 validate=_validate_scores,
             )
@@ -919,7 +919,8 @@ def _personas(ctx: ActionContext) -> tuple[dict[str, str], dict[str, str], dict[
 
     优先级：显式 params.personas > persona 技能（review.debate）> 内置默认。
     """
-    raw = _params(ctx).get("personas") or ctx.skill_personas("review.debate")
+    # 技能移除后没有第二处人设来源；参数没给就用下面的内置默认
+    raw = _params(ctx).get("personas")
     personas = [p for p in raw if isinstance(p, dict) and p.get("name")] if raw else []
     merged = (personas + DEFAULT_PERSONAS[len(personas) :])[:3]
     return merged[0], merged[1], merged[2]

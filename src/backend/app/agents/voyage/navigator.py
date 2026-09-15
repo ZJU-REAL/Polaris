@@ -12,8 +12,8 @@ from typing import Any
 
 from app.agents.voyage.actions import known_actions
 from app.agents.voyage.checks import validate_checks
+from app.agents.voyage.guidance import workflows as guidance_workflows
 from app.agents.voyage.plan_edit import experiment_round_nodes, validate_plan_edit
-from app.agents.voyage.skillset import skill_workflows
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
 from app.models.voyage import VoyageRun
@@ -87,7 +87,7 @@ IDEA_KINDS = ("idea_forge", "idea_review", "idea_proposal")
 # 调 register_plan(kind) 即可接入固定计划，无需碰 Navigator（与 #736 给 LLM
 # stage 留的插件命名空间缝同款远景）。
 #
-# 注意：未注册的 kind 不是错误——skills v1 的 custom 等自由目标任务落到
+# 注意：未注册的 kind 不是错误——自由目标任务落到
 # Navigator.plan 的 LLM 自由规划兜底路径（既有对外行为）。需要「必须有模板」
 # 语义的调用方走 get_plan_builder（未注册抛 UnknownPlanKindError，可诊断）。
 # ---------------------------------------------------------------------------
@@ -778,7 +778,7 @@ def _workflow_templates_prompt(workflows: list[dict[str, Any]]) -> str:
         titles = " → ".join(str(s.get("title", "")) for s in w.get("steps") or [])
         lines.append(f"- {w.get('slug')}：{w.get('name')}（步骤：{titles}）")
     lines.append(
-        '若某个模板与目标匹配，直接输出 {"use_skill": "<slug>"}（不要再自拟 steps）；'
+        '若某个模板与目标匹配，直接输出 {"use_workflow": "<slug>"}（不要再自拟 steps）；'
         "都不匹配才自行规划。"
     )
     return "\n".join(lines)
@@ -788,7 +788,7 @@ def _expand_workflow(slug: str, workflows: list[dict[str, Any]]) -> list[dict[st
     """按 slug 展开 workflow 技能的步骤模板；slug 未知或 steps 非法抛 ValueError。"""
     entry = next((w for w in workflows if w.get("slug") == slug), None)
     if entry is None:
-        raise ValueError(f"unknown workflow skill: {slug!r}")
+        raise ValueError(f"unknown workflow: {slug!r}")
     return validate_steps({"steps": entry.get("steps") or []})
 
 
@@ -851,8 +851,8 @@ class Navigator:
             )
             try:
                 data = _extract_json(result.content)
-                if workflows and isinstance(data, dict) and data.get("use_skill"):
-                    return _expand_workflow(str(data["use_skill"]), workflows)
+                if workflows and isinstance(data, dict) and data.get("use_workflow"):
+                    return _expand_workflow(str(data["use_workflow"]), workflows)
                 return validate_steps(data, allowed_actions=allowed_actions)
             except (ValueError, json.JSONDecodeError) as e:
                 last_error = e
@@ -866,7 +866,7 @@ class Navigator:
         # 未注册的 kind 落到 LLM 自由规划——这是既有兜底行为（skills v1 的 custom
         # 等自由目标任务靠它），不是 unknown 错误；严格语义见 get_plan_builder。
         system = PLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
-        workflows = skill_workflows(run.checkpoint or {})
+        workflows = guidance_workflows(run.checkpoint or {})
         if workflows:
             system += _workflow_templates_prompt(workflows)
         user_prompt = f"目标：{run.goal}"
