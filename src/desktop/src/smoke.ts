@@ -27,7 +27,7 @@ import type { FetchImpl, SqliteTree, StorageService } from '@polaris/kernel';
 
 import { kernelPluginMeta, localBackend, marketPluginsDir, startKernel, stopKernel } from './main/kernel';
 import { capabilityManifest } from './main/capabilities';
-import { installIpc } from './main/ipc/router';
+import { installIpc, registeredMethods } from './main/ipc/router';
 import {
   MARKET_ENDPOINT_META_KEY,
   awaitInstallForTesting,
@@ -355,6 +355,43 @@ void app.whenReady().then(async () => {
   console.log('\n能力清单与 local.*');
   const manifest = await capabilityManifest();
   check('契约版本已声明', manifest.contract >= 1);
+
+  // 方法表与契约版本是一对：#705 把 local.* 换成 kernel.*/plugins.* 却没动
+  // CONTRACT_VERSION，老外壳因此会照收新界面——插件页按能力表自动隐藏，不报错，
+  // 只是永远少一块。这条断言让「改表不改版本号」当场失败。
+  const EXPECTED_METHODS: string[] = [
+    'host.capabilities',
+    'host.copyText',
+    'host.info',
+    'host.openExternal',
+    'host.setBadgeCount',
+    'host.setServerUrl',
+    'host.testServer',
+    'host.update.apply',
+    'host.update.check',
+    'kernel.engineBootstrapStatus',
+    'kernel.localBackend',
+    'kernel.status',
+    'local.job.cancel',
+    'plugins.disable',
+    'plugins.enable',
+    'plugins.exportTree',
+    'plugins.importTree',
+    'plugins.list',
+    'plugins.market.fetchIndex',
+    'plugins.market.getEndpoint',
+    'plugins.market.install',
+    'plugins.market.setEndpoint',
+    'plugins.market.uninstall',
+    'plugins.updateConfig',
+    'plugins.validateConfig',
+  ];
+  const methods = registeredMethods();
+  check(
+    '方法表未变（变了就回头确认 CONTRACT_VERSION 是否要涨）',
+    JSON.stringify(methods) === JSON.stringify(EXPECTED_METHODS),
+    `actual=${JSON.stringify(methods)}`,
+  );
   check(
     'latex.compile 能力位仍关闭（本地编译未实现）',
     manifest.capabilities['latex.compile']?.available === false,
