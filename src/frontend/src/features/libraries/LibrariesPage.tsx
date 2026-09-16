@@ -12,6 +12,7 @@ import { api, ApiError, type DirectionLibrarySummary } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { StatementInterview } from './StatementInterview';
 import { useLibraries, libraryPath, type LibraryFilters } from './hooks';
+import { DisciplineSelect } from './DisciplineSelect';
 import {
   InclusionSettingsForm,
   ARXIV_ID_RE,
@@ -253,6 +254,9 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [statement, setStatement] = useState('');
+  // 学科决定论文按哪套字段抽取。建完库再去设置里改也行，但那之前抽过的论文
+  // 已经按通用（机器学习形状的）口径存下来了——所以这个问题属于建库时
+  const [discipline, setDiscipline] = useState('');
   const [interviewOpen, setInterviewOpen] = useState(false);
   const [incl, setIncl] = useState<InclusionValue>(EMPTY_INCLUSION);
 
@@ -303,6 +307,7 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
     mutation.mutate({
       name: name.trim(),
       statement: statement.trim(),
+      ...(discipline ? { discipline } : {}),
       ...(anchors.length > 0 ? { anchors } : {}),
       ...(keywords ? { keywords } : {}),
       ...(rubric.length > 0 ? { rubric } : {}),
@@ -364,6 +369,16 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
             {tr(
               '写清四件事效果最好：研究问题、研究对象、关注的子问题、偏重哪类方法。用英文写——语料是英文论文摘要，中文描述会让向量匹配失准。',
               'Four things help most: the research question, the subject, the sub-problems, and which kinds of method you favour. Write it in English — the corpus is English abstracts, and a Chinese statement skews vector matching.',
+            )}
+          </div>
+        </FormField>
+        <div className="hr" style={{ margin: '4px 0 16px' }} />
+        <FormField label={tr('学科口径', 'Discipline')}>
+          <DisciplineSelect value={discipline} onChange={setDiscipline} />
+          <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5, marginTop: 4 }}>
+            {tr(
+              '决定论文的方法卡按哪套字段抽取。通用口径是机器学习的形状（目的、手段、基线、数据集），选一个学科后换成该领域自己的字段。',
+              'Sets which fields the method card is extracted into. The general fields are shaped for machine learning (purpose, mechanism, baseline, dataset); picking a discipline swaps in that field’s own.',
             )}
           </div>
         </FormField>

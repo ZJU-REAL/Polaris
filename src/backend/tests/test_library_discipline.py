@@ -41,6 +41,56 @@ async def test_unknown_discipline_is_refused_rather_than_stored(client):
     assert "UNKNOWN_DISCIPLINE" in resp.json()["detail"]
 
 
+async def test_a_library_can_be_created_with_a_discipline(client):
+    """建库时就能选。
+
+    只能建完再去库设置里改的话，这中间抽过的论文已经按通用（机器学习形状的）
+    口径存下来了——对一个做结构的人来说，那批卡的字段从一开始就是错的轴。
+    """
+    token = await register_and_login(client, email="creator@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = await client.post(
+        "/api/libraries",
+        json={
+            "name": "Bridges",
+            "statement": "Long-span bridge design",
+            "discipline": "structural",
+        },
+        headers=headers,
+    )
+    assert resp.status_code in (200, 201), resp.text
+    assert resp.json()["discipline"] == "structural"
+
+
+async def test_creating_with_an_unknown_discipline_is_refused(client):
+    """与 PATCH 同一个判据——两条路各校验各的，就会从没校验的那条溜进去。"""
+    token = await register_and_login(client, email="creator2@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = await client.post(
+        "/api/libraries",
+        json={"name": "Stars", "statement": "Star signs", "discipline": "astrology"},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+    assert "UNKNOWN_DISCIPLINE" in resp.json()["detail"]
+
+
+async def test_creating_without_a_discipline_stays_general(client):
+    """不选 = 通用口径。存量建库调用不带这个键，行为必须一字不变。"""
+    token = await register_and_login(client, email="creator3@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = await client.post(
+        "/api/libraries",
+        json={"name": "Agents", "statement": "Long-running agents"},
+        headers=headers,
+    )
+    assert resp.status_code in (200, 201), resp.text
+    assert resp.json()["discipline"] is None
+
+
 async def test_discipline_can_be_cleared(client):
     token = await register_and_login(client, email="owner@example.com")
     headers = {"Authorization": f"Bearer {token}"}

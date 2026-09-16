@@ -4151,6 +4151,8 @@ export const api = {
     /** @deprecated 参考上限（#734 起不再拦任务），界面已不提供输入 */
     monthly_budget?: number | null;
     keywords?: KeywordSpec | null;
+    /** 学科包名。决定本库论文按哪套 schema 抽取；不传 = 通用口径。 */
+    discipline?: string | null;
   }): Promise<DirectionLibraryDetail> {
     return requestJson<DirectionLibraryDetail>('/libraries', 'POST', input);
   },
