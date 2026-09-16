@@ -267,6 +267,8 @@ export interface AnchorPaper {
 }
 
 export interface KeywordSpec {
+  /** 这个库从哪些文献源取；缺省/空 = 只用 arXiv（存量库行为不变）。 */
+  sources?: string[];
   arxiv_categories?: string[];
   include?: string[];
   /** 排除关键词：命中即不收；检索、打分、每日同步三处都生效。 */
@@ -1398,6 +1400,17 @@ export interface DisciplinePackSummary {
   description: string;
   /** 这个包带来几条抽取 schema；为 0 等于装了没效果 */
   schema_count: number;
+}
+
+/** 一个可选的文献来源，供建库表单的来源选择器展示。 */
+export interface LiteratureSourceOption {
+  /** 写进库配置 keywords.sources 的值 */
+  id: string;
+  title: string;
+  /** 它擅长的领域——"europepmc" 这种 id 对非本行的人不构成任何提示 */
+  description: string;
+  /** 只有 arXiv 有分类体系；表单据此决定要不要展示「arXiv 分类」那一项 */
+  supports_categories: boolean;
 }
 
 export interface DirectionLibrarySummary {
@@ -3989,6 +4002,13 @@ export const api = {
    */
   listDisciplines(): Promise<DisciplinePackSummary[]> {
     return request<DisciplinePackSummary[]>('/disciplines');
+  },
+  /**
+   * 能用来检索的文献源。**问后端，不在前端写死**：建库表单要先问「从哪里找文献」，
+   * 而装一个源就该立刻可选、撤一个就该立刻消失。
+   */
+  listLiteratureSources(): Promise<LiteratureSourceOption[]> {
+    return request<LiteratureSourceOption[]>('/literature-sources');
   },
   getLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}`);

@@ -3,13 +3,18 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '../../components/ui/Toast';
 import { api, type DirectionLibraryDetail, type DuplicateCandidatePaper, type ProjectDefinition } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { InclusionSettingsForm, type InclusionValue } from '../libraries/InclusionSettingsForm';
+import {
+  InclusionSettingsForm,
+  keywordsFromInclusion,
+  type InclusionValue,
+} from '../libraries/InclusionSettingsForm';
 import { InterdisciplinaryScopePanel } from '../projects/InterdisciplinaryScopePanel';
 
 /** library.definition → 收录设置表单初值 */
 function fromDefinition(def: ProjectDefinition | null): InclusionValue {
   const d = def ?? {};
   return {
+    sources: d.keywords?.sources ?? [],
     arxiv_categories: d.keywords?.arxiv_categories ?? [],
     include: d.keywords?.include ?? [],
     exclude: d.keywords?.exclude ?? [],
@@ -369,11 +374,7 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
   const save = useMutation({
     mutationFn: () =>
       api.updateLibrary(lib.id, {
-        keywords: {
-          ...(lib.definition?.keywords ?? {}),
-          arxiv_categories: value.arxiv_categories,
-          include: value.include,
-        },
+        keywords: { ...(lib.definition?.keywords ?? {}), ...keywordsFromInclusion(value) },
         rubric: value.rubric.filter((r) => r.name.trim()),
         anchors: value.anchors.filter((a) => a.title.trim() || (a.arxiv_id ?? '').trim()),
       }),
