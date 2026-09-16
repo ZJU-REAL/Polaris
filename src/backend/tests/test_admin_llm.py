@@ -93,9 +93,9 @@ async def _admin_and_member(client):
     )
 
 
-async def test_admin_llm_owner_only(client):
-    """admin 面回到单一主人守卫（#722）：首位用户放行，其余登录用户 403，未登录 401。"""
-    admin, member = await _admin_and_member(client)
+async def test_admin_llm_requires_login(client):
+    """未登录一律 401，不分哪张表。"""
+    admin, _member = await _admin_and_member(client)
     for method, url in [
         ("GET", "/api/admin/llm/providers"),
         ("GET", "/api/admin/llm/routes"),
@@ -103,11 +103,36 @@ async def test_admin_llm_owner_only(client):
     ]:
         resp = await client.request(method, url)
         assert resp.status_code == 401, (method, url, resp.status_code)
-        resp = await client.request(method, url, headers=member)
-        assert resp.status_code == 403, (method, url, resp.status_code)
-        assert resp.json()["detail"] == "OWNER_REQUIRED"
     resp = await client.get("/api/admin/llm/providers", headers=admin)
     assert resp.status_code == 200
+
+
+async def test_deployment_wide_views_stay_owner_only(client):
+    """用量与调用日志看的是整个部署的账（含别人的 prompt 片段），仍只对主人开放。
+
+    #801 把 providers/routes 改成按人分表之后，路由级的 require_owner 撤掉了，
+    这些面要逐个补回守卫——漏一个就是把别人的调用记录交给任何注册用户。
+    """
+    _admin, member = await _admin_and_member(client)
+    for url in [
+        "/api/admin/llm/usage",
+        "/api/admin/llm/call-logs",
+        "/api/admin/llm/call-logs/settings",
+    ]:
+        resp = await client.get(url, headers=member)
+        assert resp.status_code == 403, (url, resp.status_code)
+        assert resp.json()["detail"] == "OWNER_REQUIRED"
+
+
+async def test_a_member_configures_their_own_not_the_deployments(client):
+    """公有云的第一道墙：此前第二个注册的人在这里拿 403，配不了任何东西（#801）。"""
+    admin, member = await _admin_and_member(client)
+    await _fake_provider_id(client, admin)
+
+    resp = await client.get("/api/admin/llm/providers", headers=member)
+    assert resp.status_code == 200
+    # 看到的是自己那张（空的），不是主人那张
+    assert resp.json() == []
 
 
 async def test_provider_crud_and_key_masking(client):
@@ -304,12 +329,16 @@ async def _fake_provider_id(client, admin) -> str:
     return resp.json()["id"]
 
 
-async def test_test_model_owner_only(client):
+async def test_test_model_only_reaches_your_own_providers(client):
+    """别人的 provider 按不存在处理（404）——不然可以拿别人的 key 去探活。
+
+    404 而不是 403：说「这个 id 存在但不归你」本身就在泄露别人配了什么。
+    """
     admin, member = await _admin_and_member(client)
     provider_id = await _fake_provider_id(client, admin)
     body = {"provider_id": provider_id, "model": "fake-default", "capability": "chat"}
     resp = await client.post("/api/admin/llm/test-model", json=body, headers=member)
-    assert resp.status_code == 403  # admin 面整体回到主人守卫（#722）
+    assert resp.status_code == 404
     resp = await client.post("/api/admin/llm/test-model", json=body, headers=admin)
     assert resp.status_code == 200
 

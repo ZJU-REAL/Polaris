@@ -71,25 +71,44 @@ def _normalize_user_agent(value: str | None) -> str | None:
 # 私有 key/路由当成了平台配置。
 
 
-async def list_providers(session: AsyncSession) -> Sequence[LLMProviderConfig]:
+def _owner_clause(column: Any, owner_id: uuid.UUID | None):
+    """归属过滤：``None`` = 部署级那张表，否则 = 这个用户自己的那张。
+
+    两边都是精确匹配。少了这层，一个用户的私有配置会出现在别人的设置页上。
+    """
+    return column.is_(None) if owner_id is None else column == owner_id
+
+
+async def list_providers(
+    session: AsyncSession, owner_id: uuid.UUID | None = None
+) -> Sequence[LLMProviderConfig]:
     stmt = (
         select(LLMProviderConfig)
-        .where(LLMProviderConfig.owner_id.is_(None))
+        .where(_owner_clause(LLMProviderConfig.owner_id, owner_id))
         .order_by(LLMProviderConfig.created_at)
     )
     return (await session.execute(stmt)).scalars().all()
 
 
-async def get_provider(session: AsyncSession, provider_id: uuid.UUID) -> LLMProviderConfig | None:
-    """取平台 provider：存量私有行按不存在处理（不给读改别人的旧配置）。"""
+async def get_provider(
+    session: AsyncSession, provider_id: uuid.UUID, owner_id: uuid.UUID | None = None
+) -> LLMProviderConfig | None:
+    """取这个归属下的 provider；别人的行一律按不存在处理。
+
+    按 404 而不是 403 处理：告诉一个人「这个 id 存在但不归你」，本身就是在
+    泄露别人配了什么。
+    """
     provider = await session.get(LLMProviderConfig, provider_id)
-    if provider is None or provider.owner_id is not None:
+    if provider is None or provider.owner_id != owner_id:
         return None
     return provider
 
 
-async def create_provider(session: AsyncSession, data: ProviderCreate) -> LLMProviderConfig:
+async def create_provider(
+    session: AsyncSession, data: ProviderCreate, owner_id: uuid.UUID | None = None
+) -> LLMProviderConfig:
     provider = LLMProviderConfig(
+        owner_id=owner_id,
         name=data.name,
         kind=data.kind,
         base_url=data.base_url,
@@ -137,13 +156,21 @@ async def delete_provider(session: AsyncSession, provider: LLMProviderConfig) ->
 # ---- routes ----
 
 
-async def list_routes(session: AsyncSession) -> Sequence[ModelRoute]:
-    stmt = select(ModelRoute).where(ModelRoute.owner_id.is_(None)).order_by(ModelRoute.stage)
+async def list_routes(
+    session: AsyncSession, owner_id: uuid.UUID | None = None
+) -> Sequence[ModelRoute]:
+    stmt = (
+        select(ModelRoute)
+        .where(_owner_clause(ModelRoute.owner_id, owner_id))
+        .order_by(ModelRoute.stage)
+    )
     return (await session.execute(stmt)).scalars().all()
 
 
-async def replace_routes(session: AsyncSession, items: Sequence[RouteItem]) -> Sequence[ModelRoute]:
-    """整表覆盖平台路由。stage 必须合法且不重复，provider 必须是平台的。"""
+async def replace_routes(
+    session: AsyncSession, items: Sequence[RouteItem], owner_id: uuid.UUID | None = None
+) -> Sequence[ModelRoute]:
+    """整表覆盖这个归属的路由。stage 必须合法且不重复，provider 必须同属一人。"""
     seen: set[str] = set()
     valid_stages = known_stages()
     for item in items:
@@ -156,13 +183,18 @@ async def replace_routes(session: AsyncSession, items: Sequence[RouteItem]) -> S
         if item.stage in seen:
             raise InvalidRouteError(f"duplicate stage: {item.stage}")
         seen.add(item.stage)
+        # provider 必须与路由同属一人：否则可以把别人的 provider id 写进
+        # 自己的路由表，拿别人的 key 跑自己的任务。
         provider = await session.get(LLMProviderConfig, item.provider_id)
-        if provider is None or provider.owner_id is not None:
+        if provider is None or provider.owner_id != owner_id:
             raise InvalidRouteError(f"provider not found: {item.provider_id}")
-    await session.execute(delete(ModelRoute).where(ModelRoute.owner_id.is_(None)))
+    await session.execute(
+        delete(ModelRoute).where(_owner_clause(ModelRoute.owner_id, owner_id))
+    )
     for item in items:
         session.add(
             ModelRoute(
+                owner_id=owner_id,
                 stage=item.stage,
                 provider_id=item.provider_id,
                 model=item.model,
@@ -172,7 +204,7 @@ async def replace_routes(session: AsyncSession, items: Sequence[RouteItem]) -> S
         )
     await session.commit()
     get_llm_router().invalidate_cache()
-    return await list_routes(session)
+    return await list_routes(session, owner_id)
 
 
 # ---- 模型连通性测试 ----

@@ -115,10 +115,14 @@ def _route(model: str) -> ResolvedRoute:
 
 
 def _router_with(routes: dict[str, ResolvedRoute]) -> LLMRouter:
-    """路由表直接塞缓存（本测试测的是选路逻辑，不是 DB 加载）。"""
+    """路由表直接塞缓存（本测试测的是选路逻辑，不是 DB 加载）。
+
+    缓存自 #801 起按归属分开：``None`` 那一格是部署级路由，也就是不带
+    user_id 的 resolve 会用到的那张表。
+    """
     router = LLMRouter()
-    router._routes = routes
-    router._routes_loaded_at = time.monotonic()
+    router._routes = {None: routes}
+    router._routes_loaded_at = {None: time.monotonic()}
     return router
 
 

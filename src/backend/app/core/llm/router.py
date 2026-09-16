@@ -363,9 +363,12 @@ class LLMRouter:
     """
 
     def __init__(self) -> None:
-        # 平台路由表缓存（自管轨已并入平台配置 #621：所有人共用同一份 owner=NULL 配置）
-        self._routes: dict[str, ResolvedRoute] = {}
-        self._routes_loaded_at: float = 0.0
+        # 路由表缓存，按归属分开：``None`` = 部署级（owner_id IS NULL），
+        # ``<user>`` = 该用户自己配的那份。#621 把自管轨并进平台配置，前提是
+        # 「只有一个用户，分两份纯属摩擦」；公有云正好推翻这个前提（#801），
+        # 所以这里恢复按 owner 取表，而部署级那份的行为一字不变。
+        self._routes: dict[uuid.UUID | None, dict[str, ResolvedRoute]] = {}
+        self._routes_loaded_at: dict[uuid.UUID | None, float] = {}
         # 键含耐心档位（见 call_profile）：长/短两档各持一个客户端。键是实现细节，
         # 要在测试里替换 provider 请用 override_provider()，别直接往这个字典里塞。
         #
@@ -386,23 +389,31 @@ class LLMRouter:
         self._override = provider
 
     def invalidate_cache(self) -> None:
-        """设置页改动 providers/routes 后调用。"""
-        self._routes_loaded_at = 0.0
+        """设置页改动 providers/routes 后调用。
 
-    async def _load_routes(self) -> dict[str, ResolvedRoute]:
+        一律清空所有归属，不只清改动的那一个：部署级的一条路由被改掉，
+        每个靠回退用到它的用户手上那份合并结果也就跟着过期了。
+        """
+        self._routes_loaded_at.clear()
+
+    async def _load_routes(self, owner_id: uuid.UUID | None = None) -> dict[str, ResolvedRoute]:
         from app.models.llm_config import LLMProviderConfig, ModelRoute
 
         routes: dict[str, ResolvedRoute] = {}
         async with get_sessionmaker()() as session:
-            # owner IS NULL 过滤必须保留：老部署的表里可能还躺着自管轨时代的
-            # owner=<user> 存量行（#621 只停用了那条轨，没有清数据），
-            # 不过滤就会把某个用户的私有配置混进全平台路由。
+            # 按归属取表，两边都是精确匹配：部署级只取 owner IS NULL，用户那份
+            # 只取他自己的行。少了这层过滤，某个用户的私有配置会混进全平台路由。
+            owner_clause = (
+                ModelRoute.owner_id.is_(None)
+                if owner_id is None
+                else ModelRoute.owner_id == owner_id
+            )
             stmt = (
                 select(ModelRoute, LLMProviderConfig)
                 .join(LLMProviderConfig, ModelRoute.provider_id == LLMProviderConfig.id)
                 .where(
                     LLMProviderConfig.enabled.is_(True),
-                    ModelRoute.owner_id.is_(None),
+                    owner_clause,
                 )
             )
             for route, provider in (await session.execute(stmt)).all():
@@ -422,12 +433,43 @@ class LLMRouter:
                 )
         return routes
 
-    async def _get_routes(self) -> dict[str, ResolvedRoute]:
+    async def _cached_routes(self, owner_id: uuid.UUID | None) -> dict[str, ResolvedRoute]:
         now = time.monotonic()
-        if now - self._routes_loaded_at > _ROUTE_CACHE_TTL:
-            self._routes = await self._load_routes()
-            self._routes_loaded_at = now
-        return self._routes
+        # 也看有没有这一项，不能只看时间戳：monotonic() 的零点是开机，进程恰好在
+        # 开机 60 秒内起来时「now - 0.0 > TTL」为假，于是一条都还没加载就被当成
+        # 缓存有效——只按时间戳判断会在那种时候 KeyError。
+        loaded_at = self._routes_loaded_at.get(owner_id)
+        if loaded_at is None or now - loaded_at > _ROUTE_CACHE_TTL:
+            self._routes[owner_id] = await self._load_routes(owner_id)
+            self._routes_loaded_at[owner_id] = now
+        return self._routes[owner_id]
+
+    async def _get_routes(self, user_id: uuid.UUID | None = None) -> dict[str, ResolvedRoute]:
+        """这个用户实际可用的路由表：自己配的覆盖部署级的，按环节逐条合并。
+
+        逐条合并而不是整表二选一：只配了 ``default`` 的人，其余环节仍走部署级那份
+        ——否则「配了一个模型」会把他没碰过的环节一起变成未配置。
+
+        想让每个人都必须自带 key（公有云的常见口径），把部署级路由留空即可：
+        合并的底就是空表，谁没配谁就是未配置，不需要另一个开关。
+        """
+        platform = await self._cached_routes(None)
+        if user_id is None or await self._is_owner(user_id):
+            # 主人没有「自己那份」：他配的就是部署级那张表（见 api.admin_llm.config_scope）。
+            # 再给他叠一层私有表就自相矛盾了——那份配置他在界面上根本编辑不到，
+            # 却会压过他刚存下的那份。
+            return platform
+        own = await self._cached_routes(user_id)
+        if not own:
+            return platform
+        return {**platform, **own}
+
+    async def _is_owner(self, user_id: uuid.UUID) -> bool:
+        """这个用户是不是部署主人（owner id 在 services.owner 里按进程缓存）。"""
+        from app.services.owner import resolve_owner_id
+
+        async with get_sessionmaker()() as session:
+            return await resolve_owner_id(session) == user_id
 
     def _provider_for(self, route: ResolvedRoute, stage: str = "") -> LLMProvider:
         if self._override is not None:
@@ -472,8 +514,8 @@ class LLMRouter:
         没显式配的环节一律回退 ``default``，不存在「继承另一个环节」这回事——设置页
         就是这么告诉管理员的，界面显示跟随默认哪个模型，实际就得打那个模型。
 
-        ``user_id`` 不再影响选路（自管轨已并入平台配置 #621，人人同一份表），
-        只用于用量记账/调用日志归属，所以签名保留。
+        ``user_id`` 同时决定选路与记账：先看这个用户自己配的路由，没配的环节
+        回退到部署级那份（#801）。传 None = 只用部署级配置，与单主人部署一致。
 
         能力型环节（``_CAPABILITY_STAGES``）不回退 default：对话模型没有
         embedding/rerank 能力，回退只会产生无意义调用；未显式配置时抛
@@ -487,7 +529,7 @@ class LLMRouter:
         完整命名空间串）→ 注册时声明的内置 fallback 环节的路由 → default 路由。
         耐心档不随回退变：始终按注册时声明的 tier（见 call_profile）。
         """
-        routes = await self._get_routes()
+        routes = await self._get_routes(user_id)
         route = routes.get(stage)
         if route is None:
             spec = _PLUGIN_STAGES.get(stage)
