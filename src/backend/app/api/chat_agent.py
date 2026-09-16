@@ -587,7 +587,9 @@ async def _name_conversation(
         conv = await store.get_owned(session, conversation_id=conversation_id, user_id=user_id)
         if conv is None or (conv.settings or {}).get("title_generated"):
             return
-        title = await store.generate_title(get_llm_router(), question=question, answer=answer)
+        title = await store.generate_title(
+            get_llm_router(), question=question, answer=answer, user_id=user_id
+        )
         conv.title = title
         conv.settings = {**(conv.settings or {}), "title_generated": True}
         await session.commit()

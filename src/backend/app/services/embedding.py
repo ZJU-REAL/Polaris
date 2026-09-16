@@ -324,6 +324,8 @@ async def adopt_routed_model(session: AsyncSession) -> tuple[EmbeddingSpace, str
     model = await llm.model_name(EMBEDDING_STAGE)
     if model is None:
         raise NotImplementedError("no embedding model configured")
+    # 不带 user_id：向量空间是整个部署共用的一件事（owner 在设置里换模型），
+    # 拿某个人的 key 去探维度，等于让他替全平台的这次变更买单
     vectors = await llm.embed(["dimension probe"], stage=EMBEDDING_STAGE)
     if not vectors or not vectors[0]:
         raise NotImplementedError(f"model {model!r} returned no vector")
