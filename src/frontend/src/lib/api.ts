@@ -1403,6 +1403,19 @@ export interface DisciplinePackSummary {
 }
 
 /** 一个可选的文献来源，供建库表单的来源选择器展示。 */
+/** 开场清单的一项。``id`` 决定显示哪段文案、跳到哪里（见 OnboardingCard）。 */
+export interface OnboardingItem {
+  id: string;
+  done: boolean;
+}
+
+export interface OnboardingChecklist {
+  items: OnboardingItem[];
+  /** 用户点过「不再提示」。items 仍照常返回：收起来的是提示，不是事实。 */
+  dismissed: boolean;
+  done: boolean;
+}
+
 export interface LiteratureSourceOption {
   /** 写进库配置 keywords.sources 的值 */
   id: string;
@@ -4009,6 +4022,17 @@ export const api = {
    */
   listLiteratureSources(): Promise<LiteratureSourceOption[]> {
     return request<LiteratureSourceOption[]>('/literature-sources');
+  },
+  /**
+   * 开场清单：这个用户还差哪几步（#801）。每一项都由后端从真实状态算，
+   * 前端只负责把 id 映成文案和落点——后端不出文案，否则中英切换对它失效。
+   */
+  getOnboarding(): Promise<OnboardingChecklist> {
+    return request<OnboardingChecklist>('/onboarding');
+  },
+  /** 不再提示；返回更新后的清单，省一次回查。 */
+  dismissOnboarding(): Promise<OnboardingChecklist> {
+    return requestJson<OnboardingChecklist>('/onboarding/dismiss', 'POST', {});
   },
   getLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}`);

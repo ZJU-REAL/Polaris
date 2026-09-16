@@ -18,6 +18,7 @@ import { fmtTime } from '../../lib/format';
 import { api, type ActivityRead, type DirectionLibrarySummary, type GateRead, type StatsRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { compositeOf } from '../forge/ideaShared';
+import { OnboardingCard } from './OnboardingCard';
 
 /** 端到端流水线各阶段的真实计数（stats 未就绪时显示 —）；path 带当前课题前缀；
     stuckKey = 当前卡住（还没有产出）的阶段，进度漏斗高亮它。 */
@@ -651,6 +652,10 @@ export function DashboardPage() {
         title={tr('课题工作台', 'Topic Workbench')}
         dense
       />
+
+      {/* 还没配完的几件事（#801）。配齐或点过「不再提示」后自己消失，
+          所以老用户看不到它 */}
+      <OnboardingCard />
 
       <div style={{ marginBottom: 22 }}>
         <Segmented
