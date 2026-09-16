@@ -29,7 +29,6 @@ from app.schemas.voyage import (
     VoyageMessageRead,
     VoyagePlanEvent,
     VoyageRead,
-    VoyageSkillUse,
     VoyageTerminalLogRead,
 )
 from app.services import ai_disclosure as ai_disclosure_service
@@ -90,28 +89,6 @@ async def list_voyages(
     return [VoyageRead.model_validate(r) for r in runs]
 
 
-def _skills_summary(run: VoyageRun) -> list[VoyageSkillUse]:
-    """checkpoint["skills"] 快照 → 摘要列表（详情页「本次任务使用的技能」）。"""
-    snapshot = (run.checkpoint or {}).get("skills")
-    if not isinstance(snapshot, dict):
-        return []
-    out: list[VoyageSkillUse] = []
-    for target, entries in snapshot.items():
-        if not isinstance(entries, list):
-            continue
-        for e in entries:
-            if isinstance(e, dict) and e.get("slug"):
-                out.append(
-                    VoyageSkillUse(
-                        slug=str(e["slug"]),
-                        name=str(e.get("name") or e["slug"]),
-                        kind=str(e.get("kind") or ""),
-                        version=int(e.get("version") or 0),
-                        target=str(target),
-                    )
-                )
-    return out
-
 
 @router.get("/{voyage_id}", response_model=VoyageDetailRead)
 async def get_voyage(
@@ -126,7 +103,6 @@ async def get_voyage(
     # include_obsolete=true 才随详情返回（任务板的"显示已作废步骤"开关）
     if not include_obsolete:
         detail.steps = [s for s in detail.steps if s.status != "obsolete"]
-    detail.skills = _skills_summary(run)
     history = (run.checkpoint or {}).get("plan_history")
     if isinstance(history, list):
         detail.plan_history = [

@@ -76,24 +76,24 @@ _SYSTEM = """\
 
 
 def build_system_prompt(
-    statement: str | None = None, extra: str = "", skill_catalog: str = ""
+    statement: str | None = None, extra: str = ""
 ) -> str:
     """组装系统提示。
 
-    ``statement``（研究方向）、``skill_catalog``（技能目录）与 ``extra`` 都追加在末尾，
+    ``statement``（研究方向）与 ``extra`` 都追加在末尾，
     前面那段是不变的稳定前缀——顺序反过来会让每个作用域都有各自的缓存前缀，
     命中率归零。
 
-    **技能正文永远不进这里**：目录里每个技能只占一行，正文由 ``skill_load`` 作为工具
-    结果追加。把正文写进 system prompt 会作废整个缓存前缀，而它是每轮都要重发的。
+    往这里追加内容前先想一下缓存：system 是每轮都要重发的稳定前缀，把每轮都变的
+    东西写进来，等于让 prompt cache 永不命中。
     """
     direction = f"\n\n研究方向：{statement.strip()}" if statement and statement.strip() else ""
-    catalog = f"\n\n{skill_catalog.strip()}" if skill_catalog and skill_catalog.strip() else ""
+
     tail = f"\n\n{extra.strip()}" if extra and extra.strip() else ""
     return _SYSTEM.format(
         today=dt.datetime.now(dt.UTC).date().isoformat(),
         statement=direction,
-        extra=catalog + tail,
+        extra=tail,
     )
 
 

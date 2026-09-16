@@ -12,7 +12,7 @@ from app.core.llm.router import LLMRouter
 from app.models.guidance_document import GuidanceDocument
 from app.models.project import Project
 from app.models.voyage import VoyageRun
-from app.services.interdisciplinary_workflows import SKILL_SLUG, ensure_guidance_documents
+from app.services.interdisciplinary_workflows import WORKFLOW_SLUG, ensure_guidance_documents
 from tests.conftest import RecordingBus, register_and_login
 
 
@@ -71,28 +71,28 @@ async def _snapshot_run(project_id: str) -> VoyageRun:
         await session.commit()
         await session.refresh(run)
         engine = VoyageEngine(event_bus=RecordingBus(), llm_router=LLMRouter())
-        await engine._ensure_skills_snapshot(session, run)
+        await engine._ensure_guidance_snapshot(session, run)
         await session.refresh(run)
         return run
 
 
-async def test_run_pins_confirmed_profile_and_builtin_skill_versions(client):
+async def test_run_pins_confirmed_profile_and_guidance_versions(client):
     headers, project_id = await _project_and_profile(client)
     first = await _snapshot_run(project_id)
     first_context = dict((first.checkpoint or {})["interdisciplinary_context"])
     assert first_context["profile_version"] == 1
-    assert first_context["skill_version"] == 1
+    assert first_context["version"] == 1
     assert first_context["primary_domain"] == "Structural engineering"
     assert first_context["related_domains"] == ["Computer vision", "Data science"]
 
-    skills = (first.checkpoint or {})["skills"]
-    assert skills["navigator.free_plan"][0]["kind"] == "workflow"
-    assert skills["forge.generate"][0]["kind"] == "guidance"
-    assert "Core bridge questions" in skills["forge.generate"][0]["body"]
-    assert "Discipline query channels and terms" in skills["forge.generate"][0]["body"]
-    assert "Structural engineering" in skills["forge.generate"][0]["body"]
-    assert "Computer vision" in skills["forge.generate"][0]["body"]
-    assert first_context["profile_version_id"] in skills["forge.generate"][0]["body"]
+    guidance = (first.checkpoint or {})["guidance"]
+    assert guidance["navigator.free_plan"][0]["kind"] == "workflow"
+    assert guidance["forge.generate"][0]["kind"] == "guidance"
+    assert "Core bridge questions" in guidance["forge.generate"][0]["body"]
+    assert "Discipline query channels and terms" in guidance["forge.generate"][0]["body"]
+    assert "Structural engineering" in guidance["forge.generate"][0]["body"]
+    assert "Computer vision" in guidance["forge.generate"][0]["body"]
+    assert first_context["profile_version_id"] in guidance["forge.generate"][0]["body"]
 
     ctx = ActionContext(run=first, llm=LLMRouter(), checkpoint=dict(first.checkpoint or {}))
     assert "Structural engineering" in _prompt_with_context("BASE", ctx)
@@ -102,13 +102,13 @@ async def test_run_pins_confirmed_profile_and_builtin_skill_versions(client):
         current = await session.scalar(
             select(GuidanceDocument)
             .where(
-                GuidanceDocument.slug == SKILL_SLUG,
-                GuidanceDocument.version == first_context["skill_version"],
+                GuidanceDocument.slug == WORKFLOW_SLUG,
+                GuidanceDocument.version == first_context["version"],
             )
         )
         session.add(
             GuidanceDocument(
-                slug=SKILL_SLUG,
+                slug=WORKFLOW_SLUG,
                 version=current.version + 1,
                 name=current.name,
                 body=f"{current.body}\n\nVersion two guidance.",
@@ -133,11 +133,11 @@ async def test_run_pins_confirmed_profile_and_builtin_skill_versions(client):
     second_context = (second.checkpoint or {})["interdisciplinary_context"]
     assert second_context["profile_version"] == 2
     assert second_context["profile_version_id"] != first_context["profile_version_id"]
-    assert second_context["skill_version"] == first_context["skill_version"] + 1
+    assert second_context["version"] == first_context["version"] + 1
     assert (first.checkpoint or {})["interdisciplinary_context"] == first_context
 
 
-async def test_conventional_project_keeps_existing_skill_behavior(client):
+async def test_conventional_project_gets_no_guidance(client):
     token = await register_and_login(client, email="conventional-workflow@example.com")
     project = await client.post(
         "/api/projects",
@@ -148,7 +148,7 @@ async def test_conventional_project_keeps_existing_skill_behavior(client):
     assert "interdisciplinary_context" not in (run.checkpoint or {})
     assert all(
         entry.get("slug") != "interdisciplinary-research-workflow"
-        for entries in (run.checkpoint or {})["skills"].values()
+        for entries in (run.checkpoint or {})["guidance"].values()
         for entry in entries
     )
 
@@ -198,7 +198,7 @@ async def test_a_running_voyage_keeps_its_pinned_context_when_the_profile_moves(
     async with get_sessionmaker()() as session:
         same = await session.get(VoyageRun, run.id)
         engine = VoyageEngine(event_bus=RecordingBus(), llm_router=LLMRouter())
-        await engine._ensure_skills_snapshot(session, same)
+        await engine._ensure_guidance_snapshot(session, same)
         await session.refresh(same)
         after = dict((same.checkpoint or {})["interdisciplinary_context"])
 

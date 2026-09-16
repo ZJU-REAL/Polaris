@@ -28,7 +28,6 @@ from app.api import (
     library,
     literature_discovery,
     manuscripts,
-    market,
     mcp_meta,
     mcp_servers,
     notes,
@@ -41,7 +40,6 @@ from app.api import (
     resources,
     search,
     shelf,
-    skills,
     ssh_credentials,
     structured_content,
     tts,
@@ -49,7 +47,6 @@ from app.api import (
     voyages,
     wiki,
 )
-from app.integrations.deepseek_harness.api import router as deepseek_harness_router
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -83,9 +80,6 @@ api_router.include_router(search.router)
 api_router.include_router(shelf.router)
 api_router.include_router(daily.router)
 api_router.include_router(download_client.router)
-api_router.include_router(deepseek_harness_router)
-api_router.include_router(skills.router)
-api_router.include_router(market.router)
 api_router.include_router(mcp_meta.router)
 api_router.include_router(presentations.router)
 api_router.include_router(ssh_credentials.router)

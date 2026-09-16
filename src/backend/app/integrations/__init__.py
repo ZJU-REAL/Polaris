@@ -1,6 +1,6 @@
 """Composition root for optional external-runtime adapters."""
 
-from app.integrations.deepseek_harness.profile import PROFILES as DEEPSEEK_HARNESS_PROFILES
+from app.integrations.deepseek_harness_profile import PROFILES as DEEPSEEK_HARNESS_PROFILES
 from app.mcp.profiles import DEFAULT_PROFILE, MCPToolProfile
 
 _MCP_PROFILES = {profile.name: profile for profile in DEEPSEEK_HARNESS_PROFILES}

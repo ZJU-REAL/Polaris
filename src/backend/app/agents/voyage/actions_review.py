@@ -118,7 +118,8 @@ async def _get_manuscript(session: AsyncSession, ctx: ActionContext) -> Manuscri
 
 def _personas(ctx: ActionContext) -> list[dict[str, str]]:
     """优先级：显式 params.personas > persona 技能（review.referees）> 内置默认。"""
-    raw = _params(ctx).get("personas") or ctx.skill_personas("review.referees")
+    # 技能移除后没有第二处人设来源；参数没给就用下面的内置默认
+    raw = _params(ctx).get("personas")
     return pr.resolve_review_personas(raw)
 
 
@@ -513,7 +514,7 @@ async def review_referees(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 continue
             system = REVIEWER_SYSTEM_PROMPT.format(
                 name=persona["name"], stance=persona.get("stance") or ""
-            ) + ctx.skill_guidance("review.referees")
+            ) + ctx.workflow_guidance("review.referees")
             review: dict[str, Any] | None = None
             unreliable = False
             regenerated = 0

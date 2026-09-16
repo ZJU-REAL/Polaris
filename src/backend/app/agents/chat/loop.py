@@ -90,7 +90,6 @@ class ChatTurnRequest:
     max_turn_tokens: int | None = None
     statement: str | None = None
     extra_system: str = ""
-    skill_catalog: str = ""
     #: 用户此刻在看什么（PolarisBuddy 的页面感知）。拼在本轮提问前面，**不进 system**：
     #: system 是稳定前缀，每轮变一次等于 prompt cache 永不命中。
     page_context: str = ""
@@ -133,9 +132,7 @@ class ChatAgentLoop:
         messages: list[Message] = [
             Message(
                 role="system",
-                content=build_system_prompt(
-                    req.statement, req.extra_system, req.skill_catalog
-                ),
+                content=build_system_prompt(req.statement, req.extra_system),
             ),
             *self._history,
             Message(

@@ -233,7 +233,7 @@ async def present_outline(ctx: ActionContext, params: dict[str, Any]) -> dict[st
 
     sections = await _complete_json(
         ctx,
-        system=OUTLINE_SYSTEM + ctx.skill_guidance("present.outline"),
+        system=OUTLINE_SYSTEM + ctx.workflow_guidance("present.outline"),
         user=user,
         validate=validate,
     )
@@ -259,7 +259,7 @@ async def present_slides(ctx: ActionContext, params: dict[str, Any]) -> dict[str
 
     deck = await _complete_json(
         ctx,
-        system=SLIDES_SYSTEM + ctx.skill_guidance("present.slides"),
+        system=SLIDES_SYSTEM + ctx.workflow_guidance("present.slides"),
         user=user,
         validate=validate,
     )

@@ -16,7 +16,6 @@ from app.tools import (
     plan,  # noqa: F401
     project_state,  # noqa: F401
     projects,  # noqa: F401
-    skills,  # noqa: F401
     subagent,  # noqa: F401
     workspace,  # noqa: F401
     writing,  # noqa: F401

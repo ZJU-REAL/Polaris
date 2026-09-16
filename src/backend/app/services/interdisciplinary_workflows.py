@@ -10,7 +10,7 @@ from app.models.guidance_document import GuidanceDocument
 from app.models.interdisciplinary import InterdisciplinaryResearchProfileVersion
 from app.models.project import Project
 
-SKILL_SLUG = "interdisciplinary-research-workflow"
+WORKFLOW_SLUG = "interdisciplinary-research-workflow"
 
 _GUIDANCE_TARGETS = (
     "wiki.score_relevance",
@@ -40,12 +40,12 @@ _PLACEHOLDERS = (
 )
 
 # ---- 内置指引文档种子（#741：从 v1 BUILTIN_SKILLS 原文迁入，正文逐字节不动）----
-# 原先这份内容作为 v1 builtin 技能种子活在 skills/skill_versions 里——v1 已冻结，
+# 原先这份内容作为内置技能种子活在技能表里——技能功能已整体移除（插件覆盖），
 # 这里是唯一还在写它的新功能。现在它落在 guidance_documents（见模型 docstring
 # 里对「为什么不进 v2」的论证），注入行为不变。
 
 GUIDANCE_SEED: dict[str, Any] = {
-    "slug": SKILL_SLUG,
+    "slug": WORKFLOW_SLUG,
     "name": "跨学科研究工作流",
     "targets": [
         "navigator.free_plan",
@@ -121,7 +121,7 @@ GUIDANCE_SEED: dict[str, Any] = {
         "外部标识和规范化标题去重。\n"
         "- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，"
         "不能静默改成无来源的摘要推断。\n"
-        "- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。"
+        "- 常规课题不注入本工作流，不改变原有的单学科检索和写作流程。"
     ),
 }
 
@@ -183,7 +183,7 @@ async def _latest_confirmed_profile(
 async def _latest_guidance_document(session: AsyncSession) -> GuidanceDocument | None:
     return await session.scalar(
         select(GuidanceDocument)
-        .where(GuidanceDocument.slug == SKILL_SLUG)
+        .where(GuidanceDocument.slug == WORKFLOW_SLUG)
         .order_by(GuidanceDocument.version.desc())
         .limit(1)
     )
@@ -214,13 +214,11 @@ async def snapshot_for_project(
         "profile_version": profile.version,
         # 指引文档搬离 v1 后没有「技能/版本」两级——每个版本就是一行。两个键都指
         # 同一行，键名保留是为了 checkpoint schema_version=1 不破（存量 run 回放）。
-        "skill_id": str(document.id),
-        "skill_version_id": str(document.id),
-        "skill_version": document.version,
-        "skill_slug": document.slug,
-        "skill_name": document.name,
-        "skill_body": document.body,
-        "skill_manifest": {
+        "version": document.version,
+        "slug": document.slug,
+        "name": document.name,
+        "body": document.body,
+        "manifest": {
             "targets": list(document.targets or []),
             "steps": [dict(step) for step in document.steps or []],
         },
@@ -264,39 +262,40 @@ def _render_guidance(context: dict[str, Any]) -> str:
         "for the scientific question, identify the non-substitutable contribution of each "
         "associated discipline, preserve discipline-specific evidence standards, and state "
         "whether every bridge claim has balanced supporting evidence.\n\n"
-        f"Pinned workflow Skill v{context['skill_version']}:\n{context['skill_body']}"
+        f"Pinned workflow v{context['version']}:\n{context['body']}"
     )
 
 
-def apply_to_skill_snapshot(
+def apply_to_guidance(
     snapshot: dict[str, list[dict[str, Any]]], context: dict[str, Any]
 ) -> None:
-    """Add one pinned workflow entry and guidance entries without duplicating user configuration."""
+    """把本课题的工作流与逐环节指引写进运行时快照。
+
+    从前这份内容伪装成一条「技能」骑在技能快照上——那只是为了复用注入通道。
+    用户技能功能移除后，这里是快照的唯一住户，条目形状也随之去掉了 skill_id /
+    personas / output_contract 这些只有技能才有的字段。
+    """
 
     common = {
-        "skill_id": context["skill_id"],
-        "skill_version_id": context["skill_version_id"],
-        "slug": context["skill_slug"],
-        "name": context["skill_name"],
-        "version": context["skill_version"],
+        "slug": context["slug"],
+        "name": context["name"],
+        "version": context["version"],
         "config": {"profile_version_id": context["profile_version_id"]},
-        "personas": [],
-        "output_contract": None,
     }
     workflow_entry = {
         **common,
         "kind": "workflow",
-        "body": context["skill_body"],
-        "steps": context["skill_manifest"].get("steps") or [],
+        "body": context["body"],
+        "steps": context["manifest"].get("steps") or [],
     }
     navigator_entries = snapshot.setdefault("navigator.free_plan", [])
-    if not any(entry.get("slug") == SKILL_SLUG for entry in navigator_entries):
+    if not any(entry.get("slug") == WORKFLOW_SLUG for entry in navigator_entries):
         navigator_entries.append(workflow_entry)
 
     guidance = _render_guidance(context)
     for target in _GUIDANCE_TARGETS:
         entries = snapshot.setdefault(target, [])
-        if any(entry.get("slug") == SKILL_SLUG for entry in entries):
+        if any(entry.get("slug") == WORKFLOW_SLUG for entry in entries):
             continue
         entries.append(
             {
