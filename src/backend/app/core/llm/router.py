@@ -464,6 +464,15 @@ class LLMRouter:
             return platform
         return {**platform, **own}
 
+    async def configured_stages(self, user_id: uuid.UUID | None = None) -> set[str]:
+        """这个用户实际配了路由的环节。
+
+        给「还没配模型」这类判断用：问的是路由表本身，不看
+        ``llm_fake_fallback``——那个开关会让 resolve 在一条路由都没有时也返回
+        一个 fake provider，拿它当「配好了」的依据，等于告诉用户一件没发生的事。
+        """
+        return set(await self._get_routes(user_id))
+
     async def _is_owner(self, user_id: uuid.UUID) -> bool:
         """这个用户是不是部署主人（owner id 在 services.owner 里按进程缓存）。"""
         from app.services.owner import resolve_owner_id

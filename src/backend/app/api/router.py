@@ -32,6 +32,7 @@ from app.api import (
     mcp_meta,
     mcp_servers,
     notes,
+    onboarding,
     paper_assets,
     papers,
     plugins,
@@ -96,3 +97,4 @@ api_router.include_router(mcp_servers.router)
 api_router.include_router(experiment_backends.router)
 api_router.include_router(disciplines.router)
 api_router.include_router(literature_sources.router)
+api_router.include_router(onboarding.router)
