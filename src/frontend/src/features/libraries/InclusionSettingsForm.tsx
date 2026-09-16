@@ -1,11 +1,14 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import type { AnchorPaper, RubricDimension } from '../../lib/api';
+import { api, type AnchorPaper, type KeywordSpec, type RubricDimension } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
 /* ============================================================
    收录设置共享表单（受控）——建库弹窗与文献库收录设置卡共用。
-   四块：arXiv 分类 chips / 检索关键词 chips / 锚点论文 / 打分标准（rubric）；
+   五块：文献来源 / arXiv 分类 chips / 检索关键词 chips / 锚点论文 / 打分标准（rubric）；
+   顺序即提问顺序——先问「从哪里找」，arXiv 分类只在选了 arXiv 时才出现，
+   做临床、做结构的人不该被一个跟自己无关的分类体系拦在第一步；
    ============================================================ */
 
 const QUICK_CATEGORIES = ['cs.CL', 'cs.AI', 'cs.LG', 'cs.CV', 'cs.MA', 'stat.ML'];
@@ -13,7 +16,34 @@ const QUICK_CATEGORIES = ['cs.CL', 'cs.AI', 'cs.LG', 'cs.CV', 'cs.MA', 'stat.ML'
 // arXiv id 宽松校验：2401.01234 / 2401.01234v2 / 老式 hep-th/9901001
 export const ARXIV_ID_RE = /^(\d{4}\.\d{4,5}(v\d+)?|[a-z-]+\/\d{7}(v\d+)?)$/i;
 
+/**
+ * 收录设置 → 后端 keywords。
+ *
+ * 抽成纯函数不是为了复用（只有两处调用），是为了能被断言：选择器点得动、
+ * 值却进不了 payload，是一类只看界面发现不了的缺陷——表单看上去完全正常。
+ */
+export function keywordsFromInclusion(v: InclusionValue): KeywordSpec {
+  return {
+    sources: v.sources ?? [],
+    arxiv_categories: v.arxiv_categories,
+    include: v.include,
+  };
+}
+
+/** 收录设置是否有内容需要下发。只挑了来源也算——它决定去哪儿抓。 */
+export function hasInclusionKeywords(v: InclusionValue): boolean {
+  return (v.sources ?? []).length > 0 || v.arxiv_categories.length > 0 || v.include.length > 0;
+}
+
 export interface InclusionValue {
+  /**
+   * 这个库从哪些源取文献。空 = 只用 arXiv（存量库行为不变）。
+   *
+   * 排在 arxiv_categories 之前不是排版偏好：先问「从哪里找」才问得出「怎么筛」。
+   * 反过来的话，一个做结构、做临床的人打开建库页，第一个必答题是他领域里
+   * 根本不存在的 arXiv 分类。
+   */
+  sources: string[];
   arxiv_categories: string[];
   include: string[];
   /** 排除关键词：命中即挡在门外。与 include 不同，它在每日同步时也硬过滤。 */
@@ -48,12 +78,29 @@ export function InclusionSettingsForm({
   readOnly,
 }: InclusionSettingsFormProps) {
   const { arxiv_categories, include, rubric, anchors } = value;
+  const sources = value.sources ?? [];
   const exclude = value.exclude ?? [];
   const patch = (p: Partial<InclusionValue>) => onChange({ ...value, ...p });
+
+  // 可选来源问后端要，不在前端写死：装一个源就该立刻可选，撤一个就该立刻消失
+  const sourcesQuery = useQuery({
+    queryKey: ['literature-sources'],
+    queryFn: () => api.listLiteratureSources(),
+    retry: false,
+  });
 
   const [customCat, setCustomCat] = useState('');
   const [kwDraft, setKwDraft] = useState('');
   const [exDraft, setExDraft] = useState('');
+
+  function toggleSource(id: string) {
+    // 取消最后一个来源＝这个库无处取文献。与其存一个永远抓不到东西的配置，
+    // 不如不让它变成空——空值在后端等于「只用 arXiv」，行为可预期
+    const next = effectiveSources.includes(id)
+      ? effectiveSources.filter((x) => x !== id)
+      : [...effectiveSources, id];
+    patch({ sources: next.length > 0 ? next : ['arxiv'] });
+  }
 
   function toggleCat(c: string) {
     patch({ arxiv_categories: arxiv_categories.includes(c) ? arxiv_categories.filter((x) => x !== c) : [...arxiv_categories, c] });
@@ -104,9 +151,59 @@ export function InclusionSettingsForm({
     patch({ rubric: rubric.filter((_, j) => j !== i) });
   }
 
+  // 没配来源 = 只用 arXiv（与后端 DEFAULT_LIBRARY_SOURCES 同口径）
+  const effectiveSources = sources.length > 0 ? sources : ['arxiv'];
+  // 清单还没到就先显示 id：一个 "pubmed" 也比一块空白说得清楚
+  const sourceTitle = (id: string) =>
+    (sourcesQuery.data ?? []).find((s) => s.id === id)?.title ?? id;
+  const arxivSelected = effectiveSources.includes('arxiv');
+
   return (
     <div className="col gap16">
-      {/* —— arXiv 分类 —— */}
+      {/* —— 文献来源：先问「从哪里找」 —— */}
+      <div className="col gap6">
+        <BlockLabel zh="文献来源" en="Literature sources" />
+        {readOnly ? (
+          /* 只读时摆出十个灰按钮、其中两个亮着，读的人要自己找亮的那几个。
+             与下面几块一致：只显示选中的 */
+          <div className="row gap6 wrap">
+            {effectiveSources.map((id) => (
+              <span key={id} className="chip on" style={{ cursor: 'default' }}>
+                {sourceTitle(id)}
+              </span>
+            ))}
+          </div>
+        ) : sourcesQuery.isError ? (
+          <div className="muted" style={{ fontSize: 12.5 }}>
+            {tr('无法加载来源列表，将使用 arXiv。', 'Could not load the source list — arXiv will be used.')}
+          </div>
+        ) : (
+          <>
+            <div className="row gap6 wrap">
+              {(sourcesQuery.data ?? []).map((src) => (
+                <button
+                  key={src.id}
+                  type="button"
+                  className={'chip' + (effectiveSources.includes(src.id) ? ' on' : '')}
+                  title={src.description}
+                  onClick={() => toggleSource(src.id)}
+                >
+                  {src.title}
+                </button>
+              ))}
+            </div>
+            <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+              {tr(
+                '按你的领域挑：做生物选 PubMed / Europe PMC，做化学与工程选 Crossref，做 CS / 物理选 arXiv。不选则只用 arXiv。',
+                'Pick what your field uses: PubMed / Europe PMC for life sciences, Crossref for chemistry and engineering, arXiv for CS and physics. Defaults to arXiv.',
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* —— arXiv 分类：只在选了 arXiv 时出现 —— */}
+      {arxivSelected && (
       <div className="col gap6">
         <BlockLabel zh="arXiv 分类" en="arXiv categories" />
         {readOnly ? (
@@ -117,7 +214,11 @@ export function InclusionSettingsForm({
               ))}
             </div>
           ) : (
-            <div className="muted" style={{ fontSize: 12.5 }}>{tr('使用默认分类', 'Using default categories')}</div>
+            <div className="muted" style={{ fontSize: 12.5 }}>
+              {/* 曾写「使用默认分类」——而默认回退早在 #720 A4 就删掉了，
+                  实际是完全不带分类过滤。照抄旧文案等于告诉用户一件没发生的事 */}
+              {tr('未限定分类，按关键词检索全站', 'No category filter — searching by keywords')}
+            </div>
           )
         ) : (
           <>
@@ -149,6 +250,7 @@ export function InclusionSettingsForm({
           </>
         )}
       </div>
+      )}
 
       {/* —— 检索关键词 chips —— */}
       <div className="col gap6">

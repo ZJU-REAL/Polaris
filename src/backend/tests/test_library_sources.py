@@ -103,3 +103,47 @@ def test_metadata_absent_does_not_raise():
     entry = _entry_from_candidate(item)
     assert entry["title"] == "T"
     assert entry["arxiv_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# 第二条入库路径：文献发现任务（可调度、走 promote→enrichment）
+#
+# 库声明的来源如果只在即时抓取那条路上生效，用户会看到一个更糟的局面：
+# 选择器点得动、发现任务的结果却一点没变。以下钉住它同样照库来。
+# ---------------------------------------------------------------------------
+
+
+def _library_with(keywords: dict | None):
+    """一个只有 definition 的最小替身——这个投影函数不碰数据库。"""
+
+    class _Lib:
+        # definition 为空时 library_definition 会回退去读标量列，替身得有它们
+        definition = {"keywords": keywords} if keywords is not None else {}
+        statement = None
+        rubric = None
+        anchors = None
+        cadence = None
+
+    return _Lib()
+
+
+def test_discovery_run_inherits_the_librarys_sources():
+    from app.services.literature.discovery_runs import library_discovery_config
+
+    got = library_discovery_config(_library_with({"sources": ["pubmed", "crossref"]}))
+    assert got["sources"] == ["pubmed", "crossref"]
+
+
+def test_discovery_run_falls_back_to_platform_defaults():
+    """没声明来源的库不该被塞一个空清单——那会让发现任务一个源都不跑。"""
+    from app.services.literature.discovery_runs import library_discovery_config
+
+    assert "sources" not in library_discovery_config(_library_with({"include": ["catalysis"]}))
+    assert "sources" not in library_discovery_config(_library_with(None))
+
+
+def test_discovery_run_drops_sources_it_cannot_search():
+    from app.services.literature.discovery_runs import library_discovery_config
+
+    got = library_discovery_config(_library_with({"sources": ["PubMed", "not-a-source"]}))
+    assert got["sources"] == ["pubmed"], "大小写要归一，未知源要丢掉而不是让整份配置作废"

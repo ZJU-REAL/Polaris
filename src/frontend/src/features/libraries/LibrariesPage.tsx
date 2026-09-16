@@ -12,7 +12,13 @@ import { api, ApiError, type DirectionLibrarySummary } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { StatementInterview } from './StatementInterview';
 import { useLibraries, libraryPath, type LibraryFilters } from './hooks';
-import { InclusionSettingsForm, ARXIV_ID_RE, type InclusionValue } from './InclusionSettingsForm';
+import {
+  InclusionSettingsForm,
+  ARXIV_ID_RE,
+  hasInclusionKeywords,
+  keywordsFromInclusion,
+  type InclusionValue,
+} from './InclusionSettingsForm';
 
 /* ============================================================
    /libraries — 文献库列表（实验室区，P5c）
@@ -227,7 +233,14 @@ function LibraryCard({
   );
 }
 
-const EMPTY_INCLUSION: InclusionValue = { arxiv_categories: [], include: [], exclude: [], rubric: [], anchors: [] };
+const EMPTY_INCLUSION: InclusionValue = {
+  sources: [],
+  arxiv_categories: [],
+  include: [],
+  exclude: [],
+  rubric: [],
+  anchors: [],
+};
 
 /**
  * 新建文献库弹窗（P9b：任意登录用户可建）。名称 + 一句话说明必填；
@@ -276,10 +289,9 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
       toast(tr('有锚点论文填了非法 arXiv 编号，请修正后再提交', 'Some anchor papers have invalid arXiv ids — fix them first'), 'error');
       return;
     }
-    const keywords =
-      incl.arxiv_categories.length > 0 || incl.include.length > 0
-        ? { arxiv_categories: incl.arxiv_categories, include: incl.include }
-        : undefined;
+    // 只选了来源、没填分类和关键词，也必须把 keywords 发出去：
+    // 漏掉它等于用户挑的 PubMed 被悄悄丢掉，建出来的库还是抓 arXiv
+    const keywords = hasInclusionKeywords(incl) ? keywordsFromInclusion(incl) : undefined;
     const anchors = incl.anchors
       .filter((a) => a.title.trim() || (a.arxiv_id ?? '').trim())
       .map((a) => ({

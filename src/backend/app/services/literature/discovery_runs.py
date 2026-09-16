@@ -18,6 +18,7 @@ from app.schemas.literature_discovery import LiteratureSearchRequest
 from app.services import libraries as libraries_service
 from app.services import literature_settings as literature_settings_service
 from app.services.interdisciplinary_retrieval import apply_profile_to_query_plan
+from app.services.literature import sources as literature_sources
 from app.services.literature.discovery_ranking import normalized_score_weights
 
 
@@ -51,7 +52,17 @@ def library_discovery_config(library: DirectionLibrary) -> dict[str, object]:
     exclude = [
         str(item).strip() for item in keyword_config.get("exclude") or [] if str(item).strip()
     ]
+    # 库声明了从哪里找文献就照它来。不投影的话，库上明明选了 PubMed，
+    # 发现任务仍按平台默认源跑——选择器点得动、结果却不变，正是「有能力没入口」
+    available = {sid for sid, _ in literature_sources.sources_with_capability("search")}
+    sources = [
+        str(item).strip().lower()
+        for item in keyword_config.get("sources") or []
+        if str(item).strip().lower() in available
+    ]
     output: dict[str, object] = {}
+    if sources:
+        output["sources"] = list(dict.fromkeys(sources))
     if include:
         output["keywords"] = list(dict.fromkeys(include))
     if exclude:
