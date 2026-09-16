@@ -485,6 +485,46 @@ async def _collect_from_daily_feed(
     }
 
 
+def _entry_from_candidate(item: Any) -> dict[str, Any]:
+    """通用源的 LiteratureCandidate → 入库用的 entry。
+
+    arXiv 那条路直接拿源原生记录（带 arxiv_id / published），通用源经 search 出来的
+    已经归一化成 candidate，字段名对不上——不映射的话标题能进、去重键全丢，
+    同一篇论文会在下次检索时再插一遍。
+    """
+    meta = item.metadata if isinstance(getattr(item, "metadata", None), dict) else {}
+    return {
+        # 非 arXiv 源多半没有 arxiv_id；metadata 里带了就用上，去重才认得出同一篇
+        "arxiv_id": meta.get("arxiv_id") or meta.get("arxiv"),
+        "title": item.title,
+        "doi": item.doi,
+        "authors": item.authors,
+        "abstract": item.abstract,
+        "year": item.year,
+        "primary_category": item.venue,
+        "url": item.url,
+        "published": meta.get("published"),
+    }
+
+
+#: 库没配来源时用哪些。保持 arXiv 单源＝存量库行为逐字节不变。
+DEFAULT_LIBRARY_SOURCES = ("arxiv",)
+
+
+def _configured_sources(keywords_def: dict[str, Any]) -> list[str]:
+    """本库声明的检索来源，按注册表过滤掉当前拿不到的。
+
+    过滤而不是报错：源可能只是暂时没配密钥。剩下的照抓，少掉的在诊断里说明——
+    「这个源没装」和「这个源今天没有结果」必须可区分（同每日池的口径）。
+    """
+    raw = keywords_def.get("sources")
+    wanted = [str(x).strip() for x in raw if str(x).strip()] if isinstance(raw, list) else []
+    if not wanted:
+        wanted = list(DEFAULT_LIBRARY_SOURCES)
+    available = {sid for sid, _ in literature_sources.sources_with_capability("search")}
+    return [s for s in wanted if s in available]
+
+
 def _latest_source_date(entries: list[dict[str, Any]]) -> str | None:
     dates = [parsed for entry in entries if (parsed := _parse_iso(entry.get("published")))]
     return max(dates).isoformat() if dates else None
@@ -506,6 +546,10 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         # 分类只认库自己的 definition：没配就不带分类过滤，走纯关键词检索。
         # 以前这里回退默认 cs.* 三件套——非 CS 的库会被静默灌进计算机论文（#720 A4）。
         categories = list(keywords_def.get("arxiv_categories") or [])
+        # 这个库从哪些源取文献。没配 = 只用 arXiv：存量库行为一字不变，
+        # 而新库可以选 PubMed / Crossref / Europe PMC——一个做结构、做临床的人
+        # 不该被迫先回答「你的 arXiv 分类是什么」，他的领域在 arXiv 上根本没有对应。
+        sources = _configured_sources(keywords_def)
         include = list(keywords_def.get("include") or [])
         # 排除词与包括词不同：包括词配窄了会让库悄无声息收不到东西，所以同步时不拿它筛；
         # 排除词是用户明确说「我不要这个」，漏掉它反而是失职，三条路径一律生效。
@@ -644,6 +688,9 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             inserted_total = 0
             source_latest_at = None
             brief_acc = []
+        # 本次哪些源失败了。收集起来进诊断——静默少一个源，表现是库收不到东西
+        # 而界面上毫无线索
+        source_errors: list[str] = []
 
         def _checkpoint(*, done: bool) -> dict[str, Any]:
             return {
@@ -726,9 +773,13 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             new_papers.append(paper)
             return True
 
-        # 经源注册表取 arXiv 适配器；get_arxiv_client 模块属性保留为客户端注入缝
-        arxiv = literature_sources.require_source("arxiv", client=get_arxiv_client())
-        while next_start < limit:
+        # 经源注册表取 arXiv 适配器；get_arxiv_client 模块属性保留为客户端注入缝。
+        # arXiv 单独一条路径而不是和别的源一起走通用 search：它有分页 + 断点续跑
+        # （429 是生产上最常见的失败，续跑靠 checkpoint 里的 next_start），
+        # 通用 search 一次要完不具备这个能力。
+        if "arxiv" in sources:
+            arxiv = literature_sources.require_source("arxiv", client=get_arxiv_client())
+        while "arxiv" in sources and next_start < limit:
             # 页大小问客户端要，别写死：下面拿 len(entries) < page_size 判末页，
             # 一旦要的比客户端肯给的多，第一页就会被误判成末页，搜索静默截断。
             page_size = min(arxiv.page_size, limit - next_start)
@@ -765,6 +816,44 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             if done:
                 break
 
+        # —— arXiv 以外的源：走注册表的通用 search ——
+        # 它们没有分页续跑，一次取完即可；限流问题集中在 arXiv，别的源没这个包袱。
+        other_sources = [s for s in sources if s != "arxiv"]
+        if other_sources and terms:
+            from app.schemas.literature_discovery import SourceSearchRequest
+
+            query = " ".join(terms)
+            per_source = max(1, limit // max(len(other_sources), 1))
+            for source_id in other_sources:
+                adapter = literature_sources.get_source(source_id)
+                if adapter is None:
+                    source_errors.append(f"{source_id}：当前不可用")
+                    continue
+                try:
+                    page = await adapter.search(
+                        SourceSearchRequest(
+                            query=query,
+                            start_year=since.year,
+                            end_year=until.year,
+                            limit=per_source,
+                        )
+                    )
+                except Exception as e:  # noqa: BLE001 — 单个源失败不拖垮其余
+                    logger.warning("library search failed for %s", source_id, exc_info=True)
+                    source_errors.append(f"{source_id}：{type(e).__name__}")
+                    continue
+                inserted_here = 0
+                for item in page.items:
+                    entry = _entry_from_candidate(item)
+                    if await _try_insert(entry, source_id):
+                        inserted_here += 1
+                await session.flush()
+                fetched_total += len(page.items)
+                inserted_total += inserted_here
+                if inserted_here:
+                    brief_acc.extend(_paper_brief(new_papers[-inserted_here:]))
+                    del brief_acc[_OBS_LIST_CAP:]
+
         brief = brief_acc
 
     messages: list[str] = []
@@ -773,11 +862,16 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
     if source_fetched == 0:
         messages.append("本次所有数据源均返回 0 篇；请复查检索配置、源站状态和时间窗口。")
     if cap_hit:
-        messages.append(f"arXiv 查询达到 {limit} 篇上限，窗口内可能仍有未抓取候选。")
+        messages.append(f"检索达到 {limit} 篇上限，窗口内可能仍有未抓取候选。")
+    # 源失败要说破：「这个源没装/挂了」和「这个源今天没有结果」必须可区分，
+    # 否则库一直收不到东西而界面上看不出原因
+    messages.extend(f"数据源失败——{e}" for e in source_errors)
     if source_latest_at is None:
         messages.append("未能从返回结果确认数据源最新公告时间。")
     diagnostics = {
-        "source": "arxiv",
+        # 本次真的用了哪些源。写死 "arxiv" 的话，选了 PubMed 的库在运行台上
+        # 看到的仍是「来源：arxiv」——配置生效了，界面却说没有
+        "source": ",".join(sources) if sources else "none",
         "source_fetched": source_fetched,
         "prescreened": fetched_total,
         "query_found": fetched_total,

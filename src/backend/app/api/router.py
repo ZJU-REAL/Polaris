@@ -27,6 +27,7 @@ from app.api import (
     libraries,
     library,
     literature_discovery,
+    literature_sources,
     manuscripts,
     mcp_meta,
     mcp_servers,
@@ -94,3 +95,4 @@ api_router.include_router(plugins.router)
 api_router.include_router(mcp_servers.router)
 api_router.include_router(experiment_backends.router)
 api_router.include_router(disciplines.router)
+api_router.include_router(literature_sources.router)
