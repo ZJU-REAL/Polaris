@@ -4,12 +4,18 @@ system_settings 曾把一批「其实是用户偏好」的键（每日订阅分�
 TTS 全局档、机构抽取模式等）存成平台全局单例——单用户产品里这没毛病，但它让
 「谁的偏好」这个问题没有答案：server 档多个账号共用一份、谁改都生效。分层契约
 （docs/configuration.md）把这类键归还给用户态：存 ``users.settings`` 的命名空间键
-（如 ``daily.categories``）。
+（如 ``daily.sync_time``）。
 
-**存到谁头上**：这批偏好驱动的是部署级行为（每日池全部署共享一份、TTS 走同一个
-上游），所以规范落点是 **owner 用户**——desktop 单用户就是本人；server 档取最早
-注册的活跃用户。判定复用 #722 的 services/owner.py（admin 门禁与偏好落点共用同一个
-「谁是主人」事实源，含其进程内缓存语义：首用户被停用不会在进程内换主）。
+**存到谁头上**：本模块管的这批偏好驱动的是**部署级**行为（一个 cron、一份存储预算、
+TTS 走同一个上游），所以规范落点是 **owner 用户**——desktop 单用户就是本人；server
+档取最早注册的活跃用户。判定复用 #722 的 services/owner.py（admin 门禁与偏好落点
+共用同一个「谁是主人」事实源，含其进程内缓存语义：首用户被停用不会在进程内换主）。
+
+**不归这里管的**：真正因人而异的偏好不走这套。每日订阅（``daily.categories`` /
+``daily.subscriptions``）自 #806 起存在各人自己的 ``users.settings`` 上，由
+services/daily_feed.py 直接读写，且**不回退到 owner**——回退正是「新注册的人继承
+第一个注册者的领域」那个 bug。加新键之前先问一句：它是这台机器的属性，还是某个
+人的偏好。
 
 **迁移期回退**：alembic 数据迁移会把存量 system_settings 拷进 owner 的 settings；
 读路径在新键缺席时仍回读旧行（deprecated，保留一期），确保备份回滚/漏拷的部署
