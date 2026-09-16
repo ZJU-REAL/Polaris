@@ -146,9 +146,15 @@ async def search_daily_pool(ctx: ToolContext, args: dict[str, Any]) -> dict[str,
         raise ValueError("该工具需要用户身份（系统内部调用不可用）")
 
     async with get_sessionmaker()() as session:
+        # 必须把 User 本人传进去，不能只给 user_id：信息流按订阅过滤这件事挂在
+        # user 上（#806），只传 id 会静默跳过过滤，agent 就替这个人翻了整池
+        from app.models.user import User
+
+        actor = await session.get(User, ctx.user_id)
         items, total = await daily_service.list_papers(
             session,
             user_id=ctx.user_id,
+            user=actor,
             date=date,
             q=str(args.get("q") or "").strip() or None,
             category=str(args.get("category") or "").strip() or None,

@@ -90,6 +90,7 @@ async def _papers_in_pool() -> list[Paper]:
 
 async def test_sync_embeds_every_paper_and_only_missing(client, monkeypatch):
     """每日推送的论文一律建论文级向量（不再受管理员开关管），且幂等只补缺失的。"""
+    await register_and_login(client)  # 订阅按人存（#806）：得先有一个人
     feed = {"cs.AI": [_rss_entry("2607.10001", "Alpha"), _rss_entry("2607.10002", "Beta")]}
 
     # 无需任何开关：同步即建向量，文本口径 = 标题+作者+摘要
@@ -121,6 +122,7 @@ async def test_daily_papers_get_abstract_chunk(client, monkeypatch):
     """每日推送不下 PDF，论文靠「标题 + 摘要」兜底块进入文献对话的检索范围。"""
     from app.models.paper import PaperChunk
 
+    await register_and_login(client)  # 订阅按人存（#806）：得先有一个人
     await _run_sync(monkeypatch, {"cs.AI": [_rss_entry("2607.10009", "Delta")]})
     papers = await _papers_in_pool()
     assert papers and all(p.full_text_path is None for p in papers)

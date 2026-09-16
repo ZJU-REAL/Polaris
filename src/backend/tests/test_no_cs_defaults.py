@@ -13,7 +13,7 @@ import pytest
 from app.core.db import get_sessionmaker
 from app.services import daily_feed
 from app.services.literature import reset_clients, set_clients
-from tests.conftest import make_project_with_library, register_and_login
+from tests.conftest import make_project_with_library, owner_of, register_and_login
 
 pytestmark = pytest.mark.asyncio
 
@@ -29,12 +29,12 @@ async def test_daily_categories_have_no_code_default(client):
     await register_and_login(client)
     async with get_sessionmaker()() as session:
         # 没配过 = 空，不再回退 cs.AI/cs.CL/cs.CV
-        assert await daily_feed.get_categories(session) == []
+        assert await daily_feed.get_categories(session, await owner_of(session)) == []
         # 配了还能清空（空订阅是合法状态，池子停止进新论文）
-        await daily_feed.set_categories(session, ["stat.ML"])
-        assert await daily_feed.get_categories(session) == ["stat.ML"]
-        await daily_feed.set_categories(session, [])
-        assert await daily_feed.get_categories(session) == []
+        await daily_feed.set_categories(session, ["stat.ML"], user=await owner_of(session))
+        assert await daily_feed.get_categories(session, await owner_of(session)) == ["stat.ML"]
+        await daily_feed.set_categories(session, [], user=await owner_of(session))
+        assert await daily_feed.get_categories(session, await owner_of(session)) == []
 
 
 async def test_daily_fetch_and_probe_do_nothing_without_subscription(client, monkeypatch):
@@ -151,7 +151,11 @@ async def test_daily_list_ranks_by_subscription_order(client, monkeypatch):
     )
     async with get_sessionmaker()() as session:
         # 非 CS 订阅照样有先后：排订阅列表前面的分类先出现
-        await daily_feed.set_categories(session, ["stat.ML", "q-bio.NC"])
+        await daily_feed.set_categories(
+            session,
+            ["stat.ML", "q-bio.NC"],
+            user=await owner_of(session),
+        )
         _, by_category, _ = await daily_feed.fetch_new_by_category(session)
         await daily_feed.upsert_entries(session, by_category=by_category)
 

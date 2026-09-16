@@ -20,7 +20,22 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import Date, Float, String, case, cast, delete, func, literal, or_, select, text
+from sqlalchemy import (
+    Date,
+    Float,
+    String,
+    case,
+    cast,
+    delete,
+    func,
+    literal,
+    or_,
+    select,
+    text,
+)
+from sqlalchemy import (
+    false as sa_false,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embedding_space import EmbeddingSpace, active_space
@@ -123,8 +138,12 @@ def _normalize_extra(value: Any) -> list[Subscription]:
     return out
 
 
-async def get_subscriptions(session: AsyncSession) -> list[Subscription]:
-    """全部订阅 = arXiv（旧键，形状不变）+ 其余源（新键）。
+async def get_subscriptions(session: AsyncSession, user: User) -> list[Subscription]:
+    """这个用户的订阅 = arXiv（旧键，形状不变）+ 其余源（新键）。
+
+    #806 起按人存：此前挂在 owner 头上，于是多人实例上所有人共用第一个注册者的
+    领域——做结构的人注册完看到的是别人的分类，而唯一能改它的开关一改就是所有人
+    一起改。抓取端要的是全体的并集，见 :func:`all_subscriptions`。
 
     **arXiv 的订阅仍存在原来的键、仍是扁平分类列表。** 第一版我把它改成了统一的
     ``[{source, terms}]`` 一起塞回旧键，结果是既有测试大面积翻车——那不是测试的
@@ -132,18 +151,54 @@ async def get_subscriptions(session: AsyncSession) -> list[Subscription]:
     用新键承载，旧键一个字节都不动，存量部署因此不需要任何迁移。
     """
     subs: list[Subscription] = []
-    arxiv_terms = await get_categories(session)
+    arxiv_terms = await get_categories(session, user)
     if arxiv_terms:
         subs.append(Subscription(source=ARXIV_SOURCE, terms=tuple(arxiv_terms)))
-    extra = await owner_settings.read_setting(session, SUBSCRIPTIONS_USER_KEY, legacy_key=None)
-    subs.extend(_normalize_extra(extra))
+    subs.extend(_normalize_extra((user.settings or {}).get(SUBSCRIPTIONS_USER_KEY)))
     return subs
 
 
+async def all_subscriptions(session: AsyncSession) -> list[Subscription]:
+    """全体用户订阅的并集，按源合并、按词去重——抓取端和探测端用这个。
+
+    池子是共享的：一个人加订 q-bio，那批论文进池后对其他人的信息流毫无影响
+    （每个人看到的是与自己订阅相交的那部分，见 :func:`subscribed_terms`），
+    但少抓一次就是所有订了它的人当天集体缺料，补不回来。
+
+    停用的账号不计入：他们的词不该继续让平台每天替他们抓。
+    """
+    users = (
+        (await session.execute(select(User).where(User.is_active.is_(True)))).scalars().all()
+    )
+    by_source: dict[str, list[str]] = {}
+    for member in users:
+        for subscription in await get_subscriptions(session, member):
+            terms = by_source.setdefault(subscription.source, [])
+            for term in subscription.terms:
+                if term not in terms:
+                    terms.append(term)
+    return [Subscription(source=src, terms=tuple(terms)) for src, terms in by_source.items()]
+
+
+async def subscribed_terms(session: AsyncSession, user: User) -> list[str]:
+    """这个用户订阅的全部词（跨源）。
+
+    条目上的 ``categories`` 累积的正是「哪些词把它抓进来的」，所以信息流按词相交
+    就是「只看我订的那部分」。词本身即键（不带源前缀）是既有约定：它会落进
+    ``primary_category`` 并当作标签展示给用户看。
+    """
+    out: list[str] = []
+    for subscription in await get_subscriptions(session, user):
+        for term in subscription.terms:
+            if term not in out:
+                out.append(term)
+    return out
+
+
 async def set_subscriptions(
-    session: AsyncSession, subscriptions: list[Subscription], *, user: User | None = None
+    session: AsyncSession, subscriptions: list[Subscription], *, user: User
 ) -> list[Subscription]:
-    """写回订阅：arXiv 那条走旧键（校验分类格式），其余源走新键（自由检索词）。"""
+    """写回**这个用户**的订阅：arXiv 那条走旧键（校验分类格式），其余源走新键。"""
     arxiv_terms: list[str] = []
     others: list[Subscription] = []
     for sub in subscriptions:
@@ -166,12 +221,10 @@ async def set_subscriptions(
             others.append(Subscription(source=source, terms=tuple(terms)))
 
     saved_arxiv = await set_categories(session, arxiv_terms, user=user)
-    await owner_settings.write_setting(
-        session,
+    _write_user_setting(
+        user,
         SUBSCRIPTIONS_USER_KEY,
         [{"source": s.source, "terms": list(s.terms)} for s in others],
-        legacy_key=None,
-        user=user,
     )
     await session.commit()
 
@@ -182,23 +235,30 @@ async def set_subscriptions(
     return out
 
 
-async def get_categories(session: AsyncSession) -> list[str]:
-    """订阅分类。没配过就是**空**——不再缺省成 cs.* 三件套（#720 A4）。
+def _write_user_setting(user: User, key: str, value: Any) -> None:
+    """整字典替换而不是就地改：JSON 列的变更检测认的是赋值，就地改等于没存。"""
+    user.settings = {**(user.settings or {}), key: value}
+
+
+async def get_categories(session: AsyncSession, user: User) -> list[str]:
+    """这个用户订阅的 arXiv 分类。没配过就是**空**——不缺省成 cs.* 三件套（#720 A4）。
 
     以前静默回退 ["cs.AI","cs.CL","cs.CV"]：非 CS 用户的每日池被填满不相干
     的论文，还以为系统坏了。现在空列表如实返回，抓取端拿到空就不抓，
     API/前端提示「先在设置里订阅分类」。
+
+    #806 起只读这个用户自己的键，**不回退到 owner**：回退的话，新注册的人会
+    继承第一个注册者的分类，而那正是这次要去掉的东西。存量用户由迁移各自播下
+    一份，所以升级前后谁都不变。
     """
-    value = await owner_settings.read_setting(
-        session, CATEGORIES_USER_KEY, legacy_key=CATEGORIES_SETTING_KEY
-    )
+    value = (user.settings or {}).get(CATEGORIES_USER_KEY)
     if not isinstance(value, list):
         return []
     return [str(c) for c in value]
 
 
 async def set_categories(
-    session: AsyncSession, categories: list[str], *, user: User | None = None
+    session: AsyncSession, categories: list[str], *, user: User
 ) -> list[str]:
     cleaned: list[str] = []
     for raw in categories:
@@ -209,11 +269,9 @@ async def set_categories(
             raise InvalidCategoryError(cat)
         if cat not in cleaned:
             cleaned.append(cat)
-    # 允许清空：空订阅是合法状态（池子停止进新论文，界面另有提示），
+    # 允许清空：空订阅是合法状态（这个人的信息流停止进新论文，界面另有提示），
     # 不再用「至少留一个分类」逼着用户保留不相干的缺省
-    await owner_settings.write_setting(
-        session, CATEGORIES_USER_KEY, cleaned, legacy_key=CATEGORIES_SETTING_KEY, user=user
-    )
+    _write_user_setting(user, CATEGORIES_USER_KEY, cleaned)
     await session.commit()
     return cleaned
 
@@ -440,7 +498,7 @@ async def fetch_new_by_category(
     （``String(32)``）并由前端当作分类标签展示，换成 ``源:词`` 会改写存量、撑爆列宽，
     也改掉用户看到的东西。
     """
-    subscriptions = await get_subscriptions(session)
+    subscriptions = await all_subscriptions(session)
     # 能干这件事的源由注册表回答（能力探测），而不是这里写死一个 id。
     # get_arxiv_client 模块属性保留为客户端注入缝。
     capable = dict(
@@ -882,6 +940,36 @@ async def list_days(
     return [{"date": date, "count": count} for date, count in rows]
 
 
+def _only_subscribed(stmt: Any, terms: list[str]) -> Any:
+    """把查询限定在「命中这些词之一」的条目上。
+
+    没订任何词 = 什么都不给看，而不是什么都给看：后者会把别人订的领域倒进这个人的
+    信息流，正是 #806 要修的那件事。界面对空订阅另有「先去订阅」的提示。
+
+    匹配 ``categories``（条目累积的全部命中词）而不只是 ``primary_category``：
+    一篇论文可能是被交叉命中进来的，只看主分类会让它在订了那个交叉词的人那里消失。
+    """
+    if not terms:
+        return stmt.where(sa_false())
+    clauses = [
+        (DailyFeedEntry.primary_category == term)
+        | cast(DailyFeedEntry.categories, String).like(f'%"{term}"%')
+        for term in terms
+    ]
+    return stmt.where(or_(*clauses))
+
+
+async def only_subscribed_entries(session: AsyncSession, stmt: Any, user: User | None) -> Any:
+    """把任意一条「查 DailyFeedEntry」的语句限定到这个人订了的那部分。
+
+    公开出来是因为过滤只加在信息流那一个查询上不够：同一批论文从导出、从
+    agent 工具、从首页计数出去时，看到的仍然是别人订的领域（#806）。
+    """
+    if user is None:
+        return stmt
+    return _only_subscribed(stmt, await subscribed_terms(session, user))
+
+
 async def list_papers(
     session: AsyncSession,
     *,
@@ -944,6 +1032,10 @@ async def list_papers(
             )
         )
 
+    if user is not None:
+        # 只给这个人订的那部分。池子是全体并集，不过滤的话每多一个用户、
+        # 每个人的信息流就多一批与自己无关的论文——比今天「全看 owner 的」更糟。
+        stmt = _only_subscribed(stmt, await subscribed_terms(session, user))
     if q:
         stmt = stmt.where(Paper.title.ilike(f"%{q.strip()}%"))
     # 作者 / 机构：在 JSON 列上做文本包含匹配（同 services/papers.apply_paper_filters 口径）
@@ -967,7 +1059,9 @@ async def list_papers(
     # 分类优先级打头：按**订阅列表的顺序**排（越靠前的分类越先出现；一篇挂多个
     # 分类按最靠前的算）。以前写死 cs.CL 最前、cs.RO 最后——CS 分类学不该长在
     # 代码里，顺序跟着用户自己的订阅走（#720 A4）。没订阅分类时全部同级。
-    category_rank = _category_rank_case(await get_categories(session))
+    category_rank = _category_rank_case(
+        await get_categories(session, user) if user is not None else []
+    )
     # 同分类里，新工作排在交叉提交（更新）前面：新工作才是当天真正的新东西
     announce_rank = case((DailyFeedEntry.announce_type == "new", 0), else_=1)
     if sort == "relevance":
@@ -1108,6 +1202,7 @@ async def semantic_search_daily(
     affiliation: str | None = None,
     library_id: uuid.UUID | None = None,
     collected: bool = False,
+    terms: list[str] | None = None,
 ) -> list[tuple[DailyFeedEntry, Paper, float]]:
     """池内向量检索（pgvector 余弦；仅 postgres，调用方先判 semantic_search_supported）。
 
@@ -1126,6 +1221,17 @@ async def semantic_search_daily(
     if announce in ("new", "cross"):
         where.append("e.announce_type = :announce")
         params["announce"] = announce
+    if terms is not None:
+        # 与关键词列表同一条口径：语义检索只过滤到 category 这一层的话，
+        # 搜一下就能把整池（别人订的领域）翻出来
+        if not terms:
+            return []
+        ors = []
+        for i, term in enumerate(terms):
+            ors.append(f"(e.primary_category = :term{i} OR CAST(e.categories AS text) LIKE :tl{i})")
+            params[f"term{i}"] = term
+            params[f"tl{i}"] = f'%"{term}"%'
+        where.append("(" + " OR ".join(ors) + ")")
     if category:
         where.append(
             "(e.primary_category = :category OR CAST(e.categories AS text) LIKE :category_like)"
@@ -1900,7 +2006,7 @@ async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | Non
     找到一个没收过的就够了，所以命中即返回：常态下 cs.AI 有新论文，仍然只发一次
     请求；只有像那天一样首个分类全中时才会继续往后问。
     """
-    subscriptions = await get_subscriptions(session)
+    subscriptions = await all_subscriptions(session)
     probes = [(sub.source, term) for sub in subscriptions for term in sub.terms]
     if not probes:
         # 没订阅任何东西：无可收之物，不该开一轮同步（空转还会把当天锁死）

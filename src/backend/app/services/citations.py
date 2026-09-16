@@ -17,6 +17,7 @@ from app.models.daily_feed import DAILY_FEED_RETENTION_DAYS, DailyFeedEntry
 from app.models.library import UserLibraryEntry
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
+from app.models.user import User
 from app.services.libraries import (
     dedupe_member_rows,
     get_source_library_ids,
@@ -295,6 +296,7 @@ async def papers_for_daily_export(
     *,
     paper_ids: list[uuid.UUID] | None = None,
     today: dt.date | None = None,
+    user: User | None = None,
 ) -> Sequence[Paper]:
     """每日新论文的导出对象：当前滚动窗口内的池论文（paper_ids 给定时取其子集）。
 
@@ -309,7 +311,15 @@ async def papers_for_daily_export(
         .where(DailyFeedEntry.feed_date >= cutoff)
     )
     if paper_ids:
+        # 点名要哪几篇：按 id 精确导出，不再叠订阅过滤——这几个 id 是他从自己
+        # 界面上选出来的，能看到就能导
         stmt = stmt.where(Paper.id.in_(paper_ids))
+    elif user is not None:
+        # 不点名 = 「导出我的每日论文」。不过滤的话，他信息流里看到 5 篇、
+        # 导出来 500 篇别人领域的
+        from app.services.daily_feed import only_subscribed_entries
+
+        stmt = await only_subscribed_entries(session, stmt, user)
     stmt = stmt.order_by(
         DailyFeedEntry.feed_date.desc(), Paper.year.asc().nulls_last(), DailyFeedEntry.created_at
     )

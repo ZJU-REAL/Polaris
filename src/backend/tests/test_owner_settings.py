@@ -63,23 +63,24 @@ async def test_daily_preferences_live_on_the_owner(client):
         "/api/daily/sync-scope", json={"scope": "full"}, headers=owner_headers
     )
     assert resp.status_code == 200
-    # 非 owner：读得到，写被 403（#722）
-    resp = await client.get("/api/daily/categories", headers=other_headers)
-    assert resp.status_code == 200 and resp.json()["categories"] == ["stat.ML"]
+    # 非 owner：部署级的那几项仍然写不了（#722）
     resp = await client.put(
         "/api/daily/retention", json={"days": 3}, headers=other_headers
     )
     assert resp.status_code == 403
+    # 订阅不在此列——它按人存（#806），各人管各人的，见 test_daily_subscriptions_api
+    resp = await client.get("/api/daily/categories", headers=other_headers)
+    assert resp.status_code == 200 and resp.json()["categories"] == []
 
     async with get_sessionmaker()() as session:
         stored = await _owner_settings_snapshot(session)
-        assert stored["daily.categories"] == ["stat.ML"]
         assert stored["daily.retention_days"] == 30
         assert stored["daily.sync_time"] == "07:15"
         assert stored["daily.sync_scope"] == "full"
-        # 非 owner 用户的 settings 不被写
+        # 非 owner 用户的 settings 里不该出现部署级的那几项
         other = await session.scalar(select(User).where(User.email == "u2@e.com"))
-        assert not (other.settings or {})
+        assert "daily.retention_days" not in (other.settings or {})
+        assert "daily.sync_time" not in (other.settings or {})
         # 新写入不再落 system_settings
         for key in (
             daily_feed.CATEGORIES_SETTING_KEY,
@@ -89,7 +90,6 @@ async def test_daily_preferences_live_on_the_owner(client):
         ):
             assert await session.get(SystemSetting, key) is None
         # 读路径（worker 同款：只有 session）取到同一份真相
-        assert await daily_feed.get_categories(session) == ["stat.ML"]
         assert await daily_feed.get_retention_days(session) == 30
         assert await daily_feed.get_sync_time(session) == (7, 15)
         assert await daily_feed.get_sync_scope(session) == "full"
@@ -113,28 +113,31 @@ async def test_legacy_system_settings_rows_are_read_as_fallback(client):
         )
         await session.commit()
 
-        assert await daily_feed.get_categories(session) == ["q-bio.NC"]
         assert await daily_feed.get_retention_days(session) == 9
         assert await get_affiliation_extraction_mode(session) == "on_compile"
         assert (await tts.get_admin_settings(session))["model"] == "legacy-model"
 
         # 写新值 → 存到 owner，旧行原样保留但不再被读到
-        await daily_feed.set_categories(session, ["cs.CV"])
-        assert await daily_feed.get_categories(session) == ["cs.CV"]
-        legacy = await session.get(SystemSetting, daily_feed.CATEGORIES_SETTING_KEY)
-        assert legacy is not None and legacy.value == ["q-bio.NC"]
+        await daily_feed.set_retention_days(session, 21)
+        assert await daily_feed.get_retention_days(session) == 21
+        legacy = await session.get(SystemSetting, daily_feed.RETENTION_SETTING_KEY)
+        assert legacy is not None and legacy.value == 9
 
 
 async def test_writes_without_any_user_fall_back_to_legacy_rows(app):
-    """还没有任何用户（种子/引导阶段）：写退回旧行，读也能读回来，不丢数据。"""
+    """还没有任何用户（种子/引导阶段）：写退回旧行，读也能读回来，不丢数据。
+
+    用保留天数当抓手而不是订阅：订阅按人存（#806），没有人的时候本来就无人可订，
+    那条路径不该也不能退回一个全局行。
+    """
     from app.core.db import get_sessionmaker
     from app.services import daily_feed
 
     async with get_sessionmaker()() as session:
-        await daily_feed.set_categories(session, ["stat.ML"])
-        assert await daily_feed.get_categories(session) == ["stat.ML"]
-        row = await session.get(SystemSetting, daily_feed.CATEGORIES_SETTING_KEY)
-        assert row is not None and row.value == ["stat.ML"]
+        await daily_feed.set_retention_days(session, 12)
+        assert await daily_feed.get_retention_days(session) == 12
+        row = await session.get(SystemSetting, daily_feed.RETENTION_SETTING_KEY)
+        assert row is not None and row.value == 12
 
 
 async def test_tts_and_affiliation_settings_live_on_the_owner(client):

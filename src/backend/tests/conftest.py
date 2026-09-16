@@ -365,6 +365,22 @@ async def _pin_created_at(email: str) -> None:
         await session.commit()
 
 
+async def owner_of(session):
+    """部署主人的 User 行（= 最早注册的活跃用户）。
+
+    #806 起每日订阅按人存。存量用例里「这个部署订了什么」的意思就是「唯一那个
+    （也就是首位）用户订了什么」，所以它们统一改成对着主人设置。
+    """
+    from app.models.user import User
+    from app.services.owner import resolve_owner_id
+
+    owner_id = await resolve_owner_id(session)
+    # 说破而不是往下传一个 None：否则报的是服务层深处的 AttributeError，
+    # 而真正的原因是这个用例还没注册任何用户
+    assert owner_id is not None, "先注册一个用户：#806 起订阅按人存，没有人就没有订阅"
+    return await session.get(User, owner_id)
+
+
 async def register_and_login(
     client: AsyncClient, email: str = "alice@example.com", username: str | None = None
 ) -> str:

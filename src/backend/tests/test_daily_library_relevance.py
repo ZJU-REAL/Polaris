@@ -35,9 +35,12 @@ def _today() -> dt.date:
 
 
 async def _setup_library(client, *, member_axes: list[int]):
-    """注册（首个用户）→ 建课题（隐式建库）→ 塞成员论文并落向量。"""
+    """注册（首个用户）→ 订阅 → 建课题（隐式建库）→ 塞成员论文并落向量。"""
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
+    # 信息流只给自己订了的那部分（#806）。本文件注入的条目都是 cs.AI，
+    # 不订它的话列表一篇都不返回，测的就不是排序了
+    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=headers)
     resp = await client.post(
         "/api/projects",
         json={"name": "agents", "statement": "LLM agent planning"},
@@ -224,6 +227,8 @@ async def test_relevance_without_libraries_matches_date_sort(client):
 async def test_keyword_fallback_when_library_has_no_vectors(client):
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
+    # 同上：信息流按订阅过滤（#806），注入的条目是 cs.AI
+    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=headers)
     resp = await client.post(
         "/api/projects",
         json={"name": "diffusion", "statement": "diffusion models"},

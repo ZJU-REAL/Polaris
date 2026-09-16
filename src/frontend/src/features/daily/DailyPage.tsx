@@ -1199,15 +1199,17 @@ export function DailyPage() {
                   desc={tr('后端不可用或接口尚未就绪，稍后重试。', 'Backend unavailable — try again later.')}
                 />
               ) : items.length === 0 ? (
-                /* 没订阅分类时池子永远是空的——这不是「今天没新论文」，要把原因和去处说清楚 */
+                /* 没订阅就什么都不该看到（#806 起信息流按本人订阅过滤）——这不是
+                   「今天没新论文」，也不该说成「池子是空的」：多人实例上池子里
+                   装着别人订的东西，只是没有一条是这个人要的。说清原因和去处 */
                 !filtered && categoriesQuery.data?.categories.length === 0 ? (
                   <EmptyState
                     compact
                     icon="book"
                     title={tr('还没有订阅分类', 'No subscribed categories yet')}
                     desc={tr(
-                      '先在 设置 → 每日新论文订阅分类 里添加要跟踪的 arXiv 分类，每日新论文才会进池。',
-                      'Add the arXiv categories you want to follow in Settings → Daily subscribed categories, and new papers will start flowing in.',
+                      '先在 设置 → 每日新论文订阅分类 里添加要跟踪的 arXiv 分类，之后每天的新论文就会出现在这里。',
+                      'Add the arXiv categories you want to follow in Settings → Daily subscribed categories, and each day’s new papers will show up here.',
                     )}
                   />
                 ) : (
