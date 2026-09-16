@@ -111,14 +111,14 @@ make down    # stop and remove containers
 
 Work through these in order; each unlocks the next.
 
-1. **Configure LLM providers and routing** — go to **Manage → LLM admin** (`/admin?tab=llm`).
+1. **Configure LLM providers and routing** — go to **Settings → Models & routing** (`/settings?tab=llm`).
    Add providers (with their API keys), list their models, and edit the model routing table that
    maps each research stage to a provider, model, and optional reasoning effort. Until at least
    one route resolves, AI features return `LLM_NOT_CONFIGURED`.
 2. **Connect an SSH server** (needed for the experiment stage) — **Settings → SSH credentials**
    (`/settings?tab=ssh`). Add a host and key, then use **Test connection**; credentials are
    encrypted at rest with the Fernet key. Admin-side experiment policy (command allow/deny lists,
-   budgets) lives under **Admin → Experiments**.
+   budgets) lives under **Settings → Experiments**.
 3. **Create your first direction library** — go to **Libraries** (`/libraries`) and create one. A
    structured AI interview helps you write the inclusion config (statement, goals, scope,
    exclusions), and running the ingest builds the corpus: candidate search, citation snowballing,
@@ -130,10 +130,10 @@ Work through these in order; each unlocks the next.
 5. **Optional: enable PolarisBuddy** — the in-app assistant's multi-turn tool loop is off by
    default (it re-sends history and tool schemas every round, so it costs more than one-shot
    chat). Set `POLARIS_CHAT_AGENT_ENABLED=1` in `.env` and restart to enable it.
-6. **Optional: configure the daily arXiv feed** — **Manage → Daily papers** sets the subscribed
-   arXiv categories and the daily fetch time.
+6. **Optional: configure the daily feed** — **Settings → Daily papers** sets the subscribed
+   categories and the daily fetch time.
 
-<!-- screenshot: Admin → LLM admin, the model routing table -->
+<!-- screenshot: Settings → Models & routing, the model routing table -->
 
 ## Common first-run errors
 
@@ -142,7 +142,7 @@ Work through these in order; each unlocks the next.
 | `make dev` fails while building `polaris-texbase` (GitHub download stalls or apt is slow) | The TeX base image downloads the tectonic binary and a CJK font pack from GitHub and runs a large apt install. On restricted networks pass mirrors: `GITHUB_PROXY=https://gh-proxy.com/ APT_MIRROR=repo.huaweicloud.com make texbase`, then re-run `make dev`. For slow PyPI, pass `PIP_INDEX_URL` to the compose build. See [Deployment](deployment.md#restricted-networks). |
 | `port is already allocated` on startup | Another service holds 5173, 8000, or 8080. Set `POLARIS_API_PORT` / `POLARIS_FRONTEND_PORT` and pass them to compose (export them, or run compose with `--env-file .env` — the Makefile does not pass it, and compose interpolation reads `.env` next to the compose file, not the repo root). Port 5173 is fixed in the dev overlay. |
 | API is up but every page errors; logs show `relation "..." does not exist` | Migrations were not applied. Run the `alembic upgrade head` command from step 3. Needed again after any update that ships new migrations. |
-| AI features return `LLM_NOT_CONFIGURED` (HTTP 503) | No LLM provider is configured, or the routing table has no usable route. Configure providers and routes in **Manage → LLM admin**. |
+| AI features return `LLM_NOT_CONFIGURED` (HTTP 503) | No LLM provider is configured, or the routing table has no usable route. Configure providers and routes in **Settings → Models & routing**. |
 | Saving an SSH credential fails with a server error mentioning Fernet | `POLARIS_ENCRYPTION_KEY` still holds the `.env.example` placeholder, which is not a valid Fernet key. Set a real key (see step 2) or leave it empty in dev. Note that changing the key later makes previously stored credentials undecryptable. |
 | Literature ingest finds nothing / arXiv, Semantic Scholar, or OpenAlex time out | Direct access to the literature APIs is blocked or flaky on your network. Set `POLARIS_OUTBOUND_PROXY` (e.g. `http://host.docker.internal:7897` for a proxy on the Docker host) and restart. |
 | You edited worker code but behavior did not change | Under the dev overlay the worker's `arq --watch` only reloads the settings module. Run `docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml restart worker`. |
