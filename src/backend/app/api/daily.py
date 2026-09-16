@@ -130,6 +130,9 @@ async def list_papers(
                 affiliation=affiliation,
                 library_id=library_id,
                 collected=collected,
+                # 与关键词列表同一条订阅口径（#806）：少了它，搜一下就能把
+                # 整池——也就是别人订的领域——翻出来
+                terms=await daily_service.subscribed_terms(session, user),
             )
             mode_used = "semantic"
             entry_by_paper = {paper.id: entry for entry, paper, _ in rows}
@@ -186,8 +189,8 @@ async def export_daily_citations(
 ) -> Response:
     """导出每日新论文的引用：BibTeX / CSL-JSON。
 
-    范围 = 当前滚动窗口内的每日论文；ids 指定时按 id 精确导出（窗口外的 id 落选）。
-    每日推送全部署共享，登录即可导出。
+    范围 = **你订的**那部分每日论文（#806）；ids 指定时按 id 精确导出（窗口外的 id 落选）。
+    不按订阅过滤的话，信息流里看到 5 篇、导出来是整池几百篇别人领域的。
     """
     paper_ids: list[uuid.UUID] | None = None
     if ids:
@@ -195,7 +198,9 @@ async def export_daily_citations(
             paper_ids = [uuid.UUID(x) for x in ids.split(",") if x.strip()]
         except ValueError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="INVALID_IDS") from e
-    papers = await citations_service.papers_for_daily_export(session, paper_ids=paper_ids)
+    papers = await citations_service.papers_for_daily_export(
+        session, paper_ids=paper_ids, user=user
+    )
     if format_ == "bibtex":
         return Response(
             content=citations_service.build_bibtex(papers),
@@ -456,15 +461,21 @@ async def get_categories(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DailyCategoriesRead:
-    return DailyCategoriesRead(categories=await daily_service.get_categories(session))
+    return DailyCategoriesRead(categories=await daily_service.get_categories(session, user))
 
 
 @router.put("/categories", response_model=DailyCategoriesRead)
 async def set_categories(
     payload: DailyCategoriesUpdate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_owner),
+    user: User = Depends(current_active_user),
 ) -> DailyCategoriesRead:
+    """订**自己**的分类（#806）。
+
+    此前挂主人守卫，于是多人实例上只有第一个注册的人能订，而他一改就是所有人
+    一起改。抓取端取全体并集，所以这里加一个分类只是把那批论文引进共享池，
+    不会改变别人的信息流。
+    """
     try:
         categories = await daily_service.set_categories(session, payload.categories, user=user)
     except daily_service.InvalidCategoryError as exc:
@@ -496,7 +507,7 @@ async def get_subscriptions(
     这个端点是多源订阅的全景视图。
     """
     capable = set(_daily_capable_sources())
-    subs = await daily_service.get_subscriptions(session)
+    subs = await daily_service.get_subscriptions(session, user)
     return DailySubscriptionsRead(
         subscriptions=[
             DailySubscriptionRead(
@@ -514,9 +525,9 @@ async def get_subscriptions(
 async def set_subscriptions(
     payload: DailySubscriptionsUpdate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_owner),
+    user: User = Depends(current_active_user),
 ) -> DailySubscriptionsRead:
-    """整份替换。
+    """整份替换**自己**的订阅（#806）。
 
     订一个供不了日更的源**不拒绝**：源可能只是暂时没配密钥或被撤下，而把订阅一起
     丢掉等于让人重填。回读时 supports_daily=False 就地说明，界面据此提示。

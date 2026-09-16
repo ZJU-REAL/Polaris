@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d7f4a16c8e29"  # Skills feature removed (#755)
+HEAD_REVISION = "c1d80a3fb492"  # 每日订阅按人存 (#806)
+SKILLS_DROP_REVISION = "d7f4a16c8e29"  # 技能功能移除 (#755)
 VECTOR_SCOPE_REVISION = "c5e02a9b31d7"  # Method vectors scoped to their card (#772)
 HYPOTHESIS_SEQ_REVISION = "b4d91f7a2c08"  # Hypothesis node creation sequence (#784)
 MCP_SERVERS_REVISION = "e8c3f1a92d40"  # External MCP server registry (#754)
@@ -641,7 +642,12 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["paper_extractions"]
     assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
 
-    # 先退掉技能表的删除（downgrade 会把空表建回来）。
+    # 先退掉「每日订阅按人存」（只动数据，不动表结构）。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == SKILLS_DROP_REVISION
+
+    # 再退掉技能表的删除（downgrade 会把空表建回来）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == VECTOR_SCOPE_REVISION
@@ -1148,6 +1154,84 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "ingest_state" not in columns["projects"]
     assert "library_id" in columns["paper_tags"]
     assert "project_id" not in columns["paper_tags"]
+
+
+def test_daily_subscriptions_are_seeded_to_every_user(tmp_path):
+    """#806 数据迁移：把 owner 当时的订阅原样播给每个用户。
+
+    读路径改成只认本人的键之后，不播这一份种，升级当天除 owner 外每个人的订阅
+    都会变成空——信息流一篇不剩，而他们没做任何操作。
+    """
+    import json
+
+    db_path = tmp_path / "dailysubs.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, SKILLS_DROP_REVISION)
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    user_cols = (
+        "id, email, hashed_password, is_active, is_superuser, is_verified, "
+        "display_name, username_locked, settings, created_at, updated_at"
+    )
+    owner_settings_json = json.dumps(
+        {
+            "daily.categories": ["cs.AI", "stat.ML"],
+            "daily.subscriptions": [{"source": "pubmed", "terms": ["glioma"]}],
+            "daily.retention_days": 21,
+        }
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"INSERT INTO users ({user_cols}) VALUES "
+                "('00000000-0000-0000-0000-000000000001', 'owner@e.com', 'x', 1, 0, 1, "
+                "'', 0, :settings, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            ),
+            {"settings": owner_settings_json},
+        )
+        conn.execute(
+            text(
+                f"INSERT INTO users ({user_cols}) VALUES "
+                "('00000000-0000-0000-0000-000000000002', 'late@e.com', 'x', 1, 0, 1, "
+                "'', 0, NULL, '2026-02-01 00:00:00', '2026-02-01 00:00:00')"
+            )
+        )
+        # 自己已经有一份的人不该被覆盖（迁移重跑也必须幂等）
+        conn.execute(
+            text(
+                f"INSERT INTO users ({user_cols}) VALUES "
+                "('00000000-0000-0000-0000-000000000003', 'own@e.com', 'x', 1, 0, 1, "
+                "'', 0, :settings, '2026-03-01 00:00:00', '2026-03-01 00:00:00')"
+            ),
+            {"settings": json.dumps({"daily.categories": ["q-bio.NC"]})},
+        )
+
+    command.upgrade(cfg, "head")
+
+    def _settings(uid: str) -> dict:
+        with engine.begin() as conn:
+            raw = conn.execute(
+                text("SELECT settings FROM users WHERE id = :i"), {"i": uid}
+            ).scalar_one()
+        return json.loads(raw) if isinstance(raw, str) else (raw or {})
+
+    late = _settings("00000000-0000-0000-0000-000000000002")
+    assert late["daily.categories"] == ["cs.AI", "stat.ML"]
+    assert late["daily.subscriptions"] == [{"source": "pubmed", "terms": ["glioma"]}]
+    # 部署级的那几项不跟着播：保留天数只有一份真相
+    assert "daily.retention_days" not in late
+
+    own = _settings("00000000-0000-0000-0000-000000000003")
+    assert own["daily.categories"] == ["q-bio.NC"], "已经有自己那份的不该被覆盖"
+
+    owner = _settings("00000000-0000-0000-0000-000000000001")
+    assert owner["daily.categories"] == ["cs.AI", "stat.ML"], "主人那份原样留着"
+
+    command.downgrade(cfg, SKILLS_DROP_REVISION)
+    late_after = _settings("00000000-0000-0000-0000-000000000002")
+    assert "daily.categories" not in late_after, "播下去的那份该收回"
+    own_after = _settings("00000000-0000-0000-0000-000000000003")
+    assert own_after["daily.categories"] == ["q-bio.NC"], "用户自己设的不能被一起抹掉"
 
 
 def test_user_preference_settings_copy_to_owner_and_roundtrip(tmp_path):

@@ -16,6 +16,7 @@ from app.services.literature.multi_source import (
     PUBMED_DAILY_WINDOW_DAYS,
     MultiSourceClient,
 )
+from tests.conftest import owner_of, register_and_login
 
 
 @pytest.fixture
@@ -114,6 +115,8 @@ async def test_pubmed_declares_no_batch_date(captured_query):
 async def test_a_pubmed_entry_reaches_the_daily_pool(client, captured_query):
     """走完整条路——订阅 → 抓取 → 落库。只断言「抓回来了」的话，非 arXiv 的条目
     会在两步之后被 upsert 静默丢掉，而那正是这条线上犯过的错。"""
+    # 订阅按人存（#806）：得先有一个人，才谈得上订阅和信息流
+    await register_and_login(client)
     from sqlalchemy import select
 
     from app.core.db import get_sessionmaker
@@ -121,7 +124,8 @@ async def test_a_pubmed_entry_reaches_the_daily_pool(client, captured_query):
 
     async with get_sessionmaker()() as session:
         await daily_feed.set_subscriptions(
-            session, [Subscription(source="pubmed", terms=("neuroscience",))]
+            session, [Subscription(source="pubmed", terms=("neuroscience",))],
+            user=await owner_of(session),
         )
         await session.commit()
 

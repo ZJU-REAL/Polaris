@@ -18,18 +18,49 @@ async def test_anonymous_cannot_read_subscriptions(client):
     assert resp.status_code == 401
 
 
-async def test_a_second_user_cannot_change_subscriptions(client):
-    await register_and_login(client, email="dailysub@example.com")
+async def test_a_second_user_manages_their_own_subscriptions(client):
+    """#806：订阅归各人自己。
+
+    此前这里是 403——多人实例上只有第一个注册的人能订，其他人看到的是他的领域，
+    而唯一能改它的开关一改就是所有人一起改。
+    """
+    owner_token = await register_and_login(client, email="dailysub@example.com")
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
     second = await register_and_login(client, email="second@example.com")
     headers = {"Authorization": f"Bearer {second}"}
-    # 读是所有人的事（池子是共享的），写是 owner 的事
-    assert (await client.get("/api/daily/subscriptions", headers=headers)).status_code == 200
+
     resp = await client.put(
         "/api/daily/subscriptions",
         json={"subscriptions": [{"source": "pubmed", "terms": ["neuroscience"]}]},
         headers=headers,
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 200, resp.text
+
+    mine = (await client.get("/api/daily/subscriptions", headers=headers)).json()
+    assert mine["subscriptions"] == [
+        {"source": "pubmed", "terms": ["neuroscience"], "supports_daily": True}
+    ]
+    # 没动到别人那份
+    theirs = (await client.get("/api/daily/subscriptions", headers=owner_headers)).json()
+    assert theirs["subscriptions"] == []
+
+
+async def test_one_users_terms_are_not_anothers(client):
+    """各订各的：互相看不见对方订了什么。"""
+    a = await register_and_login(client, email="a@example.com")
+    b = await register_and_login(client, email="b@example.com")
+    ha = {"Authorization": f"Bearer {a}"}
+    hb = {"Authorization": f"Bearer {b}"}
+
+    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=ha)
+    await client.put("/api/daily/categories", json={"categories": ["q-bio.NC"]}, headers=hb)
+
+    assert (await client.get("/api/daily/categories", headers=ha)).json()["categories"] == [
+        "cs.AI"
+    ]
+    assert (await client.get("/api/daily/categories", headers=hb)).json()["categories"] == [
+        "q-bio.NC"
+    ]
 
 
 async def test_available_sources_come_from_the_registry(client):

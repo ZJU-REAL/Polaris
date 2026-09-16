@@ -2334,7 +2334,7 @@ type Tab =
   // 实验室时代的残留——同一个人要在两个页面之间找同一类配置
   | 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | 'usage';
 
-// ---------------- 每日新论文订阅分类（admin） ----------------
+// ---------------- 每日新论文订阅分类（每人一份，#806） ----------------
 
 /** arxiv 分类的大致格式：如 cs.AI / stat.ML / hep-th。 */
 const DAILY_CATEGORY_RE = /^[a-z][a-z-]+(\.[A-Za-z]{2,10})?$/;
@@ -2399,8 +2399,8 @@ function DailyCategoriesSection() {
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 14 }}>
         {tr(
-          '每天从 arxiv 抓取这些分类下的新提交，本部署共用一份。改动从下一次抓取开始生效。',
-          'New arxiv submissions in these categories are fetched daily and shared across the deployment. Changes apply from the next fetch.',
+          '你的每日论文只来自这些分类。抓取是全平台一起做的（别人订的不会进你的列表），改动从下一次抓取开始生效。',
+          'Your daily papers come only from these categories. Fetching is shared across the platform — what others subscribe to does not appear in your list. Changes apply from the next fetch.',
         )}
       </div>
 
@@ -2851,7 +2851,7 @@ export function SettingsPage() {
   );
 }
 
-// ---------------- 每日新论文：arXiv 以外的来源（owner，#778） ----------------
+// ---------------- 每日新论文：arXiv 以外的来源（每人一份，#778/#806） ----------------
 
 /**
  * 保存这一节时要发出去的完整订阅。

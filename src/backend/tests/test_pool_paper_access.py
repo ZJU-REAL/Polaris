@@ -202,6 +202,16 @@ async def _daily_only_paper(**fields) -> str:
     return paper_id
 
 
+async def _subscribe(user_id, categories: list[str]) -> None:
+    """给这个用户订上分类（#806 起每日池按人过滤）。"""
+    from app.models.user import User
+    from app.services import daily_feed
+
+    async with get_sessionmaker()() as session:
+        user = await session.get(User, user_id)
+        await daily_feed.set_categories(session, categories, user=user)
+
+
 async def _buddy_ctx(client, email: str):
     """全局助手的上下文：有身份，但一个库都搜不到（library_ids=()）。"""
     from sqlalchemy import select
@@ -229,6 +239,9 @@ async def test_buddy_can_read_the_daily_papers_it_just_searched(client):
     import app.tools as tools
 
     ctx = await _buddy_ctx(client, "buddy-daily@example.com")
+    # 每日池按订阅给（#806）：不订 cs.AI 就搜不到这篇，本用例测的是工具层
+    # 能不能读「还没进任何库」的论文，不是订阅本身
+    await _subscribe(ctx.user_id, ["cs.AI"])
     paper_id = await _daily_only_paper(title="Daily Pool Paper", abstract="brand new today")
 
     found = await tools.run_tool(ctx, "search_daily_pool", {"limit": 20})

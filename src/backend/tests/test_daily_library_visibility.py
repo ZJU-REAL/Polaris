@@ -19,6 +19,8 @@ def _today() -> dt.date:
 async def _setup(client):
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
+    # 信息流只给自己订了的那部分（#806）；本文件注入的条目都是 cs.AI
+    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=headers)
     resp = await client.post(
         "/api/projects",
         json={"name": "daily-vis", "statement": "agent planning"},

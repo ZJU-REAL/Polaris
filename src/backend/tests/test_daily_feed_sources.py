@@ -15,6 +15,7 @@ import pytest
 from app.services import daily_feed
 from app.services.literature import sources as literature_sources
 from app.services.literature.sources import SourceSpec, register_source, unregister_source
+from tests.conftest import owner_of, register_and_login
 
 
 class _FakeCivilSource:
@@ -85,12 +86,15 @@ def test_arxiv_rows_never_come_from_the_new_key():
 async def test_non_arxiv_terms_are_not_forced_into_arxiv_category_shape(client):
     """自由检索词必须能订：把「structural engineering」按 arXiv 分类格式校验就是把
     非 CS 学科挡在门外。"""
+    # 订阅按人存（#806）：得先有一个人，才谈得上订阅和信息流
+    await register_and_login(client)
     from app.core.db import get_sessionmaker
 
     async with get_sessionmaker()() as session:
         saved = await daily_feed.set_subscriptions(
             session,
             [daily_feed.Subscription(source="civil", terms=("structural engineering",))],
+            user=await owner_of(session),
         )
     assert saved[0].terms == ("structural engineering",)
 
@@ -100,11 +104,14 @@ async def test_non_arxiv_terms_are_not_forced_into_arxiv_category_shape(client):
             await daily_feed.set_subscriptions(
                 session,
                 [daily_feed.Subscription(source="arxiv", terms=("not a category!",))],
+                user=await owner_of(session),
             )
 
 
 async def test_legacy_key_keeps_its_flat_shape(client):
     """存量部署的 arXiv 订阅仍存在原键、仍是扁平列表——升级不需要迁移数据。"""
+    # 订阅按人存（#806）：得先有一个人，才谈得上订阅和信息流
+    await register_and_login(client)
     from app.core.db import get_sessionmaker
     from app.services import owner_settings
 
@@ -115,6 +122,7 @@ async def test_legacy_key_keeps_its_flat_shape(client):
                 daily_feed.Subscription(source="arxiv", terms=("cs.AI",)),
                 daily_feed.Subscription(source="civil", terms=("blast loading",)),
             ],
+            user=await owner_of(session),
         )
     async with get_sessionmaker()() as session:
         stored = await owner_settings.read_setting(
@@ -125,6 +133,8 @@ async def test_legacy_key_keeps_its_flat_shape(client):
 
 async def test_arxiv_compat_accessor_preserves_other_sources(client):
     """旧的 set_categories 只动 arXiv 那条，别的源的订阅在另一个键上不受影响。"""
+    # 订阅按人存（#806）：得先有一个人，才谈得上订阅和信息流
+    await register_and_login(client)
     from app.core.db import get_sessionmaker
 
     async with get_sessionmaker()() as session:
@@ -134,21 +144,26 @@ async def test_arxiv_compat_accessor_preserves_other_sources(client):
                 daily_feed.Subscription(source="arxiv", terms=("cs.AI",)),
                 daily_feed.Subscription(source="civil", terms=("blast loading",)),
             ],
+            user=await owner_of(session),
         )
     async with get_sessionmaker()() as session:
-        await daily_feed.set_categories(session, ["cs.CV"])
+        await daily_feed.set_categories(session, ["cs.CV"], user=await owner_of(session))
     async with get_sessionmaker()() as session:
-        subs = {s.source: s.terms for s in await daily_feed.get_subscriptions(session)}
+        owner = await owner_of(session)
+        subs = {s.source: s.terms for s in await daily_feed.get_subscriptions(session, owner)}
     assert subs["arxiv"] == ("cs.CV",)
     assert subs["civil"] == ("blast loading",)  # 没被 arXiv 口径的外壳抹掉
 
 
 async def test_unavailable_source_is_reported_not_silently_skipped(client):
+    # 订阅按人存（#806）：得先有一个人，才谈得上订阅和信息流
+    await register_and_login(client)
     from app.core.db import get_sessionmaker
 
     async with get_sessionmaker()() as session:
         await daily_feed.set_subscriptions(
-            session, [daily_feed.Subscription(source="ghost", terms=("anything",))]
+            session, [daily_feed.Subscription(source="ghost", terms=("anything",))],
+            user=await owner_of(session),
         )
     async with get_sessionmaker()() as session:
         _cats, _entries, statuses = await daily_feed.fetch_new_by_category(session)
@@ -159,6 +174,8 @@ async def test_unavailable_source_is_reported_not_silently_skipped(client):
 
 async def test_entry_with_only_a_doi_reaches_the_pool(client, civil_source):
     """这条是整件事的要害：以前非 arXiv 的条目抓回来了，然后在 upsert 被静默丢掉。"""
+    # 订阅按人存（#806）：得先有一个人，才谈得上订阅和信息流
+    await register_and_login(client)
     from sqlalchemy import select
 
     from app.core.db import get_sessionmaker
@@ -166,7 +183,8 @@ async def test_entry_with_only_a_doi_reaches_the_pool(client, civil_source):
 
     async with get_sessionmaker()() as session:
         await daily_feed.set_subscriptions(
-            session, [daily_feed.Subscription(source="civil", terms=("blast",))]
+            session, [daily_feed.Subscription(source="civil", terms=("blast",))],
+            user=await owner_of(session),
         )
 
     async with get_sessionmaker()() as session:

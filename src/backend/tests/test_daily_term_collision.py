@@ -14,6 +14,7 @@ from app.core.db import get_sessionmaker
 from app.services import daily_feed
 from app.services.daily_feed import Subscription, _merge_status
 from app.services.literature import sources as literature_sources
+from tests.conftest import owner_of, register_and_login
 
 
 class _Stub:
@@ -61,6 +62,7 @@ async def _subscribe_both(term):
                 Subscription(source="keyword", terms=(term,)),
                 Subscription(source="biorxiv", terms=(term,)),
             ],
+            user=await owner_of(session),
         )
         await session.commit()
 
@@ -109,6 +111,8 @@ def test_the_earliest_batch_date_wins_so_a_lagging_source_still_trips_stale():
 
 
 async def test_both_sources_reach_the_pool_when_they_share_a_term(client, two_sources):
+    # 订阅按人存（#806）：得先有一个人，才谈得上订阅和信息流
+    await register_and_login(client)
     two_sources(
         _Stub({"machine learning": [_entry("from-keyword")]}),
         _Stub({"machine learning": [_entry("from-biorxiv")]}),
@@ -128,6 +132,8 @@ async def test_both_sources_reach_the_pool_when_they_share_a_term(client, two_so
 async def test_a_broken_source_does_not_take_the_other_ones_papers_with_it(
     client, two_sources
 ):
+    # 订阅按人存（#806）：得先有一个人，才谈得上订阅和信息流
+    await register_and_login(client)
     two_sources(
         _Stub({"machine learning": [_entry("survivor")]}),
         _Stub({}, fail=True),

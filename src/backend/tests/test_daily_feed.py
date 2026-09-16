@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from tests.conftest import make_project_with_library, register_and_login
+from tests.conftest import make_project_with_library, owner_of, register_and_login
 
 pytestmark = pytest.mark.asyncio
 
@@ -20,8 +20,8 @@ def _daily_subscription_default(monkeypatch):
 
     real = daily_feed.get_categories
 
-    async def with_test_default(session):
-        stored = await real(session)
+    async def with_test_default(session, user):
+        stored = await real(session, user)
         return stored or ["cs.AI", "cs.CL", "cs.CV"]
 
     monkeypatch.setattr(daily_feed, "get_categories", with_test_default)
@@ -73,7 +73,11 @@ async def _run_sync(monkeypatch, by_category: dict[str, list[dict]]) -> dict:
     async with get_sessionmaker()() as session:
         # 订阅分类不再有代码级缺省（#720）：按替身数据显式订阅（空替身给一个占位分类，
         # 维持「订阅了但今天没公告」的旧语义）
-        await daily_feed.set_categories(session, list(by_category) or ["cs.AI"])
+        await daily_feed.set_categories(
+            session,
+            list(by_category) or ["cs.AI"],
+            user=await owner_of(session),
+        )
         return await daily_feed.sync_daily_feed(session)
 
 
@@ -542,9 +546,9 @@ async def test_categories_admin_and_refresh(client, queue_stub):
     # 本文件的 autouse fixture 播种了历史三件套；「没配过就是空」见 test_no_cs_defaults
     assert resp.json()["categories"] == ["cs.AI", "cs.CL", "cs.CV"]
 
-    # 分类只有平台主人能改（#722）；非法格式 422
+    # 订阅归各人自己（#806）：第二个用户改的是他自己那份，不再是 403
     resp = await client.put("/api/daily/categories", json={"categories": ["cs.LG"]}, headers=mh)
-    assert resp.status_code == 403 and resp.json()["detail"] == "OWNER_REQUIRED"
+    assert resp.status_code == 200 and resp.json()["categories"] == ["cs.LG"]
 
     resp = await client.put(
         "/api/daily/categories", json={"categories": ["cs.LG", "stat.ML"]}, headers=ah
@@ -1597,7 +1601,11 @@ async def test_daily_list_puts_cscl_first_and_csro_last(client, monkeypatch):
     )
     async with get_sessionmaker()() as session:
         # cs.RO 不在默认订阅里，先配上，否则抓取不会去拉它
-        await daily_feed.set_categories(session, ["cs.CL", "cs.AI", "cs.RO"])
+        await daily_feed.set_categories(
+            session,
+            ["cs.CL", "cs.AI", "cs.RO"],
+            user=await owner_of(session),
+        )
         _, by_category, _ = await daily_feed.fetch_new_by_category(session)
         await daily_feed.upsert_entries(session, by_category=by_category)
         # 把 Both Paper 也并进 cs.RO 的分类（模拟跨列合并）

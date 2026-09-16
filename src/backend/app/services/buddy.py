@@ -41,7 +41,7 @@ class BuddyStats:
     saved_total: int
     ideas_recent: int  # 最近 7 天在自己参与的课题里新增的想法
     experiments_running: int
-    daily_today: int  # 今天的新论文（全平台）
+    daily_today: int  # 今天的新论文里**他订了的**那些（#806）
     reading_now: int  # 标了「在读」还没读完的论文——搁在半路的事最值得被问一句
     manuscripts_active: int  # 自己课题下在写的稿子
     topics: int  # 参与的课题数；0 = 还没开张，问候语要走冷启动那条
@@ -104,10 +104,20 @@ async def collect_stats(session: AsyncSession, *, user_id: uuid.UUID) -> BuddySt
             Experiment.trashed_at.is_(None),
         )
     )
+    # 这个函数报的是「他自己的近况」，所以今日新论文也得是他订的那些（#806）：
+    # 报整池的数，屏幕上的数字和他信息流里能看到的条数对不上
+    from app.models.user import User
+    from app.services.daily_feed import only_subscribed_entries
+
+    me = await session.get(User, user_id)
     daily_today = await count(
-        select(func.count())
-        .select_from(DailyFeedEntry)
-        .where(DailyFeedEntry.feed_date == dt.datetime.now(dt.UTC).date())
+        await only_subscribed_entries(
+            session,
+            select(func.count())
+            .select_from(DailyFeedEntry)
+            .where(DailyFeedEntry.feed_date == dt.datetime.now(dt.UTC).date()),
+            me,
+        )
     )
     reading_now = await count(
         select(func.count())
