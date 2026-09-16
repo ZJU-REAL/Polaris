@@ -85,6 +85,17 @@ function LegacyTopicRedirect({ sub }: { sub?: string }) {
   return <Navigate to={topicPath(id, sub) + location.search + location.hash} replace />;
 }
 
+/**
+ * 旧「管理」页 `/admin` → `/settings`（#755）。
+ *
+ * 标签名两边一致（llm / literature / processing / experiment / daily / usage），
+ * 所以 query 原样带过去即可，`/admin?tab=llm` 落到同一块设置上。
+ */
+function AdminRedirect() {
+  const location = useLocation();
+  return <Navigate to={'/settings' + location.search + location.hash} replace />;
+}
+
 /** 旧课题设置页 `/projects/:id` → 工作台「课题设置」标签 `/t/:id?tab=settings`。 */
 function ProjectSettingsRedirect() {
   const { id = '' } = useParams();
@@ -165,7 +176,9 @@ export const router = createBrowserRouter([
       { path: 'mcp-tools', element: <Navigate to="/settings?tab=mcp" replace /> },
       { path: 'settings', element: page(() => import('../features/settings/SettingsPage'), 'SettingsPage') },
       // 管理员设置独立成页（非管理员进来是「无权访问」空态）
-      { path: 'admin', element: page(() => import('../features/settings/AdminSettingsPage'), 'AdminSettingsPage') },
+      // 设置入口只剩一个（#755）：/admin 的六个标签已并进 /settings，旧链接重定向过去。
+      // 保留重定向而不是直接删路由——书签、文档与旧任务日志里都还有 /admin 的链接。
+      { path: 'admin', element: <AdminRedirect /> },
     ],
   },
 ]);

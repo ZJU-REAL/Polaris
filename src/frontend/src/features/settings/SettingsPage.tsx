@@ -44,6 +44,10 @@ import { FullExportSettings } from './FullExportSettings';
 import { PluginsSettings } from './PluginsSettings';
 import { CAPABILITY_PLUGINS_MANAGE, isCapabilityAvailable, loadCapabilities } from '../../lib/host';
 import { AdminSpeechSettings, PersonalSpeechSettings } from './SpeechSettings';
+// 原 /admin 三块（#755）：入口合一后直接在同一页渲染
+import { ExperimentSettings } from './ExperimentSettings';
+import { LiteratureSearchSettingsPanel } from './LiteratureSearchSettings';
+import { DocumentProcessingSettingsPanel } from './DocumentProcessingSettings';
 
 /* ============================================================
    /settings — 个人设置：个人信息 / 界面偏好 / PolarisBuddy / 语音 /
@@ -2319,7 +2323,12 @@ function MyUsageTab() {
 // ---------------- 页面 ----------------
 
 /** 普通用户设置的标签页（管理员那组在 /admin，见 AdminSettingsPage）。 */
-type Tab = 'personal' | 'prefs' | 'buddy' | 'speech' | 'bots' | 'ssh' | 'myusage' | 'extension' | 'mcp' | 'export' | 'plugins';
+type Tab =
+  | 'personal' | 'prefs' | 'buddy' | 'speech' | 'bots' | 'ssh' | 'myusage'
+  | 'extension' | 'mcp' | 'export' | 'plugins'
+  // 原 /admin 的六项（#755）：平台只剩一个使用者，另开一个「管理」入口只是
+  // 实验室时代的残留——同一个人要在两个页面之间找同一类配置
+  | 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | 'usage';
 
 /** 旧的 /settings?tab=xxx 深链里属于管理员组的值 → 统一改跳 /admin。 */
 export const ADMIN_TABS = ['llm', 'daily', 'usage'] as const;
@@ -2786,13 +2795,11 @@ export function SettingsPage() {
   // 清单稍后就绪且能力在，effectiveTab 自动切回 plugins。
   const effectiveTab: Tab = tab === 'plugins' && !pluginsAvailable ? 'personal' : tab;
 
-  // 旧的管理员深链（/settings?tab=llm）改跳新的管理页；
-  // 「我的模型」自管轨并入平台配置后（#621），旧深链也指到那里
+  // 管理页并入本页后（#755），这些标签**就在这里**，不能再往 /admin 跳——
+  // /admin 已经反向重定向到 /settings，两边对跳就是一个死循环。
+  // 「我的模型」自管轨并入平台配置后（#621），旧深链落到模型与路由这一块。
   if (param === 'mymodels') {
-    return <Navigate to="/admin?tab=llm" replace />;
-  }
-  if (param !== null && (ADMIN_TABS as readonly string[]).includes(param)) {
-    return <Navigate to={`/admin?tab=${param}`} replace />;
+    return <Navigate to="/settings?tab=llm" replace />;
   }
 
   const items: { v: Tab; label: string }[] = [
@@ -2807,6 +2814,13 @@ export function SettingsPage() {
     { v: 'mcp', label: tr('MCP 接入', 'MCP access') },
     { v: 'export', label: tr('数据导出', 'Data export') },
     ...(pluginsAvailable ? [{ v: 'plugins' as Tab, label: tr('插件', 'Plugins') }] : []),
+    // —— 原「管理」页的六项，并入同一个入口 ——
+    { v: 'llm', label: tr('模型与路由', 'Models & routing') },
+    { v: 'literature', label: tr('文献检索', 'Literature search') },
+    { v: 'processing', label: tr('文档处理', 'Document processing') },
+    { v: 'experiment', label: tr('实验设置', 'Experiments') },
+    { v: 'daily', label: tr('每日论文', 'Daily papers') },
+    { v: 'usage', label: tr('用量总览', 'Usage overview') },
   ];
 
   return (
@@ -2826,6 +2840,12 @@ export function SettingsPage() {
       {effectiveTab === 'mcp' && <McpToolsContent />}
       {effectiveTab === 'export' && <FullExportSettings />}
       {effectiveTab === 'plugins' && <PluginsSettings />}
+      {effectiveTab === 'llm' && <LlmTab />}
+      {effectiveTab === 'literature' && <LiteratureSearchSettingsPanel />}
+      {effectiveTab === 'processing' && <DocumentProcessingSettingsPanel />}
+      {effectiveTab === 'experiment' && <ExperimentSettings />}
+      {effectiveTab === 'daily' && <DailyCategoriesTab />}
+      {effectiveTab === 'usage' && <UsageTab />}
     </div>
   );
 }
