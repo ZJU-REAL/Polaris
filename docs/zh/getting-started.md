@@ -87,14 +87,14 @@ make down    # 停止并移除容器
 
 按顺序做，每一步为下一步铺路。
 
-1. **配置模型服务商和路由**：进入 **管理 → LLM 管理**（`/admin?tab=llm`）。在这里添加服务商（含密钥）、列出模型，并编辑模型路由表（把每个研究阶段映射到服务商、模型和可选的推理力度）。在至少一条路由可用之前，AI 功能会返回 `LLM_NOT_CONFIGURED`。
-2. **连接 SSH 服务器**（实验阶段需要）：**Settings → SSH credentials**（`/settings?tab=ssh`）。添加主机和密钥，然后点 **Test connection**；凭据用 Fernet 密钥加密存储。管理员侧的实验策略（命令允许/拒绝列表、预算）在 **Admin → Experiments**。
+1. **配置模型服务商和路由**：进入 **设置 → 模型与路由**（`/settings?tab=llm`）。在这里添加服务商（含密钥）、列出模型，并编辑模型路由表（把每个研究阶段映射到服务商、模型和可选的推理力度）。在至少一条路由可用之前，AI 功能会返回 `LLM_NOT_CONFIGURED`。
+2. **连接 SSH 服务器**（实验阶段需要）：**Settings → SSH credentials**（`/settings?tab=ssh`）。添加主机和密钥，然后点 **Test connection**；凭据用 Fernet 密钥加密存储。实验策略（命令允许/拒绝列表、预算）在 **设置 → 实验设置**。
 3. **创建第一个方向文献库**：进入 **Libraries**（`/libraries`）创建。结构化的 AI 访谈会帮你写好收录配置（陈述、目标、范围、排除项），运行收录后会构建语料：候选检索、引文滚雪球、相关性打分、全文抽取和 wiki 编译，整个过程是一个可恢复的任务。
 4. **创建课题并关联文献库**：新建课题（`/projects/new`），再关联一个或多个方向文献库。课题本身不持有论文，语料是所关联文献库的并集。之后就可以按阶段推进流水线，见 [The Voyage agent core](../../docs/concepts.md)。
 5. **可选：启用 PolarisBuddy**：应用内助手的多轮工具循环默认关闭（每轮都重发历史和工具定义，比单轮聊天费钱）。在 `.env` 里设 `POLARIS_CHAT_AGENT_ENABLED=1` 并重启即可启用。
-6. **可选：配置每日 arXiv 订阅**：**管理 → 每日论文** 设置订阅的 arXiv 分类和每日抓取时间。
+6. **可选：配置每日论文订阅**：**设置 → 每日论文** 设置订阅分类和每日抓取时间。
 
-<!-- screenshot: Admin → LLM admin，模型路由表 -->
+<!-- screenshot: 设置 → 模型与路由，模型路由表 -->
 
 ## 常见首跑报错
 
@@ -103,7 +103,7 @@ make down    # 停止并移除容器
 | `make dev` 在构建 `polaris-texbase` 时失败（GitHub 下载卡住或 apt 很慢） | TeX 基础镜像要从 GitHub 下载 tectonic 二进制和中日韩字体包，还有一次大的 apt 安装。受限网络下传镜像参数：`GITHUB_PROXY=https://gh-proxy.com/ APT_MIRROR=repo.huaweicloud.com make texbase`，然后重跑 `make dev`。PyPI 慢就给 compose 构建传 `PIP_INDEX_URL`。见 [Deployment](../../docs/deployment.md#restricted-networks)。 |
 | 启动时报 `port is already allocated` | 5173、8000 或 8080 被占用。设置 `POLARIS_API_PORT` / `POLARIS_FRONTEND_PORT` 并传给 compose（export 出来，或用 `--env-file .env` 跑 compose：Makefile 不会传它，而 compose 的变量插值读的是 compose 文件旁边的 `.env`，不是仓库根目录的）。开发覆盖层里 5173 是固定的。 |
 | API 起来了但每个页面都报错，日志里有 `relation "..." does not exist` | 没跑迁移。执行第 3 步里的 `alembic upgrade head`。之后每次更新带来新迁移时也要再跑。 |
-| AI 功能返回 `LLM_NOT_CONFIGURED`（HTTP 503） | 还没有配置模型服务商，或路由表里没有可用路由。在 **管理 → LLM 管理** 里配置服务商和路由。 |
+| AI 功能返回 `LLM_NOT_CONFIGURED`（HTTP 503） | 还没有配置模型服务商，或路由表里没有可用路由。在 **设置 → 模型与路由** 里配置服务商和路由。 |
 | 保存 SSH 凭据时报和 Fernet 有关的服务器错误 | `POLARIS_ENCRYPTION_KEY` 还是 `.env.example` 里的占位符，不是合法的 Fernet 密钥。设一个真密钥（见第 2 步），或在开发环境留空。注意之后再换密钥会导致已存的凭据无法解密。 |
 | 文献收录什么都搜不到 / arXiv、Semantic Scholar、OpenAlex 超时 | 你的网络直连这些文献 API 不通或不稳。设置 `POLARIS_OUTBOUND_PROXY`（例如 Docker 宿主机上的代理 `http://host.docker.internal:7897`）并重启。 |
 | 改了 worker 代码但行为没变 | 开发覆盖层里 worker 的 `arq --watch` 只会重载配置模块。执行 `docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml restart worker`。 |

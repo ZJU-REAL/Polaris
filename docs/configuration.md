@@ -55,7 +55,7 @@ release.
 | `POLARIS_DATABASE_URL` | Async SQLAlchemy database URL. Falls back to local SQLite when unset, which enables a no-Docker quick start; production uses Postgres with asyncpg. | `postgresql+asyncpg://polaris:polaris@postgres:5432/polaris` (default when unset: `sqlite+aiosqlite:///./polaris_dev.db`) |
 | `POLARIS_DB_POOL_SIZE` / `POLARIS_DB_MAX_OVERFLOW` / `POLARIS_DB_POOL_TIMEOUT` | SQLAlchemy connection pool sizing. The defaults are tuned for the worker's concurrency (parallel scoring sessions per voyage); shrink them only if your Postgres `max_connections` is low. | `20` / `50` / `30` |
 | `POLARIS_REDIS_URL` | Redis URL for the ARQ broker and cache. | `redis://redis:6379/0` (local default `redis://localhost:6379/0`) |
-| `POLARIS_OPENAI_COMPAT_BASE_URL` | Fallback base URL for OpenAI-compatible model routes that leave `base_url` empty. Providers and API keys themselves are configured in-app (Manage → LLM admin) and stored in the database. | `https://api.deepseek.com/v1` |
+| `POLARIS_OPENAI_COMPAT_BASE_URL` | Fallback base URL for OpenAI-compatible model routes that leave `base_url` empty. Providers and API keys themselves are configured in-app (Settings → Models & routing) and stored in the database. | `https://api.deepseek.com/v1` |
 | `POLARIS_S2_API_KEY` | Semantic Scholar API key. Optional; without it rate limits are stricter. | (empty) |
 | `POLARIS_OPENALEX_MAILTO` | Contact email for the OpenAlex polite pool. | `polaris@example.org` |
 | `POLARIS_DATA_DIR` | Directory for PDFs and generated artifacts. In containers this is set to `/srv/data` and bind-mounted; keep it out of the code tree. | `./data` (containers: `/srv/data`) |

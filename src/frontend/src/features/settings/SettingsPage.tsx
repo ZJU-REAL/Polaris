@@ -44,16 +44,20 @@ import { FullExportSettings } from './FullExportSettings';
 import { PluginsSettings } from './PluginsSettings';
 import { CAPABILITY_PLUGINS_MANAGE, isCapabilityAvailable, loadCapabilities } from '../../lib/host';
 import { AdminSpeechSettings, PersonalSpeechSettings } from './SpeechSettings';
-// 原 /admin 三块（#755）：入口合一后直接在同一页渲染
+// 原「管理」页的三块（#755）：入口合一后直接在同一页渲染
 import { ExperimentSettings } from './ExperimentSettings';
 import { LiteratureSearchSettingsPanel } from './LiteratureSearchSettings';
 import { DocumentProcessingSettingsPanel } from './DocumentProcessingSettings';
 
 /* ============================================================
-   /settings — 个人设置：个人信息 / 界面偏好 / PolarisBuddy / 语音 /
-   群机器人 / SSH 凭据 / 用量 / 扩展 / MCP 接入。
-   管理那组（LLM 管理、每日论文、用量总览）搬到了 /admin
-   （AdminSettingsPage），但标签页组件仍住在本文件里 export 出去复用。
+   /settings — 全平台唯一的设置入口（#755）：个人信息 / 界面偏好 /
+   PolarisBuddy / 语音 / 群机器人 / SSH 凭据 / 用量 / 扩展 / MCP 接入 /
+   数据导出 / 插件，加上原「管理」页的六项：模型与路由 / 文献检索 /
+   文档处理 / 实验 / 每日论文 / 用量总览。
+
+   曾经分成 /settings 与 /admin 两页，是实验室时代「管理员 vs 成员」的
+   残留；平台面向个人之后两边是同一个人，找同一类配置却要猜在哪一页。
+   /admin 现在只是一条指向这里的重定向（见 routes.tsx）。
    ============================================================ */
 
 const KINDS: LlmProviderKind[] = ['openai_compat', 'anthropic'];
@@ -2322,16 +2326,13 @@ function MyUsageTab() {
 
 // ---------------- 页面 ----------------
 
-/** 普通用户设置的标签页（管理员那组在 /admin，见 AdminSettingsPage）。 */
+/** 设置页的标签页。原「管理」那六项自 #755 起也在这里。 */
 type Tab =
   | 'personal' | 'prefs' | 'buddy' | 'speech' | 'bots' | 'ssh' | 'myusage'
   | 'extension' | 'mcp' | 'export' | 'plugins'
   // 原 /admin 的六项（#755）：平台只剩一个使用者，另开一个「管理」入口只是
   // 实验室时代的残留——同一个人要在两个页面之间找同一类配置
   | 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | 'usage';
-
-/** 旧的 /settings?tab=xxx 深链里属于管理员组的值 → 统一改跳 /admin。 */
-export const ADMIN_TABS = ['llm', 'daily', 'usage'] as const;
 
 // ---------------- 每日新论文订阅分类（admin） ----------------
 
