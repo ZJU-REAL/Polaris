@@ -343,11 +343,17 @@ async def list_conversations(
     return list((await session.execute(stmt)).scalars().all())
 
 
-async def generate_title(llm: Any, *, question: str, answer: str) -> str:
+async def generate_title(
+    llm: Any, *, question: str, answer: str, user_id: uuid.UUID | None = None
+) -> str:
     """给这场对话起个短名字（≤15 字）。
 
     用**最便宜的那档**模型、只发一小段上下文：标题是导航用的，不值得为它花一次
     正经推理。取不到就退回问题的前 15 字——那至少是用户自己的话。
+
+    ``user_id`` 既决定走谁的模型配置（#803 起每人可以有自己那份），也决定这次
+    调用记在谁账上。不传就只走部署级配置——这场对话明明是某个人的，那笔账却
+    落不到他头上。
     """
     fallback = question.strip().replace("\n", " ")[:TITLE_MAX_CHARS]
     prompt = (
@@ -356,7 +362,9 @@ async def generate_title(llm: Any, *, question: str, answer: str) -> str:
         f"问：{question.strip()[:300]}\n答：{answer.strip()[:300]}"
     )
     try:
-        result = await llm.complete("default", [Message(role="user", content=prompt)])
+        result = await llm.complete(
+            "default", [Message(role="user", content=prompt)], user_id=user_id
+        )
         title = (result.content or "").strip().strip('"「」\'').splitlines()[0]
     except Exception:  # noqa: BLE001 — 起名失败不该影响这轮对话
         return fallback
