@@ -525,6 +525,7 @@ async def create_library(
     cadence: str | None = None,
     keywords: dict[str, Any] | None = None,
     monthly_budget: int | None = None,
+    discipline: str | None = None,
     created_by: uuid.UUID,
 ) -> DirectionLibrary:
     """用户独立新建方向文献库（P10；``project_id`` 恒为 NULL——不属于任何课题，靠关联被消费）。
@@ -554,6 +555,7 @@ async def create_library(
         cadence=cadence,
         definition=definition or None,  # P8a：独立库同样以 definition 为收录配置权威源
         monthly_budget=monthly_budget,
+        discipline=discipline or None,  # 空串按「通用」存，不是一个叫 "" 的学科
         submitted_by=created_by,  # 归属人单列（#734 起 created_by 副本列已删）
         project_id=None,
     )

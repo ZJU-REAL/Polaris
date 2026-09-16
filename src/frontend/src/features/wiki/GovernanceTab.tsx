@@ -9,6 +9,7 @@ import {
   type InclusionValue,
 } from '../libraries/InclusionSettingsForm';
 import { InterdisciplinaryScopePanel } from '../projects/InterdisciplinaryScopePanel';
+import { DisciplineSelect, disciplineFieldValue } from '../libraries/DisciplineSelect';
 
 /** library.definition → 收录设置表单初值 */
 function fromDefinition(def: ProjectDefinition | null): InclusionValue {
@@ -422,13 +423,10 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
 /**
  * 选择框的值 → PATCH 里的 discipline。
  *
- * 空串代表「通用（不限学科）」，必须发 **null** 而不是 ""：后端拿 "" 去比对已装的
- * 包名，匹配不到就按未知学科 400 掉。界面上的表现是「想清空学科，保存却失败」，
- * 而错误信息说的是一个用户从没输入过的值。
+ * 保留这个再导出：既有用例按这个名字断言「清空要发 null 而不是空串」，
+ * 而那条判据本身搬到了共用组件里。
  */
-export function disciplinePatchValue(selected: string): string | null {
-  return selected || null;
-}
+export const disciplinePatchValue = disciplineFieldValue;
 
 function DisciplineCard({
   lib,
@@ -442,12 +440,6 @@ function DisciplineCard({
 
   useEffect(() => setValue(lib.discipline ?? ''), [lib.id, lib.discipline]);
 
-  const packs = useQuery({
-    queryKey: ['disciplines'],
-    queryFn: () => api.listDisciplines(),
-    retry: false,
-  });
-
   const save = useMutation({
     // 空字符串 = 清空，回到内置口径；后端按 null 处理
     mutationFn: () => api.updateLibrary(lib.id, { discipline: disciplinePatchValue(value) }),
@@ -459,12 +451,7 @@ function DisciplineCard({
     onError: () => toast(tr('保存失败，请重试', 'Save failed, please retry'), 'error'),
   });
 
-  const options = packs.data ?? [];
-  const current = options.find((p) => p.name === value);
   const dirty = (lib.discipline ?? '') !== value;
-  // 库里存着一个已经被卸载的包名：不补这一项的话，下拉框找不到匹配值会显示成空白，
-  // 看起来像「通用」，而库里其实还存着那个名字、抽取又确实不按它走。得说破。
-  const missing = !!value && !packs.isLoading && !current;
 
   return (
     <section className="card" style={{ padding: 18 }}>
@@ -487,64 +474,7 @@ function DisciplineCard({
         )}
       </p>
 
-      {packs.isError ? (
-        <p className="muted" style={{ fontSize: 12 }}>
-          {tr('学科清单读取失败。', 'Could not load the discipline list.')}
-        </p>
-      ) : (
-        <div className="col gap8">
-          <select
-            className="input"
-            value={value}
-            disabled={readOnly || packs.isLoading}
-            onChange={(e) => setValue(e.target.value)}
-            style={{ maxWidth: 360 }}
-          >
-            <option value="">{tr('通用（不限学科）', 'General (no discipline)')}</option>
-            {missing && (
-              <option value={value}>
-                {value}
-                {tr('（学科包已不在）', ' (pack no longer installed)')}
-              </option>
-            )}
-            {options.map((p) => (
-              <option key={p.name} value={p.name}>
-                {p.title}
-              </option>
-            ))}
-          </select>
-          {current?.description && (
-            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-              {current.description}
-            </p>
-          )}
-          {missing && (
-            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-              {tr(
-                '这个库选的学科包已经不在数据目录里了，抽取已回到通用口径。把 YAML 放回去，或改选一个别的。',
-                'The pack this library selected is no longer in the data directory, so extraction has fallen back to the general fields. Put the YAML back, or pick another.',
-              )}
-            </p>
-          )}
-          {/* 装了包却一条 schema 都没有 = 选了也没效果。与其让人以为生效了，不如说破 */}
-          {current && current.schema_count === 0 && (
-            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-              {tr(
-                '这个学科包没有带来任何抽取 schema，选它不会改变抽取口径。',
-                'This pack brings no extraction schema, so choosing it changes nothing.',
-              )}
-            </p>
-          )}
-          {!packs.isLoading && options.length === 0 && (
-            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-              {tr(
-                '还没有装任何学科包。把 YAML 放进数据目录的 disciplines/ 下就会出现在这里。',
-                'No discipline packs installed. Drop a YAML into disciplines/ in the data directory and it shows up here.',
-              )}
-            </p>
-          )}
-        </div>
-      )}
+      <DisciplineSelect value={value} onChange={setValue} disabled={readOnly} />
     </section>
   );
 }

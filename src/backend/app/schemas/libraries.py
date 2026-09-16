@@ -76,6 +76,10 @@ class LibraryCreate(BaseModel):
     rubric: Any | None = None
     anchors: list[Any] | None = None
     keywords: dict[str, Any] | None = None  # {arxiv_categories, include, exclude, synonyms}
+    #: 学科包名。决定本库论文按哪套抽取 schema 走，所以属于建库时就该问的事——
+    #: 建完再去库设置里改，改之前抽取的论文已经按内置口径存下来了。
+    #: 未知包名由 API 层拒绝，与 PATCH 同一个判据。
+    discipline: str | None = Field(default=None, max_length=64)
 
 
 class SourceLibrariesUpdate(BaseModel):

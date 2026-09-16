@@ -175,6 +175,26 @@ async def list_libraries(
     return [DirectionLibrarySummary(**row) for row in rows]
 
 
+def _require_known_discipline(discipline: str | None) -> None:
+    """学科名必须对应一个真的已装学科包。
+
+    存一个匹配不到任何 schema 的名字，表现是「选了学科但抽取口径没变」——
+    看起来生效了，其实静默无效。建库与改库共用这一个判据，免得两条路
+    各校验各的，从其中一条溜进去一个装不上的名字。
+    """
+    if not discipline:
+        return
+    from app.services.discipline_packs import known_disciplines
+
+    available = known_disciplines()
+    if discipline not in available:
+        installed = ", ".join(sorted(available)) or "无"
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"UNKNOWN_DISCIPLINE: {discipline}（已装：{installed}）",
+        )
+
+
 @router.post(
     "/libraries", response_model=DirectionLibraryDetail, status_code=status.HTTP_201_CREATED
 )
@@ -188,6 +208,7 @@ async def create_library(
     想公开给所有人在库设置里直接打开 is_public（审批流已随 #593/#596 移除）。
     不属于任何课题。
     """
+    _require_known_discipline(data.discipline)
     library = await libraries_service.create_library(
         session,
         name=data.name,
@@ -197,6 +218,7 @@ async def create_library(
         cadence=data.cadence,
         keywords=data.keywords,
         monthly_budget=data.monthly_budget,
+        discipline=data.discipline,
         created_by=user.id,
     )
     await session.commit()
@@ -335,19 +357,7 @@ async def update_library(
     """
     library = await _get_managed_library(session, library_id, user)
     fields = data.model_dump(exclude_unset=True)
-    # 学科名必须对应一个真的已装学科包：存一个匹配不到任何 schema 的名字，
-    # 表现是「选了学科但抽取口径没变」——看起来生效了，其实静默无效。
-    discipline = fields.get("discipline")
-    if discipline:
-        from app.services.discipline_packs import known_disciplines
-
-        available = known_disciplines()
-        if discipline not in available:
-            installed = ", ".join(sorted(available)) or "无"
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f"UNKNOWN_DISCIPLINE: {discipline}（已装：{installed}）",
-            )
+    _require_known_discipline(fields.get("discipline"))
     if fields:
         library = await libraries_service.update_library(session, library=library, fields=fields)
     row = await libraries_service.library_overview(session, library=library, user=user)
