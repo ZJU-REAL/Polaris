@@ -52,6 +52,7 @@ from app.services import buddy
 from app.services import conversations as store
 from app.services import projects as projects_service
 from app.tools.context import ToolContext
+from app.tools.memory import MEMORY_TOOL_NAMES
 from app.tools.scope import visible_library_ids
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -390,8 +391,9 @@ async def run_turn(
         library_ids=None if project_id else library_ids,
         llm=get_llm_router(),
         user_id=user.id,
-        # 只为记忆开写：工具面里唯一非只读的就是 remember
-        allow_writes=memory_on,
+        # 点名授权记忆工具，而不是「这一轮允许写」：以后注册表里多一个写工具时，
+        # 它不会因为这一行而顺带对每个开了记忆的会话生效（#793）
+        writable=frozenset(MEMORY_TOOL_NAMES) if memory_on else frozenset(),
     )
     loop = ChatAgentLoop(llm=get_llm_router(), tool_ctx=tool_ctx, history=history)
     req = ChatTurnRequest(

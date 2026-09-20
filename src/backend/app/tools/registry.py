@@ -42,8 +42,9 @@ class ToolResult:
 class ToolWriteDenied(PermissionError):
     """要执行写工具，但这个上下文没有写权限。
 
-    正常路径上不该出现——写工具只会出现在明确开了 ``allow_writes`` 的会话里。它出现
-    就说明有条路径漏了检查（比如 MCP 那边没过滤只读），所以是硬失败而不是软降级。
+    正常路径上不该出现——写工具只会出现在**点名授权**了它的会话里（见
+    ``ToolContext.writable``）。它出现就说明有条路径漏了检查（比如 MCP 那边没过滤
+    只读），所以是硬失败而不是软降级。
     """
 
     def __init__(self, name: str) -> None:
@@ -177,9 +178,10 @@ async def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> ToolRet
         raise ValueError(f"未知工具：{name}（可用：{', '.join(sorted(_REGISTRY))}）")
     if not isinstance(args, dict):
         raise ValueError("工具参数必须是 JSON 对象")
-    if not spec.read_only and not ctx.allow_writes:
-        # 默认拒绝：调用方必须显式开写权限（且已经走完审批）。这条守卫让"忘了传
-        # allow_writes"的后果是拒绝执行，而不是静默改数据。
+    if not spec.read_only and name not in ctx.writable:
+        # 默认拒绝：调用方必须**点名**授权这个工具（且已经走完审批）。这条守卫让
+        # "忘了授权"的后果是拒绝执行，而不是静默改数据；而按名字授权让"授权了另一个
+        # 写工具"不再顺带把这个也放进来。
         raise ToolWriteDenied(name)
     return await spec.handler(ctx, args)
 
