@@ -142,13 +142,27 @@ through a DB-backed routing table, editable from the admin panel. This lets chea
 scoring while strong models handle idea debate and paper drafting. All calls go through the single
 `app/core/llm/` abstraction; see [Architecture](architecture.md#the-llm-abstraction-and-model-routing).
 
+### Provider protocols
+
+Each provider speaks one protocol, chosen when you add it:
+
+| Protocol | Endpoint | Use it for |
+|---|---|---|
+| OpenAI Chat Completions (`openai_compat`) | `POST {base_url}/chat/completions` | DeepSeek, Qwen, vLLM, LiteLLM and most gateways |
+| OpenAI Responses (`openai_responses`) | `POST {base_url}/responses` | OpenAI models and gateways that only expose the Responses API |
+| Anthropic Messages (`anthropic`) | `POST {base_url}/v1/messages` | Claude via the native API |
+
+The Responses provider supports text, images, tool calls, reasoning effort (`reasoning.effort`) and
+streaming. Embedding and rerank calls on a Responses provider use the same endpoints as the Chat
+Completions provider (`/embeddings`, `/rerank`).
+
 ### Reasoning effort
 
 Each route can also carry a **reasoning effort** — how much the model is allowed to think before
 answering. Leave it unset (the default) and Polaris sends no effort parameter at all, so the model
 uses its own default; existing routes are unaffected. Levels are `none`, `minimal`, `low`, `medium`,
-`high`, `xhigh`, `max`, sent as `reasoning_effort` to OpenAI-compatible endpoints and as
-`output_config.effort` to the native Anthropic API.
+`high`, `xhigh`, `max`, sent as `reasoning_effort` to OpenAI-compatible endpoints, as
+`reasoning.effort` to the Responses API, and as `output_config.effort` to the native Anthropic API.
 
 Support varies by model, and not every level is valid on every model that accepts the parameter —
 a model may accept `low` but reject `minimal`. Polaris does not keep a per-model whitelist. If the

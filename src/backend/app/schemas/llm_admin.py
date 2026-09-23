@@ -8,7 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.llm.base import EffortLevel
 
-ProviderKind = Literal["openai_compat", "anthropic", "fake"]
+#: 协议由配置的人显式选，不按模型名猜：同一个模型在不同网关上可能暴露不同接口（#809）。
+ProviderKind = Literal["openai_compat", "openai_responses", "anthropic", "fake"]
 UserAgent = Annotated[str, Field(max_length=255, pattern=r"^[^\r\n]*$")]
 #: rerank 端点路径。必须以 / 开头：它是接在 base_url 后面的路径，不是完整 URL；
 #: 不带斜杠会拼成 ``https://host/v1rerank`` 这种既不报错也永远打不通的地址。

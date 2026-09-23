@@ -227,13 +227,27 @@ def _build_provider(provider: LLMProviderConfig) -> LLMProvider:
         return OpenAICompatProvider(
             base_url=base_url, api_key=api_key, rerank_path=provider.rerank_path
         )
+    if provider.kind == "openai_responses":
+        from app.core.config import get_settings
+        from app.core.llm.openai_responses import OpenAIResponsesProvider
+
+        base_url = provider.base_url or get_settings().openai_compat_base_url
+        # rerank 继承自 compat provider，路径同样要带上
+        return OpenAIResponsesProvider(
+            base_url=base_url, api_key=api_key, rerank_path=provider.rerank_path
+        )
     if provider.kind == "anthropic":
         return AnthropicProvider(
             api_key=api_key,
             base_url=provider.base_url,
             user_agent=provider.user_agent,
         )
-    return FakeProvider()
+    if provider.kind == "fake":
+        return FakeProvider()
+    # 以前这里对任何没认出来的类型都回退 FakeProvider——于是新加一种协议而忘了改
+    # 这里，「测试连接」就会去探一个假 provider 并报告成功，真实服务一次都没碰过。
+    # 宁可报错。
+    raise ValueError(f"unknown LLM provider kind: {provider.kind!r}")
 
 
 async def probe_model(

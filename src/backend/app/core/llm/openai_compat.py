@@ -70,6 +70,19 @@ def _tools_unsupported(body: str) -> bool:
     return any(marker in low for marker in _TOOLS_REJECT_MARKERS)
 
 
+def _sends_effort(payload: dict[str, Any]) -> bool:
+    """这次请求发了推理档位吗。
+
+    Chat Completions 放在顶层 ``reasoning_effort``，Responses API 放在
+    ``reasoning.effort``。只认前者的话，Responses 那边「中转把不支持该参数包成 5xx」
+    会被当成临时故障，白白退避重试好几轮才交回上层。
+    """
+    if payload.get("reasoning_effort") is not None:
+        return True
+    reasoning = payload.get("reasoning")
+    return isinstance(reasoning, dict) and reasoning.get("effort") is not None
+
+
 def _rejects_effort(body: str) -> bool:
     """错误信息提到 effort —— 仅在本次确实发了该参数时才做此判断。"""
     low = body.lower()
@@ -261,7 +274,7 @@ class OpenAICompatProvider(LLMProvider):
                 continue
             if (
                 resp.status_code in _RETRYABLE_STATUS
-                and payload.get("reasoning_effort") is not None
+                and _sends_effort(payload)
                 and _rejects_effort(resp.text)
             ):
                 # 中转把「不支持该参数」包成了 5xx：这不是临时故障，重试多少次都一样，

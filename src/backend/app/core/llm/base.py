@@ -191,6 +191,28 @@ def normalize_finish_reason(raw: str | None) -> str | None:
     return raw
 
 
+def normalize_usage(raw: dict[str, Any] | None) -> dict[str, int]:
+    """usage 键名归一成平台口径。
+
+    Anthropic 与 OpenAI Responses API 给的都是 ``input_tokens`` / ``output_tokens``，
+    而记账读的是 ``prompt_tokens`` / ``completion_tokens``，读不到就按 len/4 估——
+    **此前走 Anthropic 的用量统计因此全是估算值**，而且不报任何错。归一化放在
+    provider 里做，不污染 router；两家共用这一份，免得第三家再踩一次。
+
+    嵌套的明细（``input_tokens_details`` 之类）不是整数，直接丢掉：记账只认整数。
+    """
+    if not raw:
+        return {}
+    usage = dict(raw)
+    if "input_tokens" in usage:
+        usage["prompt_tokens"] = int(usage["input_tokens"])
+    if "output_tokens" in usage:
+        usage["completion_tokens"] = int(usage["output_tokens"])
+    if "prompt_tokens" in usage and "completion_tokens" in usage:
+        usage.setdefault("total_tokens", usage["prompt_tokens"] + usage["completion_tokens"])
+    return {k: v for k, v in usage.items() if isinstance(v, int)}
+
+
 class ToolsUnsupportedError(RuntimeError):
     """这个模型/中转不认 tools 参数。由调用方降级（退回无工具的一次性问答）。"""
 

@@ -33,6 +33,7 @@ from app.core.llm.base import (
 )
 from app.core.llm.fake import FakeProvider, estimate_tokens
 from app.core.llm.openai_compat import OpenAICompatProvider
+from app.core.llm.openai_responses import OpenAIResponsesProvider
 from app.core.security import decrypt_secret
 
 logger = logging.getLogger(__name__)
@@ -211,7 +212,7 @@ _CAPABILITY_STAGES = frozenset({"embedding", "rerank"})
 
 @dataclass(slots=True, frozen=True)
 class ResolvedRoute:
-    provider_kind: str  # openai_compat | anthropic | fake
+    provider_kind: str  # openai_compat | openai_responses | anthropic | fake
     base_url: str | None
     api_key: str
     model: str
@@ -505,6 +506,16 @@ class LLMRouter:
                 base_url = route.base_url or get_settings().openai_compat_base_url
                 self._providers[key] = OpenAICompatProvider(
                     base_url=base_url,
+                    api_key=route.api_key,
+                    timeout=timeout,
+                    max_attempts=attempts,
+                    rerank_path=route.rerank_path,
+                )
+            elif route.provider_kind == "openai_responses":
+                # 与 openai_compat 同一族：base_url 缺省回退、鉴权、rerank 路径都一样，
+                # 只是对话走 /responses（#809）
+                self._providers[key] = OpenAIResponsesProvider(
+                    base_url=route.base_url or get_settings().openai_compat_base_url,
                     api_key=route.api_key,
                     timeout=timeout,
                     max_attempts=attempts,

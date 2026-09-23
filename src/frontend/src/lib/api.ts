@@ -654,7 +654,7 @@ export interface GateRead {
 // Admin · LLM
 // ============================================================
 
-export type LlmProviderKind = 'openai_compat' | 'anthropic' | 'fake';
+export type LlmProviderKind = 'openai_compat' | 'openai_responses' | 'anthropic' | 'fake';
 
 /** 与后端 `app/core/llm/router.py` 的 STAGES 保持一致（大白话名字见 lib/stageLabels.ts）。
  *
