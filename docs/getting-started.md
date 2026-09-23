@@ -9,8 +9,8 @@ see [Deployment](deployment.md); for the full environment variable reference, se
 > [!TIP]
 > Just want Polaris on your own machine? The [desktop app](desktop.md) is the zero-setup path: it
 > ships its own local backend (SQLite, no Docker, no external services) and bootstraps it on first
-> launch — there is no login and nothing to configure. This guide is for the multi-user server
-> form.
+> launch — there is no login and nothing to configure. The local engine needs **v0.4.0 or later**;
+> v0.3.x installers still ask for a server address. This guide is for the multi-user server form.
 
 ## Prerequisites check
 

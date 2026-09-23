@@ -193,14 +193,20 @@ app checks for updates and applies them without a restart where it can.
 The builds are **neither signed nor notarized**, so each platform needs to be told once that the app is
 safe to run: on macOS `xattr -dr com.apple.quarantine /Applications/Polaris.app` (or right-click →
 Open); on Windows choose More info → Run anyway past SmartScreen; on Linux the AppImage needs
-`libnss3 libgtk-3-0 libasound2`, and `--no-sandbox` under Ubuntu 24.04+ AppArmor. On first run the app
-asks for your lab's Polaris server address and validates it against `/api/health`; the server must
-whitelist the desktop origin, since the page is served from `app://polaris` and every request is
-cross-origin.
+`libnss3 libgtk-3-0 libasound2`, and `--no-sandbox` under Ubuntu 24.04+ AppArmor.
 
-The Electron shell (`src/desktop/`) is a shell plus a small local process, not an offline build:
-Postgres, Redis, the worker, and all LLM calls stay on the remote server, and the renderer talks to it
-directly. To build it yourself:
+Since **v0.4.0** the app is an offline, single-machine build: it ships its own Python backend and
+bootstraps it on first launch (SQLite, no Docker, no login, no server address). The first launch
+downloads a Python toolchain and dependencies, which can take a few minutes; later launches start
+immediately. If the local engine cannot start, the app falls back to asking for a Polaris server
+address, which is also how you connect to a shared multi-user server.
+
+> [!NOTE]
+> **v0.3.x and earlier** are remote-only shells: they always ask for a server address on first run.
+> They cannot update themselves into the local-engine build — download a v0.4.0+ installer from
+> [Releases](https://github.com/ZJU-REAL/Polaris/releases/latest) and install it over the old one.
+
+To build it yourself:
 
 ```bash
 make desktop-deps           # install the shell's dependencies (once)
