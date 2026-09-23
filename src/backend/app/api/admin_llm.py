@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
+from app.core.llm.budgets import CHARS_PER_WINDOW_TOKEN, INPUT_BUDGETS
 from app.models.llm_config import LLMCallLog, LLMProviderConfig
 from app.models.user import User
 from app.schemas.llm_admin import (
@@ -17,6 +18,7 @@ from app.schemas.llm_admin import (
     CallLogPage,
     CallLogRow,
     CallLogSettings,
+    InputBudgetSpec,
     ProviderCreate,
     ProviderRead,
     ProviderUpdate,
@@ -133,6 +135,24 @@ async def replace_routes(
     except llm_admin_service.InvalidRouteError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return [RouteItem.model_validate(r, from_attributes=True) for r in routes]
+
+
+@router.get("/input-budgets", response_model=list[InputBudgetSpec])
+async def list_input_budgets(
+    _scope: uuid.UUID | None = Depends(config_scope),
+) -> list[InputBudgetSpec]:
+    """可调的输入预算清单（#811）。设置页照这张表画输入框，不在前端另抄一份。"""
+    return [
+        InputBudgetSpec(
+            stage=b.stage,
+            key=b.key,
+            default=b.default,
+            minimum=b.minimum,
+            maximum=b.maximum,
+            chars_per_window_token=CHARS_PER_WINDOW_TOKEN,
+        )
+        for b in INPUT_BUDGETS
+    ]
 
 
 @router.post("/test-model", response_model=TestModelResult)

@@ -30,6 +30,7 @@ from app.agents.voyage.actions import ActionContext, register
 from app.core.db import get_sessionmaker
 from app.core.embedding_space import EmbeddingSpace
 from app.core.llm.base import Message
+from app.core.llm.budgets import FORGE_CONTEXT, FORGE_EXCERPT, resolve_budget
 from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.idea import Idea
@@ -61,8 +62,6 @@ DEFAULT_FORGE_KNOBS: dict[str, Any] = {
 DEFAULT_ROUNDS = 2
 
 _MAX_JSON_ATTEMPTS = 3  # 首次 + 重试 2 次
-_CONTEXT_CHARS = 12000  # 知识库上下文注入 prompt 的总长上限
-_WIKI_EXCERPT_CHARS = 800
 _RERANK_CONFIRM_SCORE = 0.5  # 余弦超阈后 rerank 复核的确认线
 _SCORE_DIMS = ("novelty", "feasibility", "operability", "impact")
 
@@ -240,11 +239,17 @@ async def forge_read_context(ctx: ActionContext, params: dict[str, Any]) -> dict
             else []
         )
 
+    # 两个预算都可以按环节调（设置 → 模型路由 → Idea Forge，#811）：单篇 wiki 摘录
+    # 多长、整段知识库上下文总共多长。默认 800 / 12000，与改成可调之前一致。
+    # 截断顺序：先按单篇截，再按总长截——总长截断会落在某一篇中间，排在后面（相关性
+    # 更低）的论文先被挤掉。
+    excerpt_chars = await resolve_budget(ctx.llm, FORGE_EXCERPT, ctx.run.created_by)
+    context_chars = await resolve_budget(ctx.llm, FORGE_CONTEXT, ctx.run.created_by)
     parts = []
     for paper in papers:
-        excerpt = (wiki_of.get(paper.id) or "")[:_WIKI_EXCERPT_CHARS]
+        excerpt = (wiki_of.get(paper.id) or "")[:excerpt_chars]
         parts.append(f"### {paper.title}\nTL;DR：{paper.tldr or '（无）'}\n{excerpt}")
-    context_text = "\n\n".join(parts)[:_CONTEXT_CHARS] or "（知识库为空）"
+    context_text = "\n\n".join(parts)[:context_chars] or "（知识库为空）"
 
     ctx.checkpoint["forge_context"] = {
         "paper_ids": [str(p.id) for p in papers],

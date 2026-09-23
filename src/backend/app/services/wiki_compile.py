@@ -7,6 +7,7 @@
 无 PDF / 无图时退化为纯文字编译（正文优先全文，缺全文用摘要）。
 """
 
+import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.base import Message
+from app.core.llm.budgets import LIBRARIAN_FULLTEXT, resolve_budget
 from app.core.llm.router import LLMRouter, get_llm_router
 from app.models.paper import Paper
 from app.services import file_projection
@@ -42,7 +44,11 @@ from app.services.literature.pdf_extract import extract_figures
 from app.services.paper_wiki import upsert_wiki
 from app.services.papers import PaperView
 
-FULLTEXT_PROMPT_CHARS = 24000
+# 正文进 prompt 的默认预算。可按环节调（设置 → 模型路由 → Librarian，#811），
+# 这里只是登记表里那条的默认值，留着这个名字给引用它的注释和测试。
+FULLTEXT_PROMPT_CHARS = LIBRARIAN_FULLTEXT.default
+
+logger = logging.getLogger(__name__)
 
 # 行内图片标记 ![[fig:N]]（N = Paper.figures 的 index）
 FIGURE_MARKER_RE = re.compile(r"!\[\[fig:(\d+)\]\]")
@@ -120,16 +126,28 @@ def _figure_prompt_section(selected: list[tuple[dict[str, Any], bytes]]) -> str:
     return "\n".join(lines)
 
 
-def build_compile_prompt(paper: Paper) -> tuple[str, list[bytes]]:
+def build_compile_prompt(
+    paper: Paper, fulltext_chars: int = FULLTEXT_PROMPT_CHARS
+) -> tuple[str, list[bytes]]:
     """组装编译 user prompt 与随附图片（无重要图时 images 为空 → 纯文字编译）。
 
-    只喂论文本身：解读全平台唯一一份，不带任何库的方向陈述 / rubric 侧重。"""
+    只喂论文本身：解读全平台唯一一份，不带任何库的方向陈述 / rubric 侧重。
+    正文超出 ``fulltext_chars`` 时保留开头、截掉其后部分——论文的问题、方法与主要
+    结果集中在前面，附录与参考文献在后面，截尾丢的是最不要紧的部分。"""
     body: str | None = None
     source = "abstract"
     if paper.full_text_path and Path(paper.full_text_path).exists():
         body = Path(paper.full_text_path).read_text(encoding="utf-8", errors="ignore")
         source = "full_text"
-    body = (body or paper.abstract or "（无正文）")[:FULLTEXT_PROMPT_CHARS]
+    body = body or paper.abstract or "（无正文）"
+    if len(body) > fulltext_chars:
+        logger.info(
+            "librarian: paper %s body %d chars cut to the %d-char input budget",
+            paper.id,
+            len(body),
+            fulltext_chars,
+        )
+        body = body[:fulltext_chars]
     authors = "、".join(a.get("name", "") for a in (paper.authors or []) if isinstance(a, dict))
     prompt = (
         f"标题：{paper.title}\n"
@@ -181,14 +199,15 @@ async def compile_paper(
     让它残留进 wiki，也绝不因解析失败让编译失败。
     """
     llm = llm or get_llm_router()
-    user_prompt, images = build_compile_prompt(paper)
+    fulltext_chars = await resolve_budget(llm, LIBRARIAN_FULLTEXT, user_id)
+    user_prompt, images = build_compile_prompt(paper, fulltext_chars)
     evidence_bundle: AIEvidenceBundle | None = None
     if session is not None and library_id is not None:
         evidence_bundle = await build_paper_evidence_context(
             session,
             paper=paper,
             library_ids=[library_id],
-            char_budget=FULLTEXT_PROMPT_CHARS,
+            char_budget=fulltext_chars,
         )
         if evidence_bundle.context:
             user_prompt += evidence_guidance(evidence_bundle.as_dict())

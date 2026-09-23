@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e3a7c91f20b6"  # provider 的 rerank 路径 (#810)
+HEAD_REVISION = "a8d3e5f71c42"  # 路由的输入预算 (#811)
+RERANK_PATH_REVISION = "e3a7c91f20b6"  # provider 的 rerank 路径 (#810)
 DAILY_SUBS_REVISION = "c1d80a3fb492"  # 每日订阅按人存 (#806)
 SKILLS_DROP_REVISION = "d7f4a16c8e29"  # 技能功能移除 (#755)
 VECTOR_SCOPE_REVISION = "c5e02a9b31d7"  # Method vectors scoped to their card (#772)
@@ -644,8 +645,16 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "ix_paper_extractions_paper_id" in _index_names(db_path, "paper_extractions")
     # rerank 端点路径可配（#810）：各家路径不统一，差异存在 provider 上
     assert "rerank_path" in columns["llm_providers"]
+    # 按环节的输入预算（#811）：路由上的覆盖值，NULL = 全用默认
+    assert "input_budgets" in columns["model_routes"]
 
-    # 先退掉 provider 的 rerank 路径列。
+    # 先退掉路由的输入预算列。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == RERANK_PATH_REVISION
+    assert "input_budgets" not in columns["model_routes"]
+
+    # 再退掉 provider 的 rerank 路径列。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == DAILY_SUBS_REVISION

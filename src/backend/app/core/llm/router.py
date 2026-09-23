@@ -31,6 +31,7 @@ from app.core.llm.base import (
     StreamEvent,
     TextDelta,
 )
+from app.core.llm.budgets import InputBudget
 from app.core.llm.fake import FakeProvider, estimate_tokens
 from app.core.llm.openai_compat import OpenAICompatProvider
 from app.core.llm.openai_responses import OpenAIResponsesProvider
@@ -225,6 +226,9 @@ class ResolvedRoute:
     context_window: int | None = None
     #: rerank 端点路径（#810）。None = provider 用自己的默认值。
     rerank_path: str | None = None
+    #: 该环节的输入预算覆盖（键 → 字符数），见 core/llm/budgets.py。元组而不是 dict：
+    #: 这个类是 frozen 的，里面放可变对象等于留了个能被悄悄改掉的口子。
+    input_budgets: tuple[tuple[str, int], ...] = ()
 
 
 # 无 DB 路由时的兜底：确定性 fake provider
@@ -434,6 +438,7 @@ class LLMRouter:
                     effort=route.effort,
                     context_window=route.context_window,
                     rerank_path=provider.rerank_path,
+                    input_budgets=tuple(sorted((route.input_budgets or {}).items())),
                 )
         return routes
 
@@ -578,6 +583,20 @@ class LLMRouter:
                         )
                     route = _FALLBACK_ROUTE
         return self._provider_for(route, stage), route
+
+    async def input_budget(self, spec: InputBudget, user_id: uuid.UUID | None = None) -> int:
+        """这个用户在该环节此刻生效的输入预算（字符），见 core/llm/budgets.py。
+
+        覆盖值只认这个环节**自己**那一行：跟随 default 的环节没有自己的预算，用登记的
+        默认值——default 那行上存的是 default 自己的键，与别的环节无关。
+        窗口封顶则看实际会被调用的那一行（自己的，没有就是 default 的），因为封顶
+        说的是「这次调用的模型能收多少」。
+        """
+        routes = await self._get_routes(user_id)
+        own = routes.get(spec.stage)
+        configured = dict(own.input_budgets).get(spec.key) if own is not None else None
+        called = own if own is not None else routes.get("default")
+        return spec.effective(configured, called.context_window if called is not None else None)
 
     async def model_name(self, stage: str, user_id: uuid.UUID | None = None) -> str | None:
         """该环节实际会用到的模型名；未配置/不可用时 None（调用方只用于展示）。

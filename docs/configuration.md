@@ -172,3 +172,35 @@ instead of breaking the stage. Embedding and rerank routes have no effort settin
 
 Lower effort on high-volume mechanical stages (relevance scoring, extraction) cuts both cost and
 latency; raise it on stages where correctness matters more than spend (self-verification, review).
+
+### Context window and input budgets
+
+A route can record its model's **context window** (in tokens), and a few stages expose **input
+budgets**: how many characters of material the stage puts into one call. The two are separate on
+purpose. The window is what the model can take; the budget is what the stage chooses to send, a
+trade-off between thoroughness and cost. A model with a 1M-token window does not have to receive
+1M tokens on every paper.
+
+| Stage | Budget | Default | Range (characters) |
+|---|---|---|---|
+| Librarian (`librarian`) | Paper full text sent to the wiki compile | 24,000 | 4,000 – 2,000,000 |
+| Idea Forge (`forge`) | Total knowledge-base context | 12,000 | 2,000 – 2,000,000 |
+| Idea Forge (`forge`) | Wiki excerpt per paper | 800 | 200 – 50,000 |
+
+The defaults are the values that were hard-coded before budgets became configurable, so leaving the
+fields empty changes nothing. The number of papers Idea Forge reads is still the `max_context_papers`
+knob on the task.
+
+Rules:
+
+- A budget belongs to the stage's own route. A stage that follows *Default* uses the default budget;
+  set a model for the stage to change it.
+- When the route has a context window, a budget may be at most `window × 2` characters (about half
+  the window at four characters per token, leaving room for the system prompt and the answer).
+  Larger values are refused on save, and a default larger than that is lowered to fit.
+- Material over the budget is cut from the end: the full text keeps its beginning, and the forge
+  context cuts each excerpt first, then the joined context, so the least relevant papers drop out.
+
+The routing table shows the budget in effect next to each field. Budgets are registered in
+`app/core/llm/budgets.py`; adding one there makes it appear in the settings page and in save
+validation.

@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.llm import call_log
 from app.core.llm.anthropic import AnthropicProvider
 from app.core.llm.base import LLMProvider, Message
+from app.core.llm.budgets import validate_budgets
 from app.core.llm.fake import FakeProvider
 from app.core.llm.openai_compat import OpenAICompatProvider
 from app.core.llm.router import get_llm_router, is_plugin_stage, known_stages
@@ -191,6 +192,10 @@ async def replace_routes(
         provider = await session.get(LLMProviderConfig, item.provider_id)
         if provider is None or provider.owner_id != owner_id:
             raise InvalidRouteError(f"provider not found: {item.provider_id}")
+        try:
+            validate_budgets(item.stage, item.input_budgets, item.context_window)
+        except ValueError as e:
+            raise InvalidRouteError(str(e)) from e
     await session.execute(
         delete(ModelRoute).where(_owner_clause(ModelRoute.owner_id, owner_id))
     )
@@ -203,6 +208,9 @@ async def replace_routes(
                 model=item.model,
                 temperature=item.temperature,
                 effort=item.effort,
+                context_window=item.context_window,
+                # 空字典存成 NULL：两者含义相同（全用默认），只留一种写法
+                input_budgets=item.input_budgets or None,
             )
         )
     await session.commit()

@@ -755,6 +755,21 @@ export interface LlmRoute {
   temperature?: number | null;
   /** null / 缺省 = 不发送该参数，用模型默认档位 */
   effort?: LlmEffort | null;
+  /** 模型的上下文窗口（token）；null = 没填，调用方按保守常量走 */
+  context_window?: number | null;
+  /** 输入预算覆盖（键 → 字符数）；缺键 = 用默认值（#811） */
+  input_budgets?: Record<string, number> | null;
+}
+
+/** 一个可调的输入预算（后端 core/llm/budgets.py 的登记表）。 */
+export interface LlmInputBudgetSpec {
+  stage: string;
+  key: string;
+  default: number;
+  minimum: number;
+  maximum: number;
+  /** 窗口 token → 预算字符上限的换算系数 */
+  chars_per_window_token: number;
 }
 
 export type LlmTestCapability = 'chat' | 'embedding' | 'rerank';
@@ -5003,6 +5018,9 @@ export const api = {
   },
   putLlmRoutes(routes: LlmRoute[]): Promise<LlmRoute[]> {
     return requestJson<LlmRoute[]>('/admin/llm/routes', 'PUT', routes);
+  },
+  getLlmInputBudgets(): Promise<LlmInputBudgetSpec[]> {
+    return request<LlmInputBudgetSpec[]>('/admin/llm/input-budgets');
   },
   testLlmModel(input: LlmTestModelInput): Promise<LlmTestResult> {
     return requestJson<LlmTestResult>('/admin/llm/test-model', 'POST', input);
