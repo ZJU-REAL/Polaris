@@ -95,6 +95,9 @@ class ModelRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: 该模型的上下文窗口（token）。压缩阈值要用它；None 时调用方按保守常量走。
     context_window: Mapped[int | None] = mapped_column(Integer, nullable=True)
     effort: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    #: 该环节的输入预算覆盖（字符），键见 core/llm/budgets.py 的登记表。
+    #: None / 缺键 = 用登记的默认值，也就是引入这一列之前写死的那个常量（#811）。
+    input_budgets: Mapped[dict[str, int] | None] = mapped_column(JSON, nullable=True)
 
     provider: Mapped[LLMProviderConfig] = relationship(back_populates="routes")
 

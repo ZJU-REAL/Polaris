@@ -40,6 +40,14 @@ import {
 } from '../../lib/api';
 import { BuddySettings } from './BuddySettings';
 import { SettingsTabs } from './SettingsTabs';
+import {
+  budgetLabel,
+  budgetsPayload,
+  effectiveBudget,
+  fmtChars,
+  parsePositiveInt,
+  specsByStage,
+} from './inputBudgets';
 import { ExtensionApiKeySettings } from './ExtensionApiKeySettings';
 import { FullExportSettings } from './FullExportSettings';
 import { PluginsSettings } from './PluginsSettings';
@@ -1411,6 +1419,10 @@ interface RouteDraft {
   temperature: string;
   /** '' = 不发送该参数，用模型默认档位 */
   effort: string;
+  /** 模型的上下文窗口（token）；'' = 没填 */
+  context_window: string;
+  /** 输入预算覆盖（键 → 输入框里的字符串）；缺键或 '' = 用默认值（#811） */
+  budgets: Record<string, string>;
 }
 
 // ---- 模型组合框：自由输入 + 候选下拉（面板视觉复用 components/ui/SelectMenu） ----
@@ -1508,6 +1520,14 @@ function RoutesSection() {
   const providersQuery = useQuery({ queryKey: ['llm', 'providers'], queryFn: () => api.listLlmProviders(), retry: false });
   const routesQuery = useQuery({ queryKey: ['llm', 'routes'], queryFn: () => api.getLlmRoutes(), retry: false });
   const providers = providersQuery.data ?? [];
+  // 可调输入预算的登记表来自后端；老后端没有这个接口时为空，界面就不画预算输入框
+  const budgetSpecsQuery = useQuery({
+    queryKey: ['llm', 'input-budgets'],
+    queryFn: () => api.getLlmInputBudgets(),
+    retry: false,
+    staleTime: Infinity,
+  });
+  const budgetSpecs = useMemo(() => specsByStage(budgetSpecsQuery.data ?? []), [budgetSpecsQuery.data]);
 
   // 只有显式设置过的 stage 才有行；其余环节运行时回退 default 路由
   const [rows, setRows] = useState<Record<string, RouteDraft>>({});
@@ -1523,6 +1543,10 @@ function RoutesSection() {
         model: r.model,
         temperature: r.temperature === null || r.temperature === undefined ? '' : String(r.temperature),
         effort: r.effort ?? '',
+        context_window: r.context_window ? String(r.context_window) : '',
+        budgets: Object.fromEntries(
+          Object.entries(r.input_budgets ?? {}).map(([k, v]) => [k, String(v)]),
+        ),
       };
     }
     setRows(next);
@@ -1536,12 +1560,17 @@ function RoutesSection() {
         const r = rows[stage];
         if (!r || !r.provider_id || !r.model.trim()) continue;
         const t = r.temperature.trim();
+        // 窗口与预算也得每次都带上：PUT 是整表覆盖，漏了就等于把它们清空
+        const window = parsePositiveInt(r.context_window);
+        const budgets = budgetsPayload(r.budgets, budgetSpecs[stage] ?? []);
         routes.push({
           stage,
           provider_id: r.provider_id,
           model: r.model.trim(),
           ...(t !== '' && Number.isFinite(Number(t)) ? { temperature: Number(t) } : {}),
           ...(r.effort ? { effort: r.effort as LlmEffort } : {}),
+          ...(window !== null ? { context_window: window } : {}),
+          ...(budgets ? { input_budgets: budgets } : {}),
         });
       }
       return api.putLlmRoutes(routes);
@@ -1565,17 +1594,29 @@ function RoutesSection() {
   );
 
   const defaultRow = rows['default'];
-  const emptyDraftRow: RouteDraft = { provider_id: '', model: '', temperature: '', effort: '' };
+  const emptyDraftRow: RouteDraft = {
+    provider_id: '',
+    model: '',
+    temperature: '',
+    effort: '',
+    context_window: '',
+    budgets: {},
+  };
 
   // 编辑「跟随默认」的行时，以 default 的值为底稿转成显式设置；
   // 能力型环节不跟随默认，底稿从空开始
+  // 预算不从 default 抄：default 那行存的是它自己环节的键，与这个环节无关
+  const seedOf = (prev: Record<string, RouteDraft>, stage: string): RouteDraft =>
+    prev[stage]
+      ?? (stage !== 'default' && !CAPABILITY_STAGES.has(stage) && prev['default']
+        ? { ...prev['default'], budgets: {} }
+        : emptyDraftRow);
   const setRow = (stage: string, patch: Partial<RouteDraft>) =>
+    setRows((prev) => ({ ...prev, [stage]: { ...seedOf(prev, stage), ...patch } }));
+  const setBudget = (stage: string, key: string, value: string) =>
     setRows((prev) => {
-      const seed = prev[stage]
-        ?? (stage !== 'default' && !CAPABILITY_STAGES.has(stage) && prev['default']
-          ? { ...prev['default'] }
-          : emptyDraftRow);
-      return { ...prev, [stage]: { ...seed, ...patch } };
+      const seed = seedOf(prev, stage);
+      return { ...prev, [stage]: { ...seed, budgets: { ...seed.budgets, [key]: value } } };
     });
   const clearRow = (stage: string) =>
     setRows((prev) => {
@@ -1656,6 +1697,15 @@ function RoutesSection() {
               >
                 effort
               </th>
+              <th
+                style={{ width: 100 }}
+                title={tr(
+                  '模型的上下文窗口，单位 token，如 128000。留空表示不知道；填了之后，各环节的输入预算不会超过窗口能收下的量，对话历史的裁剪也按它来。',
+                  'The model\'s context window in tokens, e.g. 128000. Leave empty if unknown; when set, no stage\'s input budget exceeds what the window can take, and chat history is trimmed to fit it.',
+                )}
+              >
+                {tr('上下文窗口', 'Context window')}
+              </th>
               <th style={{ width: 130 }}>{tr('模型状态', 'Model status')}</th>
             </tr>
           </thead>
@@ -1674,8 +1724,13 @@ function RoutesSection() {
                 ? tests.results[testKeyOf(eff.provider_id, eff.model.trim(), capabilityOf(stage))] ?? { status: 'idle' }
                 : { status: 'idle' };
               const providerModels = providers.find((p) => p.id === shown.provider_id)?.models ?? [];
+              const stageBudgets = budgetSpecs[stage] ?? [];
+              // 预算只认这个环节自己的行；窗口看实际会被调用的那一行（跟随默认时是 default 的）
+              const ownBudgets = rows[stage]?.budgets ?? {};
+              const windowTokens = parsePositiveInt(shown.context_window);
               return (
-                <tr key={stage}>
+                <Fragment key={stage}>
+                <tr>
                   <td>
                     <div className="row gap6" style={{ alignItems: 'center' }}>
                       <span style={{ fontSize: 12, fontWeight: 650, ...(plugin ? { fontFamily: 'var(--mono, monospace)' } : {}) }}>{tr(label.zh, label.en)}</span>
@@ -1769,6 +1824,17 @@ function RoutesSection() {
                     />
                   </td>
                   <td>
+                    <input
+                      className="input mono"
+                      style={{ height: 32, width: '100%', fontSize: 12, ...(follows ? { color: 'var(--text-3)' } : {}) }}
+                      value={capability ? '' : shown.context_window}
+                      disabled={capability}
+                      placeholder={tr('未知', 'unknown')}
+                      inputMode="numeric"
+                      onChange={(e) => setRow(stage, { context_window: e.target.value })}
+                    />
+                  </td>
+                  <td>
                     <ModelStatusBadge
                       state={state}
                       onTest={eff ? () => void runTests([stage]) : undefined}
@@ -1776,6 +1842,60 @@ function RoutesSection() {
                     />
                   </td>
                 </tr>
+                {stageBudgets.length > 0 && (
+                  <tr>
+                    <td colSpan={7} style={{ paddingTop: 0, borderTop: 'none' }}>
+                      <div className="row gap12" style={{ flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
+                        <span
+                          style={{ color: 'var(--text-3)' }}
+                          title={tr(
+                            '这个环节每次调用最多放进多少字符的材料。留空用默认值；超出的部分从末尾截掉。填了上下文窗口时，不会超过窗口能收下的量。',
+                            'How many characters of material this stage puts into one call. Leave empty for the default; anything longer is cut from the end. With a context window set, it never exceeds what the window can take.',
+                          )}
+                        >
+                          {tr('输入预算', 'Input budget')}
+                        </span>
+                        {stageBudgets.map((spec) => {
+                          const raw = ownBudgets[spec.key] ?? '';
+                          const effective = effectiveBudget(spec, raw, windowTokens);
+                          return (
+                            <span key={spec.key} className="row gap6" style={{ alignItems: 'center' }}>
+                              <span>{budgetLabel(spec.key)}</span>
+                              <input
+                                className="input mono"
+                                style={{ height: 28, width: 110, fontSize: 12 }}
+                                value={raw}
+                                placeholder={fmtChars(spec.default)}
+                                inputMode="numeric"
+                                title={`${tr('范围', 'Range')} ${fmtChars(spec.minimum)} – ${fmtChars(spec.maximum)}`}
+                                onChange={(e) => setBudget(stage, spec.key, e.target.value)}
+                              />
+                              {effective.problem ? (
+                                <span style={{ color: 'var(--warn-tx)' }}>
+                                  {effective.problem.kind === 'range'
+                                    ? tr(
+                                        `须在 ${fmtChars(effective.problem.min)} – ${fmtChars(effective.problem.max)} 之间`,
+                                        `must be ${fmtChars(effective.problem.min)} – ${fmtChars(effective.problem.max)}`,
+                                      )
+                                    : tr(
+                                        `超出上下文窗口，最多 ${fmtChars(effective.problem.max)}`,
+                                        `too large for the context window (at most ${fmtChars(effective.problem.max)})`,
+                                      )}
+                                </span>
+                              ) : (
+                                <span style={{ color: 'var(--text-3)' }}>
+                                  {tr('字符，生效', 'chars, in effect')} <span className="mono">{fmtChars(effective.value)}</span>
+                                  {effective.cappedByWindow && tr('（受上下文窗口限制）', ' (capped by the context window)')}
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               );
             })}
           </tbody>

@@ -60,6 +60,23 @@ class RouteItem(BaseModel):
     # 推理档位；None = 不发送该参数（用模型默认）。某个模型具体支持哪几档由服务端校验，
     # 这里只挡明显非法的取值。
     effort: EffortLevel | None = None
+    # 模型的上下文窗口（token）。以前库里有这一列、API 没有这个字段，而 PUT 是整表
+    # 覆盖——于是每保存一次路由表，填过的窗口就被悄悄清空（#811）。
+    context_window: int | None = Field(default=None, ge=1024, le=10_000_000)
+    # 输入预算覆盖（键 → 字符数）；键与上下限见 core/llm/budgets.py，服务端校验
+    input_budgets: dict[str, int] | None = None
+
+
+class InputBudgetSpec(BaseModel):
+    """一个可调输入预算的声明，设置页据此画输入框、给出默认值与上下限。"""
+
+    stage: str
+    key: str
+    default: int
+    minimum: int
+    maximum: int
+    #: 窗口 token → 预算字符上限的换算系数（见 budgets.CHARS_PER_WINDOW_TOKEN）
+    chars_per_window_token: int
 
 
 TestCapability = Literal["chat", "embedding", "rerank"]
