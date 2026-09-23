@@ -885,6 +885,25 @@ interface ProviderDraft {
   enabled: boolean;
   /** 可用模型列表原始输入（逗号/换行分隔），保存时解析为数组 */
   models: string;
+  /** rerank 端点路径原始输入；空 = 默认 /rerank */
+  rerank_path: string;
+}
+
+/** 默认 rerank 路径。各家不统一（#810），但默认值不能变：改了会把现在能用的
+    LiteLLM / Cohere 风格服务一起弄坏。 */
+const DEFAULT_RERANK_PATH = '/rerank';
+
+/**
+ * 输入 → 要发给后端的 rerank 路径。
+ *
+ * 空 = 默认；漏写开头的斜杠就补上——后端要求以 / 开头，是因为不带斜杠会拼成
+ * ``https://host/v1rerank`` 这种既不报错也永远打不通的地址。与其让人收到一个
+ * 422 再回来改，不如直接替他补上。
+ */
+export function rerankPathValue(raw: string): string {
+  const v = raw.trim();
+  if (!v) return DEFAULT_RERANK_PATH;
+  return v.startsWith('/') ? v : `/${v}`;
 }
 
 /** 逗号/换行分隔的模型输入 → 去空白、去重后的数组。 */
@@ -893,7 +912,16 @@ function parseModels(raw: string): string[] {
 }
 
 function emptyDraft(): ProviderDraft {
-  return { name: '', kind: 'openai_compat', base_url: '', user_agent: '', api_key: '', enabled: true, models: '' };
+  return {
+    name: '',
+    kind: 'openai_compat',
+    base_url: '',
+    user_agent: '',
+    api_key: '',
+    enabled: true,
+    models: '',
+    rerank_path: '',
+  };
 }
 
 function draftFrom(p: LlmProviderRead): ProviderDraft {
@@ -905,6 +933,7 @@ function draftFrom(p: LlmProviderRead): ProviderDraft {
     api_key: '',
     enabled: p.enabled,
     models: (p.models ?? []).join('\n'),
+    rerank_path: p.rerank_path ?? '',
   };
 }
 
@@ -917,6 +946,8 @@ function toInput(d: ProviderDraft): LlmProviderInput {
     api_key: d.api_key, // 空字符串 = 不变（PATCH）；POST 时后端忽略空 key
     enabled: d.enabled,
     models: parseModels(d.models), // 整体替换（清空 = []）
+    // 只有 openai_compat 会 rerank；别的类型不发，免得存进一个永远用不上的值
+    rerank_path: d.kind === 'openai_compat' ? rerankPathValue(d.rerank_path) : undefined,
   };
 }
 
@@ -950,6 +981,17 @@ function ProviderForm({ draft, setDraft, isNew }: {
           <input className="input mono" value={draft.user_agent}
             onChange={(e) => setDraft({ ...draft, user_agent: e.target.value })}
             placeholder="claude-cli/2.1.226 (external, sdk-cli)" />
+        </FormField>
+      )}
+      {draft.kind === 'openai_compat' && (
+        <FormField label={tr('Rerank 路径（可选）', 'Rerank path (optional)')}
+          hint={tr(
+            '接在 Base URL 后面。各家不统一，常见的是 /rerank 或 /reranks；留空用 /rerank。',
+            'Appended to the Base URL. Providers differ — usually /rerank or /reranks. Leave empty for /rerank.',
+          )}>
+          <input className="input mono" value={draft.rerank_path}
+            onChange={(e) => setDraft({ ...draft, rerank_path: e.target.value })}
+            placeholder={DEFAULT_RERANK_PATH} />
         </FormField>
       )}
       <FormField label="API Key"

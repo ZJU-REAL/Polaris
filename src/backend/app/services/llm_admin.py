@@ -116,6 +116,7 @@ async def create_provider(
         api_key_encrypted=encrypt_secret(data.api_key) if data.api_key else None,
         enabled=data.enabled,
         models=data.models,
+        rerank_path=data.rerank_path,
     )
     session.add(provider)
     await session.commit()
@@ -141,6 +142,8 @@ async def update_provider(
         provider.enabled = data.enabled
     if data.models is not None:  # 整体替换；清空传 []
         provider.models = data.models
+    if data.rerank_path is not None:
+        provider.rerank_path = data.rerank_path
     await session.commit()
     await session.refresh(provider)
     get_llm_router().invalidate_cache()

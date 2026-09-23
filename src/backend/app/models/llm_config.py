@@ -46,6 +46,11 @@ class LLMProviderConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # 该 provider 可用的模型 id 列表（字符串数组；None = 未配置，前端不给候选）
     models: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # rerank 端点路径（#810）。None = 用默认 "/rerank"。
+    #
+    # 各家没统一：有的开在 /rerank，有的开在 /reranks。全局改成后者会把现在能用的
+    # LiteLLM / Cohere 风格服务弄坏，所以差异存在这里，由配置的人说了算。
+    rerank_path: Mapped[str | None] = mapped_column(String(128))
 
     routes: Mapped[list["ModelRoute"]] = relationship(
         back_populates="provider", cascade="all, delete-orphan"
