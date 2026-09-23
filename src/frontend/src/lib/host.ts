@@ -236,6 +236,22 @@ export interface UpdateInfo {
   contract?: number;
   downloadUrl?: string;
   downloadSize?: number;
+  /** 整包安装器地址；热更新装不上时退回它。 */
+  installerUrl?: string;
+  /**
+   * 这次检查确实查到了 GitHub 并比过了版本。只有它为 true，界面才敢说「已是最新」
+   * （#812）——查失败和没有新版在 available 上长得一样。老外壳不带这个字段。
+   */
+  checked?: boolean;
+  /**
+   * 没查成的原因代码：rate-limited / network / http / no-package。文案由界面配，
+   * 主进程不知道界面是什么语言。
+   */
+  error?: string;
+  /** 原因的细节（如 HTTP 状态码），给界面附在文案后面。 */
+  errorDetail?: string;
+  /** 这个版本的发布页，给「查看发布页」用。 */
+  releaseUrl?: string;
 }
 
 /** 查有没有新版本；web 端返回 null。主进程失败时返回 available:false，不抛错。 */
