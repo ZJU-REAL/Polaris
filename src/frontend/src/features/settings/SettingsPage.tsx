@@ -39,6 +39,7 @@ import {
   type SshCredentialInput,
 } from '../../lib/api';
 import { BuddySettings } from './BuddySettings';
+import { SettingsTabs } from './SettingsTabs';
 import { ExtensionApiKeySettings } from './ExtensionApiKeySettings';
 import { FullExportSettings } from './FullExportSettings';
 import { PluginsSettings } from './PluginsSettings';
@@ -2854,7 +2855,7 @@ export function SettingsPage() {
     return <Navigate to="/settings?tab=llm" replace />;
   }
 
-  const items: { v: Tab; label: string }[] = [
+  const personalItems: { v: Tab; label: string }[] = [
     { v: 'personal', label: tr('个人信息', 'Profile') },
     { v: 'prefs', label: tr('界面偏好', 'Interface') },
     { v: 'buddy', label: 'PolarisBuddy' },
@@ -2866,7 +2867,9 @@ export function SettingsPage() {
     { v: 'mcp', label: tr('MCP 接入', 'MCP access') },
     { v: 'export', label: tr('数据导出', 'Data export') },
     ...(pluginsAvailable ? [{ v: 'plugins' as Tab, label: tr('插件', 'Plugins') }] : []),
-    // —— 原「管理」页的六项，并入同一个入口 ——
+  ];
+  // 原「管理」页的六项，并入同一个入口；「关于」也放这组
+  const workspaceItems: { v: Tab; label: string }[] = [
     { v: 'llm', label: tr('模型与路由', 'Models & routing') },
     { v: 'literature', label: tr('文献检索', 'Literature search') },
     { v: 'processing', label: tr('文档处理', 'Document processing') },
@@ -2880,7 +2883,14 @@ export function SettingsPage() {
     <div className="page fadeup">
       <PageHead eyebrow="Polaris · Settings" title={tr('设置', 'Settings')} />
       <div className="row" style={{ gap: 12, marginBottom: 22, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Segmented options={items} value={effectiveTab} onChange={setTab} />
+        <SettingsTabs
+          groups={[
+            { label: tr('个人', 'Personal'), items: personalItems },
+            { label: tr('工作区', 'Workspace'), items: workspaceItems },
+          ]}
+          value={effectiveTab}
+          onChange={setTab}
+        />
       </div>
       {effectiveTab === 'personal' && <PersonalTab />}
       {effectiveTab === 'prefs' && <PreferencesTab />}
