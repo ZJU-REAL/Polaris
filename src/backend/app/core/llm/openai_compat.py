@@ -206,6 +206,27 @@ def _messages_payload(messages: Sequence[Message]) -> list[dict[str, Any]]:
     return out
 
 
+#: rerank 端点的默认路径。各家不统一（见 #810），但改这个默认值会把现在能用的
+#: LiteLLM / Cohere 风格服务一起弄坏，所以它只是默认值，可由 provider 配置覆盖。
+_DEFAULT_RERANK_PATH = "/rerank"
+
+
+def _rerank_results(data: dict[str, Any], url: str) -> list[dict[str, Any]]:
+    """从响应里取出 results 数组。
+
+    Cohere / LiteLLM 放在顶层 ``results``；另一些服务（如 DashScope 风格）包了一层
+    ``output``。两种都认，别的形状**报出实际拿到的键**——直接 ``data["results"]``
+    抛 KeyError，错误信息里只有 'results' 这个词，看不出对面到底回了什么。
+    """
+    for candidate in (data.get("results"), (data.get("output") or {}).get("results")):
+        if isinstance(candidate, list):
+            return candidate
+    raise RuntimeError(
+        f"rerank 响应里没有 results 数组（{url}）；实际顶层键：{sorted(data)}。"
+        "如果这个服务的 rerank 路径不是默认的，在 provider 设置里改 rerank 路径。"
+    )
+
+
 def _tool_call_events(delta: dict[str, Any]) -> list[StreamEvent]:
     """把一个 chunk 里的 ``delta.tool_calls[]`` 翻成事件。
 
@@ -271,8 +292,12 @@ class OpenAICompatProvider(LLMProvider):
         client: httpx.AsyncClient | None = None,
         timeout: float = 300.0,
         max_attempts: int = _MAX_ATTEMPTS,
+        rerank_path: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        # 各家 rerank 端点路径不统一（#810）。默认保持 /rerank：改默认值会把现在
+        # 能用的 LiteLLM / Cohere 风格服务一起弄坏。
+        self._rerank_path = rerank_path or _DEFAULT_RERANK_PATH
         self._api_key = api_key
         self._max_attempts = max_attempts
         self._client = client or httpx.AsyncClient(timeout=timeout)
@@ -616,17 +641,22 @@ class OpenAICompatProvider(LLMProvider):
         model: str,
         top_n: int | None = None,
     ) -> RerankResult:
-        """Cohere 风格 rerank 端点（LiteLLM 代理 /v1/rerank；base_url 已含 /v1）。"""
+        """Cohere 风格 rerank 端点。
+
+        路径可配（#810）：默认 ``/rerank``（LiteLLM 代理 /v1/rerank；base_url 已含
+        /v1），有些服务开在 ``/reranks``，由 provider 配置给出。
+        """
         payload: dict[str, Any] = {"model": model, "query": query, "documents": documents}
         if top_n is not None:
             payload["top_n"] = top_n
-        resp = await self._post_with_retry(f"{self._base_url}/rerank", payload)
+        url = f"{self._base_url}{self._rerank_path}"
+        resp = await self._post_with_retry(url, payload)
         if resp.status_code >= 400:
             body = resp.text[:500]
-            raise RuntimeError(f"openai_compat {resp.status_code} from {self._base_url}: {body}")
+            raise RuntimeError(f"openai_compat {resp.status_code} from {url}: {body}")
         data = resp.json()
         results = sorted(
-            ((int(r["index"]), float(r["relevance_score"])) for r in data["results"]),
+            ((int(r["index"]), float(r["relevance_score"])) for r in _rerank_results(data, url)),
             key=lambda pair: -pair[1],
         )
         if top_n is not None:

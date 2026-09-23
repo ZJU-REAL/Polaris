@@ -222,6 +222,8 @@ class ResolvedRoute:
     #: 模型的上下文窗口（token）。None = 管理端没填，调用方按保守常量走。
     #: agent 的历史回放预算靠它——不知道窗口多大，裁剪阈值就只能拍脑袋。
     context_window: int | None = None
+    #: rerank 端点路径（#810）。None = provider 用自己的默认值。
+    rerank_path: str | None = None
 
 
 # 无 DB 路由时的兜底：确定性 fake provider
@@ -430,6 +432,7 @@ class LLMRouter:
                     user_agent=provider.user_agent,
                     effort=route.effort,
                     context_window=route.context_window,
+                    rerank_path=provider.rerank_path,
                 )
         return routes
 
@@ -492,6 +495,10 @@ class LLMRouter:
             route.user_agent,
             timeout,
             attempts,
+            # rerank 路径进键：它改的是请求地址。不进键的话，同一个 base_url 上
+            # 两份只有这一项不同的配置会共用同一个客户端，后配的那份静默用着
+            # 前一份的路径——正是这行上面那段注释警告过的事。
+            route.rerank_path,
         )
         if key not in self._providers:
             if route.provider_kind == "openai_compat":
@@ -501,6 +508,7 @@ class LLMRouter:
                     api_key=route.api_key,
                     timeout=timeout,
                     max_attempts=attempts,
+                    rerank_path=route.rerank_path,
                 )
             elif route.provider_kind == "anthropic":
                 self._providers[key] = AnthropicProvider(

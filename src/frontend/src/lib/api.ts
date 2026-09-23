@@ -722,6 +722,8 @@ export interface LlmProviderRead {
   enabled: boolean;
   /** 可用模型 id 列表（null = 未配置） */
   models: string[] | null;
+  /** rerank 端点路径（#810）；null = 默认 /rerank。仅 openai_compat 使用 */
+  rerank_path: string | null;
 }
 
 export interface LlmProviderInput {
@@ -735,6 +737,8 @@ export interface LlmProviderInput {
   enabled: boolean;
   /** 可用模型 id 列表；整体替换（清空传 []） */
   models?: string[];
+  /** rerank 端点路径，必须以 / 开头；仅 openai_compat 使用 */
+  rerank_path?: string;
 }
 
 /** 推理档位；与后端 app/core/llm/base.py 的 EFFORT_LEVELS 对齐 */

@@ -10,6 +10,9 @@ from app.core.llm.base import EffortLevel
 
 ProviderKind = Literal["openai_compat", "anthropic", "fake"]
 UserAgent = Annotated[str, Field(max_length=255, pattern=r"^[^\r\n]*$")]
+#: rerank 端点路径。必须以 / 开头：它是接在 base_url 后面的路径，不是完整 URL；
+#: 不带斜杠会拼成 ``https://host/v1rerank`` 这种既不报错也永远打不通的地址。
+RerankPath = Annotated[str, Field(max_length=128, pattern=r"^/[^\s?#]*$")]
 
 
 class ProviderCreate(BaseModel):
@@ -20,6 +23,7 @@ class ProviderCreate(BaseModel):
     api_key: str | None = None  # 只写不读；入库前 Fernet 加密
     enabled: bool = True
     models: list[str] | None = None  # 可用模型 id 列表（None = 未配置）
+    rerank_path: RerankPath | None = None  # None = 默认 /rerank（仅 openai_compat 用）
 
 
 class ProviderUpdate(BaseModel):
@@ -30,6 +34,7 @@ class ProviderUpdate(BaseModel):
     api_key: str | None = None  # 空字符串 = 不变
     enabled: bool | None = None
     models: list[str] | None = None  # 整体替换；None = 不变（清空传 []）
+    rerank_path: RerankPath | None = None  # None = 不变；恢复默认传 "/rerank"
 
 
 class ProviderRead(BaseModel):
@@ -43,6 +48,7 @@ class ProviderRead(BaseModel):
     api_key_masked: str
     enabled: bool
     models: list[str] | None = None
+    rerank_path: str | None = None
 
 
 class RouteItem(BaseModel):

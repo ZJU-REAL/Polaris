@@ -116,6 +116,7 @@ async def create_provider(
         api_key_encrypted=encrypt_secret(data.api_key) if data.api_key else None,
         enabled=data.enabled,
         models=data.models,
+        rerank_path=data.rerank_path,
     )
     session.add(provider)
     await session.commit()
@@ -141,6 +142,8 @@ async def update_provider(
         provider.enabled = data.enabled
     if data.models is not None:  # 整体替换；清空传 []
         provider.models = data.models
+    if data.rerank_path is not None:
+        provider.rerank_path = data.rerank_path
     await session.commit()
     await session.refresh(provider)
     get_llm_router().invalidate_cache()
@@ -219,7 +222,11 @@ def _build_provider(provider: LLMProviderConfig) -> LLMProvider:
         from app.core.config import get_settings
 
         base_url = provider.base_url or get_settings().openai_compat_base_url
-        return OpenAICompatProvider(base_url=base_url, api_key=api_key)
+        # rerank 路径也要带上：「测试连接」验的就是这份配置，漏了它，改成 /reranks 的
+        # 服务在这里照样打 /rerank，测出来的是另一回事
+        return OpenAICompatProvider(
+            base_url=base_url, api_key=api_key, rerank_path=provider.rerank_path
+        )
     if provider.kind == "anthropic":
         return AnthropicProvider(
             api_key=api_key,
