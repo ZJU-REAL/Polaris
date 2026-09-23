@@ -36,7 +36,13 @@ class ToolContext:
     #: 生成可下载资源链接时使用。HTTP MCP 取当前 /mcp 请求的 origin；stdio 可由
     #: POLARIS_PUBLIC_BASE_URL 提供；内部工具调用没有地址时返回相对 URL。
     base_url: str | None = None
-    #: 允许执行会改数据的工具吗。**默认 False 是整套安全性的支点**——MCP、voyage 的
-    #: tool_loop、以及所有现存调用点因此自动保持只读，一行不用改。只有明确开了它的
-    #: 调用方（走完审批的对话轮次）才拿得到写能力。
-    allow_writes: bool = False
+    #: 这一轮**明确获得授权**的写工具名。空集 = 一个写工具都不给跑，这是整套
+    #: 安全性的支点：MCP、voyage 的 tool_loop、以及所有没显式授权的调用点因此
+    #: 自动保持只读。
+    #:
+    #: 曾经是一个 ``allow_writes`` 布尔。它在只有 ``remember`` 一个写工具时是安全
+    #: 的，之后就不是：打开它等于授权「这一轮工具面里凡是能写的都能写」，而工具面
+    #: 是动态拼的（``default_tool_names`` 会把注册表里新加的工具自动收进去）——于是
+    #: 新注册一个写工具，某个早就存在的会话会在没人改它的情况下多出一项写能力。
+    #: 换成名单之后，授权对象是点名的这几个工具，而不是「写」这个类别。
+    writable: frozenset[str] = frozenset()

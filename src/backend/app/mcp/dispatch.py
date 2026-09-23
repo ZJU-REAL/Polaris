@@ -138,13 +138,17 @@ async def call_tool(
         args.pop("project_id", None)
 
     # 默认 Profile 和普通 JWT 都保持只读。只有 Profile 明确纳入写工具，且传输层已验证
-    # mcp:write scope，才把 allow_writes 打开；两道一起防止知道名字后绕过 tools/list。
+    # mcp:write scope，才授权写；两道一起防止知道名字后绕过 tools/list。
+    #
+    # 只授权**正在调用的这一个**工具：这次请求要的就是它，上面 profile.exposes 也
+    # 已经放行过它。授权成「凡是能写的都能写」在这里没有任何必要。
+    may_write = allow_writes and profile.include_writes
     ctx = ToolContext(
         project_id=project_id,
         llm=get_llm_router(),
         user_id=user_id,
         base_url=base_url,
-        allow_writes=allow_writes and profile.include_writes,
+        writable=frozenset({name}) if may_write else frozenset(),
     )
     try:
         result = await run_tool(ctx, name, args)
