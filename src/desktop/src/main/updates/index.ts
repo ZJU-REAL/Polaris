@@ -39,7 +39,19 @@ interface Release {
   name: string;
   body: string;
   published_at: string;
+  html_url?: string;
   assets: Asset[];
+}
+
+/**
+ * GitHub 未鉴权的 API 每个 IP 每小时 60 次。被限流时回 429，或 403 且剩余次数为 0；
+ * 这不是「没有新版本」，也不是网络坏了，要单独说出来，用户才知道等一会儿就好。
+ */
+function isRateLimited(res: Response): boolean {
+  return (
+    res.status === 429 ||
+    (res.status === 403 && res.headers.get('x-ratelimit-remaining') === '0')
+  );
 }
 
 function installerFor(assets: Asset[]): Asset | undefined {
@@ -59,10 +71,21 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
       headers: { Accept: 'application/vnd.github+json' },
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return base;
+    if (!res.ok) {
+      // 以前这里直接 return base：界面分不出「没有新版」和「没查成」，手动检查
+      // 就会在限流、出错时告诉用户「已是最新」（#812）
+      return {
+        ...base,
+        error: isRateLimited(res) ? 'rate-limited' : 'http',
+        errorDetail: `HTTP ${res.status}`,
+      };
+    }
     const release = (await res.json()) as Release;
     const latestVersion = (release.tag_name ?? '').replace(/^v/, '');
-    if (!latestVersion || compareVersions(latestVersion, currentVersion) <= 0) return base;
+    const releaseUrl = release.html_url;
+    if (!latestVersion || compareVersions(latestVersion, currentVersion) <= 0) {
+      return { ...base, checked: true };
+    }
 
     const rendererAsset = release.assets.find((a) => {
       const m = RENDERER_RE.exec(a.name);
@@ -70,7 +93,17 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
     });
     const installer = installerFor(release.assets);
     const asset = rendererAsset ?? installer;
-    if (!asset) return base;
+    if (!asset) {
+      // 新版本已经发布，但还没有适合本机的包——发版流水线先建 release 再逐个
+      // 上传产物，这段窗口里就是这样。说成「已是最新」是错的，说成出错也不对
+      return {
+        ...base,
+        checked: true,
+        latestVersion,
+        releaseUrl,
+        error: 'no-package',
+      };
+    }
 
     cached = {
       available: true,
@@ -83,11 +116,18 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
       downloadUrl: asset.browser_download_url,
       downloadSize: asset.size,
       installerUrl: installer?.browser_download_url,
+      checked: true,
+      releaseUrl,
     };
     return cached;
-  } catch {
-    // 检查更新失败不该打扰用户：当作没有更新
-    return base;
+  } catch (err) {
+    // 自动检查（顶栏角标）只看 available，失败时照样什么都不显示——后台检查失败
+    // 不该打扰用户。原因带上，是给手动检查用的：那里得如实说「没查成」
+    return {
+      ...base,
+      error: 'network',
+      errorDetail: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 

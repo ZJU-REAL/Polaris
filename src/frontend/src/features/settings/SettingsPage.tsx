@@ -42,7 +42,13 @@ import { BuddySettings } from './BuddySettings';
 import { ExtensionApiKeySettings } from './ExtensionApiKeySettings';
 import { FullExportSettings } from './FullExportSettings';
 import { PluginsSettings } from './PluginsSettings';
-import { CAPABILITY_PLUGINS_MANAGE, isCapabilityAvailable, loadCapabilities } from '../../lib/host';
+import {
+  CAPABILITY_PLUGINS_MANAGE,
+  hasHost,
+  isCapabilityAvailable,
+  loadCapabilities,
+} from '../../lib/host';
+import { AboutSettings } from './AboutSettings';
 import { AdminSpeechSettings, PersonalSpeechSettings } from './SpeechSettings';
 // 原「管理」页的三块（#755）：入口合一后直接在同一页渲染
 import { ExperimentSettings } from './ExperimentSettings';
@@ -2329,7 +2335,7 @@ function MyUsageTab() {
 /** 设置页的标签页。原「管理」那六项自 #755 起也在这里。 */
 type Tab =
   | 'personal' | 'prefs' | 'buddy' | 'speech' | 'bots' | 'ssh' | 'myusage'
-  | 'extension' | 'mcp' | 'export' | 'plugins'
+  | 'extension' | 'mcp' | 'export' | 'plugins' | 'about'
   // 原 /admin 的六项（#755）：平台只剩一个使用者，另开一个「管理」入口只是
   // 实验室时代的残留——同一个人要在两个页面之间找同一类配置
   | 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | 'usage';
@@ -2794,7 +2800,10 @@ export function SettingsPage() {
   }, [pluginsAvailable]);
   // 深链 ?tab=plugins 在能力缺失（web 端、清单未就绪）时回落默认 tab，不崩也不留空白；
   // 清单稍后就绪且能力在，effectiveTab 自动切回 plugins。
-  const effectiveTab: Tab = tab === 'plugins' && !pluginsAvailable ? 'personal' : tab;
+  // 「关于」只在桌面端有意义：网页版跟着服务器升级，没有什么可检查的（#812）
+  const desktop = hasHost();
+  const effectiveTab: Tab =
+    (tab === 'plugins' && !pluginsAvailable) || (tab === 'about' && !desktop) ? 'personal' : tab;
 
   // 管理页并入本页后（#755），这些标签**就在这里**，不能再往 /admin 跳——
   // /admin 已经反向重定向到 /settings，两边对跳就是一个死循环。
@@ -2822,6 +2831,7 @@ export function SettingsPage() {
     { v: 'experiment', label: tr('实验设置', 'Experiments') },
     { v: 'daily', label: tr('每日论文', 'Daily papers') },
     { v: 'usage', label: tr('用量总览', 'Usage overview') },
+    ...(desktop ? [{ v: 'about' as Tab, label: tr('关于', 'About') }] : []),
   ];
 
   return (
@@ -2841,6 +2851,7 @@ export function SettingsPage() {
       {effectiveTab === 'mcp' && <McpToolsContent />}
       {effectiveTab === 'export' && <FullExportSettings />}
       {effectiveTab === 'plugins' && <PluginsSettings />}
+      {effectiveTab === 'about' && <AboutSettings />}
       {effectiveTab === 'llm' && <LlmTab />}
       {effectiveTab === 'literature' && <LiteratureSearchSettingsPanel />}
       {effectiveTab === 'processing' && <DocumentProcessingSettingsPanel />}
