@@ -222,7 +222,11 @@ def _build_provider(provider: LLMProviderConfig) -> LLMProvider:
         from app.core.config import get_settings
 
         base_url = provider.base_url or get_settings().openai_compat_base_url
-        return OpenAICompatProvider(base_url=base_url, api_key=api_key)
+        # rerank 路径也要带上：「测试连接」验的就是这份配置，漏了它，改成 /reranks 的
+        # 服务在这里照样打 /rerank，测出来的是另一回事
+        return OpenAICompatProvider(
+            base_url=base_url, api_key=api_key, rerank_path=provider.rerank_path
+        )
     if provider.kind == "anthropic":
         return AnthropicProvider(
             api_key=api_key,

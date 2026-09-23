@@ -88,3 +88,23 @@ async def test_an_unrecognised_shape_names_what_came_back():
     message = str(excinfo.value)
     assert "detail" in message and "data" in message, message
     assert "rerank" in message
+
+
+async def test_test_connection_uses_the_configured_path():
+    """设置页「测试连接」走 _build_provider，不经路由表——它也得用配置的路径。"""
+    from app.models.llm_config import LLMProviderConfig
+    from app.services.llm_admin import _build_provider
+
+    provider = _build_provider(
+        LLMProviderConfig(
+            name="gw",
+            kind="openai_compat",
+            base_url="https://gw.example/v1",
+            rerank_path="/reranks",
+        )
+    )
+    assert isinstance(provider, OpenAICompatProvider)
+    seen: list[str] = []
+    provider._client = _client(seen, _COHERE)
+    await provider.rerank("q", ["a", "b"], model="m")
+    assert seen == ["https://gw.example/v1/reranks"]
