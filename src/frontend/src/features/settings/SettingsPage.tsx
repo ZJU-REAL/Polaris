@@ -66,7 +66,21 @@ import { DocumentProcessingSettingsPanel } from './DocumentProcessingSettings';
    /admin 现在只是一条指向这里的重定向（见 routes.tsx）。
    ============================================================ */
 
-const KINDS: LlmProviderKind[] = ['openai_compat', 'anthropic'];
+const KINDS: LlmProviderKind[] = ['openai_compat', 'openai_responses', 'anthropic'];
+
+/**
+ * 类型下拉框里显示协议名，而不是内部 id（#809）。
+ *
+ * 选的是**协议**，不是厂商：同一个模型在不同网关上可能暴露不同接口，所以由配置的人
+ * 按网关实际提供的接口来选。显示 openai_compat / openai_responses 这种 id，就是让人
+ * 去猜两者差在哪。协议名是专有名词，不走 tr。
+ */
+export const KIND_LABELS: Record<LlmProviderKind, string> = {
+  openai_compat: 'OpenAI Chat Completions',
+  openai_responses: 'OpenAI Responses',
+  anthropic: 'Anthropic Messages',
+  fake: 'fake',
+};
 
 // ---------------- 个人 ----------------
 
@@ -969,10 +983,10 @@ function ProviderForm({ draft, setDraft, isNew }: {
           placeholder={tr('如 deepseek / claude', 'e.g. deepseek / claude')} />
       </FormField>
       <div className="row gap12" style={{ alignItems: 'flex-start' }}>
-        <FormField label={tr('类型', 'Kind')} style={{ width: 180 }}>
+        <FormField label={tr('协议', 'Protocol')} style={{ width: 240 }}>
           <SelectMenu
             value={draft.kind}
-            options={KINDS.map((k) => ({ value: k, label: k }))}
+            options={KINDS.map((k) => ({ value: k, label: KIND_LABELS[k] }))}
             onChange={(v) => setDraft({ ...draft, kind: v as LlmProviderKind })}
           />
         </FormField>
@@ -1265,8 +1279,8 @@ function ProvidersSection() {
                     <td>
                       <div className="row gap6" style={{ alignItems: 'center' }}>
                         <span style={{ fontSize: 12, fontWeight: 650 }}>{p.name}</span>
-                        <span className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-                          {p.kind}
+                        <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                          {KIND_LABELS[p.kind] ?? p.kind}
                         </span>
                       </div>
                       <div className="mono" title={p.base_url ?? undefined}
