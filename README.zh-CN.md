@@ -177,12 +177,19 @@ tag 上构建。应用会检查更新，能不重启就直接应用。
 这些构建**既未签名也未公证**,所以每个平台都要先告诉系统一次它是安全的：macOS 执行
 `xattr -dr com.apple.quarantine /Applications/Polaris.app`(或右键 → 打开）;Windows 在
 SmartScreen 上选「更多信息 → 仍要运行」;Linux 的 AppImage 需要 `libnss3 libgtk-3-0 libasound2`,
-在 Ubuntu 24.04+ 的 AppArmor 限制下要加 `--no-sandbox`。首次启动时应用会让你填实验室的 Polaris
-服务器地址，并用 `/api/health` 校验；服务端必须放行桌面端来源，因为页面由 `app://polaris` 提供，
-每个请求都是跨域的。
+在 Ubuntu 24.04+ 的 AppArmor 限制下要加 `--no-sandbox`。
 
-Electron 外壳（`src/desktop/`）是「外壳 + 一个小的本地进程」,不是离线版：Postgres、Redis、worker
-以及所有 LLM 调用都留在远程服务器上，渲染进程直接与之通信。想自己构建：
+从 **v0.4.0** 起，桌面版是离线的单机版：安装包自带 Python 后端，首次启动时自动装好本地环境
+（SQLite，不需要 Docker、不用登录、不填服务器地址）。首次启动要下载 Python 工具链和依赖，可能需要
+几分钟；之后启动不再等待。本地引擎起不来时，应用会退回到填写 Polaris 服务器地址的流程——连接多人
+共用的服务器也走这条路。
+
+> [!NOTE]
+> **v0.3.x 及更早的版本**只是连接远程服务器的外壳，首次启动一定会要求填服务器地址，也没法自己
+> 更新成带本地引擎的版本。请到 [Releases](https://github.com/ZJU-REAL/Polaris/releases/latest)
+> 下载 v0.4.0 及以上的安装包，直接覆盖安装。
+
+想自己构建：
 
 ```bash
 make desktop-deps           # 安装外壳的依赖（只需一次）

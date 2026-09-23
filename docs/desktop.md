@@ -6,6 +6,12 @@ no Redis, no account, no server address. Sign-in does not exist in this form: th
 with `POLARIS_PROFILE=desktop` and the frontend silently adopts a local session (the machine's
 owner is their own admin).
 
+> [!NOTE]
+> The local engine first shipped in **v0.4.0**. Releases up to v0.3.9 are remote-only shells that
+> always ask for a server address, and they cannot update themselves into the local-engine build:
+> install v0.4.0 or later from [Releases](https://github.com/ZJU-REAL/Polaris/releases/latest) over
+> the old app.
+
 Connecting to a remote multi-user server is still supported: whenever no local engine is
 available (or the bootstrap fails), the renderer falls back to the classic
 "shell plus a remote server" flow, with all heavy state on the server.
