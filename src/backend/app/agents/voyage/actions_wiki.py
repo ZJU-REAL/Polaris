@@ -507,7 +507,9 @@ def _entry_from_candidate(item: Any) -> dict[str, Any]:
     }
 
 
-#: 库没配来源时用哪些。保持 arXiv 单源＝存量库行为逐字节不变。
+#: 库的 definition 里没有来源时用哪些。**只有存量库会走到这里**：新库在建库时就按
+#: 学科写入了来源（services/libraries.create_library，#821）。保持 arXiv＝这些库
+#: 在有「来源」这个字段之前的真实行为，逐字节不变。
 DEFAULT_LIBRARY_SOURCES = ("arxiv",)
 
 

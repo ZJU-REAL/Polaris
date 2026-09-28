@@ -545,8 +545,15 @@ async def create_library(
         definition["anchor_papers"] = anchors
     if cadence:
         definition["cadence"] = cadence
-    if keywords:
-        definition["keywords"] = keywords
+    # 来源一律显式落库（#821）。「没配来源」在读取侧的含义是「只用 arXiv」——那是这个
+    # 字段出现之前建的库的真实行为，得原样保住；但新库不该继承这个偏向。所以在唯一的
+    # 建库出口按学科补上默认来源，读取侧的回退就只剩存量库会走到。
+    keywords = dict(keywords or {})
+    if not [s for s in keywords.get("sources") or [] if str(s).strip()]:
+        from app.services.discipline_packs import default_sources_for
+
+        keywords["sources"] = default_sources_for(discipline)
+    definition["keywords"] = keywords
     library = DirectionLibrary(
         name=name,
         statement=statement,

@@ -22,8 +22,27 @@ class DisciplineRead(BaseModel):
     name: str
     title: str
     description: str
-    #: 这个包带来几条抽取 schema。展示用：一个包没有 schema 就等于没效果
+    #: 这个包带来几条抽取 schema。0 表示方法卡沿用内置字段（如计算机科学）
     schema_count: int
+    #: 新建文献库默认勾选的来源；包没声明时是平台的通用默认（#821）
+    sources: list[str]
+    #: 选了 arXiv 时的分类快捷项；空 = 这个学科在 arXiv 上没有对应分类
+    arxiv_categories: list[str]
+
+
+class DisciplineDefaults(BaseModel):
+    """不选学科（「通用」）时的文献口径。与包里的默认值同一处来源，前端不另抄一份。"""
+
+    sources: list[str]
+
+
+@router.get("/defaults", response_model=DisciplineDefaults)
+async def discipline_defaults(
+    _user: User = Depends(current_active_user),
+) -> DisciplineDefaults:
+    from app.services.discipline_packs import DEFAULT_SOURCES
+
+    return DisciplineDefaults(sources=list(DEFAULT_SOURCES))
 
 
 @router.get("", response_model=list[DisciplineRead])
@@ -35,7 +54,7 @@ async def list_disciplines(
     目录很小，这点开销换掉「改了包还得重启」一整类困惑（同 known_disciplines）。
     坏包在 discover_packs 里已被逐个跳过，不会让这个接口 500。
     """
-    from app.services.discipline_packs import discover_packs
+    from app.services.discipline_packs import DEFAULT_SOURCES, discover_packs
 
     return sorted(
         (
@@ -44,6 +63,8 @@ async def list_disciplines(
                 title=pack.title,
                 description=pack.description,
                 schema_count=len(pack.schemas),
+                sources=list(pack.literature.sources if pack.literature else DEFAULT_SOURCES),
+                arxiv_categories=list(pack.literature.arxiv_categories if pack.literature else ()),
             )
             for pack in discover_packs()
         ),

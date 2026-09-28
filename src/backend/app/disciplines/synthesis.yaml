@@ -64,3 +64,9 @@ schemas:
             max_len: 80
           - name: condition
             max_len: 160
+
+# 文献口径（#821）：化学与材料的期刊论文走 Crossref 与 OpenAlex；若另外勾选 arXiv，
+# 给的是材料与化学物理分类
+literature:
+  sources: [crossref, openalex]
+  arxiv_categories: [cond-mat.mtrl-sci, physics.chem-ph, cond-mat.soft]

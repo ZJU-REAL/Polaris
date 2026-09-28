@@ -1,0 +1,31 @@
+# 计算机科学学科包（#821）。
+#
+# 只带文献口径、不带抽取 schema：内置方法卡（目的 / 手段 / 基线 / 数据集 / 协议）本来
+# 就是机器学习论文的形状，计算机科学用它正合适，再抄一份只会让两处慢慢漂移。
+#
+# 这个包存在的意义，是把「arXiv + cs.* 分类」从全平台的默认值变回一个学科自己的选择。
+# 以前没有它：新建文献库默认只抓 arXiv、表单上摆着一排 cs.* 分类，做临床、做结构的人
+# 建库时首先被问「你的 arXiv 分类是什么」。
+#
+# 放进 <data_dir>/disciplines/ 的同名文件会覆盖本包。
+name: cs
+title: 计算机科学
+description: >-
+  计算机科学与人工智能。方法卡沿用内置字段（目的、手段、基线、数据集）；新建文献库
+  默认从 arXiv、Semantic Scholar 与 OpenAlex 取文献，并提供 cs.* 分类快捷项。
+literature:
+  sources: [arxiv, semantic, openalex]
+  arxiv_categories:
+    - cs.AI
+    - cs.CL
+    - cs.CV
+    - cs.LG
+    - cs.IR
+    - cs.RO
+    - cs.CR
+    - cs.DC
+    - cs.SE
+    - cs.HC
+    - cs.MA
+    - cs.NE
+    - stat.ML

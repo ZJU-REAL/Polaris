@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.core.config import get_settings
 from app.services.extraction.schemas import (
@@ -110,15 +110,57 @@ class PackSchema(BaseModel):
     stage: str | None = None
 
 
+#: 学科没声明文献来源时，新建文献库用什么。OpenAlex 覆盖全部学科（含 arXiv 预印本的
+#: 正式版本），是「不知道你做什么」时唯一不偏向某个领域的选择（#821）。
+DEFAULT_SOURCES: tuple[str, ...] = ("openalex",)
+
+
+class PackLiterature(BaseModel):
+    """学科的文献口径：这个领域的人去哪里找论文（#821）。
+
+    以前没有这一段，于是「去哪里找」的默认值只能写死在代码里——写死的是 arXiv，
+    一个做临床或结构的人建库时首先被问「你的 arXiv 分类是什么」，而他的领域在 arXiv
+    上根本没有对应。默认值属于学科，不属于代码。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: 新建文献库默认勾选的来源（注册表里的源 id，按偏好排序）
+    sources: tuple[str, ...] = Field(min_length=1, max_length=8)
+    #: 选了 arXiv 时给出的分类快捷项。只对在 arXiv 上有分类的学科有意义；
+    #: 不给就只剩自由输入，界面上不再摆一排与该学科无关的 cs.* 分类
+    arxiv_categories: tuple[str, ...] = Field(default=(), max_length=40)
+
+    @model_validator(mode="after")
+    def _check(self) -> PackLiterature:
+        for sid in self.sources:
+            if not sid or not sid.replace("_", "").replace("-", "").isalnum() or sid != sid.lower():
+                raise ValueError(f"来源 id 须为小写字母数字：{sid!r}")
+        if len(set(self.sources)) != len(self.sources):
+            raise ValueError(f"来源重复：{list(self.sources)}")
+        return self
+
+
 class DisciplinePack(BaseModel):
-    """一个学科包。name 是包标识，schemas 是它带来的抽取 schema。"""
+    """一个学科包。name 是包标识；schemas 是它带来的抽取 schema，literature 是它的文献口径。
+
+    两者至少有一个——一个什么都不带来的包装上等于没装。只带 literature 是合法的：
+    计算机科学就是这样，它的方法卡形状正是内置那套，要换的只是去哪里找论文。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
     title: str = Field(min_length=1, max_length=128)
     description: str = Field(default="", max_length=1000)
-    schemas: tuple[PackSchema, ...] = Field(min_length=1, max_length=8)
+    schemas: tuple[PackSchema, ...] = Field(default=(), max_length=8)
+    literature: PackLiterature | None = None
+
+    @model_validator(mode="after")
+    def _brings_something(self) -> DisciplinePack:
+        if not self.schemas and self.literature is None:
+            raise ValueError("学科包至少要带 schemas 或 literature 之一")
+        return self
 
 
 def _builtin_stage(schema_id: str) -> str | None:
@@ -261,3 +303,15 @@ def known_disciplines() -> set[str]:
     就该能立刻选到，不必重启。目录很小，这点开销换掉「改了包还得重启」一整类困惑。
     """
     return {pack.name for pack in discover_packs()}
+
+
+def default_sources_for(discipline: str | None) -> list[str]:
+    """新建文献库时默认勾选的来源：学科包声明的，没有则 DEFAULT_SOURCES。
+
+    现扫而不是查缓存，与 known_disciplines 同理：用户刚丢进去的包立刻生效。
+    """
+    if discipline:
+        for pack in discover_packs():
+            if pack.name == discipline and pack.literature is not None:
+                return list(pack.literature.sources)
+    return list(DEFAULT_SOURCES)

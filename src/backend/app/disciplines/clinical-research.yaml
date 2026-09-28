@@ -66,3 +66,7 @@ schemas:
             max_len: 80
           - name: interval
             max_len: 80
+
+# 文献口径（#821）：临床证据在 PubMed / Europe PMC 上；OpenAlex 兜住非生物医学期刊
+literature:
+  sources: [pubmed, europepmc, openalex]
