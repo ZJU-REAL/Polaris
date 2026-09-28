@@ -51,6 +51,9 @@ DEFINITION = {
     "rubric": [{"name": "novelty", "description": "新颖性", "weight": 1.0}],
     "anchor_papers": [{"title": "Anchor", "arxiv_id": "2404.11111"}],
     "keywords": {
+        # 这是一个 CS 库，走的是 arXiv 那条路：来源得明说（#821 起不选来源的新库
+        # 按学科给默认值，不再默认 arXiv）
+        "sources": ["arxiv"],
         "arxiv_categories": ["cs.LG"],
         "include": ["autonomous research agent"],
     },
