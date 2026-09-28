@@ -50,8 +50,11 @@ _ARXIV_FIELD_RE = re.compile(r"^(?:all|ti|au|abs|co|jr|cat|rn|id):", re.IGNORECA
 
 # 值得重试的状态码。429 是标准限流；**403 也算**——arXiv 历史上对它认为过量的客户端
 # 直接返 403 而不是 429，当成永久失败会让整批论文白白丢掉。5xx 是服务端抖动。
+# **406 也算**（#822）：arXiv 会对一个合法的查询偶发地回 406，同一个 URL、同样的请求头
+# 一分钟后就是 200（2026-09-28 实测，curl 与 httpx 各种 Accept / Accept-Encoding 组合
+# 都复现不出来）。当成永久错误的结果是一次 406 就让整个建库任务停在第一步。
 # 其余 4xx（如检索串写错的 400）立即抛，不能烧四次退避去撞同一堵墙。
-_RETRY_STATUSES = frozenset({403, 429, 500, 502, 503, 504})
+_RETRY_STATUSES = frozenset({403, 406, 429, 500, 502, 503, 504})
 # 单次退避上限：Retry-After 可能给出很大的值，voyage 任务不能被一个响应头挂住半天
 _MAX_BACKOFF_SECONDS = 120.0
 _QUERY_COOLDOWN_KEY = "arxiv:query:cooldown_until"
@@ -314,15 +317,18 @@ class ArxivClient:
                 last_exc = httpx.HTTPStatusError(
                     f"{resp.status_code} from arXiv", request=resp.request, response=resp
                 )
-                # 生产上 arXiv 返回的是 429（实测），响应头留档以便后续调整判据
+                # 生产上 arXiv 返回的是 429（实测），响应头留档以便后续调整判据；
+                # 406 的含义还不清楚，连响应体开头一起留下（#822）
                 logger.warning(
-                    "arxiv throttled: status=%s url=%s attempt=%s/%s retry_after=%s headers=%s",
+                    "arxiv throttled: status=%s url=%s attempt=%s/%s retry_after=%s headers=%s"
+                    " body=%r",
                     resp.status_code,
                     url,
                     attempt + 1,
                     self._max_retries,
                     retry_after,
                     dict(resp.headers),
+                    resp.text[:300],
                 )
             delay = (
                 min(_MAX_BACKOFF_SECONDS, retry_after)
@@ -345,9 +351,11 @@ class ArxivClient:
         # 冷却是单键、平台级的，触发条件必须是「对方明确说你太快了」。
         if url == API_URL and last_status == 429:
             cooldown = await self._start_query_cooldown(int(last_retry_after or 0))
+        # 报出最后一次的状态码：「一直 406」和「一直 429」「一直超时」要分得开，
+        # 否则排查的人只看到一句 unavailable，得去翻 worker 日志
+        why = f"HTTP {last_status}" if last_status is not None else type(last_exc).__name__
         raise ArxivRateLimitedError(
-            f"arXiv unavailable after {self._max_retries} attempts"
-            f" ({type(last_exc).__name__}): {url}",
+            f"arXiv unavailable after {self._max_retries} attempts ({why}): {url}",
             retry_after=cooldown,
         ) from last_exc
 
