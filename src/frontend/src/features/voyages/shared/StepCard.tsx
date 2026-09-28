@@ -41,6 +41,24 @@ function namesOf(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 }
 
+/** 源 id 的显示名。认不出的原样显示——插件装的新源也看得懂是哪个。 */
+const SOURCE_LABELS: Record<string, string> = {
+  arxiv: 'arXiv',
+  openalex: 'OpenAlex',
+  semantic: 'Semantic Scholar',
+  pubmed: 'PubMed',
+  europepmc: 'Europe PMC',
+  crossref: 'Crossref',
+  hal: 'HAL',
+  core: 'CORE',
+  base: 'BASE',
+  sciverse: 'ScienceDirect',
+};
+
+export function sourceLabel(id: string): string {
+  return SOURCE_LABELS[id] ?? id;
+}
+
 export interface WikiStepFriendly {
   /** 一句给用户看的中文小结 */
   text: string;
@@ -56,29 +74,50 @@ export interface WikiStepFriendly {
 export function wikiStepFriendly(action: string, obs: Record<string, unknown>): WikiStepFriendly | null {
   const failedCount = Array.isArray(obs.failed) ? obs.failed.length : 0;
   switch (action) {
-    case 'wiki.search_candidates':
-      // 候选来源随模式而变：建库检索 arXiv，增量只从每日论文池里挑（观测字段完全不同，
-      // 没有 found/window_since）。按 source 分支，否则同步任务会显示「检索到 — 篇」。
-      if (obs.source === 'daily_feed') {
+    case 'wiki.search_candidates': {
+      // 候选来源随模式而变：建库按库的来源检索；增量从每日池里取库的来源带来的那部分，
+      // 没有日更的源（OpenAlex、Crossref……）另按关键词检索（#821）。按 mode 分支——
+      // 以前按 source === 'daily_feed' 判断，而且检索那一支一律写「从 arXiv 检索到」，
+      // 选了 PubMed 的库也这么显示。
+      if (obs.mode === 'incremental') {
+        const searched = namesOf(obs.searched_sources);
+        const parts: string[] = [];
+        if (!searched.length || num(obs.feed_total) > 0 || String(obs.source ?? '').startsWith('daily_feed')) {
+          parts.push(
+            tr(
+              `每日论文池 ${num(obs.feed_total)} 篇 → 按方向粗排 ${num(obs.after_vector_rank)} 篇 → 已在库 ${num(obs.already_in_library)} 篇`,
+              `Daily pool ${num(obs.feed_total)} → ranked ${num(obs.after_vector_rank)} → ${num(obs.already_in_library)} already in library`,
+            ),
+          );
+        }
+        if (searched.length) {
+          parts.push(
+            tr(
+              `检索 ${searched.map(sourceLabel).join('、')} ${num(obs.search_fetched)} 篇`,
+              `searched ${searched.map(sourceLabel).join(', ')}: ${num(obs.search_fetched)}`,
+            ),
+          );
+        }
         return {
-          text: tr(
-            `每日论文池 ${num(obs.feed_total)} 篇 → 按方向粗排 ${num(obs.after_vector_rank)} 篇 →`
-              + ` 已在库 ${num(obs.already_in_library)} 篇 → 新收录 ${num(obs.inserted)} 篇`,
-            `Daily pool ${num(obs.feed_total)} → ranked ${num(obs.after_vector_rank)} →`
-              + ` ${num(obs.already_in_library)} already in library → ${num(obs.inserted)} newly added`,
-          ),
+          text: parts.join(tr('；', '; ')) + tr(` → 新收录 ${num(obs.inserted)} 篇`, ` → ${num(obs.inserted)} newly added`),
           papers: briefsOf(obs.new_papers),
           papersTotal: num(obs.inserted),
         };
       }
+      const used = String(obs.source ?? '')
+        .split(',')
+        .map((x) => x.trim())
+        .filter((x) => x && x !== 'none');
+      const where = used.length ? used.map(sourceLabel).join(tr('、', ', ')) : tr('数据源', 'the sources');
       return {
         text: tr(
-          `从 arXiv 检索到 ${num(obs.found)} 篇，去重后新收录 ${num(obs.inserted)} 篇`,
-          `Found ${num(obs.found)} papers on arXiv; ${num(obs.inserted)} new after dedup`,
+          `从 ${where} 检索到 ${num(obs.found)} 篇，去重后新收录 ${num(obs.inserted)} 篇`,
+          `Found ${num(obs.found)} papers on ${where}; ${num(obs.inserted)} new after dedup`,
         ),
         papers: briefsOf(obs.new_papers),
         papersTotal: num(obs.inserted),
       };
+    }
     case 'wiki.snowball':
       if (obs.skipped) return { text: tr('已跳过（未开启参考文献扩展）', 'Skipped (reference expansion is off)'), papers: [] };
       return {

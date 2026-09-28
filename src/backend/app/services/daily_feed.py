@@ -393,10 +393,23 @@ async def embedding_coverage(
 
 
 def _make_pool_paper(entry: dict[str, Any]) -> Paper:
-    """RSS entry → 轻量内容池 Paper（不下 PDF、不补机构——feed 量大，重活留给收录后）。"""
+    """源条目 → 轻量内容池 Paper（不下 PDF、不补机构——feed 量大，重活留给收录后）。
+
+    ``source`` 与外部标识按条目实际来源记：以前一律记成 ``arxiv``、只存 arXiv 编号，
+    PubMed 带来的论文因此被标成 arXiv、PMID 也丢了（#821）。
+    """
     aid = entry.get("arxiv_id")
+    external_ids = {
+        key: value
+        for key, value in (
+            ("arxiv", aid),
+            ("doi", entry.get("doi")),
+            ("pmid", entry.get("pmid")),
+        )
+        if value
+    }
     return new_paper(
-        source="arxiv",
+        source=str(entry.get("_source") or "arxiv"),
         dedup_key=pool_dedup_key(
             arxiv_id=aid,
             doi=entry.get("doi"),
@@ -406,7 +419,7 @@ def _make_pool_paper(entry: dict[str, Any]) -> Paper:
         ),
         arxiv_id=aid,
         doi=entry.get("doi"),
-        external_ids={"arxiv": aid} if aid else None,
+        external_ids=external_ids or None,
         title=entry["title"],
         authors=entry.get("authors"),
         abstract=entry.get("abstract"),
@@ -539,7 +552,9 @@ async def fetch_new_by_category(
                     },
                 )
                 continue
-            by_category[category].extend(entries)
+            # 记下是哪个源带来的：几个源订了同一个词时条目会并进同一个列表，
+            # 到落库那一步就再也分不出来了（#821）
+            by_category[category].extend({**e, "_source": sub.source} for e in entries)
             batch_date = batch_at.astimezone(dt.UTC).date() if batch_at else None
             _merge_status(
                 statuses,
@@ -608,11 +623,12 @@ async def upsert_entries(
             title = (entry.get("title") or "").strip()
             arxiv_id = entry.get("arxiv_id")
             doi = entry.get("doi")
-            # 身份不再限定 arXiv id：非 arXiv 的源给不出 arxiv_id，以前会在这里被
+            source = str(entry.get("_source") or "arxiv")
+            # 身份不限定 arXiv id：非 arXiv 的源给不出 arxiv_id，以前会在这里被
             # 静默丢掉——抓回来了、也解析了，然后一条不落地。有 DOI 就够定位一篇
-            # 论文（find_pool_paper / pool_dedup_key 本来就按 arxiv → doi → 标题哈希
-            # 级联）。两者都没有才真的无从去重，跳过。
-            if not title or not (arxiv_id or doi):
+            # 论文（find_pool_paper / pool_dedup_key 按 arxiv → doi → 标题哈希级联）；
+            # 没有 DOI 的 PubMed 新收录很常见，有 PMID 也算数，去重落到标题哈希（#821）。
+            if not title or not (arxiv_id or doi or entry.get("pmid")):
                 continue
             paper = await find_pool_paper(
                 session,
@@ -644,13 +660,22 @@ async def upsert_entries(
                         primary_category=category,
                         categories=[category],
                         announce_type=entry.get("announce_type") or "new",
+                        sources=[source],
                     )
                 )
                 created += 1
-            elif category not in (row.categories or []):
-                # 同日另一分类命中（cross-list）：合并分类，不动 feed_date
-                row.categories = [*(row.categories or []), category]
-                merged += 1
+            else:
+                changed = False
+                if category not in (row.categories or []):
+                    # 同日另一分类命中（cross-list）：合并分类，不动 feed_date
+                    row.categories = [*(row.categories or []), category]
+                    changed = True
+                if source not in (row.sources or []):
+                    # 另一个源也带来了这篇：记上，选了任一个源的库都该看得到它
+                    row.sources = [*(row.sources or []), source]
+                    changed = True
+                if changed:
+                    merged += 1
 
     await session.commit()
     return {"created": created, "merged": merged, "touched": touched}

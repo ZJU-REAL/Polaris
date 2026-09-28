@@ -296,14 +296,18 @@ async def _pool_paper_or_new(
     title: str,
     year: int | None,
     authors: list[Any] | None,
+    skip_ids: set[str] | frozenset[str] = frozenset(),
 ) -> Paper | None:
     """写路径统一入口：先按 dedup 键查全局内容池，命中只建成员行（pool hit，
     跳过重复解析），未命中用 ``make_paper()`` 建新内容池行 + 成员行。
 
-    返回本次新加入库的 Paper；本库已有成员行时返回 None（跳过）。
+    返回本次新加入库的 Paper；本库已有成员行、或池论文在 ``skip_ids`` 里（本库判过
+    不收的）时返回 None（跳过）。
     """
     key = pool_dedup_key(arxiv_id=arxiv_id, doi=doi, title=title, year=year, authors=authors)
     pooled = await find_pool_paper(session, arxiv_id=arxiv_id, doi=doi, dedup_key=key)
+    if pooled is not None and str(pooled.id) in skip_ids:
+        return None
     if pooled is not None:
         _, created = await ensure_membership(
             session, library_id=library_id, paper_id=pooled.id, status="candidate"
@@ -379,8 +383,13 @@ async def _collect_from_daily_feed(
     direction: str,
     exclude: list[str],
     limit: int,
+    sources: list[str],
 ) -> dict[str, Any]:
-    """增量同步的候选来源：每日论文池，不碰 arXiv。
+    """增量同步的候选来源之一：每日论文池，不碰源站。
+
+    **只取本库选了的源带来的条目**（``sources``，#821）。以前整池一起排：池子主要是
+    arXiv 公告，一个只选了 PubMed 的库会被送去对着它们做相似度排序，拿到的全是它
+    明说不要的来源。没记来源的旧条目（``sources`` 为空）照旧对所有库开放。
 
     取**整张 daily_feed_entries**、不加时间窗——``cleanup_expired`` 已经保证这张表里
     只有保留期内的行，表本身就是那个窗口。全量重扫是有意的：上次同步失败/欠费/被暂停
@@ -405,7 +414,7 @@ async def _collect_from_daily_feed(
 
     scope = await get_sync_scope(session)
     stmt = (
-        select(Paper, DailyFeedEntry.feed_date)
+        select(Paper, DailyFeedEntry.feed_date, DailyFeedEntry.sources)
         .join(DailyFeedEntry, DailyFeedEntry.paper_id == Paper.id)
         .order_by(DailyFeedEntry.feed_date.desc())
     )
@@ -419,7 +428,10 @@ async def _collect_from_daily_feed(
         if last is not None:
             since_day = last.astimezone(UTC).date()
             stmt = stmt.where(DailyFeedEntry.feed_date >= since_day)
-    rows = (await session.execute(stmt)).all()
+    all_rows = (await session.execute(stmt)).all()
+    wanted = set(sources)
+    rows = [(p, d) for p, d, srcs in all_rows if not srcs or wanted & set(srcs)]
+    skipped_other_sources = len(all_rows) - len(rows)
     feed_latest = max((d for _, d in rows), default=None)
     # 判过且没通过的直接跳过：它们的成员行已被删掉，去重集合挡不住，而扫描窗口
     # 和上次同步那天是重叠的——不挡的话今天淘汰的几百篇明天会再打一次分。
@@ -473,6 +485,7 @@ async def _collect_from_daily_feed(
 
     return {
         "feed_total": len(rows),
+        "feed_other_sources": skipped_other_sources,
         "feed_scope": scope,
         "skipped_previously_rejected": skipped_rejected,
         "feed_since": since_day.isoformat() if since_day else None,
@@ -505,6 +518,141 @@ def _entry_from_candidate(item: Any) -> dict[str, Any]:
         "url": item.url,
         "published": meta.get("published"),
     }
+
+
+class _LibraryInserter:
+    """把源条目按三方键（arxiv_id / doi / 标题）+ 全局内容池去重后加进一个库。
+
+    检索模式与增量同步共用。边插边更新去重键集合，同一次运行里不同源给出的同一篇
+    不会重插；池中已有的论文只建成员行（跳过重复解析）。``rejected`` 里的池论文
+    （本库判过不收的）直接跳过——增量同步每天都跑，不挡的话同一批会被天天重新打分。
+    """
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        library_id: uuid.UUID,
+        *,
+        arxiv_ids: set[str],
+        dois: set[str],
+        titles: set[str],
+        rejected: set[str] | frozenset[str] = frozenset(),
+    ) -> None:
+        self.session = session
+        self.library_id = library_id
+        self.arxiv_ids = arxiv_ids
+        self.dois = dois
+        self.titles = titles
+        self.rejected = rejected
+        self.new_papers: list[Paper] = []
+
+    async def insert(self, entry: dict[str, Any], source: str) -> bool:
+        aid = entry.get("arxiv_id")
+        title = (entry.get("title") or "").strip()
+        doi = (entry.get("doi") or "").lower() or None
+        if not title:
+            return False
+        if (
+            (aid and aid in self.arxiv_ids)
+            or (doi and doi in self.dois)
+            or (title.lower() in self.titles)
+        ):
+            return False
+
+        def make_paper() -> Paper:
+            # 外部标识只记有值的：以前写成 {"arxiv": aid}，非 arXiv 源的论文存下
+            # 一个 {"arxiv": None}，PMID 则根本没地方放
+            external_ids = {
+                key: value
+                for key, value in (
+                    ("arxiv", aid),
+                    ("doi", entry.get("doi")),
+                    ("pmid", entry.get("pmid")),
+                )
+                if value
+            }
+            return new_paper(
+                source=source,
+                arxiv_id=aid,
+                doi=entry.get("doi"),
+                external_ids=external_ids or None,
+                title=title,
+                authors=entry.get("authors"),
+                abstract=entry.get("abstract"),
+                year=entry.get("year"),
+                venue=entry.get("primary_category"),
+                url=entry.get("url"),
+                published_at=_parse_iso(entry.get("published")),
+            )
+
+        paper = await _pool_paper_or_new(
+            self.session,
+            library_id=self.library_id,
+            make_paper=make_paper,
+            arxiv_id=aid,
+            doi=doi,
+            title=title,
+            year=entry.get("year"),
+            authors=entry.get("authors"),
+            skip_ids=self.rejected,
+        )
+        if aid:
+            self.arxiv_ids.add(aid)
+        if doi:
+            self.dois.add(doi)
+        self.titles.add(title.lower())
+        if paper is None:
+            return False
+        self.new_papers.append(paper)
+        return True
+
+
+async def _search_generic_sources(
+    inserter: _LibraryInserter,
+    *,
+    source_ids: list[str],
+    terms: list[str],
+    since: datetime,
+    until: datetime,
+    limit: int,
+    errors: list[str],
+) -> int:
+    """arXiv 以外的源走注册表的通用 search，一次取完；返回抓到的条数。
+
+    它们没有分页续跑——限流问题集中在 arXiv，别的源没这个包袱。时间窗只能按年
+    （``SourceSearchRequest`` 只有年份），窗口内按相关性取前 N 篇，靠去重挡掉已有的。
+    单个源失败记进 ``errors``，不拖垮其余源。
+    """
+    if not source_ids or not terms:
+        return 0
+    from app.schemas.literature_discovery import SourceSearchRequest
+
+    query = " ".join(terms)
+    per_source = max(1, limit // len(source_ids))
+    fetched = 0
+    for source_id in source_ids:
+        adapter = literature_sources.get_source(source_id)
+        if adapter is None:
+            errors.append(f"{source_id}：当前不可用")
+            continue
+        try:
+            page = await adapter.search(
+                SourceSearchRequest(
+                    query=query,
+                    start_year=since.year,
+                    end_year=until.year,
+                    limit=per_source,
+                )
+            )
+        except Exception as e:  # noqa: BLE001 — 单个源失败不拖垮其余
+            logger.warning("library search failed for %s", source_id, exc_info=True)
+            errors.append(f"{source_id}：{type(e).__name__}")
+            continue
+        for item in page.items:
+            await inserter.insert(_entry_from_candidate(item), source_id)
+        await inserter.session.flush()
+        fetched += len(page.items)
+    return fetched
 
 
 #: 库的 definition 里没有来源时用哪些。**只有存量库会走到这里**：新库在建库时就按
@@ -568,47 +716,134 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         # arXiv 检索是限流的主要来源（生产上三个库同步就是死在这个调用的 429 上），
         # 而每日推送本来就每天把新论文抓进内容池了，同一批论文没有理由抓第二遍。
         if mode == "incremental":
-            feed = await _collect_from_daily_feed(
-                ctx,
-                session,
-                library=library,
-                direction=direction_query,
-                exclude=exclude,
-                limit=limit,
-            )
+            # 本库的源分两类（#821）：能供日更的（arXiv、PubMed）从每日池里取，池里
+            # 只拿它们带来的条目；不能日更的（OpenAlex、Crossref……）按上次同步以来的
+            # 窗口直接检索。以前不分：整池排序，选了 OpenAlex 的库从来不会去问 OpenAlex。
+            daily_capable = {
+                sid
+                for sid, _ in literature_sources.sources_with_capability(
+                    "fetch_new", clients={"arxiv": get_arxiv_client()}
+                )
+            }
+            pool_sources = [s for s in sources if s in daily_capable]
+            search_sources = [s for s in sources if s not in daily_capable]
+            messages: list[str] = []
+            if pool_sources:
+                feed = await _collect_from_daily_feed(
+                    ctx,
+                    session,
+                    library=library,
+                    direction=direction_query,
+                    exclude=exclude,
+                    limit=limit,
+                    sources=pool_sources,
+                )
+                if int(feed["feed_total"]) == 0:
+                    messages.append(
+                        f"每日论文池里没有来自 {'、'.join(pool_sources)} 的条目；"
+                        "请检查每日订阅与抓取任务。"
+                    )
+                elif feed.get("feed_latest_date") is None:
+                    messages.append("未能确认每日论文池的最新公告时间。")
+            else:
+                # 本库没有能日更的源：不碰池子，但结果形状与走过池子时一致，
+                # 运行台与调用方不必为这一种情况另写分支
+                feed = {
+                    "feed_total": 0,
+                    "feed_other_sources": 0,
+                    "feed_scope": None,
+                    "skipped_previously_rejected": 0,
+                    "feed_since": None,
+                    "excluded_by_terms": 0,
+                    "feed_ranked": False,
+                    "after_vector_rank": 0,
+                    "already_in_library": 0,
+                    "selected": [],
+                    "feed_latest_date": None,
+                }
             new_papers = feed.pop("selected")
+
+            search_fetched = 0
+            search_inserted = 0
+            if search_sources:
+                if not include:
+                    messages.append(
+                        f"{'、'.join(search_sources)} 没有每日新增，要靠关键词检索；"
+                        "本库没有配置「包括关键词」，这次没有检索它们。"
+                    )
+                else:
+                    last_run = _parse_iso(
+                        ((library.ingest_state or {}).get("last_run") or {}).get("finished_at")
+                    )
+                    window_since = last_run or (now - timedelta(days=30))
+                    arxiv_ids, dois, titles = await _existing_keys(session, library.id)
+                    inserter = _LibraryInserter(
+                        session,
+                        library.id,
+                        arxiv_ids=arxiv_ids,
+                        dois=dois,
+                        titles=titles,
+                        rejected=rejected_paper_ids(library),
+                    )
+                    errors: list[str] = []
+                    search_fetched = await _search_generic_sources(
+                        inserter,
+                        source_ids=search_sources,
+                        terms=include,
+                        since=window_since,
+                        until=now,
+                        limit=limit,
+                        errors=errors,
+                    )
+                    search_inserted = len(inserter.new_papers)
+                    new_papers = [*new_papers, *inserter.new_papers]
+                    messages.extend(f"数据源失败——{e}" for e in errors)
             await session.flush()
             brief = _paper_brief(new_papers)
-            messages: list[str] = []
-            if int(feed["feed_total"]) == 0:
-                messages.append("每日论文池当前为空；请检查每日抓取任务及数据源状态。")
-            if feed.get("feed_latest_date") is None:
-                messages.append("未能确认每日论文池的最新公告时间。")
             diagnostics = {
-                "source": "daily_feed",
-                "source_fetched": int(feed["feed_total"]),
-                "prescreened": int(feed["after_vector_rank"]),
+                # 真的用了哪些渠道：日更池（及其中的源）与直接检索的源分开写
+                "source": ",".join(
+                    ([f"daily_feed({'+'.join(pool_sources)})"] if pool_sources else [])
+                    + search_sources
+                )
+                or "none",
+                "source_fetched": int(feed["feed_total"]) + search_fetched,
+                "prescreened": int(feed["after_vector_rank"]) + search_fetched,
                 "inserted": len(new_papers),
                 "source_latest_at": feed.get("feed_latest_date"),
                 "status": "warning" if messages else "ok",
                 "messages": messages,
+                "searched_sources": search_sources,
+                "search_fetched": search_fetched,
+                "search_inserted": search_inserted,
                 **feed,
             }
             ctx.checkpoint["ingest_search_stats"] = diagnostics
             await session.commit()
             ctx.checkpoint["watermark_candidate"] = now.isoformat()
-            await ctx.log(
-                f"每日池 {feed['feed_total']} 篇 → 粗排取 {feed['after_vector_rank']}"
-                f" → 已在库 {feed['already_in_library']} → 送打分 {len(new_papers)}"
-            )
+            if pool_sources:
+                await ctx.log(
+                    f"每日池（{'、'.join(pool_sources)}）{feed['feed_total']} 篇"
+                    f" → 粗排取 {feed['after_vector_rank']}"
+                    f" → 已在库 {feed['already_in_library']}"
+                    f" → 送打分 {len(new_papers) - search_inserted}"
+                )
+            if search_sources and include:
+                await ctx.log(
+                    f"检索 {'、'.join(search_sources)} {search_fetched} 篇 → 新增 {search_inserted}"
+                )
             return {
-                "source": "daily_feed",
+                "source": diagnostics["source"],
                 "mode": mode,
                 "inserted": len(new_papers),
                 "new_papers": brief,
                 "source_latest_at": diagnostics["source_latest_at"],
                 "diagnostic_status": diagnostics["status"],
                 "diagnostic_messages": messages,
+                # 运行台的小结读这几项区分「从池里取」与「直接检索」（#821）
+                "searched_sources": search_sources,
+                "search_fetched": search_fetched,
+                "search_inserted": search_inserted,
                 **feed,
             }
 
@@ -722,58 +957,13 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         await _persist_checkpoint(done=False)
 
         arxiv_ids, dois, titles = await _existing_keys(session, library.id)
-        new_papers: list[Paper] = []
+        inserter = _LibraryInserter(
+            session, library.id, arxiv_ids=arxiv_ids, dois=dois, titles=titles
+        )
+        new_papers = inserter.new_papers
 
         async def _try_insert(entry: dict[str, Any], source: str) -> bool:
-            """三方键（arxiv_id/doi/title）+ 全局内容池去重后入库；已在本库返回 False。
-
-            边插边更新去重键集合——RSS↔API↔存量共用同一套集合，互不重插；
-            池中已有的论文只建成员行（跳过重复解析）。
-            """
-            aid = entry.get("arxiv_id")
-            title = (entry.get("title") or "").strip()
-            doi = (entry.get("doi") or "").lower() or None
-            if not title:
-                return False
-            if (aid and aid in arxiv_ids) or (doi and doi in dois) or title.lower() in titles:
-                return False
-
-            def make_paper() -> Paper:
-                return new_paper(
-                    source=source,
-                    arxiv_id=aid,
-                    doi=entry.get("doi"),
-                    external_ids=(
-                        {"arxiv": aid} | ({"doi": entry["doi"]} if entry.get("doi") else {})
-                    ),
-                    title=title,
-                    authors=entry.get("authors"),
-                    abstract=entry.get("abstract"),
-                    year=entry.get("year"),
-                    venue=entry.get("primary_category"),
-                    url=entry.get("url"),
-                    published_at=_parse_iso(entry.get("published")),
-                )
-
-            paper = await _pool_paper_or_new(
-                session,
-                library_id=library.id,
-                make_paper=make_paper,
-                arxiv_id=aid,
-                doi=doi,
-                title=title,
-                year=entry.get("year"),
-                authors=entry.get("authors"),
-            )
-            if aid:
-                arxiv_ids.add(aid)
-            if doi:
-                dois.add(doi)
-            titles.add(title.lower())
-            if paper is None:
-                return False
-            new_papers.append(paper)
-            return True
+            return await inserter.insert(entry, source)
 
         # 经源注册表取 arXiv 适配器；get_arxiv_client 模块属性保留为客户端注入缝。
         # arXiv 单独一条路径而不是和别的源一起走通用 search：它有分页 + 断点续跑
@@ -819,42 +1009,28 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 break
 
         # —— arXiv 以外的源：走注册表的通用 search ——
-        # 它们没有分页续跑，一次取完即可；限流问题集中在 arXiv，别的源没这个包袱。
         other_sources = [s for s in sources if s != "arxiv"]
-        if other_sources and terms:
-            from app.schemas.literature_discovery import SourceSearchRequest
-
-            query = " ".join(terms)
-            per_source = max(1, limit // max(len(other_sources), 1))
-            for source_id in other_sources:
-                adapter = literature_sources.get_source(source_id)
-                if adapter is None:
-                    source_errors.append(f"{source_id}：当前不可用")
-                    continue
-                try:
-                    page = await adapter.search(
-                        SourceSearchRequest(
-                            query=query,
-                            start_year=since.year,
-                            end_year=until.year,
-                            limit=per_source,
-                        )
-                    )
-                except Exception as e:  # noqa: BLE001 — 单个源失败不拖垮其余
-                    logger.warning("library search failed for %s", source_id, exc_info=True)
-                    source_errors.append(f"{source_id}：{type(e).__name__}")
-                    continue
-                inserted_here = 0
-                for item in page.items:
-                    entry = _entry_from_candidate(item)
-                    if await _try_insert(entry, source_id):
-                        inserted_here += 1
-                await session.flush()
-                fetched_total += len(page.items)
-                inserted_total += inserted_here
-                if inserted_here:
-                    brief_acc.extend(_paper_brief(new_papers[-inserted_here:]))
-                    del brief_acc[_OBS_LIST_CAP:]
+        if other_sources and not terms:
+            # 以前这里静默跳过：选了 arXiv 分类 + PubMed、没填关键词的库，PubMed
+            # 一篇都不会去查，界面上看不出来（arXiv 能只按分类检索，别的源不能）
+            source_errors.append(
+                f"{'、'.join(other_sources)}：没有检索关键词，只按 arXiv 分类检索了 arXiv"
+            )
+        before = len(new_papers)
+        fetched_total += await _search_generic_sources(
+            inserter,
+            source_ids=other_sources,
+            terms=terms,
+            since=since,
+            until=until,
+            limit=limit,
+            errors=source_errors,
+        )
+        inserted_here = len(new_papers) - before
+        inserted_total += inserted_here
+        if inserted_here:
+            brief_acc.extend(_paper_brief(new_papers[-inserted_here:]))
+            del brief_acc[_OBS_LIST_CAP:]
 
         brief = brief_acc
 
@@ -888,7 +1064,8 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
     # 新水位线 = 本次检索时刻，由最后一步 wiki.update_watermark 落库
     ctx.checkpoint["watermark_candidate"] = now.isoformat()
     return {
-        "source": "arxiv",
+        # 与 diagnostics 同口径：写死 "arxiv" 的话，选了 PubMed 的库照样显示 arxiv
+        "source": diagnostics["source"],
         "found": fetched_total,
         "inserted": inserted_total,
         "new_papers": brief,

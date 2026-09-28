@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "a8d3e5f71c42"  # 路由的输入预算 (#811)
+HEAD_REVISION = "b5e2c8d41f7a"  # 每日池条目记来源 (#821)
+INPUT_BUDGETS_REVISION = "a8d3e5f71c42"  # 路由的输入预算 (#811)
 RERANK_PATH_REVISION = "e3a7c91f20b6"  # provider 的 rerank 路径 (#810)
 DAILY_SUBS_REVISION = "c1d80a3fb492"  # 每日订阅按人存 (#806)
 SKILLS_DROP_REVISION = "d7f4a16c8e29"  # 技能功能移除 (#755)
@@ -639,8 +640,16 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "rerank_path" in columns["llm_providers"]
     # 按环节的输入预算（#811）：路由上的覆盖值，NULL = 全用默认
     assert "input_budgets" in columns["model_routes"]
+    # 每日池条目记来源（#821）：增量同步按库的来源筛池
+    assert "sources" in columns["daily_feed_entries"]
 
-    # 先退掉路由的输入预算列。
+    # 先退掉每日池条目的来源列。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == INPUT_BUDGETS_REVISION
+    assert "sources" not in columns["daily_feed_entries"]
+
+    # 再退掉路由的输入预算列。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == RERANK_PATH_REVISION

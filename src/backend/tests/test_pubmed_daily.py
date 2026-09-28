@@ -140,3 +140,89 @@ async def test_a_pubmed_entry_reaches_the_daily_pool(client, captured_query):
         rows = (await session.execute(select(DailyFeedEntry))).scalars().all()
     assert len(rows) == 1, "只给 DOI、不给 arxiv_id 的条目以前会在这一步被丢掉"
     assert rows[0].primary_category == "neuroscience"
+    # 记下是 PubMed 带来的：以前池论文一律标成 arxiv，库的增量同步分不出来源（#821）
+    assert rows[0].sources == ["pubmed"]
+
+
+# ---- 池条目的来源与标识（#821） ----
+
+
+async def _pool_rows():
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.daily_feed import DailyFeedEntry
+    from app.models.paper import Paper
+
+    async with get_sessionmaker()() as session:
+        return (
+            await session.execute(
+                select(DailyFeedEntry, Paper).join(Paper, Paper.id == DailyFeedEntry.paper_id)
+            )
+        ).all()
+
+
+async def test_pool_papers_record_the_source_that_brought_them(client):
+    from app.core.db import get_sessionmaker
+
+    async with get_sessionmaker()() as session:
+        await daily_feed.upsert_entries(
+            session,
+            by_category={
+                "neuro": [
+                    {"title": "PubMed one", "doi": "10.1/p1", "pmid": "111", "_source": "pubmed"}
+                ],
+                "cs.AI": [{"title": "arXiv one", "arxiv_id": "2609.00001", "_source": "arxiv"}],
+            },
+        )
+    by_title = {paper.title: (entry, paper) for entry, paper in await _pool_rows()}
+    entry, paper = by_title["PubMed one"]
+    assert entry.sources == ["pubmed"]
+    assert paper.source == "pubmed"
+    assert paper.external_ids == {"doi": "10.1/p1", "pmid": "111"}
+    entry, paper = by_title["arXiv one"]
+    assert entry.sources == ["arxiv"]
+    assert paper.source == "arxiv"
+    assert paper.external_ids == {"arxiv": "2609.00001"}
+
+
+async def test_a_pubmed_record_without_a_doi_is_kept_by_its_pmid(client):
+    """刚收录的 PubMed 记录常常还没有 DOI；以前没有 arXiv 号也没有 DOI 就整条丢掉。"""
+    from app.core.db import get_sessionmaker
+
+    async with get_sessionmaker()() as session:
+        await daily_feed.upsert_entries(
+            session,
+            by_category={"neuro": [{"title": "Fresh record", "pmid": "222", "_source": "pubmed"}]},
+        )
+    rows = await _pool_rows()
+    assert len(rows) == 1
+    entry, paper = rows[0]
+    assert paper.external_ids == {"pmid": "222"}
+    assert entry.sources == ["pubmed"]
+
+
+async def test_a_paper_brought_by_two_sources_records_both(client):
+    """同一篇被 arXiv 和 PubMed 都带来：选了任一个源的库都该看得到它。"""
+    from app.core.db import get_sessionmaker
+
+    async with get_sessionmaker()() as session:
+        await daily_feed.upsert_entries(
+            session,
+            by_category={
+                "q-bio.NC": [
+                    {
+                        "title": "Shared",
+                        "doi": "10.1/shared",
+                        "arxiv_id": "2609.00002",
+                        "_source": "arxiv",
+                    }
+                ],
+                "neuro": [
+                    {"title": "Shared", "doi": "10.1/shared", "pmid": "333", "_source": "pubmed"}
+                ],
+            },
+        )
+    rows = await _pool_rows()
+    assert len(rows) == 1
+    assert sorted(rows[0][0].sources) == ["arxiv", "pubmed"]
