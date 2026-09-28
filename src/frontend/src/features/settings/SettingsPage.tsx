@@ -1055,6 +1055,24 @@ type TestState =
 const testKeyOf = (providerId: string, model: string, capability: LlmTestCapability) =>
   `${providerId}|${model}|${capability}`;
 
+/**
+ * 供应商表里「模型状态」该按什么能力测（#819）。
+ *
+ * 以前一律按 chat 测：嵌入模型的服务恰好也应答 chat，于是显示「正常」；重排序服务不应答
+ * chat，于是显示「失败」——与下面路由表按真实能力测出的结果正好相反。现在看路由表里这个
+ * provider+model 被用在哪个环节：用作 embedding / rerank 就按那个能力测，否则按 chat。
+ */
+export function providerTestCapability(
+  providerId: string,
+  model: string,
+  routes: readonly { stage: string; provider_id: string; model: string }[],
+): LlmTestCapability {
+  const uses = routes.filter((r) => r.provider_id === providerId && r.model.trim() === model);
+  if (uses.some((r) => r.stage === 'embedding')) return 'embedding';
+  if (uses.some((r) => r.stage === 'rerank')) return 'rerank';
+  return 'chat';
+}
+
 /** 模型连通性测试：相同 provider+model+capability 只实测一次，结果共享。 */
 function useModelTests(testModel: (input: LlmTestModelInput) => Promise<LlmTestResult>) {
   const [results, setResults] = useState<Record<string, TestState>>({});
@@ -1159,6 +1177,9 @@ function ProvidersSection() {
     retry: false,
   });
   const providers = data ?? [];
+  // 与路由表区共用同一个查询缓存：测试能力要按路由表里的用途来定
+  const routesQuery = useQuery({ queryKey: ['llm', 'routes'], queryFn: () => api.getLlmRoutes(), retry: false });
+  const routes = routesQuery.data ?? [];
 
   const [modal, setModal] = useState<'closed' | 'create' | string>('closed'); // string = 编辑中的 provider id
   const [draft, setDraft] = useState<ProviderDraft>(emptyDraft());
@@ -1202,13 +1223,13 @@ function ProvidersSection() {
     onError: (err) => toast(`${tr('操作失败', 'Failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
-  /** 每个 provider 用其 models 的第一个模型测 chat 连通性。 */
+  /** 每个 provider 测其 models 的第一个模型，按它在路由表里的用途测（见 providerTestCapability）。 */
   const firstModelOf = (p: LlmProviderRead): string | null => (p.models ?? [])[0]?.trim() || null;
   const runProviderTests = async (list: LlmProviderRead[]) => {
     const inputs: LlmTestModelInput[] = [];
     for (const p of list) {
       const model = firstModelOf(p);
-      if (model) inputs.push({ provider_id: p.id, model, capability: 'chat' });
+      if (model) inputs.push({ provider_id: p.id, model, capability: providerTestCapability(p.id, model, routes) });
     }
     if (!(await tests.run(inputs))) {
       toast(tr('没有可测试的 provider — 先在编辑里填写可用模型', 'Nothing to test — add models to a provider first'), 'error');
@@ -1233,7 +1254,10 @@ function ProvidersSection() {
           <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
           {tr('LLM 供应商', 'Providers')}{' '}
           <span className="en-label" style={{ fontSize: 11 }}>
-            {tr('测试用各 provider 的第一个可用模型', "tests use each provider's first model")}
+            {tr(
+              '测试各 provider 的第一个可用模型，按它在路由表里的用途（对话 / 向量嵌入 / 重排序）测',
+              "tests each provider's first model as the routing table uses it (chat, embedding or rerank)",
+            )}
           </span>
         </span>
         <div className="row gap8">
@@ -1281,7 +1305,8 @@ function ProvidersSection() {
                 const shownModels = expanded ? models : models.slice(0, MODELS_COLLAPSED);
                 const hiddenCount = models.length - shownModels.length;
                 const state: TestState = firstModel
-                  ? tests.results[testKeyOf(p.id, firstModel, 'chat')] ?? { status: 'idle' }
+                  ? tests.results[testKeyOf(p.id, firstModel, providerTestCapability(p.id, firstModel, routes))]
+                    ?? { status: 'idle' }
                   : { status: 'idle' };
                 return (
                   <tr key={p.id}>
