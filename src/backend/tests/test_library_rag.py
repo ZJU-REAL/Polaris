@@ -122,9 +122,7 @@ async def test_expansion_round_pulls_in_the_probe_paper(client, monkeypatch):
     headers, library_id, ids = await _setup(client)
 
     async with get_sessionmaker()() as session:
-        result = await library_rag.answer(
-            session, library_id, QUESTION, user_id=None, max_rounds=2
-        )
+        result = await library_rag.answer(session, library_id, QUESTION, user_id=None, max_rounds=2)
     assert result["queries"] == [QUESTION, FAKE_EXPANSION_QUERY]
     via_by_paper = {e["paper_id"]: e["via"] for e in result["evidence"]}
     assert via_by_paper.get(str(ids["A"])) == "vector"
@@ -137,9 +135,7 @@ async def test_max_rounds_one_skips_expansion(client, monkeypatch):
     headers, library_id, ids = await _setup(client)
 
     async with get_sessionmaker()() as session:
-        result = await library_rag.answer(
-            session, library_id, QUESTION, user_id=None, max_rounds=1
-        )
+        result = await library_rag.answer(session, library_id, QUESTION, user_id=None, max_rounds=1)
     assert result["queries"] == [QUESTION]
     assert str(ids["B"]) not in {e["paper_id"] for e in result["evidence"]}
 
@@ -153,9 +149,7 @@ async def test_citation_edge_recalls_the_neighbor(client, monkeypatch):
     headers, library_id, ids = await _setup(client, with_citation_edge=True)
 
     async with get_sessionmaker()() as session:
-        result = await library_rag.answer(
-            session, library_id, QUESTION, user_id=None, max_rounds=2
-        )
+        result = await library_rag.answer(session, library_id, QUESTION, user_id=None, max_rounds=2)
     via_by_paper = {e["paper_id"]: e["via"] for e in result["evidence"]}
     assert via_by_paper.get(str(ids["C"])) == "citation"
 
@@ -166,9 +160,7 @@ async def test_without_citation_edge_the_neighbor_stays_out(client, monkeypatch)
     headers, library_id, ids = await _setup(client, with_citation_edge=False)
 
     async with get_sessionmaker()() as session:
-        result = await library_rag.answer(
-            session, library_id, QUESTION, user_id=None, max_rounds=2
-        )
+        result = await library_rag.answer(session, library_id, QUESTION, user_id=None, max_rounds=2)
     assert str(ids["C"]) not in {e["paper_id"] for e in result["evidence"]}
 
 

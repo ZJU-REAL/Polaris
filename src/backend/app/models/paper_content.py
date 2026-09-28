@@ -45,9 +45,7 @@ class PaperContentVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     document_vector_state: Mapped[str] = mapped_column(
         String(24), nullable=False, default="pending"
     )
-    chunk_vector_state: Mapped[str] = mapped_column(
-        String(24), nullable=False, default="pending"
-    )
+    chunk_vector_state: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     metadata_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
 
@@ -74,9 +72,7 @@ class PaperContentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class PaperContentVersionVector(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "paper_content_version_vectors"
     __table_args__ = (
-        UniqueConstraint(
-            "content_version_id", "space", name="uq_content_version_vectors_space"
-        ),
+        UniqueConstraint("content_version_id", "space", name="uq_content_version_vectors_space"),
     )
 
     content_version_id: Mapped[uuid.UUID] = mapped_column(

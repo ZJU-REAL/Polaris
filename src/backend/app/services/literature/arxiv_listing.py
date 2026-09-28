@@ -136,8 +136,9 @@ def _parse_entry(dt_html: str, dd_html: str) -> dict[str, Any] | None:
         # arXiv 明确标了主分类就用它，别拿「列表里的第一个」当主分类
         categories = [primary] + [c for c in categories if c != primary]
 
-    abstract_match = re.search(r"<p[^>]*class=['\"][^'\"]*mathjax[^'\"]*['\"][^>]*>(.*?)</p>",
-                               dd_html, re.S | re.I)
+    abstract_match = re.search(
+        r"<p[^>]*class=['\"][^'\"]*mathjax[^'\"]*['\"][^>]*>(.*?)</p>", dd_html, re.S | re.I
+    )
     abstract = _collapse(_text(abstract_match.group(1))) if abstract_match else None
 
     return {

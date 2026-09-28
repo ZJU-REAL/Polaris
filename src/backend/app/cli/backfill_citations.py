@@ -50,9 +50,7 @@ async def _run(args: argparse.Namespace) -> None:
             for paper in papers:
                 stats["papers"] += 1
                 try:
-                    edges = await ensure_citation_edges(
-                        session, paper, force=args.force_edges
-                    )
+                    edges = await ensure_citation_edges(session, paper, force=args.force_edges)
                     if edges:
                         await session.commit()
                         stats["edges"] += edges

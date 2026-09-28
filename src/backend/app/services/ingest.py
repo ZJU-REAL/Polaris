@@ -475,9 +475,7 @@ async def find_due_daily_libraries(session: AsyncSession) -> list[DirectionLibra
     11 个活跃库里有 6 个是独立库，全靠人工点击才会同步。审批流移除后不再有
     pending/rejected 之分（#619 删列），全部库都是候选，靠下面的水位线/互斥筛。
     """
-    libraries = (
-        (await session.execute(select(DirectionLibrary))).scalars().all()
-    )
+    libraries = (await session.execute(select(DirectionLibrary))).scalars().all()
     # 今天已经**自动**同步过的库不再重复选。这一条以前写在调用方，而且是全局的：
     # 「今天有任意一条 wiki_ingest」就整轮跳过。于是任何人手动同步任何一个库，当天
     # 其余所有库的自动同步全部消失——生产上 07-31 就是这样，10:22 有人手动同步了

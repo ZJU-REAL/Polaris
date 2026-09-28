@@ -68,9 +68,7 @@ async def set_idea_vector(
     await session.commit()
 
 
-async def get_paper_vector(
-    session: AsyncSession, paper_id: uuid.UUID
-) -> list[float] | None:
+async def get_paper_vector(session: AsyncSession, paper_id: uuid.UUID) -> list[float] | None:
     """该论文在激活空间下的向量（没有则 None）。"""
     space = await active_space(session)
     if space is None:
@@ -85,9 +83,7 @@ async def get_paper_vector(
     return list(row) if row is not None else None
 
 
-async def get_chunk_vector(
-    session: AsyncSession, chunk_id: uuid.UUID
-) -> list[float] | None:
+async def get_chunk_vector(session: AsyncSession, chunk_id: uuid.UUID) -> list[float] | None:
     space = await active_space(session)
     if space is None:
         return None
@@ -102,9 +98,7 @@ async def get_chunk_vector(
     return list(row) if row is not None else None
 
 
-async def get_idea_vector(
-    session: AsyncSession, idea_id: uuid.UUID
-) -> list[float] | None:
+async def get_idea_vector(session: AsyncSession, idea_id: uuid.UUID) -> list[float] | None:
     space = await active_space(session)
     if space is None:
         return None

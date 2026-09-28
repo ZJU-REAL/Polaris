@@ -259,8 +259,7 @@ async def resolve_evidence_anchor(
                         PaperContentVersion.is_current.is_(True),
                     )
                 )
-            )
-            .scalars()
+            ).scalars()
         )
     current = next((chunk for chunk in chunks if chunk.id == anchor.chunk_id), None)
     if current is not None and content_revision(current.text) == anchor.content_revision:
@@ -318,10 +317,10 @@ async def current_fulltext_evidence(
 ) -> dict[str, Any] | None:
     """Return current parsed chunks with sentence anchors for agent and MCP tools."""
     version_query = select(PaperContentVersion).where(
-            PaperContentVersion.paper_id == paper_id,
-            PaperContentVersion.is_current.is_(True),
-            PaperContentVersion.status.in_(_READY_CONTENT_STATUSES),
-        )
+        PaperContentVersion.paper_id == paper_id,
+        PaperContentVersion.is_current.is_(True),
+        PaperContentVersion.status.in_(_READY_CONTENT_STATUSES),
+    )
     if library_ids is not None:
         if not library_ids:
             return None
@@ -335,11 +334,7 @@ async def current_fulltext_evidence(
     )
     if query:
         chunks = list(
-            (
-                await session.execute(chunk_query.order_by(PaperContentChunk.seq))
-            )
-            .scalars()
-            .all()
+            (await session.execute(chunk_query.order_by(PaperContentChunk.seq))).scalars().all()
         )
         terms = {part for part in normalize_evidence_text(query).split() if len(part) > 1}
         chunks.sort(
@@ -557,11 +552,7 @@ async def semantic_search_current_fulltext(
     scores = {row.id: float(row.score) for row in rows}
     paper_ids = {row.id: row.paper_id for row in rows}
     chunks = list(
-        (
-            await session.execute(
-                select(PaperContentChunk).where(PaperContentChunk.id.in_(scores))
-            )
-        )
+        (await session.execute(select(PaperContentChunk).where(PaperContentChunk.id.in_(scores))))
         .scalars()
         .all()
     )

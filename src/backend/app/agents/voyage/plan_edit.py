@@ -199,7 +199,6 @@ def experiment_signal_edits(
     return None
 
 
-
 def discovery_expand_node(round_no: int) -> dict:
     """一轮假设扩展节点（discovery，docs 设计报告 §8.2）。"""
     return {
@@ -225,9 +224,7 @@ def discovery_summarize_node() -> dict:
     }
 
 
-def discovery_signal_edits(
-    signal: dict[str, Any], active_rows: list[Any]
-) -> dict[str, Any] | None:
+def discovery_signal_edits(signal: dict[str, Any], active_rows: list[Any]) -> dict[str, Any] | None:
     """hypothesis.seed / hypothesis.expand 的 plan_signal → 追加下一步（幂等）。
 
     discovery 不预排线性计划：每轮扩展结束后按树状态给信号，这里只做确定性

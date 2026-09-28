@@ -59,14 +59,10 @@ async def test_daily_preferences_live_on_the_owner(client):
         "/api/daily/sync-time", json={"hour": 7, "minute": 15}, headers=owner_headers
     )
     assert resp.status_code == 200
-    resp = await client.put(
-        "/api/daily/sync-scope", json={"scope": "full"}, headers=owner_headers
-    )
+    resp = await client.put("/api/daily/sync-scope", json={"scope": "full"}, headers=owner_headers)
     assert resp.status_code == 200
     # 非 owner：部署级的那几项仍然写不了（#722）
-    resp = await client.put(
-        "/api/daily/retention", json={"days": 3}, headers=other_headers
-    )
+    resp = await client.put("/api/daily/retention", json={"days": 3}, headers=other_headers)
     assert resp.status_code == 403
     # 订阅不在此列——它按人存（#806），各人管各人的，见 test_daily_subscriptions_api
     resp = await client.get("/api/daily/categories", headers=other_headers)
@@ -107,9 +103,7 @@ async def test_legacy_system_settings_rows_are_read_as_fallback(client):
         session.add(SystemSetting(key=daily_feed.RETENTION_SETTING_KEY, value=9))
         session.add(SystemSetting(key="affiliation_extraction_mode", value="on_compile"))
         session.add(
-            SystemSetting(
-                key=tts.SETTING_KEY, value={"enabled": True, "model": "legacy-model"}
-            )
+            SystemSetting(key=tts.SETTING_KEY, value={"enabled": True, "model": "legacy-model"})
         )
         await session.commit()
 

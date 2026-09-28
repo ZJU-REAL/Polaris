@@ -453,13 +453,9 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                             # 接地/查新的查询此刻还没有节点 id 可挂（先算后写），
                             # 落库后再补上归属
                             "queries": [
-                                {"phase": "ground", **q}
-                                for q in grounded["trace"]["queries"]
+                                {"phase": "ground", **q} for q in grounded["trace"]["queries"]
                             ]
-                            + [
-                                {"phase": "novelty", **q}
-                                for q in nov["trace"]["queries"]
-                            ],
+                            + [{"phase": "novelty", **q} for q in nov["trace"]["queries"]],
                         }
                     )
                 pruned_children: list[str] = []
@@ -549,9 +545,7 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                     # 对阵记录累加、终榜整体覆盖（榜单永远是最新一场之后的排位）
                     t_state["matches"].extend(outcome["matches"])
                     t_state["nodes"].update(outcome["nodes"])
-                    state["rounds"][str(round_no)]["tournament_matches"] = len(
-                        outcome["matches"]
-                    )
+                    state["rounds"][str(round_no)]["tournament_matches"] = len(outcome["matches"])
                     # 记账：总账并入本步 usage，每场的 token 对半记到参赛双方头上
                     for key in ("prompt_tokens", "completion_tokens"):
                         usage[key] += outcome["usage"][key]

@@ -230,9 +230,7 @@ def _is_turn_start(msg: Message) -> bool:
     return not any(isinstance(b, ToolResultBlock) for b in blocks)
 
 
-def trim_history(
-    messages: list[Message], *, budget_chars: int | None = None
-) -> list[Message]:
+def trim_history(messages: list[Message], *, budget_chars: int | None = None) -> list[Message]:
     """把历史裁进预算。两条硬规则：
 
     1. **只在轮次边界裁**。一轮 = 一个用户提问到下一个提问之间的全部消息（含中间的
@@ -365,7 +363,7 @@ async def generate_title(
         result = await llm.complete(
             "default", [Message(role="user", content=prompt)], user_id=user_id
         )
-        title = (result.content or "").strip().strip('"「」\'').splitlines()[0]
+        title = (result.content or "").strip().strip("\"「」'").splitlines()[0]
     except Exception:  # noqa: BLE001 — 起名失败不该影响这轮对话
         return fallback
     return (title or fallback)[:TITLE_MAX_CHARS]

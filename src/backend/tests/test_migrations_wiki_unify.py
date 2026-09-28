@@ -67,8 +67,13 @@ def _seed(db_path: Path) -> dict[str, uuid.UUID]:
                     {"id": _hex(ids[key]), "title": key, "t": now},
                 )
 
-            def add_member(library: str, paper: str, wiki: str | None, compiled_at: str | None,
-                           model: str | None) -> None:
+            def add_member(
+                library: str,
+                paper: str,
+                wiki: str | None,
+                compiled_at: str | None,
+                model: str | None,
+            ) -> None:
                 conn.execute(
                     text(
                         "INSERT INTO library_papers (id, library_id, paper_id, status,"

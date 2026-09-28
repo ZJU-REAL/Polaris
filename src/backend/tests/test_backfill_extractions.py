@@ -62,9 +62,7 @@ def test_index_library_prefers_the_one_that_declared_a_discipline():
 async def test_library_contexts_reads_the_discipline_off_the_membership_row(client):
     token = await register_and_login(client, email="backfill@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    project_id, library_id = await make_project_with_library(
-        client, headers, name="backfill-proj"
-    )
+    project_id, library_id = await make_project_with_library(client, headers, name="backfill-proj")
 
     async with get_sessionmaker()() as session:
         library = await session.get(DirectionLibrary, library_id)

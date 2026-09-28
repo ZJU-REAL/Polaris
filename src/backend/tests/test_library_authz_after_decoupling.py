@@ -90,4 +90,3 @@ async def test_legacy_library_serves_library_scoped_endpoints(client):
     ):
         resp = await client.get(path, headers=owner)
         assert resp.status_code == 200, f"{path} -> {resp.status_code} {resp.text}"
-

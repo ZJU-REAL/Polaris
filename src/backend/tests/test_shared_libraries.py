@@ -116,9 +116,7 @@ async def test_library_papers_concepts_search_readable_by_all(client):
     assert [c["name"] for c in body["concepts"]] == ["Agent"]
 
     # 不存在的库 → 404
-    resp = await client.get(
-        "/api/libraries/00000000-0000-0000-0000-000000000000", headers=stranger
-    )
+    resp = await client.get("/api/libraries/00000000-0000-0000-0000-000000000000", headers=stranger)
     assert resp.status_code == 404
 
 
@@ -165,9 +163,7 @@ async def test_library_write_and_manage_still_member_only(client):
     assert resp.status_code == 404
     resp = await client.post(f"/api/papers/{paper_id}/restore", headers=stranger)
     assert resp.status_code == 404
-    resp = await client.put(
-        f"/api/papers/{paper_id}/tags", json={"names": ["x"]}, headers=stranger
-    )
+    resp = await client.put(f"/api/papers/{paper_id}/tags", json={"names": ["x"]}, headers=stranger)
     assert resp.status_code == 404
 
     # project 作用域管理端点

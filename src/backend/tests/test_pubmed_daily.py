@@ -124,7 +124,8 @@ async def test_a_pubmed_entry_reaches_the_daily_pool(client, captured_query):
 
     async with get_sessionmaker()() as session:
         await daily_feed.set_subscriptions(
-            session, [Subscription(source="pubmed", terms=("neuroscience",))],
+            session,
+            [Subscription(source="pubmed", terms=("neuroscience",))],
             user=await owner_of(session),
         )
         await session.commit()

@@ -113,9 +113,7 @@ def parse_mineru_markdown(markdown: str) -> ParseResult | None:
     )
     if not result.body_text():
         return None
-    result.quality.coverage = compute_coverage(
-        result, metadata=False, references=False, body=True
-    )
+    result.quality.coverage = compute_coverage(result, metadata=False, references=False, body=True)
     return result
 
 

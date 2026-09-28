@@ -37,9 +37,7 @@ def _kernel_target() -> tuple[str, str]:
     url = (settings.kernel_url or "").rstrip("/")
     token = settings.kernel_token or ""
     if not url or not token:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE, detail="KERNEL_NOT_CONFIGURED"
-        )
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="KERNEL_NOT_CONFIGURED")
     return url, token
 
 

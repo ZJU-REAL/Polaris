@@ -275,9 +275,7 @@ async def _resource_still_valid(resource_id: uuid.UUID) -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def dispatch_task(
-    redis: Redis, resource_id: uuid.UUID | str, payload: dict[str, Any]
-) -> str:
+async def dispatch_task(redis: Redis, resource_id: uuid.UUID | str, payload: dict[str, Any]) -> str:
     """向某台 runner 机器派发一个任务，返回 task_id。
 
     统一路径：先压 Redis 队列（离线排队 + TTL 兜底），再 publish 唤醒在线连接。
@@ -331,9 +329,7 @@ async def fetch_task_events(redis: Redis, task_id: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-async def _authenticate_first_frame(
-    websocket: WebSocket, auth_timeout: float
-) -> Resource | None:
+async def _authenticate_first_frame(websocket: WebSocket, auth_timeout: float) -> Resource | None:
     """读首帧并鉴权。任何失败（超时/坏 JSON/断开/校验不过）都返回 None。"""
     try:
         raw = await asyncio.wait_for(websocket.receive_text(), timeout=auth_timeout)
@@ -444,9 +440,7 @@ async def serve_agent(
     logger.info("runner_ws.connected resource=%s", resource_id)
     reason = "disconnect"
     try:
-        await websocket.send_text(
-            json.dumps({"type": "ready", "resource_id": str(resource_id)})
-        )
+        await websocket.send_text(json.dumps({"type": "ready", "resource_id": str(resource_id)}))
         receiver = asyncio.create_task(
             _receive_loop(redis, websocket, resource_id, heartbeat_timeout)
         )

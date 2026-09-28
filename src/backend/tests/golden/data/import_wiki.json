@@ -48,6 +48,15 @@
     "concept_count": 0,
     "created_at": "<ts>",
     "definition": {
+      "keywords": {
+        "sources": [
+          "openalex",
+          "semantic",
+          "arxiv",
+          "pubmed",
+          "crossref"
+        ]
+      },
       "statement": "Deterministic golden-transcript library covering reproducible plumbing."
     },
     "discipline": null,

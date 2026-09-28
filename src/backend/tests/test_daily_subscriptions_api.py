@@ -55,9 +55,7 @@ async def test_one_users_terms_are_not_anothers(client):
     await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=ha)
     await client.put("/api/daily/categories", json={"categories": ["q-bio.NC"]}, headers=hb)
 
-    assert (await client.get("/api/daily/categories", headers=ha)).json()["categories"] == [
-        "cs.AI"
-    ]
+    assert (await client.get("/api/daily/categories", headers=ha)).json()["categories"] == ["cs.AI"]
     assert (await client.get("/api/daily/categories", headers=hb)).json()["categories"] == [
         "q-bio.NC"
     ]
@@ -146,8 +144,6 @@ async def test_clearing_every_subscription_is_allowed(client):
         json={"subscriptions": [{"source": "pubmed", "terms": ["neuroscience"]}]},
         headers=headers,
     )
-    resp = await client.put(
-        "/api/daily/subscriptions", json={"subscriptions": []}, headers=headers
-    )
+    resp = await client.put("/api/daily/subscriptions", json={"subscriptions": []}, headers=headers)
     assert resp.status_code == 200
     assert resp.json()["subscriptions"] == []

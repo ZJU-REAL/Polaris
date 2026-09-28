@@ -226,10 +226,7 @@ def test_non_method_schemas_are_free_to_use_any_fields():
 
 
 def _builtin_packs():
-    return [
-        dp.read_pack_file(path)
-        for path in sorted(dp.BUILTIN_DISCIPLINES_DIR.glob("*.yaml"))
-    ]
+    return [dp.read_pack_file(path) for path in sorted(dp.BUILTIN_DISCIPLINES_DIR.glob("*.yaml"))]
 
 
 def test_every_builtin_pack_parses():

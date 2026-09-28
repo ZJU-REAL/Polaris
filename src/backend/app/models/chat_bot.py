@@ -16,9 +16,7 @@ class ChatBotConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "chat_bot_configs"
     __table_args__ = (
         UniqueConstraint("user_id", "platform", name="uq_chat_bot_configs_user_platform"),
-        CheckConstraint(
-            "platform IN ('dingtalk', 'feishu')", name="ck_chat_bot_configs_platform"
-        ),
+        CheckConstraint("platform IN ('dingtalk', 'feishu')", name="ck_chat_bot_configs_platform"),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(

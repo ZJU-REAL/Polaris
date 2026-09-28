@@ -53,9 +53,7 @@ async def start_full_export(
     try:
         # 两把归属 key：paper-task 的供 SSE 鉴权（1h，与事件日志同寿），
         # full_export 的供下载鉴权（24h，给足下载窗口）
-        await redis.setex(
-            paper_enrich_service.paper_task_owner_key(task_id), 3600, str(user.id)
-        )
+        await redis.setex(paper_enrich_service.paper_task_owner_key(task_id), 3600, str(user.id))
         await redis.setex(
             full_export_service.export_owner_key(task_id),
             full_export_service.EXPORT_OWNER_TTL_SECONDS,
@@ -86,6 +84,4 @@ async def download_full_export(
     if not path.is_file():
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="EXPORT_NOT_READY")
     # 文件名固定 ASCII：Content-Disposition 是 latin-1 头，中文名会当场炸（同库页导出）
-    return FileResponse(
-        path, media_type="application/zip", filename="polaris-full-export.zip"
-    )
+    return FileResponse(path, media_type="application/zip", filename="polaris-full-export.zip")

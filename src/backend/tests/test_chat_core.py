@@ -168,9 +168,11 @@ def test_sextant_catches_claiming_to_have_searched_without_searching():
 
 def test_sextant_does_not_fire_on_plain_answers():
     """没有编号、没有声称检索过 → 什么都不说。误报会训练用户忽略这一栏。"""
-    assert Sextant().verify(
-        answer="这个问题不需要查库，我直接说说思路。", sources=0, successful_tool_calls=0
-    ).passed
+    assert (
+        Sextant()
+        .verify(answer="这个问题不需要查库，我直接说说思路。", sources=0, successful_tool_calls=0)
+        .passed
+    )
 
 
 async def test_helm_survives_a_result_that_cannot_be_serialized():

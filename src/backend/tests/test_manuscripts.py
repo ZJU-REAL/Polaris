@@ -90,7 +90,8 @@ async def _seed_experiment(project_id: str, idea_id: str, tmp_path=None) -> str:
 
 async def _seed_paper(project_id: str, title: str, year: int = 2024, status="compiled") -> str:
     async with get_sessionmaker()() as session:
-        paper = await add_paper(session,
+        paper = await add_paper(
+            session,
             project_id=uuid.UUID(project_id),
             title=title,
             authors=[{"name": "Ada Smith"}],

@@ -166,9 +166,7 @@ async def effective_settings(
     }
 
 
-async def set_user_settings(
-    session: AsyncSession, user: User, raw: Any
-) -> dict[str, Any]:
+async def set_user_settings(session: AsyncSession, user: User, raw: Any) -> dict[str, Any]:
     admin = await get_admin_settings(session)
     data = raw if isinstance(raw, dict) else {}
     model = str(data.get("model") or "").strip() or None
@@ -238,9 +236,7 @@ async def _request_audio(config: dict[str, Any], text: str) -> bytes:
     except httpx.HTTPError as exc:
         raise TTSNotAvailableError(f"TTS_UPSTREAM_UNREACHABLE:{type(exc).__name__}") from exc
     if response.status_code >= 400:
-        logger.warning(
-            "TTS upstream returned %d: %s", response.status_code, response.text[:500]
-        )
+        logger.warning("TTS upstream returned %d: %s", response.status_code, response.text[:500])
         raise TTSNotAvailableError(f"TTS_UPSTREAM_ERROR:{response.status_code}")
     audio = response.content
     if not audio.startswith(b"RIFF") or b"WAVE" not in audio[:16]:
@@ -362,9 +358,7 @@ async def open_speech_stream(
                 if chunk:
                     yield chunk
         except httpx.HTTPError as exc:
-            raise TTSNotAvailableError(
-                f"TTS_UPSTREAM_UNREACHABLE:{type(exc).__name__}"
-            ) from exc
+            raise TTSNotAvailableError(f"TTS_UPSTREAM_UNREACHABLE:{type(exc).__name__}") from exc
         finally:
             await response.aclose()
             await client.aclose()

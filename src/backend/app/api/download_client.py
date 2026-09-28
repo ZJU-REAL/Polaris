@@ -311,9 +311,7 @@ async def create_download_batch(
         paper = await session.get(Paper, target.paper_id)
         if paper is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
-        await _require_library_paper(
-            session, library_id=target.library_id, paper_id=paper.id
-        )
+        await _require_library_paper(session, library_id=target.library_id, paper_id=paper.id)
         item = DownloadBatchItem(
             batch_id=batch.id,
             created_by=user.id,

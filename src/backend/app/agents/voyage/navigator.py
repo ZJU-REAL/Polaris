@@ -635,7 +635,6 @@ def paper_review_plan(run: VoyageRun) -> list[dict[str, Any]]:
     ]
 
 
-
 @register_plan("discovery")
 def discovery_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """discovery 启动计划（#642，设计报告 §8.2，mode=loop）：**只有播种一步**。

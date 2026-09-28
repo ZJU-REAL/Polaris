@@ -23,9 +23,7 @@ async def _hdr(client, email):
 
 async def _user_id(email: str) -> uuid.UUID:
     async with get_sessionmaker()() as session:
-        return (
-            await session.execute(select(User).where(User.email == email))
-        ).scalar_one().id
+        return (await session.execute(select(User).where(User.email == email))).scalar_one().id
 
 
 async def _make_run(*, kind: str, library_id=None, project_id=None, created_by=None) -> uuid.UUID:
@@ -94,9 +92,7 @@ async def test_library_voyages_stay_out_of_the_topic_list(client):
     legacy_bootstrap = await _make_run(kind="wiki_bootstrap", project_id=project_id)
 
     async with get_sessionmaker()() as session:
-        runs = await voyages_service.list_voyages(
-            session, user_id=owner_id, project_id=project_id
-        )
+        runs = await voyages_service.list_voyages(session, user_id=owner_id, project_id=project_id)
     ids = {r.id for r in runs}
     assert topic_run in ids
     assert legacy_ingest not in ids
@@ -195,9 +191,7 @@ async def test_platform_voyage_stays_out_of_the_topic_list(client):
     attached_run = await _make_run(kind="daily_feed_sync", project_id=project_id)
 
     async with get_sessionmaker()() as session:
-        runs = await voyages_service.list_voyages(
-            session, user_id=admin_id, project_id=project_id
-        )
+        runs = await voyages_service.list_voyages(session, user_id=admin_id, project_id=project_id)
     ids = {r.id for r in runs}
     assert platform_run not in ids
     assert attached_run not in ids
@@ -445,8 +439,9 @@ async def test_delete_voyage_only_when_finished(client):
     me = (await client.get("/api/users/me", headers=headers)).json()
 
     async with get_sessionmaker()() as session:
-        run = VoyageRun(kind="wiki_ingest", status="executing", goal="跑着的",
-                        created_by=uuid.UUID(me["id"]))
+        run = VoyageRun(
+            kind="wiki_ingest", status="executing", goal="跑着的", created_by=uuid.UUID(me["id"])
+        )
         session.add(run)
         await session.commit()
         run_id = run.id
@@ -475,14 +470,18 @@ async def test_delete_voyage_keeps_token_accounting(client):
     me = (await client.get("/api/users/me", headers=headers)).json()
 
     async with get_sessionmaker()() as session:
-        run = VoyageRun(kind="wiki_ingest", status="done", goal="跑完的",
-                        created_by=uuid.UUID(me["id"]))
+        run = VoyageRun(
+            kind="wiki_ingest", status="done", goal="跑完的", created_by=uuid.UUID(me["id"])
+        )
         session.add(run)
         await session.flush()
         session.add(
             LLMUsage(
-                stage="relevance", model="fake-default",
-                prompt_tokens=100, completion_tokens=20, voyage_id=run.id,
+                stage="relevance",
+                model="fake-default",
+                prompt_tokens=100,
+                completion_tokens=20,
+                voyage_id=run.id,
             )
         )
         await session.commit()

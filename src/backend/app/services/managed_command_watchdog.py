@@ -212,9 +212,7 @@ async def check_unanswered_managed_commands(
                 continue
             stop_status = stop_result.status
             watchdog["stop_status"] = stop_status
-            watchdog["status"] = (
-                "command_ended" if stop_status == "already_exited" else stop_status
-            )
+            watchdog["status"] = "command_ended" if stop_status == "already_exited" else stop_status
             if stop_result:
                 context["remote_operation_continues"] = False
                 if stop_status == "already_exited":
@@ -237,9 +235,7 @@ async def check_unanswered_managed_commands(
                     {"id": "abort", "zh": "放弃任务", "en": "Abort task"},
                 ]
                 action = (
-                    "command_ended"
-                    if stop_status == "already_exited"
-                    else "stopped_gpu_active"
+                    "command_ended" if stop_status == "already_exited" else "stopped_gpu_active"
                 )
             # The stop decision is complete.  The question remains open so the
             # user can choose diagnosis/abort, but only after the remote result
@@ -248,8 +244,7 @@ async def check_unanswered_managed_commands(
         elif usage is not None and usage.status in {"exited", "superseded"}:
             context["remote_operation_continues"] = False
             ask.text = (
-                "等待回复期间，远端命令已经结束。请选择继续，让 AI 读取最终状态并诊断，"
-                "或放弃任务。"
+                "等待回复期间，远端命令已经结束。请选择继续，让 AI 读取最终状态并诊断，或放弃任务。"
             )
             payload["options"] = [
                 {

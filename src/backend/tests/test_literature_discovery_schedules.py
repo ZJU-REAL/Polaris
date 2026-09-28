@@ -45,9 +45,9 @@ async def _library(client) -> tuple[DirectionLibrary, object]:
 
 def test_next_occurrence_respects_library_timezone():
     after = datetime(2026, 8, 28, 0, 0, tzinfo=UTC)
-    assert next_occurrence(
-        timezone="Asia/Shanghai", hour=9, minute=30, after=after
-    ) == datetime(2026, 8, 28, 1, 30, tzinfo=UTC)
+    assert next_occurrence(timezone="Asia/Shanghai", hour=9, minute=30, after=after) == datetime(
+        2026, 8, 28, 1, 30, tzinfo=UTC
+    )
 
 
 @pytest.mark.asyncio
@@ -76,9 +76,7 @@ async def test_due_schedule_creates_one_versioned_run_and_recovers_undispatched_
 
         first = await claim_due_schedules(session, now=now)
         second = await claim_due_schedules(session, now=now + timedelta(minutes=1))
-        run_count = await session.scalar(
-            select(func.count()).select_from(LiteratureSearchRun)
-        )
+        run_count = await session.scalar(select(func.count()).select_from(LiteratureSearchRun))
         run = await session.get(LiteratureSearchRun, first[0])
         persisted = await session.get(LiteratureDiscoverySchedule, library.id)
 
@@ -160,8 +158,7 @@ async def test_incremental_filter_removes_historical_hits_and_library_papers(cli
 async def test_incremental_filter_batches_the_maximum_candidate_pool(client):
     library, _ = await _library(client)
     candidates = [
-        {"title": f"Candidate {index}", "doi": f"10.2000/{index}"}
-        for index in range(1000)
+        {"title": f"Candidate {index}", "doi": f"10.2000/{index}"} for index in range(1000)
     ]
     async with get_sessionmaker()() as session:
         unseen, removed = await filter_known_candidates(

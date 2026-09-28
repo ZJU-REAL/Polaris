@@ -79,13 +79,9 @@ async def filter_known_candidates(
 
     for candidate_batch in _batches(rows):
         batch_identities = {_identity(candidate) for candidate in candidate_batch}
-        dois = {
-            key.removeprefix("doi:") for key in batch_identities if key.startswith("doi:")
-        }
+        dois = {key.removeprefix("doi:") for key in batch_identities if key.startswith("doi:")}
         arxiv_ids = {
-            key.removeprefix("arxiv:")
-            for key in batch_identities
-            if key.startswith("arxiv:")
+            key.removeprefix("arxiv:") for key in batch_identities if key.startswith("arxiv:")
         }
         titles = {
             str(candidate.get("title") or "").casefold().strip()

@@ -53,9 +53,11 @@ async def synthesize_speech(
         )
     except tts_service.TTSNotAvailableError as exc:
         detail = str(exc)
-        code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE if detail.startswith(
-            "TTS_TEXT_TOO_LONG"
-        ) else status.HTTP_503_SERVICE_UNAVAILABLE
+        code = (
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+            if detail.startswith("TTS_TEXT_TOO_LONG")
+            else status.HTTP_503_SERVICE_UNAVAILABLE
+        )
         raise HTTPException(code, detail=detail) from exc
     return FileResponse(
         path,
@@ -72,14 +74,14 @@ async def stream_speech(
     user: User = Depends(current_active_user),
 ) -> StreamingResponse:
     try:
-        stream = await tts_service.open_speech_stream(
-            session, user=user, source=payload.text
-        )
+        stream = await tts_service.open_speech_stream(session, user=user, source=payload.text)
     except tts_service.TTSNotAvailableError as exc:
         detail = str(exc)
-        code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE if detail.startswith(
-            "TTS_TEXT_TOO_LONG"
-        ) else status.HTTP_503_SERVICE_UNAVAILABLE
+        code = (
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+            if detail.startswith("TTS_TEXT_TOO_LONG")
+            else status.HTTP_503_SERVICE_UNAVAILABLE
+        )
         raise HTTPException(code, detail=detail) from exc
     return StreamingResponse(
         stream.content,

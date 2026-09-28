@@ -88,8 +88,7 @@ async def test_a_provider_without_tool_support_still_streams():
     provider = OldStyleProvider()
     assert provider.supports_tools is False
     events = [
-        ev
-        async for ev in provider.stream_events([Message(role="user", content="hi")], model="m")
+        ev async for ev in provider.stream_events([Message(role="user", content="hi")], model="m")
     ]
     assert [e.text for e in events if isinstance(e, TextDelta)] == ["你", "好"]
     assert isinstance(events[-1], StreamDone)

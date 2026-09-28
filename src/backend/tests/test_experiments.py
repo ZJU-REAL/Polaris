@@ -409,6 +409,7 @@ async def test_smoke_repeated_failure_stops_after_two_repairs(
     assert smoke_step["observation"]["fixes"] == 2
     assert "同一个错误" in voyage["open_ask"]["text"]
 
+
 async def test_setup_dep_failure_fixed_and_retried(client, queue_stub, fake_ssh, bus_recorder):
     """依赖安装第一次失败 → 报错回 LLM 修 requirements/run.sh → 重装通过（对称 smoke 自愈）。"""
     fake_ssh.setup_exits = [1, 0]
@@ -490,7 +491,9 @@ async def test_setup_time_budget_exceeded_asks(
 
     # 回答重试（恢复真实时钟）→ 装通走完
     monkeypatch.setattr(
-        ax, "_phase_deadline_exceeded", ax._phase_deadline_exceeded.__wrapped__
+        ax,
+        "_phase_deadline_exceeded",
+        ax._phase_deadline_exceeded.__wrapped__
         if hasattr(ax._phase_deadline_exceeded, "__wrapped__")
         else ax._phase_deadline_exceeded,
     )
@@ -528,7 +531,10 @@ async def test_setup_fix_loop_picks_up_mid_action_suggestions(
             if "依赖安装退出码" in full:
                 self.fix_prompts.append(full)
             return await super().complete(
-                messages, model=model, temperature=temperature, max_tokens=max_tokens,
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
                 images=images,
             )
 
@@ -720,7 +726,11 @@ async def test_intake_questions_and_answers_reach_plan(client, queue_stub, fake_
             if "开题问答" in full and "用 GSM8K 的前 500 条" in full:
                 self.saw_intake = True
             return await FakeProvider.complete(
-                self, messages, model=model, temperature=temperature, max_tokens=max_tokens,
+                self,
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
                 images=images,
             )
 
@@ -736,7 +746,7 @@ async def test_intake_questions_and_answers_reach_plan(client, queue_stub, fake_
                 "intake": [
                     {"question": "用哪个数据集？", "answer": "用 GSM8K 的前 500 条"},
                     {"question": "要对照组吗？", "answer": ""},
-                ]
+                ],
             },
         },
         headers=headers,
@@ -788,7 +798,10 @@ async def test_smoke_same_error_escalates_then_asks(client, queue_stub, fake_ssh
             if "冒烟测试退出码" in full:
                 self.fix_prompts.append(full)
             return await super().complete(
-                messages, model=model, temperature=temperature, max_tokens=max_tokens,
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
                 images=images,
             )
 
@@ -1329,9 +1342,7 @@ def test_validate_files_rejects_python_syntax_error():
     样本取自真实失败（voyage ae147dec）：f-string 里写了 ``\\"``。这个错以前一路穿过
     校验传到远端，直到冒烟才暴露，整个 voyage 判死。
     """
-    broken = (
-        'print(f"POLARIS_METRIC {json.dumps({\\"name\\": \\"acc\\", \\"value\\": v})}")\n'
-    )
+    broken = 'print(f"POLARIS_METRIC {json.dumps({\\"name\\": \\"acc\\", \\"value\\": v})}")\n'
     with pytest.raises(ValueError) as exc:
         ax.validate_files(
             {"files": {"requirements.txt": "", "run.sh": "--smoke", "train.py": broken}}
@@ -1340,9 +1351,7 @@ def test_validate_files_rejects_python_syntax_error():
     assert "train.py" in str(exc.value)
 
     # 非 .py 文件不做语法检查：run.sh 里的 shell 片段不该被当成 Python
-    ax.validate_files(
-        {"files": {"requirements.txt": "", "run.sh": "if [ --smoke ]; then :; fi"}}
-    )
+    ax.validate_files({"files": {"requirements.txt": "", "run.sh": "if [ --smoke ]; then :; fi"}})
 
 
 def test_parse_metric_lines_unit():
@@ -1652,7 +1661,10 @@ async def test_smoke_fix_reinstalls_deps_when_requirements_change(
                     usage={"prompt_tokens": 1, "completion_tokens": 1},
                 )
             return await super().complete(
-                messages, model=model, temperature=temperature, max_tokens=max_tokens,
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
                 images=images,
             )
 
@@ -1682,9 +1694,7 @@ async def test_smoke_fix_reinstalls_deps_when_requirements_change(
     assert len(reinstalls) == 2, fake_ssh.commands
 
 
-async def test_trash_running_experiment_cancels_voyage(
-    client, queue_stub, fake_ssh, bus_recorder
-):
+async def test_trash_running_experiment_cancels_voyage(client, queue_stub, fake_ssh, bus_recorder):
     """删除/移入回收站会先取消运行中的实验（#379 现场：purge 后孤儿 voyage
     拿着已删实验的 id 反复重规划烧 LLM，直到有人手动叫停）。"""
     project_id, headers = await _setup_project(client)

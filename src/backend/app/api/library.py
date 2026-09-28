@@ -77,8 +77,11 @@ async def list_library(
 ) -> LibraryPage:
     # 语义检索：仅「我的收藏」tab 有意义（浏览记录不做语义），候选=本人收藏且有向量的论文。
     # embed/rerank 记个人账（无课题上下文）；非 postgres / provider 不支持 → 回退关键词。
-    if mode == "semantic" and tab == "saved" and q and papers_service.semantic_search_supported(
-        session
+    if (
+        mode == "semantic"
+        and tab == "saved"
+        and q
+        and papers_service.semantic_search_supported(session)
     ):
         try:
             vector, space = await embed_query(session, q, user_id=user.id)
@@ -207,9 +210,7 @@ async def export_personal_citations(
     return Response(
         content=json.dumps(citations_service.build_csl_json(papers), ensure_ascii=False, indent=2),
         media_type="application/json",
-        headers={
-            "Content-Disposition": 'attachment; filename="polaris-my-library-citations.json"'
-        },
+        headers={"Content-Disposition": 'attachment; filename="polaris-my-library-citations.json"'},
     )
 
 

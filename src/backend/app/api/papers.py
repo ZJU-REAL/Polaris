@@ -167,9 +167,7 @@ async def list_papers(
     published_to: datetime | None = Query(default=None),
     created_from: datetime | None = Query(default=None),
     created_to: datetime | None = Query(default=None),
-    daily_only: bool = Query(
-        default=False, description="只看从每日论文池自动收录的"
-    ),
+    daily_only: bool = Query(default=False, description="只看从每日论文池自动收录的"),
     last_sync_only: bool = Query(
         default=False,
         description="只看最近一次同步新增的（没同步过则返回空；「最新收录」视图用）",
@@ -457,9 +455,7 @@ async def restore_project_paper(
     return await _paper_detail(session, view, user.id)
 
 
-@router.delete(
-    "/projects/{project_id}/papers/{paper_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/projects/{project_id}/papers/{paper_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_project_paper(
     project_id: uuid.UUID,
     paper_id: uuid.UUID,
@@ -496,8 +492,7 @@ async def resolve_paper_meta(
         title=str(fields.get("title") or ""),
         year=fields.get("year"),
         authors=[
-            str(a.get("name") if isinstance(a, dict) else a)
-            for a in (fields.get("authors") or [])
+            str(a.get("name") if isinstance(a, dict) else a) for a in (fields.get("authors") or [])
         ][:8],
     )
 
@@ -651,16 +646,12 @@ async def upload_paper_pdf(
     user: User = Depends(current_active_user),
 ) -> PaperDetail:
     """给尚无 PDF 的可见论文上传原件，并同步完成全文抽取、分块与索引。"""
-    view = await _get_member_paper(
-        session, paper_id, user, with_concepts=True, include_pool=True
-    )
+    view = await _get_member_paper(session, paper_id, user, with_concepts=True, include_pool=True)
     content = await file.read(MAX_PDF_UPLOAD_BYTES + 1)
     if not content:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="PDF_UPLOAD_EMPTY")
     if len(content) > MAX_PDF_UPLOAD_BYTES:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="PDF_UPLOAD_TOO_LARGE"
-        )
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="PDF_UPLOAD_TOO_LARGE")
     try:
         await papers_service.upload_pdf(
             session,
@@ -691,9 +682,7 @@ async def upload_paper_pdf_from_url(
     这类失败几乎都是用户能自己修的（粘成了落地页而不是 PDF、站点要登录），
     只回一个错误码等于让人猜。
     """
-    view = await _get_member_paper(
-        session, paper_id, user, with_concepts=True, include_pool=True
-    )
+    view = await _get_member_paper(session, paper_id, user, with_concepts=True, include_pool=True)
     try:
         await papers_service.upload_pdf_from_url(
             session,

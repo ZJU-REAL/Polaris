@@ -75,9 +75,7 @@ _SYSTEM = """\
 {statement}{extra}"""
 
 
-def build_system_prompt(
-    statement: str | None = None, extra: str = ""
-) -> str:
+def build_system_prompt(statement: str | None = None, extra: str = "") -> str:
     """组装系统提示。
 
     ``statement``（研究方向）与 ``extra`` 都追加在末尾，

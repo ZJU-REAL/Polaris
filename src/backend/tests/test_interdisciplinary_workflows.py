@@ -100,8 +100,7 @@ async def test_run_pins_confirmed_profile_and_guidance_versions(client):
     async with get_sessionmaker()() as session:
         # 指引文档搬离 v1 后（#741）版本演进 = 追加一行（slug, version+1）
         current = await session.scalar(
-            select(GuidanceDocument)
-            .where(
+            select(GuidanceDocument).where(
                 GuidanceDocument.slug == WORKFLOW_SLUG,
                 GuidanceDocument.version == first_context["version"],
             )

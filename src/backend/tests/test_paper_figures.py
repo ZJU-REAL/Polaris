@@ -151,7 +151,8 @@ async def _setup_paper(client, *, email: str = "alice@example.com"):
     resp = await client.post("/api/projects", json={"name": "fig-proj"}, headers=headers)
     project_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
-        paper = await add_paper(session,
+        paper = await add_paper(
+            session,
             project_id=uuid.UUID(project_id),
             source="manual",
             title="Figured Paper",

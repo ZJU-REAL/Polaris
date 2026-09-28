@@ -115,9 +115,7 @@ async def _run(args: argparse.Namespace) -> None:
                 stats["papers"] += 1
                 contexts = await _library_contexts(session, paper.id)
                 index_library = _index_library(contexts)
-                plan = (
-                    [(explicit, index_library)] if explicit is not None else _plan(contexts)
-                )
+                plan = [(explicit, index_library)] if explicit is not None else _plan(contexts)
                 method_extracted = False
                 for schema, library_id in plan:
                     try:
@@ -137,9 +135,7 @@ async def _run(args: argparse.Namespace) -> None:
                             method_extracted |= is_method_schema_id(schema.id)
                         else:
                             stats["skipped"] += 1
-                            logger.info(
-                                "skipped %s (%s): %s", paper.id, schema.id, outcome.reason
-                            )
+                            logger.info("skipped %s (%s): %s", paper.id, schema.id, outcome.reason)
                     except Exception:  # noqa: BLE001 — 单篇/单 schema 失败不拖垮整批
                         logger.warning(
                             "extraction backfill failed for %s (%s)",

@@ -66,9 +66,7 @@ async def test_exporting_named_ids_still_works(client):
     """点名要哪几篇就按 id 给：这些 id 是他从自己界面上选出来的。"""
     _owner, member, mine = await _two_users_with_different_fields(client)
 
-    resp = await client.get(
-        f"/api/daily/export/citations?format=bibtex&ids={mine}", headers=member
-    )
+    resp = await client.get(f"/api/daily/export/citations?format=bibtex&ids={mine}", headers=member)
     assert resp.status_code == 200, resp.text
     assert "Cortical circuits" in resp.text
 

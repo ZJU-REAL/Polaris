@@ -29,13 +29,15 @@ async def _setup(client):
     async with get_sessionmaker()() as session:
         session.add_all(
             [
-                await add_paper(session,
+                await add_paper(
+                    session,
                     project_id=pid,
                     title="Paper A",
                     status="compiled",
                     wiki_content="本文提出 [[自我博弈]]，结合 [[强化学习]] 训练。",
                 ),
-                await add_paper(session,
+                await add_paper(
+                    session,
                     project_id=pid,
                     title="Paper B",
                     status="included",
@@ -85,14 +87,16 @@ async def test_relink_backfills_placeholder_definitions(client):
     async with get_sessionmaker()() as session:
         session.add_all(
             [
-                await add_concept(session,
+                await add_concept(
+                    session,
                     project_id=pid,
                     name="自我博弈",
                     slug="old-x",
                     definition=placeholder_definition("自我博弈"),
                     category="other",
                 ),
-                await add_concept(session,
+                await add_concept(
+                    session,
                     project_id=pid,
                     name="课程学习",
                     slug="old-y",
@@ -122,9 +126,7 @@ async def test_relink_backfills_placeholder_definitions(client):
 async def _set_wiki_content(project_id: str, title: str, content) -> uuid.UUID:
     """改写这篇论文的解读正文（论文级唯一一份；content=None 表示删掉解读）。"""
     async with get_sessionmaker()() as session:
-        paper = (
-            await session.execute(select(Paper).where(Paper.title == title))
-        ).scalar_one()
+        paper = (await session.execute(select(Paper).where(Paper.title == title))).scalar_one()
         wiki = await wiki_of(session, paper_id=paper.id)
         if content is None:
             if wiki is not None:
@@ -297,7 +299,8 @@ async def test_auto_sweep_backfills_placeholders_capped(client):
     # 无引用的占位会被 #65 的孤儿清理直接删除，不走回填。
     async with get_sessionmaker()() as session:
         session.add(
-            await add_concept(session,
+            await add_concept(
+                session,
                 project_id=pid,
                 name="强化学习",
                 slug="ph-rl",
@@ -318,9 +321,7 @@ async def test_auto_sweep_backfills_placeholders_capped(client):
 
     async with get_sessionmaker()() as session:
         row = next(
-            c
-            for c in await project_concepts(session, project_id=pid)
-            if c.name == "强化学习"
+            c for c in await project_concepts(session, project_id=pid) if c.name == "强化学习"
         )
         assert not row.definition.endswith("（定义待补充）")
         assert row.category == "method"  # fake provider 返回 method

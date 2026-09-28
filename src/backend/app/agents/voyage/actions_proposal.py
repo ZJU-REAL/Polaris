@@ -535,9 +535,7 @@ async def _grounding_papers(ctx: ActionContext) -> list[tuple[Paper, str | None]
         rows = (
             dedupe_member_rows(
                 (
-                    await session.execute(
-                        member_papers_stmt(library_ids).where(Paper.id.in_(ids))
-                    )
+                    await session.execute(member_papers_stmt(library_ids).where(Paper.id.in_(ids)))
                 ).all()
             )
             if library_ids
@@ -807,9 +805,7 @@ async def _internal_similar(ctx: ActionContext, query_text: str) -> list[dict[st
                     )
                     known = await paper_vectors(session, [p.id for p in papers], space)
                     scored = [
-                        (cosine_similarity(vector, known[p.id]), p)
-                        for p in papers
-                        if p.id in known
+                        (cosine_similarity(vector, known[p.id]), p) for p in papers if p.id in known
                     ]
                     scored.sort(key=lambda x: -x[0])
                     scored = scored[:_INTERNAL_SIMILAR_K]

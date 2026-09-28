@@ -60,9 +60,7 @@ async def _precheck_dns(parsed: object) -> None:
     scheme = getattr(parsed, "scheme", "http")
     port = getattr(parsed, "port", None) or (443 if scheme == "https" else 80)
     try:
-        rows = await asyncio.get_running_loop().getaddrinfo(
-            hostname, port, type=socket.SOCK_STREAM
-        )
+        rows = await asyncio.get_running_loop().getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
     except OSError as e:
         raise PdfUrlError(f"解析不了这个地址：{hostname}") from e
     addresses = {ipaddress.ip_address(row[4][0]) for row in rows}

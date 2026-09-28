@@ -57,10 +57,7 @@ def test_normalize_robot_id_accepts_only_fixed_official_webhooks():
 async def test_config_crud_is_encrypted_write_only_and_per_user(client):
     alice, alice_id = await _auth(client)
     bob, _ = await _auth(client, "bob@example.com")
-    webhook = (
-        "https://oapi.dingtalk.com/robot/send?"
-        "access_token=ding_token_0123456789abcdef"
-    )
+    webhook = "https://oapi.dingtalk.com/robot/send?access_token=ding_token_0123456789abcdef"
 
     empty = await client.get("/api/chat-bots", headers=alice)
     assert empty.status_code == 200
@@ -102,9 +99,7 @@ async def test_config_crud_is_encrypted_write_only_and_per_user(client):
 
     async with get_sessionmaker()() as session:
         row = (
-            await session.execute(
-                select(ChatBotConfig).where(ChatBotConfig.user_id == alice_id)
-            )
+            await session.execute(select(ChatBotConfig).where(ChatBotConfig.user_id == alice_id))
         ).scalar_one()
         assert "ding_token_0123456789abcdef" not in row.robot_id_encrypted
         assert "SEC-ding-signing-secret" not in (row.secret_encrypted or "")
@@ -176,9 +171,7 @@ async def test_dingtalk_delivery_uses_query_signature_and_markdown(client):
                 client=upstream,
             )
         row = (
-            await session.execute(
-                select(ChatBotConfig).where(ChatBotConfig.user_id == user_id)
-            )
+            await session.execute(select(ChatBotConfig).where(ChatBotConfig.user_id == user_id))
         ).scalar_one()
         assert row.last_delivered_at is not None
 

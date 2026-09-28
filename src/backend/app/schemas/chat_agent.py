@@ -71,4 +71,3 @@ class MessageRead(BaseModel):
     usage: dict[str, Any] | None = None
     stop_reason: str | None = None
     created_at: datetime
-

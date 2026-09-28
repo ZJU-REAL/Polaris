@@ -689,9 +689,7 @@ async def _assemble_source_files(
     return rels
 
 
-async def build_source_bundle(
-    session: AsyncSession, manuscript: Manuscript
-) -> tuple[bytes, str]:
+async def build_source_bundle(session: AsyncSession, manuscript: Manuscript) -> tuple[bytes, str]:
     """可编译的源码包（tar.gz）+ 内容指纹。
 
     与 arXiv 导出的区别：不重编、不生成 .bbl——这是给桌面端拿去**本地编译**的输入。

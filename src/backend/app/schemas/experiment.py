@@ -65,9 +65,7 @@ class ExperimentParams(BaseModel):
         from app.services.process_packs import known_pack_names
 
         if v not in known_pack_names():
-            raise ValueError(
-                f"unknown process pack {v!r}; known: {sorted(known_pack_names())}"
-            )
+            raise ValueError(f"unknown process pack {v!r}; known: {sorted(known_pack_names())}")
         return v
 
 

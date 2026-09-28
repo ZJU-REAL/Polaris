@@ -259,6 +259,18 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
   const [discipline, setDiscipline] = useState('');
   const [interviewOpen, setInterviewOpen] = useState(false);
   const [incl, setIncl] = useState<InclusionValue>(EMPTY_INCLUSION);
+  // 默认来源跟学科走（#821）：选「计算机科学」给 arXiv + cs.* 快捷项，选临床给 PubMed，
+  // 不选学科给覆盖全学科的通用来源。用户动过来源勾选之后以他的为准（incl.sources 非空）
+  const packsQuery = useQuery({ queryKey: ['disciplines'], queryFn: () => api.listDisciplines(), retry: false });
+  const generalQuery = useQuery({
+    queryKey: ['disciplines', 'defaults'],
+    queryFn: () => api.getDisciplineDefaults(),
+    retry: false,
+  });
+  const pack = (packsQuery.data ?? []).find((p) => p.name === discipline);
+  // 包声明了来源就用它的；否则是部署默认（管理员在文献检索设置里配的）。两者都取不到时
+  // 留空，不在前端编一个默认值——建库时服务端会按同样的规则补上
+  const defaultSources = pack?.sources.length ? pack.sources : generalQuery.data?.sources ?? [];
 
   const badAnchors = incl.anchors.filter(
     (a) => !!a.arxiv_id && a.arxiv_id.trim() !== '' && !ARXIV_ID_RE.test(a.arxiv_id.trim()),
@@ -387,6 +399,8 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
           value={incl}
           onChange={setIncl}
           showRubric
+          defaultSources={defaultSources}
+          arxivQuickPicks={pack?.arxiv_categories ?? []}
         />
       </div>
       <StatementInterview

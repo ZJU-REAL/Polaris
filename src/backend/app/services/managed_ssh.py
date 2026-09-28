@@ -317,9 +317,7 @@ class SSHManagedCommands:
         except (ValueError, IndexError):
             return None
 
-    async def recover_current(
-        self, context: OperationContext
-    ) -> ManagedCommandHandle | None:
+    async def recover_current(self, context: OperationContext) -> ManagedCommandHandle | None:
         """Recover the durable handle most recently selected for an operation.
 
         Unlike :meth:`start`, recovery also returns an attempt which has already
@@ -407,10 +405,7 @@ class SSHManagedCommands:
                 try:
                     parts = [int(part) for part in fields[1].split(":")]
                     cpu_seconds = float(
-                        sum(
-                            value * (60**index)
-                            for index, value in enumerate(reversed(parts))
-                        )
+                        sum(value * (60**index) for index, value in enumerate(reversed(parts)))
                     )
                 except ValueError:
                     pass
@@ -582,32 +577,32 @@ class SSHManagedCommands:
             f"expected_pgid={expected_pgid}\n"
             "lock=${operation_dir}/launch.lock\n"
             "i=0\n"
-            "until mkdir \"$lock\" 2>/dev/null; do\n"
+            'until mkdir "$lock" 2>/dev/null; do\n'
             "  i=$((i+1)); [ $i -lt 40 ] || { printf 'lock_busy\\n'; exit 75; }\n"
             "  sleep 0.25\n"
             "done\n"
             "trap 'rmdir \"$lock\" 2>/dev/null || true' EXIT\n"
-            "current=$(cat \"${operation_dir}/current\" 2>/dev/null)\n"
-            "[ \"$current\" = \"$expected_attempt\" ] || "
+            'current=$(cat "${operation_dir}/current" 2>/dev/null)\n'
+            '[ "$current" = "$expected_attempt" ] || '
             "{ printf 'attempt_changed\\n'; exit 76; }\n"
-            "pid=$(cat \"${prefix}.pid\" 2>/dev/null)\n"
-            "pgid=$(cat \"${prefix}.pgid\" 2>/dev/null)\n"
+            'pid=$(cat "${prefix}.pid" 2>/dev/null)\n'
+            'pgid=$(cat "${prefix}.pgid" 2>/dev/null)\n'
             "case $pid:$pgid in *[!0-9:]*|:*) printf 'invalid_identity\\n'; exit 76;; esac\n"
-            "[ \"$pid\" = \"$expected_pid\" ] && [ \"$pgid\" = \"$expected_pgid\" ] || "
+            '[ "$pid" = "$expected_pid" ] && [ "$pgid" = "$expected_pgid" ] || '
             "{ printf 'identity_changed\\n'; exit 76; }\n"
             "if ! kill -0 \"$pid\" 2>/dev/null; then printf 'already_exited\\n'; exit 0; fi\n"
-            "saved_ticks=$(cat \"${prefix}.start_ticks\" 2>/dev/null)\n"
-            "if [ -n \"$saved_ticks\" ]; then\n"
+            'saved_ticks=$(cat "${prefix}.start_ticks" 2>/dev/null)\n'
+            'if [ -n "$saved_ticks" ]; then\n'
             "  current_ticks=$(awk '{print $22}' \"/proc/$pid/stat\" 2>/dev/null)\n"
-            "  [ \"$current_ticks\" = \"$saved_ticks\" ] || "
+            '  [ "$current_ticks" = "$saved_ticks" ] || '
             "{ printf 'process_reused\\n'; exit 76; }\n"
             "fi\n"
-            "kill -TERM -- -\"$pgid\" 2>/dev/null || true\n"
+            'kill -TERM -- -"$pgid" 2>/dev/null || true\n'
             "i=0\n"
-            "while kill -0 \"$pid\" 2>/dev/null && [ $i -lt 20 ]; do "
+            'while kill -0 "$pid" 2>/dev/null && [ $i -lt 20 ]; do '
             "sleep 0.25; i=$((i+1)); done\n"
-            "if kill -0 \"$pid\" 2>/dev/null; then\n"
-            "  kill -KILL -- -\"$pgid\" 2>/dev/null || true\n"
+            'if kill -0 "$pid" 2>/dev/null; then\n'
+            '  kill -KILL -- -"$pgid" 2>/dev/null || true\n'
             "  sleep 0.25\n"
             "fi\n"
             "if kill -0 \"$pid\" 2>/dev/null; then printf 'stop_unconfirmed\\n'; exit 1; fi\n"

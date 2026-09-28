@@ -159,9 +159,7 @@ async def test_same_wiki_from_library_daily_and_personal_library(client):
     assert resp.json()["wiki_content"] == wiki
 
     # ③ 个人库条目详情
-    resp = await client.post(
-        "/api/me/library/visits", json={"paper_id": paper_id}, headers=headers
-    )
+    resp = await client.post("/api/me/library/visits", json={"paper_id": paper_id}, headers=headers)
     assert resp.status_code == 201, resp.text
     entry = resp.json()
     resp = await client.get(f"/api/me/library/{entry['id']}", headers=headers)
@@ -266,12 +264,14 @@ async def test_concept_shared_across_libraries_and_scoped_by_papers(client):
         assert len(rows) == 1
         concept_id = str(rows[0].id)
 
-    names_a = {c["name"] for c in (await client.get(
-        f"/api/libraries/{library_a}/concepts", headers=headers
-    )).json()}
-    names_b = {c["name"] for c in (await client.get(
-        f"/api/libraries/{library_b}/concepts", headers=headers
-    )).json()}
+    names_a = {
+        c["name"]
+        for c in (await client.get(f"/api/libraries/{library_a}/concepts", headers=headers)).json()
+    }
+    names_b = {
+        c["name"]
+        for c in (await client.get(f"/api/libraries/{library_b}/concepts", headers=headers)).json()
+    }
     assert names_a == {"大语言模型", "检索增强"}
     assert names_b == {"大语言模型"}  # B 库只用到一个
 
@@ -279,9 +279,7 @@ async def test_concept_shared_across_libraries_and_scoped_by_papers(client):
     resp = await client.get(f"/api/concepts/{concept_id}", headers=headers)
     assert resp.status_code == 200, resp.text
     assert {p["title"] for p in resp.json()["papers"]} == {"Paper In A", "Paper In B"}
-    resp = await client.get(
-        f"/api/concepts/{concept_id}?library_id={library_b}", headers=headers
-    )
+    resp = await client.get(f"/api/concepts/{concept_id}?library_id={library_b}", headers=headers)
     assert resp.status_code == 200, resp.text
     assert [p["title"] for p in resp.json()["papers"]] == ["Paper In B"]
     assert str(resp.json()["library_id"]) == str(library_b)

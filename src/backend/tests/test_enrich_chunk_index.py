@@ -80,8 +80,11 @@ async def test_enrich_embeds_blocks(client, fake_redis):
     project_id, _ = await make_project_with_library(client, headers, name="enrich-on")
     async with get_sessionmaker()() as session:
         paper = await add_paper(
-            session, project_id=uuid.UUID(project_id), title="On",
-            doi="10.1/on", full_text_path=_write_fulltext(),
+            session,
+            project_id=uuid.UUID(project_id),
+            title="On",
+            doi="10.1/on",
+            full_text_path=_write_fulltext(),
         )
         await session.commit()
         paper_id = paper.id
@@ -100,8 +103,11 @@ async def test_enrich_does_not_reslice_existing_chunks(client, fake_redis):
     project_id, _ = await make_project_with_library(client, headers, name="enrich-keep")
     async with get_sessionmaker()() as session:
         paper = await add_paper(
-            session, project_id=uuid.UUID(project_id), title="Keep",
-            doi="10.1/keep", full_text_path=_write_fulltext(),
+            session,
+            project_id=uuid.UUID(project_id),
+            title="Keep",
+            doi="10.1/keep",
+            full_text_path=_write_fulltext(),
         )
         await session.commit()
         paper_id = paper.id
@@ -143,8 +149,11 @@ async def test_fetch_pdf_builds_paper_vector_and_gated_blocks(client, fake_redis
         # 预置全文（extract 抽不出也不影响；chunk 走已有 full_text_path）
         async with get_sessionmaker()() as session:
             paper = await add_paper(
-                session, project_id=uuid.UUID(project_id), title="Fetch",
-                arxiv_id="2406.22222", full_text_path=_write_fulltext(),
+                session,
+                project_id=uuid.UUID(project_id),
+                title="Fetch",
+                arxiv_id="2406.22222",
+                full_text_path=_write_fulltext(),
             )
             await session.commit()
             paper_id = paper.id

@@ -23,10 +23,14 @@ from tests.test_scoped_paper_detail import (
 async def _statuses_by_lib(paper_id: str) -> dict[str, str]:
     async with get_sessionmaker()() as session:
         rows = (
-            await session.execute(
-                select(LibraryPaper).where(LibraryPaper.paper_id == uuid.UUID(paper_id))
+            (
+                await session.execute(
+                    select(LibraryPaper).where(LibraryPaper.paper_id == uuid.UUID(paper_id))
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return {str(r.library_id): r.status for r in rows}
 
 
@@ -62,9 +66,7 @@ async def test_scoped_restore_only_restores_current_library(client):
     await _add_membership(lib_a, paper_id, status="included", relevance=0.9)
     await _add_membership(lib_b, paper_id, status="excluded", relevance=0.3)
 
-    resp = await client.post(
-        f"/api/libraries/{lib_b}/papers/{paper_id}/restore", headers=creator
-    )
+    resp = await client.post(f"/api/libraries/{lib_b}/papers/{paper_id}/restore", headers=creator)
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "scored"  # 有分数无 wiki → 召回回 scored
 

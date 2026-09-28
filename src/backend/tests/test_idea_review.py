@@ -130,9 +130,7 @@ async def test_partial_tournament_retries_only_failed_matches(client, queue_stub
     )
 
     summary = (
-        await client.get(
-            f"/api/projects/{project_id}/review/tournament/latest", headers=headers
-        )
+        await client.get(f"/api/projects/{project_id}/review/tournament/latest", headers=headers)
     ).json()
     assert summary["planned"] == 2
     assert summary["completed"] == 1
@@ -152,9 +150,7 @@ async def test_partial_tournament_retries_only_failed_matches(client, queue_stub
     retry_engine, _ = _make_engine()
     await retry_engine.run(uuid.UUID(retry.json()["id"]))
     summary = (
-        await client.get(
-            f"/api/projects/{project_id}/review/tournament/latest", headers=headers
-        )
+        await client.get(f"/api/projects/{project_id}/review/tournament/latest", headers=headers)
     ).json()
     assert summary["is_retry"] is True
     assert summary["planned"] == 1

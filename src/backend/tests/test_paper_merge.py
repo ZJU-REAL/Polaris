@@ -100,9 +100,7 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
         # 个人视角冲突：keep 未读不星标，drop 已读且星标 → 合并取并/更靠后
         session.add(PaperUserMeta(paper_id=keep.id, user_id=owner_id, starred=False))
         session.add(
-            PaperUserMeta(
-                paper_id=drop.id, user_id=owner_id, starred=True, reading_status="read"
-            )
+            PaperUserMeta(paper_id=drop.id, user_id=owner_id, starred=True, reading_status="read")
         )
         # 另一用户只有 drop 行 → repoint
         session.add(PaperUserMeta(paper_id=drop.id, user_id=other_id, starred=True))
@@ -186,33 +184,33 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
         assert meta.reading_status == "read"
         # 概念链：shared 只剩一条、only_drop 已 repoint
         links = (
-            await session.execute(
-                select(paper_concepts.c.concept_id).where(paper_concepts.c.paper_id == keep_id)
+            (
+                await session.execute(
+                    select(paper_concepts.c.concept_id).where(paper_concepts.c.paper_id == keep_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert sorted(map(str, links)) == sorted(map(str, [shared_id, only_drop_id]))
         # 分段随合并迁移
         chunk_count = len(
             (
-                await session.execute(
-                    select(PaperChunk.id).where(PaperChunk.paper_id == keep_id)
-                )
+                await session.execute(select(PaperChunk.id).where(PaperChunk.paper_id == keep_id))
             ).all()
         )
         assert chunk_count == 2
         # 书架：keep 行补了备注（wiki 快照列已退役删除，解读统一走 paper_wikis）
         shelf = (
-            await session.execute(
-                select(TopicPaper).where(TopicPaper.paper_id == keep_id)
-            )
-        ).scalars().all()
+            (await session.execute(select(TopicPaper).where(TopicPaper.paper_id == keep_id)))
+            .scalars()
+            .all()
+        )
         assert len(shelf) == 2
         merged_row = next(t for t in shelf if t.topic_id == uuid.UUID(project_id))
         assert merged_row.note == "why"
         # 软引用 repoint
-        entry = (
-            (await session.execute(select(UserLibraryEntry))).scalars().first()
-        )
+        entry = (await session.execute(select(UserLibraryEntry))).scalars().first()
         assert entry.last_paper_id == keep_id
         pub = (await session.execute(select(UserPublication))).scalars().first()
         assert pub.paper_id == keep_id

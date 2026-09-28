@@ -138,9 +138,7 @@ class ChatAgentLoop:
             Message(
                 role="user",
                 content=(
-                    f"{req.page_context}\n\n{req.question}"
-                    if req.page_context
-                    else req.question
+                    f"{req.page_context}\n\n{req.question}" if req.page_context else req.question
                 ),
             ),
         ]
@@ -297,6 +295,7 @@ class ChatAgentLoop:
             if removed := _elide_old_results(messages):
                 yield CompactionEvent(removed=removed)
 
+
 def _safe_json(text: str) -> Any:
     """工具结果文本 → 对象；解析不了返回 None（结果被截断过，未必是完整 JSON）。"""
     try:
@@ -341,9 +340,7 @@ def _paper_refs(payload: Any) -> list[dict[str, str]]:
     return found
 
 
-def _plan_from(
-    ev: ChatEvent, result: ToolResultBlock | None
-) -> tuple[dict[str, str], ...] | None:
+def _plan_from(ev: ChatEvent, result: ToolResultBlock | None) -> tuple[dict[str, str], ...] | None:
     """成功的 update_plan / submit_plan 结果 → 计划步骤；其余一律 None。
 
     读的是**回喂给模型的那份文本**，不是另算一份：界面上画的计划和模型看到的计划

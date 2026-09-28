@@ -364,9 +364,18 @@ function LibraryInfoCard({
 
 /* —— 收录设置（P8：库为收录配置权威源，ingest 按此检索/打分） —— */
 
+/**
+ * 来源为空的库当年的含义：只用 arXiv。新库建库时就按学科写入了来源（#821），走到这个
+ * 回退的只有存量库——与后端 actions_wiki.DEFAULT_LIBRARY_SOURCES 同口径。
+ */
+const LEGACY_LIBRARY_SOURCES = ['arxiv'];
+
 function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail; readOnly?: boolean }) {
   const queryClient = useQueryClient();
   const [value, setValue] = useState<InclusionValue>(() => fromDefinition(lib.definition));
+  // arXiv 分类快捷项跟库的学科走；没选学科就只有自由输入
+  const packsQuery = useQuery({ queryKey: ['disciplines'], queryFn: () => api.listDisciplines(), retry: false });
+  const arxivQuickPicks = (packsQuery.data ?? []).find((p) => p.name === lib.discipline)?.arxiv_categories ?? [];
 
   useEffect(() => {
     setValue(fromDefinition(lib.definition));
@@ -401,8 +410,8 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
         {readOnly
           ? tr('由文献库管理员维护，你只能查看。', 'Maintained by library managers — read-only for you.')
           : tr(
-              '文献追踪按这里的 arXiv 分类与关键词检索、按打分标准判定相关性；留空则用默认分类、只按方向说明打分。',
-              'Literature tracking searches by these arXiv categories and keywords and scores relevance against the rubric; leave empty to use default categories and statement-only scoring.',
+              '建库检索从这里勾选的来源按关键词取文献（选了 arXiv 时还可按分类筛），再按打分标准判定相关性；不设打分标准则只按方向说明打分。',
+              'Library builds search the sources ticked here by keyword (arXiv can also be narrowed by category), then score relevance against the rubric; without a rubric, scoring uses the statement alone.',
             )}
       </p>
       <InclusionSettingsForm
@@ -410,6 +419,9 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
         onChange={setValue}
         showRubric
         readOnly={readOnly}
+        // 新库建库时就写入了来源；来源为空的只有存量库，而它们当年的含义是只用 arXiv
+        defaultSources={LEGACY_LIBRARY_SOURCES}
+        arxivQuickPicks={arxivQuickPicks}
       />
     </section>
   );

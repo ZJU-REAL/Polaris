@@ -242,9 +242,7 @@ async def test_translation_api_reports_progress_and_deduplicates_requests(
         count = await session.scalar(
             select(func.count())
             .select_from(LiteratureHitTranslation)
-            .where(
-                LiteratureHitTranslation.hit_id.in_(hit_ids)
-            )
+            .where(LiteratureHitTranslation.hit_id.in_(hit_ids))
         )
         assert count == 2
 

@@ -65,9 +65,7 @@ def _fixture():
                 {"subclaim": "s1", "stance": "support", "paper_ids": [P1]},
                 {"subclaim": "s2", "stance": "speculation", "paper_ids": []},
             ],
-            novelty={
-                "subclaims": [{"subclaim": "s1", "verdict": "novel", "paper_ids": [P2]}]
-            },
+            novelty={"subclaims": [{"subclaim": "s1", "verdict": "novel", "paper_ids": [P2]}]},
         ),
         _node(CHILD_B, ROOT, "pruned", score=0.1),
         _node(GRANDCHILD, CHILD_B, "pruned", score=None),
@@ -121,9 +119,7 @@ def _fixture():
                 CHILD_A: {"prompt_tokens": 7, "completion_tokens": 3},
             },
             "tournament": {
-                "matches": [
-                    {"round": 1, "a": ROOT, "b": CHILD_A, "winner": "a", "rationale": "r"}
-                ],
+                "matches": [{"round": 1, "a": ROOT, "b": CHILD_A, "winner": "a", "rationale": "r"}],
                 "nodes": {
                     ROOT: {"win_rate": 1.0, "matches": 1, "pipeline_score": 0.8, "score": 0.9}
                 },
@@ -310,7 +306,13 @@ async def test_disclosure_artifact_written_and_served(client, queue_stub):
     # 检索留痕齐全：generate 1 条 + 每子假设接地 2 条/查新 1 条（fake 确定性形状）
     phases = [q["phase"] for q in d["queries"]]
     assert phases == [
-        "generate", "ground", "ground", "novelty", "ground", "ground", "novelty",
+        "generate",
+        "ground",
+        "ground",
+        "novelty",
+        "ground",
+        "ground",
+        "novelty",
     ]
     assert all(q["round"] == 1 and q["node_id"] for q in d["queries"])
     # 实引 ⊆ 检索全集，且与树上节点的引用一致

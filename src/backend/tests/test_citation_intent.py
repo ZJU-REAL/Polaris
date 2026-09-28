@@ -74,9 +74,7 @@ async def oa_redis():
 
 def _work(openalex_id, title, *, year=2024, abstract_words=None, venue=None):
     """构造 OpenAlex work 响应（_simplify 的输入形态）。"""
-    inverted = (
-        {w: [i] for i, w in enumerate(abstract_words)} if abstract_words else None
-    )
+    inverted = {w: [i] for i, w in enumerate(abstract_words)} if abstract_words else None
     return {
         "id": openalex_id,
         "title": title,
@@ -215,9 +213,7 @@ async def test_enrich_hook_builds_citation_edges(client, tmp_path):
     assert {r.ref_index: r.intent for r in rows} == EXPECTED_INTENTS
 
 
-async def test_enrich_hook_aligns_openalex_when_enabled(
-    client, tmp_path, monkeypatch, oa_redis
-):
+async def test_enrich_hook_aligns_openalex_when_enabled(client, tmp_path, monkeypatch, oa_redis):
     token = await register_and_login(client, email="hookalign@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     project_id, _ = await make_project_with_library(client, headers, name="hookalign-proj")
@@ -239,9 +235,7 @@ async def test_enrich_hook_aligns_openalex_when_enabled(
             router.get(url__regex=r"https://api\.openalex\.org/works/doi:.*").mock(
                 return_value=httpx.Response(
                     200,
-                    json=_work(
-                        "https://openalex.org/W777", "Aligned By Enrich Hook Paper"
-                    ),
+                    json=_work("https://openalex.org/W777", "Aligned By Enrich Hook Paper"),
                 )
             )
             async with get_sessionmaker()() as session:

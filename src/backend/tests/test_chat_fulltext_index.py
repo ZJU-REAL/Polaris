@@ -113,11 +113,17 @@ async def test_shelf_index_rebuild_reports_indexable_counts(client, queue_stub):
     txt.write_text("规划方法细节。" * 50, encoding="utf-8")
     async with get_sessionmaker()() as session:
         with_text = await add_paper(
-            session, project_id=project_id, title="Has Full Text",
-            status="compiled", full_text_path=str(txt),
+            session,
+            project_id=project_id,
+            title="Has Full Text",
+            status="compiled",
+            full_text_path=str(txt),
         )
         no_text = await add_paper(
-            session, project_id=project_id, title="No Full Text", status="candidate",
+            session,
+            project_id=project_id,
+            title="No Full Text",
+            status="candidate",
         )
         await session.commit()
         # 入书架（两篇都上架，才会进 shelf_paper_ids）
@@ -130,9 +136,7 @@ async def test_shelf_index_rebuild_reports_indexable_counts(client, queue_stub):
             )
         await session.commit()
 
-    resp = await client.post(
-        f"/api/projects/{project_id}/shelf/index/rebuild", headers=headers
-    )
+    resp = await client.post(f"/api/projects/{project_id}/shelf/index/rebuild", headers=headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["queued"] == 2
@@ -142,9 +146,7 @@ async def test_shelf_index_rebuild_reports_indexable_counts(client, queue_stub):
 
 async def test_shelf_index_rebuild_requires_member(client, queue_stub):
     _, headers = await _project(client)
-    resp = await client.post(
-        f"/api/projects/{uuid.uuid4()}/shelf/index/rebuild", headers=headers
-    )
+    resp = await client.post(f"/api/projects/{uuid.uuid4()}/shelf/index/rebuild", headers=headers)
     assert resp.status_code == 404
     assert queue_stub.jobs == []
 

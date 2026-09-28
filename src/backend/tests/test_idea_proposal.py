@@ -49,7 +49,8 @@ async def _seed_searchable_papers(project_id: str, statement: str, n: int = 3) -
     async with get_sessionmaker()() as session:
         ids = []
         for i in range(n):
-            paper = await add_paper(session,
+            paper = await add_paper(
+                session,
                 project_id=uuid.UUID(project_id),
                 source="manual",
                 title=f"Deep paper {i}",

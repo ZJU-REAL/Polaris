@@ -128,9 +128,7 @@ async def set_score(
     return node
 
 
-async def transition(
-    session: AsyncSession, node: HypothesisNode, to_status: str
-) -> HypothesisNode:
+async def transition(session: AsyncSession, node: HypothesisNode, to_status: str) -> HypothesisNode:
     """按状态机迁移并 commit；非法迁移抛 ValueError。
 
     to_status="pruned" 级联：整个子树全部置 pruned——父分支被放弃后，子节点
@@ -141,9 +139,7 @@ async def transition(
     """
     allowed = _TRANSITIONS.get(node.status, frozenset())
     if to_status not in allowed:
-        raise ValueError(
-            f"invalid hypothesis node transition: {node.status} -> {to_status}"
-        )
+        raise ValueError(f"invalid hypothesis node transition: {node.status} -> {to_status}")
     now = utcnow()
     node.status = to_status
     node.updated_at = now
@@ -153,9 +149,7 @@ async def transition(
             children = (
                 (
                     await session.execute(
-                        select(HypothesisNode.id).where(
-                            HypothesisNode.parent_id.in_(frontier)
-                        )
+                        select(HypothesisNode.id).where(HypothesisNode.parent_id.in_(frontier))
                     )
                 )
                 .scalars()
@@ -180,9 +174,7 @@ async def transition(
     return node
 
 
-async def tree_for_run(
-    session: AsyncSession, run_id: uuid.UUID
-) -> list[HypothesisNode]:
+async def tree_for_run(session: AsyncSession, run_id: uuid.UUID) -> list[HypothesisNode]:
     """一次查询拉平返回 run 的全部节点（父子拼装交给 API/前端）。
 
     按 run 内创建序号定序，不按 created_at：后者是 Python 侧 utcnow()，同秒批量建
@@ -201,9 +193,7 @@ async def tree_for_run(
     )
 
 
-async def best_open_node(
-    session: AsyncSession, run_id: uuid.UUID
-) -> HypothesisNode | None:
+async def best_open_node(session: AsyncSession, run_id: uuid.UUID) -> HypothesisNode | None:
     """score 最高的 open 节点（D2 恢复语义的地基）；空树/无 open 返回 None。
 
     score 为空的节点排最后（还没评分不代表最优）；同分按 run 内创建序号取早的。

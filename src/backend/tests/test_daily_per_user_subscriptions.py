@@ -185,9 +185,7 @@ async def test_a_deactivated_user_stops_costing_fetches(client):
 async def test_a_single_user_deployment_behaves_as_before(client):
     """唯一那个用户既是 owner 也是读者：订什么就看到什么，与改动之前一致。"""
     only = await _auth(client, "solo@example.com")
-    await client.put(
-        "/api/daily/categories", json={"categories": ["cs.AI", "cs.CL"]}, headers=only
-    )
+    await client.put("/api/daily/categories", json={"categories": ["cs.AI", "cs.CL"]}, headers=only)
     await _add_entry("Agent planning", "cs.AI")
     await _add_entry("Parsing", "cs.CL")
     await _add_entry("Somebody else's field", "q-bio.NC")

@@ -362,8 +362,7 @@ async def _trend_concepts(session: AsyncSession, project_id: uuid.UUID) -> list[
             .join(Paper, Paper.id == paper_concepts.c.paper_id)
             .join(
                 LibraryPaper,
-                (LibraryPaper.paper_id == Paper.id)
-                & (LibraryPaper.library_id.in_(library_ids)),
+                (LibraryPaper.paper_id == Paper.id) & (LibraryPaper.library_id.in_(library_ids)),
             )
             .where(
                 Concept.id.in_(library_concept_ids(library_ids)),
@@ -1266,9 +1265,7 @@ async def review_summarize(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         if result.get("idea_a") and result.get("idea_b")
     }
     failed_pairs = [
-        pair
-        for pair in planned_pairs
-        if _pair_key(str(pair[0]), str(pair[1])) not in completed
+        pair for pair in planned_pairs if _pair_key(str(pair[0]), str(pair[1])) not in completed
     ]
     ctx.checkpoint["review_failed_pairs"] = failed_pairs
     async with get_sessionmaker()() as session:

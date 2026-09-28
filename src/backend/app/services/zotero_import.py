@@ -341,11 +341,15 @@ async def run_zotero_import(
                                 authors=fields.get("authors"),
                             ),
                         )
-                        if pooled is not None and (
-                            await get_membership(
-                                session, library_id=library_id, paper_id=pooled.id
+                        if (
+                            pooled is not None
+                            and (
+                                await get_membership(
+                                    session, library_id=library_id, paper_id=pooled.id
+                                )
                             )
-                        ) is not None:
+                            is not None
+                        ):
                             # 三级索引漏网的库内命中（如库行 doi 为空、池键靠年份+首作者对上）
                             index.add(
                                 pooled.id,
@@ -360,9 +364,7 @@ async def run_zotero_import(
                                 title=pooled.title,
                             )
                         else:
-                            paper = pooled or await create_pool_paper_stub(
-                                session, fields=fields
-                            )
+                            paper = pooled or await create_pool_paper_stub(session, fields=fields)
                             await ensure_membership(
                                 session,
                                 library_id=library_id,
@@ -447,9 +449,7 @@ async def run_zotero_import(
             finished = await completed
             await publish_paper_task_event(bus, task_id, "batch_enriched", {"index": finished})
 
-        await publish_paper_task_event(
-            bus, task_id, "done", {"total": len(entries), **totals}
-        )
+        await publish_paper_task_event(bus, task_id, "done", {"total": len(entries), **totals})
         return totals
     except asyncio.CancelledError:
         raise

@@ -72,9 +72,7 @@ async def test_builtin_process_packs_are_listed(client):
     from app.services import process_packs
 
     headers = await _auth(client)
-    rows = (
-        await client.get("/api/experiment-backends/process-packs", headers=headers)
-    ).json()
+    rows = (await client.get("/api/experiment-backends/process-packs", headers=headers)).json()
     assert {r["name"] for r in rows} == set(process_packs.known_pack_names())
     assert rows, "一个流程包都列不出来的话，选择器没有意义"
 
@@ -82,9 +80,7 @@ async def test_builtin_process_packs_are_listed(client):
 async def test_a_process_pack_shows_its_phases(client):
     """选包等于选一条流程，阶段名是唯一看得见的依据。"""
     headers = await _auth(client)
-    rows = (
-        await client.get("/api/experiment-backends/process-packs", headers=headers)
-    ).json()
+    rows = (await client.get("/api/experiment-backends/process-packs", headers=headers)).json()
     row = next(r for r in rows if r["phases"])
     assert all(isinstance(p, str) and p for p in row["phases"])
 
@@ -111,9 +107,7 @@ async def test_a_user_written_pack_shows_up_without_a_restart(client, tmp_path, 
         encoding="utf-8",
     )
 
-    rows = (
-        await client.get("/api/experiment-backends/process-packs", headers=headers)
-    ).json()
+    rows = (await client.get("/api/experiment-backends/process-packs", headers=headers)).json()
     names = {r["name"] for r in rows}
     assert "mine" in names, "现扫才有意义：丢进目录就该立刻能选到"
 

@@ -180,7 +180,8 @@ async def _setup_paper(client, *, status: str = "scored"):
     resp = await client.post("/api/projects", json={"name": "recompile-proj"}, headers=headers)
     project_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
-        paper = await add_paper(session,
+        paper = await add_paper(
+            session,
             project_id=uuid.UUID(project_id),
             source="manual",
             title="Recompiled Paper",
@@ -276,7 +277,8 @@ async def test_obsidian_export_rewrites_figure_markers(client):
     resp = await client.post("/api/projects", json={"name": "export-proj"}, headers=headers)
     project_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
-        paper = await add_paper(session,
+        paper = await add_paper(
+            session,
             project_id=uuid.UUID(project_id),
             source="arxiv",
             arxiv_id="2406.20001",

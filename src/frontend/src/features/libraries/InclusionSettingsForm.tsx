@@ -9,9 +9,11 @@ import { tr } from '../../lib/i18n';
    五块：文献来源 / arXiv 分类 chips / 检索关键词 chips / 锚点论文 / 打分标准（rubric）；
    顺序即提问顺序——先问「从哪里找」，arXiv 分类只在选了 arXiv 时才出现，
    做临床、做结构的人不该被一个跟自己无关的分类体系拦在第一步；
-   ============================================================ */
 
-const QUICK_CATEGORIES = ['cs.CL', 'cs.AI', 'cs.LG', 'cs.CV', 'cs.MA', 'stat.ML'];
+   「没选来源时用什么」和「arXiv 分类的快捷项」都由调用方给（#821）：前者取决于
+   是新建（跟学科走）还是存量库（当年的含义是只用 arXiv），后者取决于学科。这里曾
+   写死 arXiv 与一排 cs.*，于是每个人建库都先看到计算机的分类。
+   ============================================================ */
 
 // arXiv id 宽松校验：2401.01234 / 2401.01234v2 / 老式 hep-th/9901001
 export const ARXIV_ID_RE = /^(\d{4}\.\d{4,5}(v\d+)?|[a-z-]+\/\d{7}(v\d+)?)$/i;
@@ -59,6 +61,13 @@ export interface InclusionSettingsFormProps {
   showAnchors?: boolean;
   /** 只读：隐藏 AI 生成 / 增删按钮，禁用所有输入，仅展示已配置项。 */
   readOnly?: boolean;
+  /**
+   * ``sources`` 为空时实际会用哪些来源。必填：每个调用处都得说清楚空值的含义——
+   * 新建时是所选学科的默认来源，存量库则是当年的「只用 arXiv」。
+   */
+  defaultSources: string[];
+  /** 选了 arXiv 时给出的分类快捷项，来自学科包；空就只保留自由输入。 */
+  arxivQuickPicks?: string[];
 }
 
 function BlockLabel({ zh, en, right }: { zh: string; en: string; right?: React.ReactNode }) {
@@ -76,6 +85,8 @@ export function InclusionSettingsForm({
   showRubric,
   showAnchors,
   readOnly,
+  defaultSources,
+  arxivQuickPicks = [],
 }: InclusionSettingsFormProps) {
   const { arxiv_categories, include, rubric, anchors } = value;
   const sources = value.sources ?? [];
@@ -95,11 +106,11 @@ export function InclusionSettingsForm({
 
   function toggleSource(id: string) {
     // 取消最后一个来源＝这个库无处取文献。与其存一个永远抓不到东西的配置，
-    // 不如不让它变成空——空值在后端等于「只用 arXiv」，行为可预期
+    // 不如退回默认来源——显示的就是它，行为可预期
     const next = effectiveSources.includes(id)
       ? effectiveSources.filter((x) => x !== id)
       : [...effectiveSources, id];
-    patch({ sources: next.length > 0 ? next : ['arxiv'] });
+    patch({ sources: next.length > 0 ? next : defaultSources });
   }
 
   function toggleCat(c: string) {
@@ -151,8 +162,8 @@ export function InclusionSettingsForm({
     patch({ rubric: rubric.filter((_, j) => j !== i) });
   }
 
-  // 没配来源 = 只用 arXiv（与后端 DEFAULT_LIBRARY_SOURCES 同口径）
-  const effectiveSources = sources.length > 0 ? sources : ['arxiv'];
+  // 没配来源时实际会用的，由调用方说明（见 defaultSources）
+  const effectiveSources = sources.length > 0 ? sources : defaultSources;
   // 清单还没到就先显示 id：一个 "pubmed" 也比一块空白说得清楚
   const sourceTitle = (id: string) =>
     (sourcesQuery.data ?? []).find((s) => s.id === id)?.title ?? id;
@@ -175,7 +186,10 @@ export function InclusionSettingsForm({
           </div>
         ) : sourcesQuery.isError ? (
           <div className="muted" style={{ fontSize: 12.5 }}>
-            {tr('无法加载来源列表，将使用 arXiv。', 'Could not load the source list — arXiv will be used.')}
+            {tr(
+              `无法加载来源列表，将使用：${defaultSources.join('、')}。`,
+              `Could not load the source list — ${defaultSources.join(', ')} will be used.`,
+            )}
           </div>
         ) : (
           <>
@@ -194,8 +208,8 @@ export function InclusionSettingsForm({
             </div>
             <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
               {tr(
-                '按你的领域挑：做生物选 PubMed / Europe PMC，做化学与工程选 Crossref，做 CS / 物理选 arXiv。不选则只用 arXiv。',
-                'Pick what your field uses: PubMed / Europe PMC for life sciences, Crossref for chemistry and engineering, arXiv for CS and physics. Defaults to arXiv.',
+                '默认勾选的是所选学科常用的来源，可以增减：生物医学常用 PubMed / Europe PMC，化学与工程常用 Crossref，CS 与物理常用 arXiv，OpenAlex 覆盖全部学科。',
+                'Pre-selected from the discipline above; add or remove as you like. Life sciences use PubMed / Europe PMC, chemistry and engineering Crossref, CS and physics arXiv; OpenAlex covers every field.',
               )}
             </div>
           </>
@@ -205,7 +219,7 @@ export function InclusionSettingsForm({
       {/* —— arXiv 分类：只在选了 arXiv 时出现 —— */}
       {arxivSelected && (
       <div className="col gap6">
-        <BlockLabel zh="arXiv 分类" en="arXiv categories" />
+        <BlockLabel zh="arXiv 分类（可选，只作用于 arXiv）" en="arXiv categories (optional, arXiv only)" />
         {readOnly ? (
           arxiv_categories.length > 0 ? (
             <div className="row gap6 wrap">
@@ -223,7 +237,7 @@ export function InclusionSettingsForm({
         ) : (
           <>
             <div className="row gap6 wrap">
-              {[...new Set([...QUICK_CATEGORIES, ...arxiv_categories])].map((c) => (
+              {[...new Set([...arxivQuickPicks, ...arxiv_categories])].map((c) => (
                 <button
                   key={c}
                   type="button"
@@ -238,7 +252,10 @@ export function InclusionSettingsForm({
               <input
                 className="input"
                 style={{ width: 170 }}
-                placeholder={tr('自定义分类，如 cs.IR', 'custom, e.g. cs.IR')}
+                placeholder={tr(
+                  `分类代码，如 ${arxivQuickPicks[0] ?? 'physics.optics'}`,
+                  `category code, e.g. ${arxivQuickPicks[0] ?? 'physics.optics'}`,
+                )}
                 value={customCat}
                 onChange={(e) => setCustomCat(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomCat(); } }}

@@ -74,21 +74,13 @@ async def _merge_paper_vectors(
     只有 keep 缺、drop 有的空间才搬过来。剩下的 drop 向量随 drop 行级联删除。
     """
     keep_spaces = set(
-        (
-            await session.execute(
-                select(PaperVector.space).where(PaperVector.paper_id == keep_id)
-            )
-        )
+        (await session.execute(select(PaperVector.space).where(PaperVector.paper_id == keep_id)))
         .scalars()
         .all()
     )
     moved = 0
     rows = (
-        (
-            await session.execute(
-                select(PaperVector).where(PaperVector.paper_id == drop_id)
-            )
-        )
+        (await session.execute(select(PaperVector).where(PaperVector.paper_id == drop_id)))
         .scalars()
         .all()
     )
@@ -111,14 +103,10 @@ async def _repoint_associations(
     other_col = table.c[col]
     dup_subq = select(other_col).where(paper_col == keep_id)
     deduped = (
-        await session.execute(
-            delete(table).where(paper_col == drop_id, other_col.in_(dup_subq))
-        )
+        await session.execute(delete(table).where(paper_col == drop_id, other_col.in_(dup_subq)))
     ).rowcount
     repointed = (
-        await session.execute(
-            update(table).where(paper_col == drop_id).values(paper_id=keep_id)
-        )
+        await session.execute(update(table).where(paper_col == drop_id).values(paper_id=keep_id))
     ).rowcount
     return int(repointed or 0), int(deduped or 0)
 
@@ -308,9 +296,7 @@ async def merge_papers(
         )
     report["chunks_moved"] = chunks_moved
     # 分段向量以 chunk_id 为键，随分段一起搬走，不用单独处理；论文级向量按空间补
-    report["vectors_moved"] = await _merge_paper_vectors(
-        session, keep_id=keep_id, drop_id=drop_id
-    )
+    report["vectors_moved"] = await _merge_paper_vectors(session, keep_id=keep_id, drop_id=drop_id)
 
     # ---- 8. 内容池行缺项回填（keep 缺 → 用 drop 的） ----
     filled: list[str] = []

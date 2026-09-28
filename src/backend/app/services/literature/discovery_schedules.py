@@ -46,9 +46,7 @@ def schedule_timezone(name: str) -> ZoneInfo:
         raise InvalidDiscoveryScheduleError("INVALID_TIMEZONE") from exc
 
 
-def next_occurrence(
-    *, timezone: str, hour: int, minute: int, after: datetime
-) -> datetime:
+def next_occurrence(*, timezone: str, hour: int, minute: int, after: datetime) -> datetime:
     """Return the next wall-clock occurrence as an aware UTC timestamp."""
 
     zone = schedule_timezone(timezone)
@@ -90,9 +88,7 @@ async def upsert_schedule(
     now: datetime | None = None,
 ) -> LiteratureDiscoverySchedule:
     await _serialize_first_write(session, library.id)
-    schedule = await session.get(
-        LiteratureDiscoverySchedule, library.id, with_for_update=True
-    )
+    schedule = await session.get(LiteratureDiscoverySchedule, library.id, with_for_update=True)
     values = data.model_dump()
     schedule_timezone(values["timezone"])
     current = _aware(now or datetime.now(UTC))
@@ -124,9 +120,7 @@ async def upsert_schedule(
     return schedule
 
 
-async def delete_schedule(
-    session: AsyncSession, schedule: LiteratureDiscoverySchedule
-) -> None:
+async def delete_schedule(session: AsyncSession, schedule: LiteratureDiscoverySchedule) -> None:
     await session.delete(schedule)
     await session.commit()
 
@@ -320,9 +314,7 @@ async def record_dispatch_result(
     now: datetime | None = None,
 ) -> None:
     schedule = await session.scalar(
-        select(LiteratureDiscoverySchedule).where(
-            LiteratureDiscoverySchedule.last_run_id == run_id
-        )
+        select(LiteratureDiscoverySchedule).where(LiteratureDiscoverySchedule.last_run_id == run_id)
     )
     if schedule is None:
         return

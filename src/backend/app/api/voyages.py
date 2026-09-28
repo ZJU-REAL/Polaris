@@ -89,7 +89,6 @@ async def list_voyages(
     return [VoyageRead.model_validate(r) for r in runs]
 
 
-
 @router.get("/{voyage_id}", response_model=VoyageDetailRead)
 async def get_voyage(
     voyage_id: uuid.UUID,
@@ -222,9 +221,7 @@ async def answer_voyage_ask(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ASK_NOT_FOUND")
     text = data.text.strip()
     if not text and not data.choice:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ANSWER_EMPTY"
-        )
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ANSWER_EMPTY")
     claimed_stop = False
     stop_status: str | None = None
     if data.choice == "stop_remote":

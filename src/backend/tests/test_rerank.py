@@ -146,13 +146,15 @@ async def _setup_semantic_project(client, monkeypatch):
     project_id = uuid.UUID(resp.json()["id"])
 
     async with get_sessionmaker()() as session:
-        pa = await add_paper(session,
+        pa = await add_paper(
+            session,
             project_id=project_id,
             title="Cooking pasta at home",
             abstract="A recipe study about food.",
             status="compiled",
         )
-        pb = await add_paper(session,
+        pb = await add_paper(
+            session,
             project_id=project_id,
             title="Agent planning",
             abstract=None,

@@ -41,9 +41,7 @@ def _is_weekend(now: dt.datetime | None = None) -> bool:
 @register("daily.fetch")
 async def fetch(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
-        categories, by_category, statuses = await daily_feed_service.fetch_new_by_category(
-            session
-        )
+        categories, by_category, statuses = await daily_feed_service.fetch_new_by_category(session)
 
     fetched = sum(s["count"] for s in statuses.values())
     failed = [c for c, s in statuses.items() if s["status"] == "error"]

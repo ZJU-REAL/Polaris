@@ -317,9 +317,7 @@ async def test_complete_pool_hit_still_scores_new_library_membership(
     await paper_enrich.await_task(resp.json()["task_id"])
 
     async with get_sessionmaker()() as session:
-        membership = await get_membership(
-            session, library_id=library_id, paper_id=paper_id
-        )
+        membership = await get_membership(session, library_id=library_id, paper_id=paper_id)
         assert membership is not None
         assert membership.relevance_score is not None
         assert membership.relevance_reason
@@ -460,9 +458,7 @@ async def test_library_batch_add_endpoint_and_limit(client, fake_redis):
 
     token = await register_and_login(client, email="library-batch@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    _project_id, library_id = await make_project_with_library(
-        client, headers, name="library-batch"
-    )
+    _project_id, library_id = await make_project_with_library(client, headers, name="library-batch")
     resp = await client.post(
         f"/api/libraries/{library_id}/paper-imports/batch",
         json={"items": [{"bibtex": BIBTEX_ENTRY}]},
@@ -565,8 +561,12 @@ async def test_resolve_by_arxiv_id_fills_in_the_title(client, monkeypatch):
     from app.services import paper_import
 
     async def _fake(arxiv_id=None, doi=None, bibtex=None):
-        return {"arxiv_id": "2005.11401", "title": "Retrieval-Augmented Generation",
-                "year": 2020, "authors": [{"name": "Lewis"}, {"name": "Perez"}]}
+        return {
+            "arxiv_id": "2005.11401",
+            "title": "Retrieval-Augmented Generation",
+            "year": 2020,
+            "authors": [{"name": "Lewis"}, {"name": "Perez"}],
+        }
 
     monkeypatch.setattr(paper_import, "resolve_fields", _fake)
     headers = {"Authorization": f"Bearer {await register_and_login(client)}"}

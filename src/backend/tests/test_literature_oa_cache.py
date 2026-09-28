@@ -88,9 +88,7 @@ async def test_oa_cache_without_pdf_url_is_not_promoted(client):
         assert cache.error_code == "OA_PDF_NOT_FOUND"
         assert (
             await session.scalar(
-                select(LiteratureOaAttempt.id).where(
-                    LiteratureOaAttempt.cache_id == cache.id
-                )
+                select(LiteratureOaAttempt.id).where(LiteratureOaAttempt.cache_id == cache.id)
             )
             is None
         )

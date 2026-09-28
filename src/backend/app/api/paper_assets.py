@@ -26,9 +26,7 @@ from app.services import papers as papers_service
 router = APIRouter(tags=["paper-assets"])
 
 
-async def _library_for_manager(
-    session: AsyncSession, library_id: uuid.UUID, user: User
-):
+async def _library_for_manager(session: AsyncSession, library_id: uuid.UUID, user: User):
     library = await libraries_service.get_library(session, library_id)
     if library is None or not libraries_service.library_visible_to(library, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
@@ -68,9 +66,7 @@ def _asset_read(asset, blob) -> PaperAssetRead:
     return PaperAssetRead.model_validate(data)
 
 
-@router.get(
-    "/libraries/{library_id}/papers/{paper_id}/assets", response_model=PaperAssetPage
-)
+@router.get("/libraries/{library_id}/papers/{paper_id}/assets", response_model=PaperAssetPage)
 async def list_paper_assets(
     library_id: uuid.UUID,
     paper_id: uuid.UUID,
@@ -83,10 +79,7 @@ async def list_paper_assets(
     await _paper_in_library(session, library_id, paper_id, user)
     rows = await asset_service.list_assets(session, paper_id=paper_id, library_id=library_id)
     return PaperAssetPage(
-        items=[
-            _asset_read(asset, blob)
-            for asset, blob, _grant in rows
-        ],
+        items=[_asset_read(asset, blob) for asset, blob, _grant in rows],
         grants=[AssetGrantRead.model_validate(grant) for _asset, _blob, grant in rows],
     )
 
@@ -202,9 +195,7 @@ async def download_paper_asset(
     if library is None or not libraries_service.library_visible_to(library, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
     await _paper_in_library(session, library_id, paper_id, user)
-    row = await asset_service.readable_asset(
-        session, asset_id=asset_id, library_id=library_id
-    )
+    row = await asset_service.readable_asset(session, asset_id=asset_id, library_id=library_id)
     if row is None or row[0].paper_id != paper_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ASSET_NOT_FOUND")
     asset, blob = row
@@ -241,18 +232,12 @@ async def create_paper_content_version(
     """Queue a fresh parse attempt for an explicitly granted PDF asset."""
     library = await _library_for_manager(session, library_id, user)
     paper = await _paper_in_library(session, library_id, paper_id, user)
-    row = await asset_service.readable_asset(
-        session, asset_id=asset_id, library_id=library_id
-    )
+    row = await asset_service.readable_asset(session, asset_id=asset_id, library_id=library_id)
     if row is None or row[0].paper_id != paper.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ASSET_NOT_FOUND")
-    version = await content_service.create_content_version(
-        session, asset=row[0], parser="mineru"
-    )
+    version = await content_service.create_content_version(session, asset=row[0], parser="mineru")
     await session.commit()
-    await queue.enqueue(
-        "parse_paper_content_task", str(version.id), str(user.id), str(library.id)
-    )
+    await queue.enqueue("parse_paper_content_task", str(version.id), str(user.id), str(library.id))
     return PaperContentVersionRead.model_validate(version)
 
 
@@ -294,7 +279,5 @@ async def get_current_paper_content_chunks(
     version = await get_current_paper_content_version(
         library_id=library_id, paper_id=paper_id, session=session, user=user
     )
-    rows = await content_service.list_content_chunks(
-        session, version_id=version.id
-    )
+    rows = await content_service.list_content_chunks(session, version_id=version.id)
     return [PaperContentChunkRead.model_validate(row) for row in rows]

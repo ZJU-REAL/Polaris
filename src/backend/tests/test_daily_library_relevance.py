@@ -128,9 +128,7 @@ async def test_centroid_cached_and_invalidated(client):
 
     # 库一变（再收一篇）指纹变 → 自动重算，篡改值被真质心覆盖
     async with get_sessionmaker()() as session:
-        project_id = (
-            (await session.execute(select(DirectionLibrary.project_id))).scalars().one()
-        )
+        project_id = (await session.execute(select(DirectionLibrary.project_id))).scalars().one()
         await add_paper(
             session, project_id=project_id, title="member 2", status="scored", embedding=_vec(1)
         )
@@ -187,13 +185,9 @@ async def test_fusion_is_gentle_recency_still_matters(client):
     """
     _headers, _library_id, _name = await _setup_library(client, member_axes=[0])
     today = _today()
-    mid_related = await _add_entry(
-        "Mid related", axis=0, feed_date=today - dt.timedelta(days=3)
-    )
+    mid_related = await _add_entry("Mid related", axis=0, feed_date=today - dt.timedelta(days=3))
     new_unrelated = await _add_entry("New unrelated", axis=7, feed_date=today)
-    old_related = await _add_entry(
-        "Old related", axis=0, feed_date=today - dt.timedelta(days=7)
-    )
+    old_related = await _add_entry("Old related", axis=0, feed_date=today - dt.timedelta(days=7))
 
     resp = await client.get("/api/daily/papers?sort=relevance&size=10", headers=_headers)
     assert resp.status_code == 200
@@ -239,9 +233,7 @@ async def test_keyword_fallback_when_library_has_no_vectors(client):
     # 这里直接用测试助手把隐式库建出来再填关键词。
     async with get_sessionmaker()() as session:
         library = await ensure_project_library(session, project_id)
-        library.definition = dict(
-            library.definition or {}, keywords={"include": ["diffusion"]}
-        )
+        library.definition = dict(library.definition or {}, keywords={"include": ["diffusion"]})
         library_name = library.name
         await session.commit()
 

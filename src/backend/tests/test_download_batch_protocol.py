@@ -236,9 +236,7 @@ async def test_extension_api_key_can_create_batch_and_receives_item_status(clien
         "/api/download-batches",
         headers={"X-Polaris-API-Key": api_key},
         json={
-            "targets": [
-                {"library_id": library_id, "paper_id": paper_id} for paper_id in paper_ids
-            ]
+            "targets": [{"library_id": library_id, "paper_id": paper_id} for paper_id in paper_ids]
         },
     )
     assert created.status_code == 200, created.text

@@ -290,11 +290,7 @@ async def create_retry_tournament_voyage(
         status="planning",
         cursor=0,
         checkpoint={"params": params},
-        budget={
-            "max_tokens": matches
-            * (2 * int(params["rounds"]) + 1)
-            * _TOKENS_PER_MATCH_CALL
-        },
+        budget={"max_tokens": matches * (2 * int(params["rounds"]) + 1) * _TOKENS_PER_MATCH_CALL},
         project_id=project.id,
         created_by=created_by,
     )
@@ -334,16 +330,20 @@ async def _validate_seed(
         if paper is None:
             raise InvalidSeedError(value)
         library_ids = await get_source_library_ids(session, project_id)
-        in_corpus = bool(library_ids) and (
-            await session.execute(
-                select(LibraryPaper.paper_id)
-                .where(
-                    LibraryPaper.library_id.in_(library_ids),
-                    LibraryPaper.paper_id == paper.id,
+        in_corpus = (
+            bool(library_ids)
+            and (
+                await session.execute(
+                    select(LibraryPaper.paper_id)
+                    .where(
+                        LibraryPaper.library_id.in_(library_ids),
+                        LibraryPaper.paper_id == paper.id,
+                    )
+                    .limit(1)
                 )
-                .limit(1)
-            )
-        ).first() is not None
+            ).first()
+            is not None
+        )
         if not in_corpus:
             raise InvalidSeedError(value)
         return f"论文《{paper.title[:60]}》"
@@ -353,13 +353,17 @@ async def _validate_seed(
             raise InvalidSeedError(value)
         library_ids = await get_source_library_ids(session, project_id)
         # 概念不属于任何库：在不在本课题语料内 = 有没有本课题库里的论文用到它
-        in_corpus = bool(library_ids) and (
-            await session.execute(
-                library_concept_ids(library_ids)
-                .where(paper_concepts.c.concept_id == concept.id)
-                .limit(1)
-            )
-        ).first() is not None
+        in_corpus = (
+            bool(library_ids)
+            and (
+                await session.execute(
+                    library_concept_ids(library_ids)
+                    .where(paper_concepts.c.concept_id == concept.id)
+                    .limit(1)
+                )
+            ).first()
+            is not None
+        )
         if not in_corpus:
             raise InvalidSeedError(value)
         return f"概念「{concept.name}」"
@@ -553,9 +557,7 @@ async def get_idea_for_user(
     session: AsyncSession, *, idea_id: uuid.UUID, user_id: uuid.UUID
 ) -> Idea | None:
     """取 idea；非课题主人视为不存在（不泄露存在性）。"""
-    stmt = select(Idea).where(
-        Idea.id == idea_id, in_my_projects(Idea.project_id, user_id)
-    )
+    stmt = select(Idea).where(Idea.id == idea_id, in_my_projects(Idea.project_id, user_id))
     return (await session.execute(stmt)).scalar_one_or_none()
 
 

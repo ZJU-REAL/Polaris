@@ -148,7 +148,5 @@ async def test_library_csl_json_and_invalid_format(client):
     titles = {item["title"] for item in json.loads(resp.text)}
     assert titles == {"The Great Agent Benchmark", "Quantum Annealing Survey"}
 
-    resp = await client.get(
-        f"/api/libraries/{lib_id}/export/citations?format=ris", headers=creator
-    )
+    resp = await client.get(f"/api/libraries/{lib_id}/export/citations?format=ris", headers=creator)
     assert resp.status_code == 422

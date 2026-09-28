@@ -70,8 +70,11 @@ _ICML_HEAD = (
 
 def _icml_doc(pkg: str, head: str = _ICML_HEAD) -> str:
     return (
-        "\\documentclass{article}\n" + pkg + "\n\\begin{document}\n" + head +
-        "Sample body.\n\\bibliographystyle{icml2026}\n"
+        "\\documentclass{article}\n"
+        + pkg
+        + "\n\\begin{document}\n"
+        + head
+        + "Sample body.\n\\bibliographystyle{icml2026}\n"
         "\\bibliography{example_paper}\n\\end{document}\n"
     )
 

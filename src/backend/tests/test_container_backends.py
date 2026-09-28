@@ -335,7 +335,10 @@ async def test_poll_falls_back_to_run_exit_after_rm(tmp_path, monkeypatch):
 def test_metric_point_flags_nan_and_parse_float_table():
     assert metric_point("m", 3, 1.5) == {"name": "m", "step": 3, "value": 1.5}
     assert metric_point("m", 3, float("nan")) == {
-        "name": "m", "step": 3, "value": None, "flag": "nan",
+        "name": "m",
+        "step": 3,
+        "value": None,
+        "flag": "nan",
     }
     header, rows = parse_float_table("# Time p\n0.1 2.5\n(0 0 0) 1\n0.2 3.5\n")
     assert header == ["Time", "p"]

@@ -38,9 +38,7 @@ class VoyageCreate(BaseModel):
         try:
             params["library_id"] = str(uuid.UUID(str(params.get("library_id"))))
         except (TypeError, ValueError):
-            raise ValueError(
-                "discovery 任务需要 params.library_id（关联文献库）"
-            ) from None
+            raise ValueError("discovery 任务需要 params.library_id（关联文献库）") from None
         raw = params.get("max_expansions", 3)
         if isinstance(raw, bool) or not isinstance(raw, int):
             raise ValueError("max_expansions 必须是整数")

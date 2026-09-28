@@ -47,9 +47,7 @@ _OUTPUTS_BY_KIND: dict[str, tuple[str, ...]] = {
 }
 
 
-async def _runs_for_manuscript(
-    session: AsyncSession, manuscript: Manuscript
-) -> list[VoyageRun]:
+async def _runs_for_manuscript(session: AsyncSession, manuscript: Manuscript) -> list[VoyageRun]:
     """稿件关联的全部写作/审稿 run（含已完结；checkpoint.params 回指判归属）。"""
     stmt = (
         select(VoyageRun)
@@ -88,9 +86,7 @@ async def _stage_rows_by_run(
         .order_by(LLMUsage.stage.asc(), LLMUsage.model.asc())
     )
     out: dict[uuid.UUID, list[dict[str, Any]]] = {}
-    for voyage_id, stage, model, calls, prompt, completion in (
-        await session.execute(stmt)
-    ).all():
+    for voyage_id, stage, model, calls, prompt, completion in (await session.execute(stmt)).all():
         out.setdefault(voyage_id, []).append(
             {
                 "stage": stage,
@@ -148,8 +144,7 @@ async def _editing_facts(
         .group_by(ManuscriptFileVersion.origin)
     )
     rows = {
-        origin: (int(n), int(files))
-        for origin, n, files in (await session.execute(stmt)).all()
+        origin: (int(n), int(files)) for origin, n, files in (await session.execute(stmt)).all()
     }
     if not rows:
         notes.append("no_edit_history")
@@ -433,8 +428,7 @@ def _appendix(facts: dict[str, Any], lang: str) -> str:
         lines.append("|---|---|---|---|---|---|---|---|")
         for rf in facts["runs"]:
             outputs = (
-                _join([_OUTPUT_LABELS.get(o, {}).get(lang, o) for o in rf["outputs"]], lang)
-                or "-"
+                _join([_OUTPUT_LABELS.get(o, {}).get(lang, o) for o in rf["outputs"]], lang) or "-"
             )
             if rf["stages"]:
                 for row in rf["stages"]:
@@ -444,9 +438,7 @@ def _appendix(facts: dict[str, Any], lang: str) -> str:
                         f"| {row['prompt_tokens']} | {row['completion_tokens']} |"
                     )
             else:
-                lines.append(
-                    f"| {rf['run_id']} | {rf['kind']} | {outputs} | - | - | - | - | - |"
-                )
+                lines.append(f"| {rf['run_id']} | {rf['kind']} | {outputs} | - | - | - | - | - |")
         totals = facts["totals"]
         lines.append("")
         lines.append(

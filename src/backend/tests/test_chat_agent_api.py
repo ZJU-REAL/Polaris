@@ -92,9 +92,7 @@ async def test_the_answer_is_persisted_and_replayed_next_turn(client, agent_on):
     from app.models.conversation import ConversationMessage
 
     headers = await _headers(client, "agent-persist@example.com")
-    conv_id = (
-        await client.post("/api/chat/conversations", json={}, headers=headers)
-    ).json()["id"]
+    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
 
     for question in ("第一个问题", "第二个问题"):
         async with client.stream(
@@ -146,9 +144,9 @@ async def test_conversations_are_listed_newest_first(client, agent_on):
     headers = await _headers(client, "agent-list@example.com")
     ids = []
     for _ in range(2):
-        conv_id = (
-            await client.post("/api/chat/conversations", json={}, headers=headers)
-        ).json()["id"]
+        conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()[
+            "id"
+        ]
         ids.append(conv_id)
         async with client.stream(
             "POST",
@@ -221,8 +219,7 @@ async def test_the_assistant_actually_finds_papers_in_the_resolved_project(clien
     assert results, f"没有工具结果帧：{[e for e, _ in events]}"
     assert results[0]["ok"] is True
     assert "Tree Search Planning Methods" in results[0]["preview"], (
-        "真工具必须查到真论文。查到零条说明作用域又丢了"
-        f"——此前这里兜的是随机 UUID：{results[0]}"
+        f"真工具必须查到真论文。查到零条说明作用域又丢了——此前这里兜的是随机 UUID：{results[0]}"
     )
 
 
@@ -234,9 +231,7 @@ async def test_several_projects_no_longer_block_the_turn(client, agent_on):
     """
     headers = await _headers(client, "agent-scope-many@example.com")
     for name in ("proj-a", "proj-b"):
-        await client.post(
-            "/api/projects", json={"name": name, "statement": "x"}, headers=headers
-        )
+        await client.post("/api/projects", json={"name": name, "statement": "x"}, headers=headers)
 
     conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
     async with client.stream(
@@ -271,9 +266,7 @@ async def test_the_assistant_searches_across_libraries_without_a_project(client,
         )
         session.add(paper)
         await session.flush()
-        session.add(
-            LibraryPaper(library_id=lib.id, paper_id=paper.id, status="included")
-        )
+        session.add(LibraryPaper(library_id=lib.id, paper_id=paper.id, status="included"))
         await session.commit()
     assert add_paper is not None  # 用不上，但保持与其它作用域测试同一套脚手架
 
@@ -311,9 +304,7 @@ async def test_someone_elses_project_id_is_rejected_everywhere(client, agent_on)
     assert resp.status_code == 404
 
     # 跑轮次时显式传也挡
-    conv_id = (
-        await client.post("/api/chat/conversations", json={}, headers=intruder)
-    ).json()["id"]
+    conv_id = (await client.post("/api/chat/conversations", json={}, headers=intruder)).json()["id"]
     resp = await client.post(
         f"/api/chat/conversations/{conv_id}/turn",
         json={"question": "hi", "project_id": project_id},
@@ -640,7 +631,7 @@ async def test_replayed_history_never_orphans_a_tool_message(client, agent_on):
         assert index > 0, "tool 消息不能是第一条"
         prev = payload[index - 1]
         assert prev.get("tool_calls") or prev["role"] == "tool", (
-            f"第 {index} 条 tool 消息前面没有带 tool_calls 的 assistant：{payload[:index + 1]}"
+            f"第 {index} 条 tool 消息前面没有带 tool_calls 的 assistant：{payload[: index + 1]}"
         )
 
 

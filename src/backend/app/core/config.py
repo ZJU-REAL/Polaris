@@ -175,9 +175,7 @@ class Settings(BaseSettings):
     )
     easyscholar_secret_keys: str = Field(
         default="",
-        validation_alias=AliasChoices(
-            "POLARIS_EASYSCHOLAR_SECRET_KEYS", "EASYSCHOLAR_SECRET_KEYS"
-        ),
+        validation_alias=AliasChoices("POLARIS_EASYSCHOLAR_SECRET_KEYS", "EASYSCHOLAR_SECRET_KEYS"),
     )
     mineru_base_url: str = Field(
         default="https://mineru.net/api/v4",

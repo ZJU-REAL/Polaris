@@ -46,11 +46,7 @@ async def _library_counts(session: AsyncSession, user: User) -> tuple[int, int]:
 
 
 async def _has_machine(session: AsyncSession, user: User) -> bool:
-    stmt = (
-        select(func.count())
-        .select_from(SSHCredential)
-        .where(SSHCredential.user_id == user.id)
-    )
+    stmt = select(func.count()).select_from(SSHCredential).where(SSHCredential.user_id == user.id)
     return int((await session.execute(stmt)).scalar_one()) > 0
 
 

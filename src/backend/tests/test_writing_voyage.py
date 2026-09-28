@@ -398,9 +398,7 @@ async def test_draft_auto_initializes_template_demo_main(client, queue_stub):
     async with get_sessionmaker()() as session:
         ms_uuid = uuid.UUID(ms_id)
         main_path = (
-            await session.execute(
-                select(Manuscript.main_tex).where(Manuscript.id == ms_uuid)
-            )
+            await session.execute(select(Manuscript.main_tex).where(Manuscript.id == ms_uuid))
         ).scalar_one() or "main.tex"
         row = (
             await session.execute(
@@ -417,9 +415,7 @@ async def test_draft_auto_initializes_template_demo_main(client, queue_stub):
     detail = resp.json()
     assert detail["main_tex"] == "draft.tex"  # 编译主文件已切换到骨架稿
     draft = next(f for f in detail["files"] if f["path"] == "draft.tex")
-    resp = await client.get(
-        f"/api/manuscripts/{ms_id}/files/{draft['id']}", headers=headers
-    )
+    resp = await client.get(f"/api/manuscripts/{ms_id}/files/{draft['id']}", headers=headers)
     content = resp.json()["content"]
     assert "POLARIS_SECTION" in content
     assert "langley00" not in content  # 模板演示正文不再进入起草主文件

@@ -754,6 +754,7 @@ async def synthesize_rolling_trends(
         .scalars()
         .all()
     )
+
     async def carry_forward() -> LibraryResearchDigest:
         """沿用上一份趋势收尾。今天没有新洞察、或综合实在做不出来时都走这里。"""
         prior = previous[0] if previous else None

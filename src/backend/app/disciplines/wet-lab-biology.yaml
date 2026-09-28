@@ -57,3 +57,9 @@ schemas:
         kind: list
         max_len: 200
         max_items: 6
+
+# 文献口径（#821）：实验生物学的论文在 PubMed / Europe PMC 上；若另外勾选 arXiv，
+# 给的是 q-bio 分类，而不是一排与该学科无关的 cs.*
+literature:
+  sources: [pubmed, europepmc, openalex]
+  arxiv_categories: [q-bio.BM, q-bio.CB, q-bio.GN, q-bio.MN, q-bio.NC, q-bio.QM]

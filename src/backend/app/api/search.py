@@ -28,7 +28,5 @@ async def global_search(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> GlobalSearchResponse:
-    hits = await search_service.global_search(
-        session, user_id=user.id, q=q, limit_per_type=limit
-    )
+    hits = await search_service.global_search(session, user_id=user.id, q=q, limit_per_type=limit)
     return GlobalSearchResponse(query=q, hits=hits)

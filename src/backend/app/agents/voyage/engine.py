@@ -216,9 +216,7 @@ class VoyageEngine:
         if self._bus is not None:
             await self._bus.publish_voyage_event(run_id, event, data)
 
-    async def _emit_notify(
-        self, user_id: uuid.UUID | None, message: dict[str, Any]
-    ) -> None:
+    async def _emit_notify(self, user_id: uuid.UUID | None, message: dict[str, Any]) -> None:
         # #721：通知频道按用户组织（notify:user:{id}），库化任务（无起源课题）
         # 一样能送达发起人；user_id 为空只剩 cron 等无人值守场景，静默跳过。
         if user_id is not None and self._bus is not None:
@@ -487,9 +485,7 @@ class VoyageEngine:
         appended_ops = []
         for op in edit.get("edits") or []:
             if op.get("op") == "add_nodes":
-                nodes = [
-                    {**node, "requires_gate": None} for node in (op.get("nodes") or [])
-                ]
+                nodes = [{**node, "requires_gate": None} for node in (op.get("nodes") or [])]
                 appended_ops.append({**op, "insert_after": None, "nodes": nodes})
         edit = {**edit, "edits": appended_ops}
         if edit.get("finish") or not edit.get("edits"):
@@ -536,9 +532,7 @@ class VoyageEngine:
         """
         rows = await self._active_rows(session, run)
         finishing = self._budget_finishing_steps(run, rows)
-        dropped = [
-            r for r in rows if r.status not in ("passed", "obsolete") and r not in finishing
-        ]
+        dropped = [r for r in rows if r.status not in ("passed", "obsolete") and r not in finishing]
         for r in dropped:
             r.status = "obsolete"
         if dropped:
@@ -553,9 +547,7 @@ class VoyageEngine:
             )
             await self._regen_plan_snapshot(session, run)
         await session.commit()
-        await self._emit_log(
-            run, f"{reason}：作废 {len(dropped)} 个未执行步骤", level="plan"
-        )
+        await self._emit_log(run, f"{reason}：作废 {len(dropped)} 个未执行步骤", level="plan")
 
     # ---- 状态持久化 ----
 
@@ -799,7 +791,7 @@ class VoyageEngine:
                         run,
                         ask_kind="budget",
                         question="token 预算已用尽，而且还没有可以收尾的产出。"
-                "追加预算继续，还是放弃？",
+                        "追加预算继续，还是放弃？",
                         context={
                             "used_tokens": int(usage.get("total_tokens", 0)),
                             "max_tokens": int((run.budget or {}).get("max_tokens", 0) or 0),
@@ -1152,12 +1144,8 @@ class VoyageEngine:
         # 不自动重规划，但也不再打死任务——转成向用户提问，等人拍板
         # （重试 / 换方案 / 放弃）。无人值守 run 降级 paused_error（可 resume）。
         if step_def.get("on_failure") == "fail":
-            await self._emit_log(
-                run, f"步骤失败（不自动重试）：{diagnosis}", level="error"
-            )
-            attempts_note = (
-                f"（已尝试 {node.attempt} 次）" if node.attempt > 1 else ""
-            )
+            await self._emit_log(run, f"步骤失败（不自动重试）：{diagnosis}", level="error")
+            attempts_note = f"（已尝试 {node.attempt} 次）" if node.attempt > 1 else ""
             await self._raise_ask(
                 session,
                 run,
@@ -1343,8 +1331,7 @@ class VoyageEngine:
                         "title": str(patch.get("title") or f"重跑：{row.title}")[:255],
                         "action": row.action,
                         "params": dict(row.params or {}) | dict(patch.get("params") or {}),
-                        "acceptance": patch.get("acceptance")
-                        or (row.acceptance or {}).get("text"),
+                        "acceptance": patch.get("acceptance") or (row.acceptance or {}).get("text"),
                         "checks": patch.get("checks") or (row.acceptance or {}).get("checks"),
                         "requires_gate": None,  # 重跑不再重复人工审批
                         "on_failure": (row.provenance or {}).get("on_failure"),
@@ -1354,9 +1341,7 @@ class VoyageEngine:
                     following = min((r.rank for r in rows if r.rank > base), default=None)
                     gap = (following - base) / 2 if following is not None else _RANK_GAP
                     session.add(
-                        self._new_step_row(
-                            run, seq=next_seq, rank=base + gap, step_def=clone_def
-                        )
+                        self._new_step_row(run, seq=next_seq, rank=base + gap, step_def=clone_def)
                     )
                     next_seq += 1
                     added += 1
@@ -1427,9 +1412,7 @@ class VoyageEngine:
         # LLM 失败 / 编辑被拒时不标记，建议留在队列等下一个决策点）
         guidance_msgs = await self._drain_user_messages(session, run)
         combined_guidance = (
-            "\n".join(
-                filter(None, [messages_service.guidance_text(guidance_msgs), user_guidance])
-            )
+            "\n".join(filter(None, [messages_service.guidance_text(guidance_msgs), user_guidance]))
             or None
         )
         # 同签名重复时明确告诉 Navigator：上次的编辑没改变故障面，必须换思路
@@ -1457,9 +1440,7 @@ class VoyageEngine:
 
         if edit.get("finish") or not edit.get("edits"):
             reason = str(edit.get("reason") or "noop")
-            await self._emit_log(
-                run, f"AI 认为不必再调整（{reason}），等你裁决", level="error"
-            )
+            await self._emit_log(run, f"AI 认为不必再调整（{reason}），等你裁决", level="error")
             await self._raise_ask(
                 session,
                 run,
@@ -1549,9 +1530,7 @@ class VoyageEngine:
         # 签名感知（同 _navigator_edit）：错误在变=有进展，不打断用户
         replans, replan_sig, sig_repeated = _replan_progress(checkpoint, diagnosis)
         if replans >= MAX_REPLANS:
-            await self._emit_log(
-                run, f"同一问题连续 {MAX_REPLANS} 次重规划仍未解决", level="error"
-            )
+            await self._emit_log(run, f"同一问题连续 {MAX_REPLANS} 次重规划仍未解决", level="error")
             await self._raise_ask(
                 session,
                 run,

@@ -663,12 +663,24 @@ async def test_update_passed_step_degrades_to_clone(client, queue_stub):
         session.add(run)
         await session.flush()
         passed = VoyageStep(
-            run_id=run.id, seq=0, rank=0.0, title="建环境", action="sleep",
-            params={"seconds": 0}, acceptance={"text": "ok"}, status="passed",
+            run_id=run.id,
+            seq=0,
+            rank=0.0,
+            title="建环境",
+            action="sleep",
+            params={"seconds": 0},
+            acceptance={"text": "ok"},
+            status="passed",
         )
         failed = VoyageStep(
-            run_id=run.id, seq=1, rank=100.0, title="后续", action="sleep",
-            params={"seconds": 0}, acceptance={"text": "ok"}, status="failed",
+            run_id=run.id,
+            seq=1,
+            rank=100.0,
+            title="后续",
+            action="sleep",
+            params={"seconds": 0},
+            acceptance={"text": "ok"},
+            status="failed",
         )
         session.add_all([passed, failed])
         await session.commit()
@@ -682,17 +694,24 @@ async def test_update_passed_step_degrades_to_clone(client, queue_stub):
             "reason": "重跑建环境",
             "finish": False,
             "edits": [
-                {"op": "update_node", "step_id": passed_id,
-                 "patch": {"params": {"seconds": 1}, "title": "重装依赖"}}
+                {
+                    "op": "update_node",
+                    "step_id": passed_id,
+                    "patch": {"params": {"seconds": 1}, "title": "重装依赖"},
+                }
             ],
         }
         added = await engine._apply_plan_edit(session, run, edit, anchor=anchor)
         await session.commit()
         assert added == 1
         steps = (
-            (await session.execute(
-                select(VoyageStep).where(VoyageStep.run_id == run_id).order_by(VoyageStep.rank)
-            )).scalars().all()
+            (
+                await session.execute(
+                    select(VoyageStep).where(VoyageStep.run_id == run_id).order_by(VoyageStep.rank)
+                )
+            )
+            .scalars()
+            .all()
         )
         # 原已通过节点原封不动；新克隆节点携带 patch 参数、pending 待跑
         assert steps[0].id == uuid.UUID(passed_id) and steps[0].status == "passed"

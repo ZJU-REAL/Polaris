@@ -130,9 +130,7 @@ async def build_adapter_registry(runtime_settings: Mapping[str, Any]) -> Adapter
             return _REGISTRY_CACHE[1]
 
         context = source_registry.build_context(runtime_settings)
-        registry = AdapterRegistry(
-            tuple(spec.build(context) for spec in source_registry.specs())
-        )
+        registry = AdapterRegistry(tuple(spec.build(context) for spec in source_registry.specs()))
         _REGISTRY_CACHE = (fingerprint, registry)
         return registry
 

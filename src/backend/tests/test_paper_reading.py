@@ -47,7 +47,8 @@ async def _setup(client, *, arxiv_id: str | None = "2406.00001", email: str = "a
     resp = await client.post("/api/projects", json={"name": "read-proj"}, headers=headers)
     project_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
-        paper = await add_paper(session,
+        paper = await add_paper(
+            session,
             project_id=uuid.UUID(project_id),
             source="arxiv" if arxiv_id else "manual",
             arxiv_id=arxiv_id,
@@ -270,7 +271,8 @@ async def test_chat_with_referenced_papers(client):
     foreign_pid = resp.json()["id"]
 
     async with get_sessionmaker()() as session:
-        referenced = await add_paper(session,
+        referenced = await add_paper(
+            session,
             project_id=uuid.UUID(project_id),
             source="manual",
             title="Fara-1.5 Learning Environments",
@@ -278,7 +280,8 @@ async def test_chat_with_referenced_papers(client):
             tldr="Fara-1.5 一句话总结：可扩展的 CUA 学习环境。",
             status="included",
         )
-        foreign = await add_paper(session,
+        foreign = await add_paper(
+            session,
             project_id=uuid.UUID(foreign_pid),
             source="manual",
             title="Foreign Paper",

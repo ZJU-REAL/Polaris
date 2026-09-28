@@ -153,9 +153,7 @@ async def upsert_chunk_vector(
     space: EmbeddingSpace,
 ) -> None:
     """写入/覆盖分段向量（调用方负责 commit）。"""
-    await _upsert(
-        session, PaperChunkVector, PaperChunkVector.chunk_id, chunk_id, vector, space
-    )
+    await _upsert(session, PaperChunkVector, PaperChunkVector.chunk_id, chunk_id, vector, space)
 
 
 async def upsert_idea_vector(
@@ -239,9 +237,7 @@ async def _upsert(
     else:  # 其余方言没有 ON CONFLICT，退回先查后插（单机开发场景没有并发问题）
         conditions = [key_column == key, model_class.space == space.key]
         conditions += [getattr(model_class, name) == v for name, v in extra_key.items()]
-        row = (
-            await session.execute(select(model_class).where(*conditions))
-        ).scalar_one_or_none()
+        row = (await session.execute(select(model_class).where(*conditions))).scalar_one_or_none()
         if row is None:
             row = model_class(**{key_column.key: key, **extra_key, "space": space.key})
             session.add(row)

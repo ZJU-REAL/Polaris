@@ -144,9 +144,7 @@ async def _load_papers(ctx: ActionContext) -> list[tuple[Paper, str | None]]:
         rows = (
             dedupe_member_rows(
                 (
-                    await session.execute(
-                        member_papers_stmt(library_ids).where(Paper.id.in_(ids))
-                    )
+                    await session.execute(member_papers_stmt(library_ids).where(Paper.id.in_(ids)))
                 ).all()
             )
             if library_ids

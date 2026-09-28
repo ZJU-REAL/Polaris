@@ -266,9 +266,7 @@ def _render_guidance(context: dict[str, Any]) -> str:
     )
 
 
-def apply_to_guidance(
-    snapshot: dict[str, list[dict[str, Any]]], context: dict[str, Any]
-) -> None:
+def apply_to_guidance(snapshot: dict[str, list[dict[str, Any]]], context: dict[str, Any]) -> None:
     """把本课题的工作流与逐环节指引写进运行时快照。
 
     从前这份内容伪装成一条「技能」骑在技能快照上——那只是为了复用注入通道。

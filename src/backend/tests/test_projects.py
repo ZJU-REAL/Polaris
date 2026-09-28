@@ -55,10 +55,8 @@ async def test_delete_project(client):
     from app.models.paper import Paper
 
     async with get_sessionmaker()() as session:
-        session.add(await add_paper(
-            session,
-            project_id=_uuid.UUID(project_id),
-            title="orphan check"),
+        session.add(
+            await add_paper(session, project_id=_uuid.UUID(project_id), title="orphan check"),
         )
         await session.commit()
 
@@ -78,9 +76,7 @@ async def test_delete_project(client):
         # 只有课题自己的关联行随课题消失（library 变孤儿，admin 可后续删库）。
         libs = (
             await session.execute(
-                select(func.count()).where(
-                    DirectionLibrary.project_id == _uuid.UUID(project_id)
-                )
+                select(func.count()).where(DirectionLibrary.project_id == _uuid.UUID(project_id))
             )
         ).scalar_one()
         assert libs == 0  # 无库仍回指这个已删课题
@@ -94,9 +90,7 @@ async def test_delete_project(client):
         assert memberships == 1  # 成员行随库存活
         assoc = (
             await session.execute(
-                select(func.count()).where(
-                    TopicSourceLibrary.topic_id == _uuid.UUID(project_id)
-                )
+                select(func.count()).where(TopicSourceLibrary.topic_id == _uuid.UUID(project_id))
             )
         ).scalar_one()
         assert assoc == 0  # 课题自己的关联行随课题删除

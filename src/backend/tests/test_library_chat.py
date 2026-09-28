@@ -67,7 +67,8 @@ async def _setup(client, tmp_path_factory=None):
         for i, (title, body) in enumerate(seeds):
             txt = txt_dir / f"p{i}.txt"
             txt.write_text(body, encoding="utf-8")
-            p = await add_paper(session,
+            p = await add_paper(
+                session,
                 project_id=project_id,
                 title=title,
                 abstract=f"{title} abstract",
@@ -101,9 +102,7 @@ async def test_rebuild_index_and_chunk_rows(client):
     assert resp.json()["papers_indexed"] == 0
 
     async with get_sessionmaker()() as session:
-        count = (
-            await session.execute(select(func.count()).select_from(PaperChunk))
-        ).scalar_one()
+        count = (await session.execute(select(func.count()).select_from(PaperChunk))).scalar_one()
         assert count == body["total_chunks"]
 
 
@@ -192,8 +191,12 @@ async def test_library_chat_sources_include_concepts(client):
     from app.services.concepts import wiki_slug
 
     async with get_sessionmaker()() as session:
-        c = await add_concept(session,
-            project_id=project_id, name="思维树", slug=wiki_slug("思维树"), category="method"
+        c = await add_concept(
+            session,
+            project_id=project_id,
+            name="思维树",
+            slug=wiki_slug("思维树"),
+            category="method",
         )
         session.add(c)
         await session.flush()
@@ -227,9 +230,7 @@ async def _project_and_router(project_id):
     from app.models.project import Project
 
     session = get_sessionmaker()()
-    project = (
-        await session.execute(_select(Project).where(Project.id == project_id))
-    ).scalar_one()
+    project = (await session.execute(_select(Project).where(Project.id == project_id))).scalar_one()
     return session, project, get_llm_router()
 
 
@@ -280,10 +281,14 @@ async def test_previously_cited_paper_is_pinned_into_context(client, monkeypatch
     async def only_first_paper(session, **kwargs):
         """检索只命中第一篇，模拟追问句检索不回目标论文。"""
         rows = (
-            await session.execute(
-                select(PaperChunk).where(PaperChunk.paper_id == uuid.UUID(ids[0])).limit(2)
+            (
+                await session.execute(
+                    select(PaperChunk).where(PaperChunk.paper_id == uuid.UUID(ids[0])).limit(2)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [(c, 0.9) for c in rows]
 
     monkeypatch.setattr(lc, "_retrieve_chunks", only_first_paper)

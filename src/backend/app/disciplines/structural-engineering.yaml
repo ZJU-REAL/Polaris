@@ -60,3 +60,7 @@ schemas:
         kind: list
         max_len: 200
         max_items: 5
+
+# 文献口径（#821）：结构工程的期刊论文走 Crossref（DOI 注册处）与 OpenAlex
+literature:
+  sources: [crossref, openalex]

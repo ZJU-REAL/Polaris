@@ -347,9 +347,7 @@ def failure_from_snapshot(snapshot: CommandSnapshot) -> FailureReport:
     message = snapshot.stderr_tail or snapshot.stdout_tail or "command failed without output"
     evidence = f"{message}\n{snapshot.stdout_tail}\n{snapshot.stderr_tail}"
     normalized = re.sub(r"\d+", "N", evidence[-2000:])
-    fingerprint = hashlib.sha256(
-        f"{context.phase}\0{normalized}".encode()
-    ).hexdigest()[:16]
+    fingerprint = hashlib.sha256(f"{context.phase}\0{normalized}".encode()).hexdigest()[:16]
     return FailureReport(
         phase=context.phase,
         operation=context.operation,
@@ -382,19 +380,21 @@ def failure_from_exception(
     exception_context = getattr(exception, "operation_context", None)
     if not isinstance(exception_context, OperationContext):
         exception_context = None
-    context = context or exception_context or OperationContext(
-        phase="unknown",
-        operation="unknown",
-        display_command=str(command or "unknown command"),
+    context = (
+        context
+        or exception_context
+        or OperationContext(
+            phase="unknown",
+            operation="unknown",
+            display_command=str(command or "unknown command"),
+        )
     )
     message = redact_text(str(exception), tail=True).strip()
     if not message:
         message = stderr or stdout or type(exception).__name__
     evidence = f"{type(exception).__name__}\n{message}\n{stdout}\n{stderr}"
     normalized = re.sub(r"\d+", "N", evidence[-2000:])
-    fingerprint = hashlib.sha256(
-        f"{context.phase}\0{normalized}".encode()
-    ).hexdigest()[:16]
+    fingerprint = hashlib.sha256(f"{context.phase}\0{normalized}".encode()).hexdigest()[:16]
     cause_chain: list[str] = []
     current: BaseException | None = exception
     seen: set[int] = set()
@@ -441,7 +441,6 @@ def may_apply_recovery_automatically(
     return bool(
         plan.confidence >= 0.85
         and repeated_without_progress < 2
-        and plan.repair_scope
-        in {RepairScope.DEPENDENCY_FILES, RepairScope.APPLICATION_FILES}
+        and plan.repair_scope in {RepairScope.DEPENDENCY_FILES, RepairScope.APPLICATION_FILES}
         and plan.proposed_changes
     )

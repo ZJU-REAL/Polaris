@@ -181,9 +181,7 @@ def build_user_prompt(schema: ExtractionSchema, paper: Paper, body: str) -> str:
     """抽取 user prompt（标题行与 librarian 编译同格式，fake provider 靠它回显）。"""
     del schema  # 目前各 schema 共用同一份材料口径；字段差异全在 system prompt
     return (
-        f"标题：{paper.title}\n"
-        f"摘要：{(paper.abstract or '').strip() or '（无）'}\n"
-        f"正文：\n{body}"
+        f"标题：{paper.title}\n摘要：{(paper.abstract or '').strip() or '（无）'}\n正文：\n{body}"
     )
 
 
@@ -261,9 +259,7 @@ async def extract_paper(
     return ExtractionOutcome("extracted", None, row)
 
 
-async def list_extractions(
-    session: AsyncSession, paper_id: uuid.UUID
-) -> list[PaperExtraction]:
+async def list_extractions(session: AsyncSession, paper_id: uuid.UUID) -> list[PaperExtraction]:
     """一篇论文的全部抽取产物（详情页「结构化摘要」区的原料），按 schema_id 稳定排序。"""
     stmt = (
         select(PaperExtraction)

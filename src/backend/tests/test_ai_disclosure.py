@@ -85,9 +85,7 @@ async def _seed_versions(manuscript_id: uuid.UUID, origins: list[str]) -> None:
         await session.flush()
         for seq, origin in enumerate(origins, start=1):
             session.add(
-                ManuscriptFileVersion(
-                    file_id=file.id, seq=seq, origin=origin, content=f"v{seq}"
-                )
+                ManuscriptFileVersion(file_id=file.id, seq=seq, origin=origin, content=f"v{seq}")
             )
         await session.commit()
 
@@ -295,9 +293,7 @@ async def test_manuscript_disclosure_endpoint(client):
     assert data["facts"]["ai_used"] is True
 
     # 非法 style 被 422 顶回（Literal 校验）
-    resp = await client.get(
-        f"/api/manuscripts/{ms_id}/ai-disclosure?style=nature", headers=headers
-    )
+    resp = await client.get(f"/api/manuscripts/{ms_id}/ai-disclosure?style=nature", headers=headers)
     assert resp.status_code == 422
 
     # 非课题主人 404（与稿件详情同口径，不泄露存在性）

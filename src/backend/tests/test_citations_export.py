@@ -27,7 +27,8 @@ async def _setup(client):
             url="https://example.org/one",
             status="included",
         )
-        p2 = await add_paper(session,   # 有 venue（期刊）→ article + journal 字段
+        p2 = await add_paper(
+            session,  # 有 venue（期刊）→ article + journal 字段
             project_id=pid,
             title="Great Expectations of LLMs",
             authors=[{"name": "Smith, Alice"}],
@@ -35,7 +36,8 @@ async def _setup(client):
             venue="Nature",
             status="compiled",
         )
-        p3 = await add_paper(session,   # 无 venue → misc；arxiv 论文带 eprint；中文名整个作 family
+        p3 = await add_paper(
+            session,  # 无 venue → misc；arxiv 论文带 eprint；中文名整个作 family
             project_id=pid,
             title="Quantum Annealing Survey",
             authors=[{"name": "张三"}],

@@ -49,7 +49,6 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         if not (any(c.isalpha() for c in password) and any(c.isdigit() for c in password)):
             raise exceptions.InvalidPasswordException(reason="PASSWORD_NEEDS_LETTER_AND_DIGIT")
 
-
     async def authenticate(self, credentials: OAuth2PasswordRequestForm) -> User | None:
         """登录支持「邮箱或用户名」+ 密码：先按邮箱查，查不到再按用户名查。"""
         ident = credentials.username.strip()
@@ -307,9 +306,7 @@ async def username_available(
 ) -> dict[str, bool]:
     """注册表单实时检查用户名是否可用（公开接口，只回可用与否，不泄露其他信息）。"""
     uname = username.strip().lower()
-    taken = (
-        await session.execute(select(User.id).where(User.username == uname))
-    ).first()
+    taken = (await session.execute(select(User.id).where(User.username == uname))).first()
     return {"available": taken is None}
 
 

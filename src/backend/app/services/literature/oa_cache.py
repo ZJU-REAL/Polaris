@@ -164,9 +164,7 @@ async def _unpaywall_urls(hit: LiteratureSearchHit) -> list[tuple[str, str]]:
     ]
 
 
-async def cache_hit_pdf(
-    session: AsyncSession, hit: LiteratureSearchHit
-) -> LiteratureOaCache:
+async def cache_hit_pdf(session: AsyncSession, hit: LiteratureSearchHit) -> LiteratureOaCache:
     cache = await session.scalar(
         select(LiteratureOaCache).where(LiteratureOaCache.hit_id == hit.id)
     )

@@ -133,9 +133,7 @@ async def test_scan_filters_sorts_and_paginates_library_papers(client):
             (target, datetime(2024, 2, 1, tzinfo=UTC)),
             (newest, datetime(2024, 3, 1, tzinfo=UTC)),
         ):
-            membership = await membership_of(
-                session, project_id=project_id, paper_id=paper.id
-            )
+            membership = await membership_of(session, project_id=project_id, paper_id=paper.id)
             membership.created_at = created_at
         library_id = membership.library_id
         await session.commit()
@@ -207,9 +205,7 @@ async def test_scan_keeps_query_only_compatibility_and_rejects_unlinked_library(
         await session.commit()
 
     ctx = ToolContext(project_id=project_id, llm=LLMRouter(), user_id=user_id)
-    result = await run_tool(
-        ctx, "scan_papers", {"query": "retrieval", "mode": "keyword", "k": 5}
-    )
+    result = await run_tool(ctx, "scan_papers", {"query": "retrieval", "mode": "keyword", "k": 5})
     assert result["mode"] == "keyword"
     assert [row["paper_id"] for row in result["results"]] == [str(paper.id)]
 
@@ -257,9 +253,7 @@ async def test_subagent_keeps_its_intermediate_results_out_of_the_parent():
         scanned.append(args.get("query", ""))
         # 故意回一大坨：如果它进了父上下文，下面的断言会抓到
         return {
-            "results": [
-                {"paper_id": str(uuid.uuid4()), "title": f"论文 {i}"} for i in range(40)
-            ]
+            "results": [{"paper_id": str(uuid.uuid4()), "title": f"论文 {i}"} for i in range(40)]
         }
 
     # 子 agent 内部：先扫一次，再给结论
@@ -313,6 +307,7 @@ async def test_a_loaded_skill_narrows_the_tools_for_later_rounds():
 
     之前 narrow_tools 写好了但**没接进循环**，所以 allowed-tools 只是装饰。
     """
+
     @tool(
         name="_fake_skill_load",
         description="加载技能",
@@ -358,6 +353,7 @@ async def test_a_loaded_skill_narrows_the_tools_for_later_rounds():
 @pytest.mark.asyncio
 async def test_a_skill_cannot_widen_the_tool_set():
     """技能里写一个会话没给的工具名，不会把它加进来。"""
+
     @tool(
         name="_fake_skill_greedy",
         description="贪心技能",
@@ -391,6 +387,7 @@ async def test_a_skill_cannot_widen_the_tool_set():
 @pytest.mark.asyncio
 async def test_a_skill_with_a_wrong_tool_name_does_not_mute_the_assistant():
     """技能把工具名写错、交集为空时不生效——否则助手会突然变成哑巴。"""
+
     @tool(
         name="_fake_skill_typo",
         description="写错名字的技能",

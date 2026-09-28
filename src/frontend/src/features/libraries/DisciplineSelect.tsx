@@ -84,12 +84,13 @@ export function DisciplineSelect({ value, onChange, disabled, maxWidth = 360 }: 
           )}
         </p>
       )}
-      {/* 装了包却一条 schema 都没有 = 选了也没效果。与其让人以为生效了，不如说破 */}
+      {/* 没有自己的抽取 schema 的包（如计算机科学）只换文献口径，方法卡沿用内置字段。
+          说清楚，免得人以为选了它方法卡会变 */}
       {current && current.schema_count === 0 && (
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
           {tr(
-            '这个学科包没有带来任何抽取 schema，选它不会改变抽取口径。',
-            'This pack brings no extraction schema, so choosing it changes nothing.',
+            '方法卡沿用通用字段；这个学科决定的是默认文献来源与 arXiv 分类快捷项。',
+            'Method cards keep the general fields; this discipline sets the default literature sources and arXiv category shortcuts.',
           )}
         </p>
       )}

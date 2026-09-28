@@ -102,11 +102,7 @@ def venue_identity(candidate: Mapping[str, Any]) -> VenueIdentity | None:
     metadata = candidate.get("metadata")
     metadata = metadata if isinstance(metadata, Mapping) else {}
     issn_l = next(
-        iter(
-            _issns(
-                metadata.get("issn_l") or metadata.get("issnL")
-            )
-        ),
+        iter(_issns(metadata.get("issn_l") or metadata.get("issnL"))),
         None,
     )
     issns = _issns(
@@ -380,8 +376,13 @@ class VenueMetricService:
                     if row.status == "resolved" and isinstance(row.metrics, Mapping)
                     else None
                 )
-                return provider.name, identity, result, None, _aware(row.fetched_at), _aware(
-                    row.expires_at
+                return (
+                    provider.name,
+                    identity,
+                    result,
+                    None,
+                    _aware(row.fetched_at),
+                    _aware(row.expires_at),
                 )
             async with semaphore:
                 try:
@@ -526,9 +527,7 @@ def build_venue_metric_service(runtime_settings: Mapping[str, Any]) -> VenueMetr
             mailto=settings.openalex_mailto,
         )
     ]
-    easyscholar_keys = _pool(
-        runtime_settings, "easyscholar", settings.easyscholar_secret_keys
-    )
+    easyscholar_keys = _pool(runtime_settings, "easyscholar", settings.easyscholar_secret_keys)
     if easyscholar_keys:
         providers.append(
             EasyScholarVenueMetricProvider(

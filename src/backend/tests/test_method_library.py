@@ -44,11 +44,7 @@ def _write_fulltext(tmp_path, text=FULL_TEXT):
 async def _method_vectors_of(paper_id):
     async with get_sessionmaker()() as session:
         rows = (
-            (
-                await session.execute(
-                    select(MethodVector).where(MethodVector.paper_id == paper_id)
-                )
-            )
+            (await session.execute(select(MethodVector).where(MethodVector.paper_id == paper_id)))
             .scalars()
             .all()
         )
@@ -59,15 +55,11 @@ async def _add_method_paper(
     session, project_id, *, title, purpose, mechanism, tmp_path=None, **payload_extra
 ):
     """建一篇库内（scored）论文 + 手写 method@1 产物 + 刷双轴索引，返回 paper。"""
-    paper = await add_paper(
-        session, project_id=uuid.UUID(project_id), title=title, status="scored"
-    )
+    paper = await add_paper(session, project_id=uuid.UUID(project_id), title=title, status="scored")
     payload = {"purpose": purpose, **payload_extra}
     if mechanism is not None:
         payload["mechanism"] = mechanism
-    session.add(
-        PaperExtraction(paper_id=paper.id, schema_id="method", payload=payload)
-    )
+    session.add(PaperExtraction(paper_id=paper.id, schema_id="method", payload=payload))
     await session.commit()
     await refresh_paper_method_index(session, paper)
     await session.commit()
@@ -216,9 +208,7 @@ async def test_search_same_purpose_ranks_by_purpose_axis(client):
 async def test_search_different_mechanism_ranks_far_mechanism_first(client):
     token = await register_and_login(client, email="methodana@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    project_id, library_id = await make_project_with_library(
-        client, headers, name="methodana-proj"
-    )
+    project_id, library_id = await make_project_with_library(client, headers, name="methodana-proj")
 
     query = "reduce hallucination via retrieval augmentation and external memory"
     async with get_sessionmaker()() as session:
@@ -255,9 +245,7 @@ async def test_search_different_mechanism_ranks_far_mechanism_first(client):
             purpose="reduce hallucination in language models",
             mechanism=None,
         )
-        items, _ = await search_methods(
-            session, library_id, query, mode="different_mechanism"
-        )
+        items, _ = await search_methods(session, library_id, query, mode="different_mechanism")
         assert no_mech.id not in {c["paper_id"] for c in items}
 
 
@@ -265,9 +253,7 @@ async def test_search_keyword_fallback_when_embeddings_unavailable(client, monke
     """嵌入不可用时降级为确定性关键词匹配，mode_used 如实上报。"""
     token = await register_and_login(client, email="methodkw@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    project_id, library_id = await make_project_with_library(
-        client, headers, name="methodkw-proj"
-    )
+    project_id, library_id = await make_project_with_library(client, headers, name="methodkw-proj")
 
     async with get_sessionmaker()() as session:
         hit = await _add_method_paper(
@@ -379,9 +365,7 @@ async def test_enrich_hook_zero_output_without_fulltext(client):
 async def test_methods_endpoints(client):
     token = await register_and_login(client, email="methodapi@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    project_id, library_id = await make_project_with_library(
-        client, headers, name="methodapi-proj"
-    )
+    project_id, library_id = await make_project_with_library(client, headers, name="methodapi-proj")
 
     async with get_sessionmaker()() as session:
         paper = await _add_method_paper(
@@ -434,9 +418,7 @@ async def test_methods_endpoints(client):
     # 未登录不可读
     anon = await client.get(f"/api/libraries/{library_id}/methods")
     assert anon.status_code == 401
-    anon = await client.get(
-        f"/api/libraries/{library_id}/methods/search", params={"q": "x"}
-    )
+    anon = await client.get(f"/api/libraries/{library_id}/methods/search", params={"q": "x"})
     assert anon.status_code == 401
 
 

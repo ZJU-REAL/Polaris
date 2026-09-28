@@ -65,9 +65,7 @@ async def test_keyword_chunk_search_skips_the_recycle_bin(client):
     project_id, _headers, kept_id, trashed_id = await _setup(client)
     async with get_sessionmaker()() as session:
         for pid in (kept_id, trashed_id):
-            session.add(
-                PaperChunk(paper_id=pid, seq=0, text="planning agents in the wild")
-            )
+            session.add(PaperChunk(paper_id=pid, seq=0, text="planning agents in the wild"))
         await session.commit()
 
         from app.services.libraries import get_source_library_ids
@@ -109,9 +107,7 @@ async def test_chunk_search_by_paper_ids_is_unaffected(client):
     project_id, _headers, kept_id, trashed_id = await _setup(client)
     async with get_sessionmaker()() as session:
         for pid in (kept_id, trashed_id):
-            session.add(
-                PaperChunk(paper_id=pid, seq=0, text="planning agents in the wild")
-            )
+            session.add(PaperChunk(paper_id=pid, seq=0, text="planning agents in the wild"))
         await session.commit()
         hits = await chunks_service.keyword_search_chunks(
             session,

@@ -253,8 +253,7 @@ async def compile_paper(
             break
     if evidence_bundle is not None and evidence_bundle.manifest:
         valid_refs = {
-            (int(item["article_no"]), int(item["sentence_no"]))
-            for item in evidence_bundle.manifest
+            (int(item["article_no"]), int(item["sentence_no"])) for item in evidence_bundle.manifest
         }
         if any(ref not in valid_refs for ref in citation_refs(content)):
             raise ValueError("LIBRARIAN_EVIDENCE_CITATIONS_INVALID")

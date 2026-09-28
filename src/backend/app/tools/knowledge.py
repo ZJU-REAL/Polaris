@@ -109,14 +109,10 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
 
         versioned_paper_ids = {hit.paper_id for hit in fulltext_rows}
         rows = [
-            (chunk, score)
-            for chunk, score in rows
-            if chunk.paper_id not in versioned_paper_ids
+            (chunk, score) for chunk, score in rows if chunk.paper_id not in versioned_paper_ids
         ]
         rows = rows[: max(0, k - len(fulltext_rows))]
-        evidence = await sentence_evidence_for_chunks(
-            session, [hit.chunk for hit in fulltext_rows]
-        )
+        evidence = await sentence_evidence_for_chunks(session, [hit.chunk for hit in fulltext_rows])
 
         # 补论文标题（一次批量查询，避免 N+1）
         paper_ids = versioned_paper_ids | {c.paper_id for c, _ in rows}

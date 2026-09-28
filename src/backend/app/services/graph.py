@@ -83,9 +83,7 @@ async def _graph_for_library_ids(
     dedup_rows = dedupe_member_rows(
         (
             await session.execute(
-                member_papers_stmt(library_ids).where(
-                    LibraryPaper.status.in_(GRAPH_PAPER_STATUSES)
-                )
+                member_papers_stmt(library_ids).where(LibraryPaper.status.in_(GRAPH_PAPER_STATUSES))
             )
         ).all()
     )

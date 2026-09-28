@@ -96,8 +96,7 @@ class ExtractionSchema:
                 )
             else:
                 lines.append(
-                    f'- "{f.name}"：一段文本，不超过 {f.max_len} 字；'
-                    "原文没讲清就给 null，不要编造"
+                    f'- "{f.name}"：一段文本，不超过 {f.max_len} 字；原文没讲清就给 null，不要编造'
                 )
         return "\n".join(lines)
 
@@ -150,10 +149,10 @@ METHOD_SCHEMA = ExtractionSchema(
         "你是论文方法卡抽取器。根据给定论文的标题与正文，把它的做法拆成方法卡，"
         "全部字段用中文表述（专有名词保留原文）：\n"
         "{fields_spec}\n"
-        "其中 \"purpose\" 只写这个方法要达成的目标（不写怎么做），"
-        "\"mechanism\" 只写达成目标的核心机制（不复述目标）；"
-        "\"baseline\" 是对比的基线方法名，\"dataset\" 是用到的数据集名，"
-        "\"protocol\" 是实验流程的一段概述。"
+        '其中 "purpose" 只写这个方法要达成的目标（不写怎么做），'
+        '"mechanism" 只写达成目标的核心机制（不复述目标）；'
+        '"baseline" 是对比的基线方法名，"dataset" 是用到的数据集名，'
+        '"protocol" 是实验流程的一段概述。'
         '只输出一个 JSON 对象，键为上述字段名，另加 "confidence"（0 到 1，'
         "你对整份抽取的把握）。只依据原文，不引入外部知识。"
     ),

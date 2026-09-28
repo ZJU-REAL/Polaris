@@ -515,6 +515,18 @@ async def source_libraries_overview(
     ]
 
 
+async def default_library_sources(session: AsyncSession, discipline: str | None) -> list[str]:
+    """新建文献库默认勾选的来源：学科包声明的优先，否则部署默认（#821）。"""
+    from app.services import literature_settings
+    from app.services.discipline_packs import pack_sources
+
+    declared = pack_sources(discipline)
+    if declared is not None:
+        return declared
+    settings = await literature_settings.get_settings(session)
+    return [str(s) for s in settings.get("sources") or []]
+
+
 async def create_library(
     session: AsyncSession,
     *,
@@ -545,8 +557,14 @@ async def create_library(
         definition["anchor_papers"] = anchors
     if cadence:
         definition["cadence"] = cadence
-    if keywords:
-        definition["keywords"] = keywords
+    # 来源一律显式落库（#821）。「没配来源」在读取侧的含义是「只用 arXiv」——那是这个
+    # 字段出现之前建的库的真实行为，得原样保住；但新库不该继承这个偏向。所以在唯一的
+    # 建库出口补上默认来源：学科包声明了就用它的，否则用部署默认（管理员在文献检索
+    # 设置里配的来源）。读取侧的 arXiv 回退就只剩存量库会走到。
+    keywords = dict(keywords or {})
+    if not [s for s in keywords.get("sources") or [] if str(s).strip()]:
+        keywords["sources"] = await default_library_sources(session, discipline)
+    definition["keywords"] = keywords
     library = DirectionLibrary(
         name=name,
         statement=statement,
@@ -605,8 +623,6 @@ async def get_managed_project(
     if library is not None and library.submitted_by == user.id:
         return project
     return None
-
-
 
 
 # PATCH 顶层便捷字段 → library.definition 的键（收录配置权威源）。statement/cadence/

@@ -86,8 +86,9 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     concepts: Mapped[list["Concept"]] = relationship(
         secondary=paper_concepts,
         primaryjoin=lambda: Paper.id == paper_concepts.c.paper_id,
-        secondaryjoin=lambda: (Concept.id == paper_concepts.c.concept_id)
-        & (Concept.status == CONCEPT_STATUS_ACTIVE),
+        secondaryjoin=lambda: (
+            (Concept.id == paper_concepts.c.concept_id) & (Concept.status == CONCEPT_STATUS_ACTIVE)
+        ),
         viewonly=True,
     )
     # 唯一解读（PaperWiki）；selectin 随论文一起取，读路径无需显式 join
