@@ -1,6 +1,7 @@
 """「每日新论文」池（Daily Paper）。
 
-每天从 arxiv 订阅分类抓 New submissions 进池，滚动保留 7 天：
+每天按用户订阅从能供日更的源（arXiv 分类的当日公告、PubMed 检索词的新收录）抓新论文
+进池，滚动保留（默认 14 天）：
 - 论文本体走全局内容池（paper_id 引用 papers，永不复制、过期不删）；
 - entry 是「橱窗」行，过期由 cron 直接删除；点赞挂 entry、FK 级联跟删，
   因此「我赞过的」历史随池过期自然消失；
@@ -44,6 +45,10 @@ class DailyFeedEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     categories: Mapped[Any] = mapped_column(JSONVariant, nullable=False, default=list)
     # arxiv 公告类型：new（新提交）| cross（转投/交叉列表）
     announce_type: Mapped[str] = mapped_column(String(16), nullable=False, default="new")
+    # 带来这篇的源（如 ["arxiv"]、["pubmed"]；两个源都抓到时两个都在）。文献库的增量
+    # 同步按它只取自己选了的源——以前不记，只选了 PubMed 的库也会被送去对 arXiv 公告
+    # 做相似度排序（#821）
+    sources: Mapped[Any] = mapped_column(JSONVariant, nullable=False, default=list)
 
     paper: Mapped[Paper] = relationship()
 

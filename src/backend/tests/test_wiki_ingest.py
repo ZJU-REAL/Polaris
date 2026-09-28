@@ -439,7 +439,7 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     assert detail2["steps"][0]["observation"]["inserted"] == 0  # 去重
     # 增量的候选来自每日论文池，不再检索 arXiv，所以没有时间窗这回事
     obs2 = detail2["steps"][0]["observation"]
-    assert obs2["source"] == "daily_feed"
+    assert obs2["source"] == "daily_feed(arxiv)"
     assert "window_since" not in obs2
     assert obs2["feed_total"] == 0  # 本测试没往每日池放东西
     async with get_sessionmaker()() as session:
@@ -772,7 +772,8 @@ async def test_incremental_pulls_from_daily_feed_without_arxiv(client, queue_stu
     assert detail["status"] == "done", detail
 
     obs = detail["steps"][0]["observation"]
-    assert obs["source"] == "daily_feed"
+    # 写明是从池里的哪个源取的（#821）：只写 daily_feed 的话看不出库选了什么
+    assert obs["source"] == "daily_feed(arxiv)"
     assert obs["mode"] == "incremental"
     assert obs["feed_total"] == 3  # 池里 3 条（含 1 条与存量重复）
     assert obs["already_in_library"] == 1  # 重复那条被去重挡下，不重复打分
@@ -2214,3 +2215,245 @@ async def test_next_sync_reads_the_setting_not_a_hardcoded_hour(client):
 
     assert state["next_sync_at"]
     assert state["next_sync_at"][11:16] == "06:15"
+
+
+# ---- 增量同步按库的来源取（#821） ----
+
+OPENALEX_WORKS = {
+    "results": [
+        {
+            "id": "https://openalex.org/W1",
+            "title": "OpenAlex Agent Paper",
+            "display_name": "OpenAlex Agent Paper",
+            "doi": "https://doi.org/10.5555/oa1",
+            "publication_year": 2026,
+            "authorships": [],
+            "abstract_inverted_index": {"research": [0], "agents": [1]},
+        },
+        {
+            "id": "https://openalex.org/W2",
+            "title": "OpenAlex Planning Paper",
+            "display_name": "OpenAlex Planning Paper",
+            "doi": "https://doi.org/10.5555/oa2",
+            "publication_year": 2026,
+            "authorships": [],
+            "abstract_inverted_index": {"planning": [0]},
+        },
+    ]
+}
+
+
+async def _library_with_sources(client, sources, include=("autonomous research agent",)):
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    definition = {
+        **DEFINITION,
+        "keywords": {"sources": list(sources), "include": list(include)},
+    }
+    project_id, _library_id = await make_project_with_library(
+        client, headers, name="src-proj", definition=definition
+    )
+    return project_id, headers
+
+
+async def _run_source_incremental(client, project_id, headers):
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "incremental", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+    detail = (await client.get(f"/api/voyages/{resp.json()['id']}", headers=headers)).json()
+    assert detail["status"] == "done", detail
+    return detail["steps"][0]["observation"]
+
+
+async def _pool_paper(title, *, sources, arxiv_id=None, doi=None):
+    import datetime as dt
+
+    from app.models.daily_feed import DailyFeedEntry
+
+    async with get_sessionmaker()() as session:
+        paper = new_paper(
+            source=(sources or ["arxiv"])[0],
+            arxiv_id=arxiv_id,
+            doi=doi,
+            title=title,
+            abstract="research agents and planning",
+            year=2026,
+            published_at=dt.datetime.now(dt.UTC),
+        )
+        session.add(paper)
+        await session.flush()
+        session.add(
+            DailyFeedEntry(
+                paper_id=paper.id,
+                feed_date=_today(),
+                primary_category="x",
+                sources=list(sources),
+            )
+        )
+        await session.commit()
+        return paper.id
+
+
+async def _library_titles(project_id):
+    async with get_sessionmaker()() as session:
+        rows = await project_paper_rows(session, project_id=project_id)
+    return {p.title for p, _ in rows}
+
+
+async def test_incremental_takes_only_pool_entries_from_the_library_sources(
+    client, queue_stub, wiki_mocks
+):
+    """只选了 PubMed 的库不该被送去对 arXiv 公告排序；没记来源的旧条目照旧对所有库开放。"""
+    project_id, headers = await _library_with_sources(client, ["pubmed"])
+    await _pool_paper("From PubMed", sources=["pubmed"], doi="10.1/pm")
+    await _pool_paper("From arXiv", sources=["arxiv"], arxiv_id="2609.10001")
+    await _pool_paper("Unknown origin", sources=[], doi="10.1/legacy")
+
+    obs = await _run_source_incremental(client, project_id, headers)
+
+    assert obs["source"] == "daily_feed(pubmed)"
+    assert obs["feed_total"] == 2
+    assert obs["feed_other_sources"] == 1
+    titles = await _library_titles(project_id)
+    assert "From PubMed" in titles
+    assert "Unknown origin" in titles
+    assert "From arXiv" not in titles
+
+
+async def test_incremental_searches_sources_without_a_daily_feed(client, queue_stub, wiki_mocks):
+    """OpenAlex 没有每日新增：以前增量同步从来不会去问它，选了它等于没选。"""
+    route = wiki_mocks.get(url__regex=r"https://api\.openalex\.org/works.*").mock(
+        return_value=httpx.Response(200, json=OPENALEX_WORKS)
+    )
+    project_id, headers = await _library_with_sources(client, ["openalex"])
+    await _pool_paper("Pool arXiv paper", sources=["arxiv"], arxiv_id="2609.10002")
+
+    obs = await _run_source_incremental(client, project_id, headers)
+
+    assert route.called, "增量同步必须真的检索了 OpenAlex"
+    searched = [str(c.request.url) for c in route.calls if "search=" in str(c.request.url)]
+    assert searched, "检索请求要带关键词"
+    assert any("autonomous" in url and "agent" in url for url in searched)
+    assert obs["source"] == "openalex"
+    assert obs["searched_sources"] == ["openalex"]
+    assert obs["search_inserted"] == 2
+    titles = await _library_titles(project_id)
+    assert {"OpenAlex Agent Paper", "OpenAlex Planning Paper"} <= titles
+    # 池子不属于这个库的来源，一篇都不该进
+    assert "Pool arXiv paper" not in titles
+
+
+async def test_a_search_only_library_without_keywords_says_why_nothing_was_searched(
+    client, queue_stub, wiki_mocks
+):
+    route = wiki_mocks.get(url__regex=r"https://api\.openalex\.org/works.*").mock(
+        return_value=httpx.Response(200, json=OPENALEX_WORKS)
+    )
+    project_id, headers = await _library_with_sources(client, ["openalex"], include=())
+
+    obs = await _run_source_incremental(client, project_id, headers)
+
+    assert not route.called
+    assert obs["inserted"] == 0
+    assert obs["diagnostic_status"] == "warning"
+    assert any("包括关键词" in m for m in obs["diagnostic_messages"])
+
+
+async def test_search_mode_reports_the_sources_it_used(client, queue_stub, wiki_mocks):
+    """结果里写死 source="arxiv" 的话，选了 OpenAlex 的库在运行台上看到的仍是 arxiv。"""
+    wiki_mocks.get(url__regex=r"https://api\.openalex\.org/works.*").mock(
+        return_value=httpx.Response(200, json=OPENALEX_WORKS)
+    )
+    project_id, headers = await _library_with_sources(client, ["openalex"])
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+    detail = (await client.get(f"/api/voyages/{resp.json()['id']}", headers=headers)).json()
+    obs = detail["steps"][0]["observation"]
+    assert obs["source"] == "openalex"
+    assert obs["inserted"] == 2
+    # 检索到的论文要真的落进库、并被下一步打分：以前没选 arXiv 的库插完不提交，
+    # 结果写着新增 N 篇、库里一篇没有，打分步骤处理 0 篇
+    titles = await _library_titles(project_id)
+    assert {"OpenAlex Agent Paper", "OpenAlex Planning Paper"} <= titles
+    assert detail["steps"][1]["action"] == "wiki.score_relevance"
+    assert detail["steps"][1]["observation"]["processed"] == 2
+
+
+async def test_rejected_pool_papers_are_not_offered_again(client):
+    """增量同步每天都跑：判过不收的论文要是还能再进候选，每天都会被重新打分一遍。"""
+    from app.agents.voyage.actions_wiki import _pool_paper_or_new
+    from app.models.library_direction import DirectionLibrary
+
+    async with get_sessionmaker()() as session:
+        library = DirectionLibrary(name="L")
+        session.add(library)
+        pooled = new_paper(source="openalex", doi="10.1/rej", title="Rejected before", year=2026)
+        session.add(pooled)
+        await session.flush()
+
+        def _never():
+            raise AssertionError("命中池论文时不该新建")
+
+        got = await _pool_paper_or_new(
+            session,
+            library_id=library.id,
+            make_paper=_never,
+            arxiv_id=None,
+            doi="10.1/rej",
+            title="Rejected before",
+            year=2026,
+            authors=None,
+            skip_ids={str(pooled.id)},
+        )
+        assert got is None
+        got = await _pool_paper_or_new(
+            session,
+            library_id=library.id,
+            make_paper=_never,
+            arxiv_id=None,
+            doi="10.1/rej",
+            title="Rejected before",
+            year=2026,
+            authors=None,
+        )
+        assert got is not None and got.id == pooled.id
+
+
+async def test_the_search_cap_is_shared_across_sources(client, queue_stub, wiki_mocks):
+    """「最大检索篇数」是总上限：以前 arXiv 用满上限、别的源再各拿一份，
+    填 30 实际进来 45 篇（在真实建库里看到的）。"""
+    from urllib.parse import parse_qs, urlparse
+
+    arxiv_route = wiki_mocks.routes[0]  # export.arxiv.org/api/query
+    openalex_route = wiki_mocks.get(url__regex=r"https://api\.openalex\.org/works\?.*").mock(
+        return_value=httpx.Response(200, json=OPENALEX_WORKS)
+    )
+    project_id, headers = await _library_with_sources(client, ["arxiv", "openalex"])
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "search", "knobs": {**KNOBS, "max_papers": 10}},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    arxiv_sizes = [
+        int(parse_qs(urlparse(str(c.request.url)).query)["max_results"][0])
+        for c in arxiv_route.calls
+    ]
+    openalex_sizes = [
+        int(parse_qs(urlparse(str(c.request.url)).query)["per-page"][0])
+        for c in openalex_route.calls
+        if "search=" in str(c.request.url)
+    ]
+    assert arxiv_sizes and max(arxiv_sizes) <= 5
+    assert openalex_sizes == [5]
