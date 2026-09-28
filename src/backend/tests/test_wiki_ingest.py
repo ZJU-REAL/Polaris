@@ -2379,6 +2379,13 @@ async def test_search_mode_reports_the_sources_it_used(client, queue_stub, wiki_
     detail = (await client.get(f"/api/voyages/{resp.json()['id']}", headers=headers)).json()
     obs = detail["steps"][0]["observation"]
     assert obs["source"] == "openalex"
+    assert obs["inserted"] == 2
+    # 检索到的论文要真的落进库、并被下一步打分：以前没选 arXiv 的库插完不提交，
+    # 结果写着新增 N 篇、库里一篇没有，打分步骤处理 0 篇
+    titles = await _library_titles(project_id)
+    assert {"OpenAlex Agent Paper", "OpenAlex Planning Paper"} <= titles
+    assert detail["steps"][1]["action"] == "wiki.score_relevance"
+    assert detail["steps"][1]["observation"]["processed"] == 2
 
 
 async def test_rejected_pool_papers_are_not_offered_again(client):

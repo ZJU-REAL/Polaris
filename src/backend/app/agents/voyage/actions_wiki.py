@@ -1039,6 +1039,11 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         if inserted_here:
             brief_acc.extend(_paper_brief(new_papers[-inserted_here:]))
             del brief_acc[_OBS_LIST_CAP:]
+        # 提交。以前只有 arXiv 的分页循环会提交（每页落一次断点），别的源插完只 flush——
+        # 会话随后关闭即回滚：没选 arXiv 的库（PubMed、Crossref、OpenAlex……）检索结果
+        # 报着「新增 17 篇」，库里一篇都没有，后面的打分步骤处理 0 篇（#821，真实建库
+        # 里发现）。走到这里 arXiv 那部分已经完成，断点记为 done。
+        await _persist_checkpoint(done=True)
 
         brief = brief_acc
 
