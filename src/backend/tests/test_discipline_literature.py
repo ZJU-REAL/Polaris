@@ -103,7 +103,7 @@ async def test_new_library_without_discipline_uses_the_deployment_sources(client
 async def test_new_library_follows_its_discipline(client):
     headers = await _headers(client)
     cs = await _create(client, headers, discipline="cs")
-    assert cs["definition"]["keywords"]["sources"] == ["arxiv", "semantic", "openalex"]
+    assert cs["definition"]["keywords"]["sources"] == ["arxiv", "openalex"]
     clinical = await _create(client, headers, discipline="clinical")
     assert clinical["definition"]["keywords"]["sources"][0] == "pubmed"
 

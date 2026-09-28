@@ -12,9 +12,12 @@ name: cs
 title: 计算机科学
 description: >-
   计算机科学与人工智能。方法卡沿用内置字段（目的、手段、基线、数据集）；新建文献库
-  默认从 arXiv、Semantic Scholar 与 OpenAlex 取文献，并提供 cs.* 分类快捷项。
+  默认从 arXiv 与 OpenAlex 取文献，并提供 cs.* 分类快捷项。
+# 不默认勾 Semantic Scholar：没有 API key 时它的公共额度几乎总是 429（实测每次建库都
+# 失败一次、在运行台上挂一条警告）。有 key 的部署在建库表单上勾上即可；引用扩展
+# （snowball）仍然走它。
 literature:
-  sources: [arxiv, semantic, openalex]
+  sources: [arxiv, openalex]
   arxiv_categories:
     - cs.AI
     - cs.CL
