@@ -189,3 +189,38 @@ async def test_cooldown_honours_a_short_retry_after():
         await client.search_page(keywords=["agents"], limit=1)
     assert caught.value.retry_after == 5, "Retry-After 被无视了"
     await redis.aclose()
+
+
+# ---- 406 是偶发的，不是永久错误（#822） ----
+
+_EMPTY_FEED = (
+    '<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>'
+)
+
+
+@respx.mock
+async def test_a_transient_406_is_retried_instead_of_failing_the_build():
+    """arXiv 会对合法查询偶发回 406，同一个 URL 一分钟后就是 200。以前一次 406
+    就直接抛出，整个建库任务停在第一步。"""
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    client = ArxivClient(redis=redis, min_interval=0, max_retries=3, backoff_base=0)
+    route = respx.get("https://export.arxiv.org/api/query").mock(
+        side_effect=[httpx.Response(406), httpx.Response(200, text=_EMPTY_FEED)]
+    )
+    entries = await client.search_page(keywords=["agents"], limit=1)
+    assert entries == []
+    assert route.call_count == 2
+    await redis.aclose()
+
+
+@respx.mock
+async def test_repeated_406_names_the_status_and_does_not_freeze_everyone():
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    client = ArxivClient(redis=redis, min_interval=0, max_retries=2, backoff_base=0)
+    route = respx.get("https://export.arxiv.org/api/query").mock(return_value=httpx.Response(406))
+    with pytest.raises(ArxivRateLimitedError) as err:
+        await client.search_page(keywords=["agents"], limit=1)
+    assert "HTTP 406" in str(err.value)
+    assert err.value.retry_after is None, "406 不该开平台级冷却"
+    assert route.call_count == 2
+    await redis.aclose()
