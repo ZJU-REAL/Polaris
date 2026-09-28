@@ -34,9 +34,11 @@ class IngestRequest(BaseModel):
 
     三种模式，各跑各自需要的步骤：
 
-    - ``search``：按查询词走 arXiv 检索 API，可选时间范围。建库和日后扩充都用它。
+    - ``search``：按查询词检索库选的来源（arXiv、PubMed、OpenAlex……），可选时间范围。
+      建库和日后扩充都用它。
     - ``snowball``：从锚点论文出发走引用/参考，跳数可设。
-    - ``incremental``：自动模式，从每日论文池里按方向挑（不访问 arXiv）。
+    - ``incremental``：自动模式。能日更的来源从每日论文池里按方向挑；不能日更的来源
+      按「包括关键词」检索上次同步以来的新论文（#821）。
 
     ``bootstrap`` 是 ``search`` 的旧名，保留以兼容存量调用与历史任务。
     """

@@ -2419,3 +2419,34 @@ async def test_rejected_pool_papers_are_not_offered_again(client):
             authors=None,
         )
         assert got is not None and got.id == pooled.id
+
+
+async def test_the_search_cap_is_shared_across_sources(client, queue_stub, wiki_mocks):
+    """「最大检索篇数」是总上限：以前 arXiv 用满上限、别的源再各拿一份，
+    填 30 实际进来 45 篇（在真实建库里看到的）。"""
+    from urllib.parse import parse_qs, urlparse
+
+    arxiv_route = wiki_mocks.routes[0]  # export.arxiv.org/api/query
+    openalex_route = wiki_mocks.get(url__regex=r"https://api\.openalex\.org/works\?.*").mock(
+        return_value=httpx.Response(200, json=OPENALEX_WORKS)
+    )
+    project_id, headers = await _library_with_sources(client, ["arxiv", "openalex"])
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "search", "knobs": {**KNOBS, "max_papers": 10}},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    arxiv_sizes = [
+        int(parse_qs(urlparse(str(c.request.url)).query)["max_results"][0])
+        for c in arxiv_route.calls
+    ]
+    openalex_sizes = [
+        int(parse_qs(urlparse(str(c.request.url)).query)["per-page"][0])
+        for c in openalex_route.calls
+        if "search=" in str(c.request.url)
+    ]
+    assert arxiv_sizes and max(arxiv_sizes) <= 5
+    assert openalex_sizes == [5]

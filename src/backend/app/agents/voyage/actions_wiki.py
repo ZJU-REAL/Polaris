@@ -847,7 +847,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 **feed,
             }
 
-        # —— 检索模式：走 arXiv 检索 API（每日池只有当天公告、没有历史，回填不了）——
+        # —— 检索模式：按库的来源检索（每日池只有当天公告、没有历史，回填不了）——
         # 查询词优先用本次指定的；没指定就退回库配置里的「包括关键词」
         params = _params(ctx)
         terms = [t for t in (params.get("query_terms") or []) if str(t).strip()] or include
@@ -896,6 +896,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                     "days": days,
                     "months_back": int(knobs["months_back"]),
                     "limit": limit,
+                    "sources": sources,
                 },
                 sort_keys=True,
                 ensure_ascii=False,
@@ -971,10 +972,17 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         # 通用 search 一次要完不具备这个能力。
         if "arxiv" in sources:
             arxiv = literature_sources.require_source("arxiv", client=get_arxiv_client())
-        while "arxiv" in sources and next_start < limit:
+        # 「最大检索篇数」是这次检索的总上限，几个源分着用（#821）。以前 arXiv 一个源就
+        # 用满上限、别的源再各拿一份，填 30 实际进来 45 篇——旋钮名和行为对不上，
+        # 打分的钱也跟着超。能真正检索的源才参与分配：别的源没有关键词就检索不了。
+        searchable = [s for s in sources if s == "arxiv" or terms]
+        share = max(1, limit // max(1, len(searchable)))
+        arxiv_limit = limit if len(searchable) <= 1 else share
+        generic_limit = limit - (arxiv_limit if "arxiv" in searchable else 0)
+        while "arxiv" in sources and next_start < arxiv_limit:
             # 页大小问客户端要，别写死：下面拿 len(entries) < page_size 判末页，
             # 一旦要的比客户端肯给的多，第一页就会被误判成末页，搜索静默截断。
-            page_size = min(arxiv.page_size, limit - next_start)
+            page_size = min(arxiv.page_size, arxiv_limit - next_start)
             entries = await arxiv.search_page(
                 categories=categories,
                 keywords=terms,
@@ -1001,7 +1009,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             page_latest = _latest_source_date(entries)
             if page_latest and (source_latest_at is None or page_latest > source_latest_at):
                 source_latest_at = page_latest
-            done = len(entries) < page_size or next_start >= limit
+            done = len(entries) < page_size or next_start >= arxiv_limit
             # Paper rows/memberships and next_start are committed atomically. A later 429 can
             # therefore resume at the next page without losing or replaying this page.
             await _persist_checkpoint(done=done)
@@ -1023,7 +1031,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             terms=terms,
             since=since,
             until=until,
-            limit=limit,
+            limit=max(1, generic_limit),
             errors=source_errors,
         )
         inserted_here = len(new_papers) - before
