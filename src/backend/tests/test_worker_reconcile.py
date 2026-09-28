@@ -35,9 +35,7 @@ async def _seed_voyage(
 
 async def _seed_log(run_id: uuid.UUID, at: datetime) -> None:
     async with get_sessionmaker()() as session:
-        session.add(
-            VoyageTerminalLog(run_id=run_id, event="log", level="info", message="t", at=at)
-        )
+        session.add(VoyageTerminalLog(run_id=run_id, event="log", level="info", message="t", at=at))
         await session.commit()
 
 

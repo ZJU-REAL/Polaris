@@ -68,12 +68,8 @@ def build_disclosure(checkpoint: dict[str, Any], nodes: Sequence[Any]) -> dict[s
     state = state if isinstance(state, dict) else {}
     rounds = state.get("rounds") if isinstance(state.get("rounds"), dict) else {}
     decisions = [d for d in (state.get("decisions") or []) if isinstance(d, dict)]
-    node_usage = (
-        state.get("node_usage") if isinstance(state.get("node_usage"), dict) else {}
-    )
-    tournament = (
-        state.get("tournament") if isinstance(state.get("tournament"), dict) else {}
-    )
+    node_usage = state.get("node_usage") if isinstance(state.get("node_usage"), dict) else {}
+    tournament = state.get("tournament") if isinstance(state.get("tournament"), dict) else {}
     warnings: list[dict[str, Any]] = []
 
     # ---- queries：轮次账本里的检索留痕拉平（按轮序，轮内保持记录顺序） ----
@@ -135,9 +131,7 @@ def build_disclosure(checkpoint: dict[str, Any], nodes: Sequence[Any]) -> dict[s
     cited_not_retrieved = [pid for pid in cited if pid not in retrieved_set]
     if cited_not_retrieved:
         # 引用只该来自检索结果（管线的结构性约束）：违反说明留痕缺失或数据有伤
-        warnings.append(
-            {"code": "cited_not_retrieved", "paper_ids": cited_not_retrieved}
-        )
+        warnings.append({"code": "cited_not_retrieved", "paper_ids": cited_not_retrieved})
     papers = {
         "retrieved": retrieved,
         "cited": cited,
@@ -157,9 +151,7 @@ def build_disclosure(checkpoint: dict[str, Any], nodes: Sequence[Any]) -> dict[s
     for decision in decisions:
         if decision.get("decision") == "pruned" and decision.get("node_id"):
             prune_decisions.setdefault(str(decision["node_id"]), decision)
-    parent_of = {
-        str(n.id): (str(n.parent_id) if n.parent_id else None) for n in nodes
-    }
+    parent_of = {str(n.id): (str(n.parent_id) if n.parent_id else None) for n in nodes}
     status_of = {str(n.id): n.status for n in nodes}
 
     def _cascade_source(node_id: str) -> str | None:
@@ -207,9 +199,7 @@ def build_disclosure(checkpoint: dict[str, Any], nodes: Sequence[Any]) -> dict[s
                 else:
                     # 不变量违反：被剪却查无原因（直接决策没有、级联来源也没有）
                     pruned_have_reasons = False
-                    warnings.append(
-                        {"code": "pruned_without_reason", "node_id": node_id}
-                    )
+                    warnings.append({"code": "pruned_without_reason", "node_id": node_id})
                     timeline.append({"event": "pruned", "round": None, "reason": None})
         branches.append(
             {

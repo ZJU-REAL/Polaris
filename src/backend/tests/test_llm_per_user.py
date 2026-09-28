@@ -27,9 +27,7 @@ async def _auth(client, email):
 
 async def _user_id(email: str) -> uuid.UUID:
     async with get_sessionmaker()() as session:
-        return (
-            await session.execute(select(User.id).where(User.email == email))
-        ).scalar_one()
+        return (await session.execute(select(User.id).where(User.email == email))).scalar_one()
 
 
 async def _make_provider(client, headers, name):

@@ -94,9 +94,7 @@ async def test_stop_refuses_an_attempt_replaced_before_the_signal():
     manager = _manager(server)
     handle = await manager.start(_context(), "bash run.sh")
     operation_dir = manager._operation_dir(handle.operation_id)
-    server.managed_files[f"{operation_dir}/current"] = (
-        "22222222-2222-2222-2222-222222222222"
-    )
+    server.managed_files[f"{operation_dir}/current"] = "22222222-2222-2222-2222-222222222222"
 
     outcome = await manager.stop(handle)
     assert outcome.confirmed is False

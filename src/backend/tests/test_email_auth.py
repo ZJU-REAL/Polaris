@@ -64,9 +64,7 @@ async def test_capabilities_off_without_smtp(client):
 
 
 async def test_send_code_requires_email_configured(client):
-    resp = await client.post(
-        "/api/auth/send-code", json={"email": EMAIL, "purpose": "register"}
-    )
+    resp = await client.post("/api/auth/send-code", json={"email": EMAIL, "purpose": "register"})
     assert resp.status_code == 503
     assert resp.json()["detail"] == "EMAIL_NOT_CONFIGURED"
 
@@ -105,9 +103,7 @@ async def test_send_code_rejects_registered_email(client, email_on, sent):
     code = await _get_code(client, sent, "register")
     await client.post("/api/auth/register", json=_register_body(email_code=code))
 
-    resp = await client.post(
-        "/api/auth/send-code", json={"email": EMAIL, "purpose": "register"}
-    )
+    resp = await client.post("/api/auth/send-code", json={"email": EMAIL, "purpose": "register"})
     assert resp.status_code == 400
     assert resp.json()["detail"] == "REGISTER_USER_ALREADY_EXISTS"
 

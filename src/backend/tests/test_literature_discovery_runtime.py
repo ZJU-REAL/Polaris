@@ -883,6 +883,7 @@ def test_disabled_credential_pool_does_not_fall_back_to_env():
     assert _credential_pool({"provider_keys": {"openalex": ["  "]}}, "openalex", "env-key") == []
 
     # 配了且非空 → 用配置的
-    assert _credential_pool(
-        {"provider_keys": {"openalex": ["a", "b"]}}, "openalex", "env-key"
-    ) == ["a", "b"]
+    assert _credential_pool({"provider_keys": {"openalex": ["a", "b"]}}, "openalex", "env-key") == [
+        "a",
+        "b",
+    ]

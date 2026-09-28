@@ -130,6 +130,7 @@ async def experiment_intake_questions(
     except Exception:  # noqa: BLE001 — 开题提问是增强项，失败不阻塞创建
         return ExperimentIntakeQuestions(questions=[])
 
+
 _HEARTBEAT_SECONDS = 15.0
 _STREAM_POLL_SECONDS = 1.0
 _STREAM_INITIAL_TAIL = 200
@@ -705,9 +706,7 @@ async def stream_experiment_terminal_logs(
     async def stream() -> AsyncIterator[str]:
         status_now = await _status()
         yield _sse_frame("status", {"status": status_now})
-        lines, _truncated = experiments_service.read_local_log_tail(
-            str(path), _STREAM_INITIAL_TAIL
-        )
+        lines, _truncated = experiments_service.read_local_log_tail(str(path), _STREAM_INITIAL_TAIL)
         offset = path.stat().st_size if path.is_file() else 0
         if lines:
             yield _sse_frame("log", {"lines": lines})

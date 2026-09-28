@@ -157,9 +157,7 @@ _PRECISE_FILTERS = frozenset(
             },
         },
     },
-    summarize=lambda a, r: (
-        f"宽扫 {a.get('query') or '文献库'} → {len(r.get('results') or [])} 篇"
-    ),
+    summarize=lambda a, r: f"宽扫 {a.get('query') or '文献库'} → {len(r.get('results') or [])} 篇",
 )
 async def scan_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     query = str(args.get("query") or "").strip()
@@ -296,9 +294,7 @@ async def _scan_filtered(
         raise ValueError(f"sort 不受支持：{sort}")
 
     published_from = _parse_datetime(args.get("published_from"), "published_from")
-    published_to = _parse_datetime(
-        args.get("published_to"), "published_to", end_of_day=True
-    )
+    published_to = _parse_datetime(args.get("published_to"), "published_to", end_of_day=True)
     created_from = _parse_datetime(args.get("created_from"), "created_from")
     created_to = _parse_datetime(args.get("created_to"), "created_to", end_of_day=True)
     for lower, upper, label in (

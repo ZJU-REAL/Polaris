@@ -19,8 +19,11 @@ async def _setup(client):
     bob = await register_and_login(client, email="bob@example.com")
 
     async with get_sessionmaker()() as session:
-        p1 = await add_paper(session,
-            project_id=uuid.UUID(project_id), title="Attention Is All You Need", status="fetched"
+        p1 = await add_paper(
+            session,
+            project_id=uuid.UUID(project_id),
+            title="Attention Is All You Need",
+            status="fetched",
         )
         session.add(p1)
         await session.commit()

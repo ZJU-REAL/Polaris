@@ -33,10 +33,7 @@ from tests.conftest import RecordingBus, register_and_login
 from tests.fake_ssh import FakeSSHConnector, FakeSSHServer
 from tests.test_ssh_credentials import PAYLOAD as CRED_PAYLOAD
 
-RUN_LOG = (
-    'POLARIS_METRIC {"name": "accuracy", "step": 1, "value": 0.7}\n'
-    "done (fake experiment)\n"
-)
+RUN_LOG = 'POLARIS_METRIC {"name": "accuracy", "step": 1, "value": 0.7}\ndone (fake experiment)\n'
 FAKE_PNG = b"\x89PNG\r\n\x1a\n(fake png bytes)"
 
 
@@ -280,12 +277,8 @@ async def _active_leases(resource_id: str) -> list[ResourceLease]:
         return list(rows.scalars().all())
 
 
-async def test_setup_lease_acquire_idempotent_and_busy_diagnosable(
-    client, queue_stub, monkeypatch
-):
-    headers = {
-        "Authorization": f"Bearer {await register_and_login(client, 'lease@example.com')}"
-    }
+async def test_setup_lease_acquire_idempotent_and_busy_diagnosable(client, queue_stub, monkeypatch):
+    headers = {"Authorization": f"Bearer {await register_and_login(client, 'lease@example.com')}"}
     resource_id = await _register_host(client, headers)
 
     async with get_sessionmaker()() as session:

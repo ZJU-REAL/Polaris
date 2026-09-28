@@ -27,9 +27,7 @@ async def _auth(client, email="alice@example.com"):
 
 async def _user_id(email="alice@example.com") -> uuid.UUID:
     async with get_sessionmaker()() as session:
-        return (
-            await session.execute(select(User.id).where(User.email == email))
-        ).scalar_one()
+        return (await session.execute(select(User.id).where(User.email == email))).scalar_one()
 
 
 async def _make_run(session) -> VoyageRun:
@@ -296,9 +294,7 @@ async def test_exclusive_lease_busy_then_wait_acquire(client):
         resource = await session.get(Resource, resource_id)
         run2 = await session.get(VoyageRun, run2_id)
         releaser = asyncio.create_task(_release_soon())
-        lease2 = await leases_service.acquire(
-            session, resource, run2, wait=True, timeout=5.0
-        )
+        lease2 = await leases_service.acquire(session, resource, run2, wait=True, timeout=5.0)
         await releaser
         assert lease2.run_id == run2_id
     assert await _active_lease_count(resource_id) == 1
@@ -326,7 +322,11 @@ async def test_capacity_counting_semantics(client):
     owner = await _user_id()
     async with get_sessionmaker()() as session:
         resource = await _make_resource(
-            session, owner, kind="license_pool", capacity=2, exclusive=False,
+            session,
+            owner,
+            kind="license_pool",
+            capacity=2,
+            exclusive=False,
             config={"feature": "HFSS"},
         )
         runs = [await _make_run(session) for _ in range(3)]
@@ -380,8 +380,15 @@ async def test_release_idempotent_and_release_for_run(client):
     owner = await _user_id()
     async with get_sessionmaker()() as session:
         r1 = await _make_resource(session, owner)
-        r2 = await _make_resource(session, owner, name="q", kind="queue",
-                                  exclusive=False, capacity=2, config={"queue": "gpu"})
+        r2 = await _make_resource(
+            session,
+            owner,
+            name="q",
+            kind="queue",
+            exclusive=False,
+            capacity=2,
+            config={"queue": "gpu"},
+        )
         run = await _make_run(session)
         lease = await leases_service.acquire(session, r1, run)
         await leases_service.acquire(session, r2, run)

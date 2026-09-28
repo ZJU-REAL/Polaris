@@ -196,9 +196,7 @@ async def replace_routes(
             validate_budgets(item.stage, item.input_budgets, item.context_window)
         except ValueError as e:
             raise InvalidRouteError(str(e)) from e
-    await session.execute(
-        delete(ModelRoute).where(_owner_clause(ModelRoute.owner_id, owner_id))
-    )
+    await session.execute(delete(ModelRoute).where(_owner_clause(ModelRoute.owner_id, owner_id)))
     for item in items:
         session.add(
             ModelRoute(

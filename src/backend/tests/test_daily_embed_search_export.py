@@ -99,9 +99,7 @@ async def test_sync_embeds_every_paper_and_only_missing(client, monkeypatch):
     papers = await _papers_in_pool()
     async with get_sessionmaker()() as session:
         for paper in papers:
-            row = await session.execute(
-                select(PaperVector).where(PaperVector.paper_id == paper.id)
-            )
+            row = await session.execute(select(PaperVector).where(PaperVector.paper_id == paper.id))
             vector_row = row.scalar_one()
             assert list(vector_row.embedding) == fake_embedding(paper_embedding_text(paper))
             assert vector_row.built_at is not None  # 构建时间记下了
@@ -128,11 +126,7 @@ async def test_daily_papers_get_abstract_chunk(client, monkeypatch):
     assert papers and all(p.full_text_path is None for p in papers)
     async with get_sessionmaker()() as session:
         chunks = (
-            (
-                await session.execute(
-                    select(PaperChunk).where(PaperChunk.paper_id == papers[0].id)
-                )
-            )
+            (await session.execute(select(PaperChunk).where(PaperChunk.paper_id == papers[0].id)))
             .scalars()
             .all()
         )

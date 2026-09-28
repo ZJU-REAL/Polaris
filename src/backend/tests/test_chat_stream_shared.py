@@ -119,11 +119,7 @@ async def test_paper_chat_omits_sources_when_there_are_none(client):
     ) as resp:
         text = (await resp.aread()).decode("utf-8")
 
-    kinds = [
-        line[len("event: ") :]
-        for line in text.splitlines()
-        if line.startswith("event: ")
-    ]
+    kinds = [line[len("event: ") :] for line in text.splitlines() if line.startswith("event: ")]
     assert "sources" not in kinds, f"没有参考文献时不该发 sources：{kinds}"
     assert kinds and kinds[-1] == "done"
     assert json.loads(text.rsplit("data: ", 1)[1])["usage"]["completion_tokens"] > 0

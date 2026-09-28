@@ -87,9 +87,7 @@ async def list_voyages(
     """
     stmt = _visible_filter(select(VoyageRun), user_id).order_by(VoyageRun.created_at.desc())
     if project_id is not None:
-        stmt = stmt.where(
-            VoyageRun.project_id == project_id, VoyageRun.kind.not_in(LIBRARY_KINDS)
-        )
+        stmt = stmt.where(VoyageRun.project_id == project_id, VoyageRun.kind.not_in(LIBRARY_KINDS))
     return (await session.execute(stmt)).scalars().all()
 
 
@@ -102,9 +100,7 @@ async def _owns_project(
     return row.first() is not None
 
 
-async def can_view_voyage(
-    session: AsyncSession, *, run: VoyageRun, user: User
-) -> bool:
+async def can_view_voyage(session: AsyncSession, *, run: VoyageRun, user: User) -> bool:
     """能否查看某个任务（详情/日志/SSE/取消/重试的统一口径）。
 
     - 平台级任务（两个作用域 id 都为空，如每日新论文抓取）：所有登录用户
@@ -127,9 +123,7 @@ async def can_view_voyage(
         from app.services.libraries import can_manage_library, get_library
 
         library = await get_library(session, run.library_id)
-        if library is not None and await can_manage_library(
-            session, user=user, library=library
-        ):
+        if library is not None and await can_manage_library(session, user=user, library=library):
             return True
     return False
 

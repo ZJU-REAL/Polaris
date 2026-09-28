@@ -106,9 +106,7 @@ def test_normalize_caps_dedupes_and_drops_empty():
 
 
 def test_normalize_accepts_bare_string_as_single_item_list():
-    payload, confidence = normalize_payload(
-        SKELETON_SCHEMA, {"findings": "单条发现给成了字符串"}
-    )
+    payload, confidence = normalize_payload(SKELETON_SCHEMA, {"findings": "单条发现给成了字符串"})
     assert payload == {"findings": ["单条发现给成了字符串"]}
     assert confidence is None  # 模型没给就空着，不编数
 

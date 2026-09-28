@@ -268,7 +268,9 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
     retry: false,
   });
   const pack = (packsQuery.data ?? []).find((p) => p.name === discipline);
-  const defaultSources = pack?.sources ?? generalQuery.data?.sources ?? ['openalex'];
+  // 包声明了来源就用它的；否则是部署默认（管理员在文献检索设置里配的）。两者都取不到时
+  // 留空，不在前端编一个默认值——建库时服务端会按同样的规则补上
+  const defaultSources = pack?.sources.length ? pack.sources : generalQuery.data?.sources ?? [];
 
   const badAnchors = incl.anchors.filter(
     (a) => !!a.arxiv_id && a.arxiv_id.trim() !== '' && !ARXIV_ID_RE.test(a.arxiv_id.trim()),

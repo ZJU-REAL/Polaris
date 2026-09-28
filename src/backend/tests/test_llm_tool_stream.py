@@ -200,7 +200,7 @@ async def test_openai_tool_call_without_index_defaults_to_zero():
                     }
                 ]
             },
-            {"choices": [{"delta": {"tool_calls": [{"function": {"arguments": ': 1}'}}]}}]},
+            {"choices": [{"delta": {"tool_calls": [{"function": {"arguments": ": 1}"}}]}}]},
             {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
         ]
     )
@@ -221,9 +221,7 @@ async def test_openai_stream_is_a_filter_over_stream_events():
             {"choices": [{"delta": {"content": "二"}, "finish_reason": "stop"}]},
         ]
     )
-    chunks = [
-        c async for c in provider.stream([Message(role="user", content="hi")], model="m")
-    ]
+    chunks = [c async for c in provider.stream([Message(role="user", content="hi")], model="m")]
     assert chunks == ["一", "二"], "思考不该混进正文"
 
     events = await _events(provider)
@@ -297,9 +295,7 @@ def _anthropic_provider(events: list[dict]):
         ("https://relay.test/v1/messages", "https://relay.test/v1/messages"),
     ],
 )
-async def test_anthropic_custom_base_url(
-    base_url: str | None, expected_url: str
-) -> None:
+async def test_anthropic_custom_base_url(base_url: str | None, expected_url: str) -> None:
     """自定义 Anthropic Base URL 必须覆盖完整与流式请求使用的硬编码地址。"""
     from app.core.llm.anthropic import AnthropicProvider
 

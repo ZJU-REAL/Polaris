@@ -96,11 +96,7 @@ class FakeSSHSession:
             stdout = ""
             stderr = ""
             if operation == "dependency-install":
-                exit_status = (
-                    server.setup_exits.pop(0)
-                    if server.setup_exits
-                    else server.setup_exit
-                )
+                exit_status = server.setup_exits.pop(0) if server.setup_exits else server.setup_exit
                 stderr = server.setup_log if exit_status else ""
             elif operation == "application-smoke":
                 exit_status = server.smoke_exits.pop(0) if server.smoke_exits else 0
@@ -138,9 +134,7 @@ class FakeSSHSession:
                 server.host_files["~/.polaris-runner/VERSION"] = m.group(1) + "\n"
             return SSHResult(0, "", "")
         if command.startswith("printf ") and "/operations/" in command and "/current" in command:
-            match = re.search(
-                r"printf '%s\\n' ([0-9a-f-]+) > (\S+)\.tmp && mv \S+ (\S+)", command
-            )
+            match = re.search(r"printf '%s\\n' ([0-9a-f-]+) > (\S+)\.tmp && mv \S+ (\S+)", command)
             if match:
                 server.managed_files[match.group(3)] = match.group(1)
             return SSHResult(0, "", "")
@@ -151,9 +145,7 @@ class FakeSSHSession:
         if command.startswith("stat -c") and ".polaris/operations/" in command:
             paths = command.split(" 2>/dev/null", 1)[0].split()[-2:]
             mtime = int(time.time()) - server.managed_output_age_seconds
-            rows = [
-                f"{len(server.managed_files.get(path, '').encode())} {mtime}" for path in paths
-            ]
+            rows = [f"{len(server.managed_files.get(path, '').encode())} {mtime}" for path in paths]
             return SSHResult(0, "\n".join(rows) + "\n", "")
         if command.startswith("tail -c") and ".polaris/operations/" in command:
             path = command.split(" 2>/dev/null", 1)[0].split()[-1]
@@ -170,6 +162,7 @@ class FakeSSHSession:
                 return SSHResult(0, base64.b64encode(raw).decode(), "")
             return SSHResult(0, raw.decode(errors="replace"), "")
         if "# polaris-managed-stop" in command:
+
             def assignment(name: str) -> str | None:
                 match = re.search(rf"^{name}=([^\n]+)$", command, re.MULTILINE)
                 return match.group(1) if match else None

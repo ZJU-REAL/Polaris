@@ -264,7 +264,5 @@ def test_replan_progress_signature_semantics():
     replans, _, repeated = _replan_progress({"replans": 1, "replan_signature": sig_a}, err_a)
     assert (replans, repeated) == (1, True)
     # 签名变化：计数清零（换了新错误=有进展，不打断用户）
-    replans, sig_new, repeated = _replan_progress(
-        {"replans": 2, "replan_signature": sig_a}, err_b
-    )
+    replans, sig_new, repeated = _replan_progress({"replans": 2, "replan_signature": sig_a}, err_b)
     assert (replans, repeated) == (0, False) and sig_new != sig_a

@@ -49,6 +49,7 @@ async def _existing_dedicated_library(
         )
     )
 
+
 router = APIRouter(prefix="/projects/{project_id}/interdisciplinary", tags=["interdisciplinary"])
 suggestion_router = APIRouter(tags=["interdisciplinary"])
 
@@ -64,9 +65,7 @@ async def suggest_interdisciplinary_scope(
     return await scope_service.suggest_scope(data, user_id=user.id)
 
 
-async def _managed_project(
-    session: AsyncSession, project_id: uuid.UUID, user: User
-) -> Project:
+async def _managed_project(session: AsyncSession, project_id: uuid.UUID, user: User) -> Project:
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")

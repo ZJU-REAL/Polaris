@@ -55,9 +55,9 @@ class GapEntry:
 
 
 def _entry_sort_key(entry: GapEntry) -> tuple:
-    score = (
-        _NO_YEAR_SCORE if entry.year is None else entry.year
-    ) + _KIND_WEIGHTS.get(entry.kind, 0)
+    score = (_NO_YEAR_SCORE if entry.year is None else entry.year) + _KIND_WEIGHTS.get(
+        entry.kind, 0
+    )
     # 主排序分之后再按年份、statement 定序：同分条目的顺序不随查询顺序漂移
     return (-score, -(entry.year or 0), entry.statement)
 
@@ -141,11 +141,44 @@ _EN_TERM_RE = re.compile(r"[A-Za-z][A-Za-z0-9+_-]{3,}")
 _CJK_RUN_RE = re.compile(r"[一-鿿]{3,}")
 _EN_STOPWORDS = frozenset(
     {
-        "this", "that", "with", "from", "have", "been", "does", "not",
-        "only", "into", "over", "such", "than", "then", "them", "these",
-        "those", "when", "which", "while", "will", "would", "could",
-        "should", "there", "their", "about", "after", "before", "between",
-        "under", "based", "using", "used", "more", "most", "less", "least",
+        "this",
+        "that",
+        "with",
+        "from",
+        "have",
+        "been",
+        "does",
+        "not",
+        "only",
+        "into",
+        "over",
+        "such",
+        "than",
+        "then",
+        "them",
+        "these",
+        "those",
+        "when",
+        "which",
+        "while",
+        "will",
+        "would",
+        "could",
+        "should",
+        "there",
+        "their",
+        "about",
+        "after",
+        "before",
+        "between",
+        "under",
+        "based",
+        "using",
+        "used",
+        "more",
+        "most",
+        "less",
+        "least",
         "fake",  # fake provider 的替身文案里到处都是，别拿它当共享概念
     }
 )
@@ -157,15 +190,28 @@ _EN_NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 _CJK_NEGATION_CUES = (
-    "并未", "未能", "不能", "无法", "没有", "无人", "相反", "矛盾", "反驳",
-    "失败", "失效", "劣于", "否定", "不成立", "不适用", "不显著", "无效",
+    "并未",
+    "未能",
+    "不能",
+    "无法",
+    "没有",
+    "无人",
+    "相反",
+    "矛盾",
+    "反驳",
+    "失败",
+    "失效",
+    "劣于",
+    "否定",
+    "不成立",
+    "不适用",
+    "不显著",
+    "无效",
 )
 
 
 def _concept_terms(text: str) -> frozenset[str]:
-    terms = {
-        w.lower() for w in _EN_TERM_RE.findall(text) if w.lower() not in _EN_STOPWORDS
-    }
+    terms = {w.lower() for w in _EN_TERM_RE.findall(text) if w.lower() not in _EN_STOPWORDS}
     for run in _CJK_RUN_RE.findall(text):
         terms.update(run[i : i + 3] for i in range(len(run) - 2))
     return frozenset(terms)
@@ -184,9 +230,7 @@ _MIN_SHARED_TERMS = 2
 _MAX_PAIRS = 20  # 配对是 O(n²) 里挑出来的展示位，页面上超过 20 对没人看
 
 
-def find_contradiction_pairs(
-    entries: list[GapEntry], *, limit: int = _MAX_PAIRS
-) -> list[dict]:
+def find_contradiction_pairs(entries: list[GapEntry], *, limit: int = _MAX_PAIRS) -> list[dict]:
     """在已排序的台账条目里找疑似矛盾对：同概念、异立场、不同论文。
 
     输入按 library_gaps 的排序给，配对按 (i, j) 字典序产出——排序靠前

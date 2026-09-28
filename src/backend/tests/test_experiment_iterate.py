@@ -293,6 +293,7 @@ async def test_debug_repeats_until_run_budget(client, queue_stub, fake_ssh, bus_
     detail = await _get_detail(client, headers, exp_id)
     assert detail["status"] == "failed"
 
+
 async def test_analyze_ask_pauses_then_guidance_continues(
     client, queue_stub, fake_ssh, bus_recorder
 ):
@@ -348,15 +349,11 @@ async def test_analyze_without_runs_self_heals(client, queue_stub, fake_ssh, bus
 
     async with get_sessionmaker()() as session:
         await session.execute(
-            delete(ExperimentRunModel).where(
-                ExperimentRunModel.experiment_id == uuid.UUID(exp_id)
-            )
+            delete(ExperimentRunModel).where(ExperimentRunModel.experiment_id == uuid.UUID(exp_id))
         )
         await session.commit()
         run = await session.get(VoyageRun, uuid.UUID(voyage_id))
-        ctx = ActionContext(
-            run=run, llm=LLMRouter(), checkpoint=dict(run.checkpoint or {})
-        )
+        ctx = ActionContext(run=run, llm=LLMRouter(), checkpoint=dict(run.checkpoint or {}))
         observation = await experiment_analyze(ctx, {})
 
     assert observation["skipped"] is True and observation["reason"] == "no_runs"

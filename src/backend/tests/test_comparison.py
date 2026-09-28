@@ -44,9 +44,7 @@ async def _seed_papers(session, project_id, specs):
             session, project_id=uuid.UUID(project_id), title=title, year=year, status=status
         )
         for schema_id, payload in extractions.items():
-            session.add(
-                PaperExtraction(paper_id=paper.id, schema_id=schema_id, payload=payload)
-            )
+            session.add(PaperExtraction(paper_id=paper.id, schema_id=schema_id, payload=payload))
         papers.append(paper)
     await session.commit()
     return papers
@@ -256,9 +254,7 @@ async def test_comparison_endpoint(client):
     assert resp.json()["detail"] == "PAPER_NOT_FOUND"
 
     # 未登录不可读
-    anon = await client.post(
-        f"/api/libraries/{library_id}/comparison", json={"paper_ids": ids}
-    )
+    anon = await client.post(f"/api/libraries/{library_id}/comparison", json={"paper_ids": ids})
     assert anon.status_code == 401
 
 

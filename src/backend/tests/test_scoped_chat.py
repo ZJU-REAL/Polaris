@@ -28,9 +28,7 @@ def _parse_sse(text: str) -> list[tuple[str, dict]]:
 
 async def _user_id(email: str) -> uuid.UUID:
     async with get_sessionmaker()() as session:
-        return (
-            await session.execute(select(User.id).where(User.email == email))
-        ).scalar_one()
+        return (await session.execute(select(User.id).where(User.email == email))).scalar_one()
 
 
 # ---- personal_paper_ids（纯业务） ----
@@ -225,9 +223,7 @@ async def test_shelf_chat_empty_corpus(client):
     """空书架 + 无关联库：无论文 → sources 空、仍能 done 收尾（走空语料分支）。"""
     token = await register_and_login(client, email="scoped-empty-shelf@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    resp = await client.post(
-        "/api/projects", json={"name": "empty-shelf"}, headers=headers
-    )
+    resp = await client.post("/api/projects", json={"name": "empty-shelf"}, headers=headers)
     project_id = resp.json()["id"]
 
     async with client.stream(
@@ -251,9 +247,7 @@ async def test_personal_library_chat_sse(client):
     project_id, ids = await _project_with_papers(client, headers)
 
     # 收藏一篇到个人库 + 建索引（个人库对话复用现有已索引 chunk）
-    resp = await client.post(
-        "/api/me/library", json={"paper_id": ids[0]}, headers=headers
-    )
+    resp = await client.post("/api/me/library", json={"paper_id": ids[0]}, headers=headers)
     assert resp.status_code == 201, resp.text
     await client.post(f"/api/projects/{project_id}/index/rebuild", headers=headers)
 

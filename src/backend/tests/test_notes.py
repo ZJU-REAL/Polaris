@@ -24,7 +24,8 @@ async def _setup(client):
     bob = await register_and_login(client, email="bob@example.com")
 
     async with get_sessionmaker()() as session:
-        p1 = await add_paper(session,
+        p1 = await add_paper(
+            session,
             project_id=uuid.UUID(project_id),
             title="Agent Planning with RL",
             abstract="Planning for agents.",
@@ -92,9 +93,7 @@ async def test_notes_shared_across_topics_and_survive_library_removal(client):
 
         library2 = await ensure_project_library(session, uuid.UUID(project2_id))
         session.add(
-            LibraryPaper(
-                library_id=library2.id, paper_id=uuid.UUID(ids["p1"]), status="included"
-            )
+            LibraryPaper(library_id=library2.id, paper_id=uuid.UUID(ids["p1"]), status="included")
         )
         await session.commit()
 

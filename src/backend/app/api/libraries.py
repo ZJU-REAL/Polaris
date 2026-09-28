@@ -465,9 +465,7 @@ async def list_library_papers(
     published_to: datetime | None = Query(default=None),
     created_from: datetime | None = Query(default=None),
     created_to: datetime | None = Query(default=None),
-    daily_only: bool = Query(
-        default=False, description="只看从每日论文池自动收录的"
-    ),
+    daily_only: bool = Query(default=False, description="只看从每日论文池自动收录的"),
     last_sync_only: bool = Query(
         default=False,
         description="只看最近一次同步新增的（没同步过则返回空；「最新收录」视图用）",
@@ -712,9 +710,7 @@ async def build_library_comparison(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND") from exc
     except ValueError as exc:
         # body 校验已挡 >10；这里兜底服务层帽子（防未来有内部调用绕开校验）
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="TOO_MANY_PAPERS"
-        ) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="TOO_MANY_PAPERS") from exc
     return ComparisonTableRead.model_validate(table, from_attributes=True)
 
 
@@ -985,23 +981,17 @@ async def import_library_zotero(
     library = await _get_managed_library(session, library_id, user)
     raw = await bib.read(MAX_ZOTERO_BIB_BYTES + 1)
     if len(raw) > MAX_ZOTERO_BIB_BYTES:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="ZOTERO_BIB_TOO_LARGE"
-        )
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="ZOTERO_BIB_TOO_LARGE")
     try:
         # 同步解析一遍是为了当场把「文件根本不是 bib」顶回去并给出条数；worker 侧
         # 会从暂存文件重新解析（任务参数只传路径，跨进程不传大对象）。
-        entries = zotero_import_service.parse_zotero_bib(
-            raw.decode("utf-8-sig", errors="replace")
-        )
+        entries = zotero_import_service.parse_zotero_bib(raw.decode("utf-8-sig", errors="replace"))
     except paper_import_service.ParseFailedError as e:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"PARSE_FAILED: {e}"
         ) from e
     if len(entries) > MAX_ZOTERO_ENTRIES:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="ZOTERO_TOO_MANY_ENTRIES"
-        )
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="ZOTERO_TOO_MANY_ENTRIES")
 
     task_id = uuid.uuid4().hex
     try:

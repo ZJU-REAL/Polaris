@@ -172,13 +172,10 @@ async def test_command_templates_source_env(client, queue_stub, fake_ssh, bus_re
     # 断言意图不变，只是从「整条 SSH 命令」挪到「启动脚本里的命令行」。
     smoke_launcher = next(c for c in fake_ssh.commands if "--smoke" in c)
     assert f"cd {workdir} && {{ {ENV_PREFIX} bash run.sh --smoke; }}" in smoke_launcher
-    run_launcher = next(
-        c for c in fake_ssh.commands if "stdbuf -oL -eL bash run.sh" in c
-    )
+    run_launcher = next(c for c in fake_ssh.commands if "stdbuf -oL -eL bash run.sh" in c)
     # 前缀先 export PYTHONUNBUFFERED=1、再 source env.sh、stdbuf 行缓冲跑 run.sh（日志实时刷新）
     assert (
-        f"cd {workdir} && {{ export PYTHONUNBUFFERED=1; "
-        f"{ENV_PREFIX} stdbuf -oL -eL bash run.sh; }}"
+        f"cd {workdir} && {{ export PYTHONUNBUFFERED=1; {ENV_PREFIX} stdbuf -oL -eL bash run.sh; }}"
     ) in run_launcher
     # plot 仍是前台白名单模板，没有 managed 化
     plot = next(c for c in fake_ssh.commands if "plot_figures.py" in c and ".venv" in c)

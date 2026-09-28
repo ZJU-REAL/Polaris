@@ -159,9 +159,7 @@ def test_extends_unknown_parent_and_chain_rejected(tmp_path, monkeypatch):
     )
     with pytest.raises(ProcessPackError, match="不存在"):
         load_pack("sub/orphan")
-    _write_pack(
-        tmp_path, "g.yaml", "kind: research-process\nname: g\nextends: mid\nphases: []\n"
-    )
+    _write_pack(tmp_path, "g.yaml", "kind: research-process\nname: g\nextends: mid\nphases: []\n")
     _write_pack(
         tmp_path, "mid.yaml", "kind: research-process\nname: mid\nextends: root\nphases: []\n"
     )

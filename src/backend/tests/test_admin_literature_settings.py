@@ -216,9 +216,7 @@ async def test_easyscholar_credential_uses_metric_probe(client, monkeypatch):
     assert response.json()["fetched_count"] == 1
     assert observed["source"] == "easyscholar"
     assert observed["venue_name"] == "Journal of Tests"
-    assert observed["settings"]["provider_keys"] == {
-        "easyscholar": ["easyscholar-secret"]
-    }
+    assert observed["settings"]["provider_keys"] == {"easyscholar": ["easyscholar-secret"]}
 
 
 async def test_unpaywall_health_probe_uses_doi_resolver_without_adding_search_source(

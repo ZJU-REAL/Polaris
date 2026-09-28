@@ -337,7 +337,6 @@ async def make_project_with_library(
     return str(project_id), library_id
 
 
-
 def _username_from_email(email: str) -> str:
     """从 email 派生一个合法用户名（小写字母/数字/下划线 3-32 位）。"""
     local = email.split("@", 1)[0].lower()
@@ -358,9 +357,7 @@ async def _pin_created_at(email: str) -> None:
     if _register_epoch is None:
         _register_epoch = dt.datetime.now(dt.UTC)
     async with get_sessionmaker()() as session:
-        user = (
-            await session.execute(sa_select(User).where(User.email == email))
-        ).scalar_one()
+        user = (await session.execute(sa_select(User).where(User.email == email))).scalar_one()
         user.created_at = _register_epoch + dt.timedelta(seconds=next(_register_seq))
         await session.commit()
 

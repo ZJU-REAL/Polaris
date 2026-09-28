@@ -40,9 +40,7 @@ _CLIENT_SEAMS: dict[str, Any] = {
 def _source(source_id: str) -> Any:
     """经注册表取源适配器（客户端沿用本模块的注入缝）。"""
     seam = _CLIENT_SEAMS.get(source_id)
-    return literature_sources.require_source(
-        source_id, client=seam() if seam is not None else None
-    )
+    return literature_sources.require_source(source_id, client=seam() if seam is not None else None)
 
 
 class ParseFailedError(Exception):
@@ -428,9 +426,7 @@ async def resolve_or_create_pool_paper(
         or (bibtex and bibtex.strip())
     ):
         raise ParseFailedError("按标题没有找到这篇论文，请提供 arXiv 编号或 DOI")
-    fields = await resolve_fields(
-        arxiv_id=arxiv_id, doi=doi, corpus_id=corpus_id, bibtex=bibtex
-    )
+    fields = await resolve_fields(arxiv_id=arxiv_id, doi=doi, corpus_id=corpus_id, bibtex=bibtex)
     # 解析出的规范 id 再查一次池（输入可能是版本号 / 别名，bibtex 里也可能带 DOI）
     paper = await find_pool_paper(
         session,
@@ -496,9 +492,7 @@ async def add_manual_paper_to_library(
     - 新论文只落元数据行；PDF 下载/全文抽取/向量化/打分由后台任务补全
     project_id 仅用于 LLM 记账归因（补机构等），独立库为空。
     """
-    fields = await resolve_fields(
-        arxiv_id=arxiv_id, doi=doi, corpus_id=corpus_id, bibtex=bibtex
-    )
+    fields = await resolve_fields(arxiv_id=arxiv_id, doi=doi, corpus_id=corpus_id, bibtex=bibtex)
     dedup_key = pool_dedup_key(
         arxiv_id=fields.get("arxiv_id"),
         doi=fields.get("doi"),

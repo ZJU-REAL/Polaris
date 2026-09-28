@@ -201,9 +201,7 @@ async def test_stale_idle_command_keeps_running(client, monkeypatch):
         raise AssertionError("idle command must not be stopped")
 
     monkeypatch.setattr(experiments_service, "managed_command_gpu_usage_by_voyage", gpu_usage)
-    monkeypatch.setattr(
-        experiments_service, "stop_managed_command_by_voyage", unexpected_stop
-    )
+    monkeypatch.setattr(experiments_service, "stop_managed_command_by_voyage", unexpected_stop)
 
     async with get_sessionmaker()() as session:
         events = await watchdog.check_unanswered_managed_commands(session)
@@ -235,9 +233,7 @@ async def test_answer_arriving_during_probe_prevents_watchdog_stop(client, monke
         raise AssertionError("an answered ask must not trigger the watchdog stop")
 
     monkeypatch.setattr(experiments_service, "managed_command_gpu_usage_by_voyage", gpu_usage)
-    monkeypatch.setattr(
-        experiments_service, "stop_managed_command_by_voyage", unexpected_stop
-    )
+    monkeypatch.setattr(experiments_service, "stop_managed_command_by_voyage", unexpected_stop)
 
     async with get_sessionmaker()() as session:
         events = await watchdog.check_unanswered_managed_commands(session)

@@ -217,20 +217,24 @@ async def _sentence_evidence_for_chunks(
     if not paper_ids:
         return {}
     rows = (
-        await session.execute(
-            select(PaperEvidenceAnchor)
-            .where(
-                PaperEvidenceAnchor.paper_id.in_(paper_ids),
-                PaperEvidenceAnchor.anchor_type == "sentence",
-            )
-            .order_by(
-                PaperEvidenceAnchor.paper_id,
-                PaperEvidenceAnchor.seq,
-                PaperEvidenceAnchor.paragraph_index,
-                PaperEvidenceAnchor.sentence_index,
+        (
+            await session.execute(
+                select(PaperEvidenceAnchor)
+                .where(
+                    PaperEvidenceAnchor.paper_id.in_(paper_ids),
+                    PaperEvidenceAnchor.anchor_type == "sentence",
+                )
+                .order_by(
+                    PaperEvidenceAnchor.paper_id,
+                    PaperEvidenceAnchor.seq,
+                    PaperEvidenceAnchor.paragraph_index,
+                    PaperEvidenceAnchor.sentence_index,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     anchors_by_paper: dict[uuid.UUID, list[PaperEvidenceAnchor]] = {}
     for anchor in rows:
         anchors_by_paper.setdefault(anchor.paper_id, []).append(anchor)
@@ -403,9 +407,7 @@ async def build_messages_for_libraries(
         messages = [
             Message(
                 role="system",
-                content=_render_system(
-                    statement=statement, context="（还没有关联任何文献库）"
-                ),
+                content=_render_system(statement=statement, context="（还没有关联任何文献库）"),
             )
         ]
         messages += _history_messages(turns, {})
@@ -570,9 +572,7 @@ async def build_scoped_messages(
         messages = [
             Message(
                 role="system",
-                content=_render_system(
-                    statement=statement_text, context="（还没有收藏任何论文）"
-                ),
+                content=_render_system(statement=statement_text, context="（还没有收藏任何论文）"),
             )
         ]
         messages += _history_messages(turns, {})
@@ -647,9 +647,7 @@ async def build_scoped_messages(
         names = concepts_by_paper.get(paper.id, [])[:10]
         concept_line = f"\n概念：{'、'.join(names)}" if names else ""
         fig_line = _figure_hints(paper)
-        blocks.append(
-            f"[{i}] {paper.title}（{_dateline(paper)}）{concept_line}{fig_line}\n{body}"
-        )
+        blocks.append(f"[{i}] {paper.title}（{_dateline(paper)}）{concept_line}{fig_line}\n{body}")
         sources.append(
             ChatSource(
                 index=i,

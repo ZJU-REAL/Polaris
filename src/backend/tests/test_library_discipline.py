@@ -218,9 +218,7 @@ async def test_index_refreshes_when_only_the_discipline_card_is_new(client, tmp_
         ids = (
             (
                 await session.execute(
-                    select(PaperExtraction.schema_id).where(
-                        PaperExtraction.paper_id == paper_id
-                    )
+                    select(PaperExtraction.schema_id).where(PaperExtraction.paper_id == paper_id)
                 )
             )
             .scalars()
@@ -245,9 +243,7 @@ async def test_index_refreshes_when_only_the_discipline_card_is_new(client, tmp_
         ids = set(
             (
                 await session.execute(
-                    select(PaperExtraction.schema_id).where(
-                        PaperExtraction.paper_id == paper_id
-                    )
+                    select(PaperExtraction.schema_id).where(PaperExtraction.paper_id == paper_id)
                 )
             )
             .scalars()
@@ -285,9 +281,7 @@ async def test_the_discipline_card_wins_when_both_cards_are_on_the_table(client)
 
     token = await register_and_login(client, email="discpick@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    project_id, library_id = await make_project_with_library(
-        client, headers, name="discpick-proj"
-    )
+    project_id, library_id = await make_project_with_library(client, headers, name="discpick-proj")
 
     async with get_sessionmaker()() as session:
         library = await session.get(DirectionLibrary, library_id)
@@ -391,9 +385,7 @@ async def _library_with_two_cards(client, email):
 
     async with get_sessionmaker()() as session:
         paper = await session.get(Paper, paper_id)
-        await method_index.refresh_paper_method_index(
-            session, paper, library_id=library_id
-        )
+        await method_index.refresh_paper_method_index(session, paper, library_id=library_id)
         await session.commit()
     return library_id, paper_id
 
@@ -457,15 +449,11 @@ async def test_a_review_with_only_the_builtin_card_is_still_found(client):
 
     async with get_sessionmaker()() as session:
         paper = await session.get(Paper, review_id)
-        await method_index.refresh_paper_method_index(
-            session, paper, library_id=library_id
-        )
+        await method_index.refresh_paper_method_index(session, paper, library_id=library_id)
         await session.commit()
 
     async with get_sessionmaker()() as session:
-        cards, _mode = await method_index.search_methods(
-            session, library_id, "blast resistance"
-        )
+        cards, _mode = await method_index.search_methods(session, library_id, "blast resistance")
     found = {c["paper_id"] for c in cards}
     assert found == {first_paper, review_id}
     assert len(cards) == 2, "每篇仍是一张卡"
@@ -529,9 +517,7 @@ async def test_a_field_with_no_label_falls_back_to_its_name(client):
     from app.services.method_index import _declared_fields
 
     rendered = _declared_fields("nolabel.method", {"widget": "x"})
-    assert rendered == [
-        {"name": "widget", "label": "widget", "kind": "text", "value": "x"}
-    ]
+    assert rendered == [{"name": "widget", "label": "widget", "kind": "text", "value": "x"}]
 
 
 async def test_empty_fields_are_left_off_the_card(client):
@@ -626,9 +612,7 @@ async def _two_discipline_libraries(client):
     for library_id in (lib_a, lib_b):
         async with get_sessionmaker()() as session:
             paper = await session.get(Paper, paper_id)
-            await method_index.refresh_paper_method_index(
-                session, paper, library_id=library_id
-            )
+            await method_index.refresh_paper_method_index(session, paper, library_id=library_id)
             await session.commit()
     return lib_a, lib_b, paper_id
 
@@ -645,9 +629,7 @@ async def test_two_libraries_keep_their_own_reading_of_the_same_paper(client):
         schema_ids = (
             (
                 await session.execute(
-                    select(MethodVector.schema_id).where(
-                        MethodVector.paper_id == paper_id
-                    )
+                    select(MethodVector.schema_id).where(MethodVector.paper_id == paper_id)
                 )
             )
             .scalars()
@@ -663,9 +645,7 @@ async def test_each_library_scores_against_its_own_card(client):
     lib_a, lib_b, paper_id = await _two_discipline_libraries(client)
 
     async with get_sessionmaker()() as session:
-        cards_a, _mode = await method_index.search_methods(
-            session, lib_a, "blast loading on beams"
-        )
+        cards_a, _mode = await method_index.search_methods(session, lib_a, "blast loading on beams")
         cards_b, _mode = await method_index.search_methods(
             session, lib_b, "palladium catalyst preparation"
         )

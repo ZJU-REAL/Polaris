@@ -29,9 +29,7 @@ class LiteratureSearchRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "uq_literature_search_runs_active_schedule",
             "library_id",
             unique=True,
-            postgresql_where=text(
-                "trigger = 'scheduled' AND status IN ('queued', 'running')"
-            ),
+            postgresql_where=text("trigger = 'scheduled' AND status IN ('queued', 'running')"),
             sqlite_where=text("trigger = 'scheduled' AND status IN ('queued', 'running')"),
         ),
     )

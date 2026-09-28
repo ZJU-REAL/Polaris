@@ -166,7 +166,7 @@ async def test_the_plan_frame_reaches_the_client(client, agent_on):
     )
     conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
     marker = (
-        'POLARIS_FAKE_TOOL:update_plan:'
+        "POLARIS_FAKE_TOOL:update_plan:"
         '{"steps": [{"title": "\u5148\u67e5", "status": "running"}, {"title": "\u518d\u8bfb"}]}'
     )
     async with client.stream(
@@ -205,16 +205,20 @@ def test_submit_plan_marks_everything_as_not_yet_started():
 
     from app.tools.plan import submit_plan
 
-    out = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
-        submit_plan(
-            None,  # type: ignore[arg-type]  这个工具不碰 ctx
-            {
-                "steps": [
-                    {"title": "查文献", "status": "done"},
-                    {"title": "读全文", "status": "running"},
-                ],
-                "rationale": "先摸清现状再动手",
-            },
+    out = (
+        asyncio.get_event_loop_policy()
+        .new_event_loop()
+        .run_until_complete(
+            submit_plan(
+                None,  # type: ignore[arg-type]  这个工具不碰 ctx
+                {
+                    "steps": [
+                        {"title": "查文献", "status": "done"},
+                        {"title": "读全文", "status": "running"},
+                    ],
+                    "rationale": "先摸清现状再动手",
+                },
+            )
         )
     )
     assert [s["status"] for s in out["steps"]] == ["pending", "pending"]

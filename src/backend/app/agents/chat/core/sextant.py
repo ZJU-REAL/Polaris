@@ -32,9 +32,7 @@ class Verdict:
 
 
 class Sextant:
-    def verify(
-        self, *, answer: str, sources: int, successful_tool_calls: int
-    ) -> Verdict:
+    def verify(self, *, answer: str, sources: int, successful_tool_calls: int) -> Verdict:
         """``sources`` = 这轮工具真的返回过的论文数；``successful_tool_calls`` = 成功的调用数。"""
         notes: list[str] = []
         cited = {int(m) for m in _CITATION_RE.findall(answer or "")}

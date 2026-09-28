@@ -114,9 +114,7 @@ async def index_paper_abstract(session: AsyncSession, paper: Paper) -> int:
     if not text:
         return 0
     await session.execute(delete(PaperChunk).where(PaperChunk.paper_id == paper.id))
-    chunk = PaperChunk(
-        paper_id=paper.id, seq=0, text=text[:CHUNK_MAX_CHARS], source="abstract"
-    )
+    chunk = PaperChunk(paper_id=paper.id, seq=0, text=text[:CHUNK_MAX_CHARS], source="abstract")
     session.add(chunk)
     await session.flush()  # 拿到 chunk.id 才能给它挂向量
     await _copy_paper_vector_to_chunk(session, paper_id=paper.id, chunk_id=chunk.id)
@@ -143,9 +141,7 @@ async def _copy_paper_vector_to_chunk(
     return True
 
 
-async def sync_abstract_chunk_vectors(
-    session: AsyncSession, *, paper_ids: list[uuid.UUID]
-) -> int:
+async def sync_abstract_chunk_vectors(session: AsyncSession, *, paper_ids: list[uuid.UUID]) -> int:
     """把论文级向量拷进还没有向量的摘要兜底块，返回补上的块数。调用方负责 commit。
 
     零 token 开销，所以不受任何开关控制——摘要块的存在与否决定了这篇论文能不能被
@@ -407,9 +403,7 @@ async def rebuild_library_fulltext_index(
         project_id=project_id,
     )
     # 摘要兜底块不走嵌入接口，向量拷论文级向量（论文级向量也还没建的就先留空）
-    copied = await sync_abstract_chunk_vectors(
-        session, paper_ids=[p.id for p in papers]
-    )
+    copied = await sync_abstract_chunk_vectors(session, paper_ids=[p.id for p in papers])
     await session.commit()
     total_chunks = int(
         (

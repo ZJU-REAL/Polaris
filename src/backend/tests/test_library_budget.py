@@ -26,9 +26,7 @@ async def _setup_project(client, email="budget-owner@example.com"):
     token = await register_and_login(client, email=email)
     headers = {"Authorization": f"Bearer {token}"}
     # P9c：课题不再自动建库——显式配一条起源库（project_id 回指）。
-    project_id, library_id = await make_project_with_library(
-        client, headers, name="预算方向"
-    )
+    project_id, library_id = await make_project_with_library(client, headers, name="预算方向")
     return headers, project_id, library_id
 
 
@@ -163,11 +161,7 @@ async def test_router_records_library_attribution(client):
     )
     async with get_sessionmaker()() as session:
         rows = (
-            (
-                await session.execute(
-                    select(LLMUsage).where(LLMUsage.library_id == library_id)
-                )
-            )
+            (await session.execute(select(LLMUsage).where(LLMUsage.library_id == library_id)))
             .scalars()
             .all()
         )

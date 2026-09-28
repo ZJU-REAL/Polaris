@@ -147,9 +147,7 @@ async def list_shelf(
         order = (TopicPaper.trashed_at.desc(),)
 
     rows = (
-        await session.execute(
-            base.order_by(*order).offset((page - 1) * size).limit(size)
-        )
+        await session.execute(base.order_by(*order).offset((page - 1) * size).limit(size))
     ).all()
     return [_item_dict(row, paper) for row, paper in rows], int(total)
 
@@ -203,9 +201,7 @@ async def add_to_shelf(
         await session.commit()
         return _item_dict(row, paper)
 
-    source_library_id = await _source_library_id(
-        session, project_id=project_id, paper_id=paper_id
-    )
+    source_library_id = await _source_library_id(session, project_id=project_id, paper_id=paper_id)
     if row is not None:  # 回收站里的旧行复活
         row.trashed_at = None
         row.trashed_by = None

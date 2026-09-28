@@ -72,6 +72,4 @@ def workflow_guidance(checkpoint: dict[str, Any] | None, *targets: str) -> str:
 
 def workflows(checkpoint: dict[str, Any] | None) -> list[dict[str, Any]]:
     """navigator.free_plan 上的工作流条目（自由规划的计划模板）。"""
-    return [
-        e for e in _entries(checkpoint, "navigator.free_plan") if e.get("kind") == "workflow"
-    ]
+    return [e for e in _entries(checkpoint, "navigator.free_plan") if e.get("kind") == "workflow"]

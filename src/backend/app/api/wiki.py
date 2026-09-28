@@ -74,9 +74,7 @@ async def search(
     paper_rows: list = []
     if mode == "semantic" and papers_service.semantic_search_supported(session):
         try:
-            vector, space = await embed_query(
-                session, q, user_id=user.id, project_id=project_id
-            )
+            vector, space = await embed_query(session, q, user_id=user.id, project_id=project_id)
             candidates = await papers_service.semantic_search_papers(
                 session,
                 project_id=project_id,
@@ -205,9 +203,7 @@ def _chat_stream_response(
 
     保留这个名字是因为它是三个课题级端点的调用点，改名会让 diff 淹没在噪音里。
     """
-    return chat_stream_response(
-        messages, sources, user_id=user_id, project_id=project_id
-    )
+    return chat_stream_response(messages, sources, user_id=user_id, project_id=project_id)
 
 
 @router.post("/projects/{project_id}/chat")
@@ -307,9 +303,7 @@ async def chat_with_personal_library(
     return _chat_stream_response(messages, sources, user_id=user_id, project_id=None)
 
 
-async def _count_with_fulltext(
-    session: AsyncSession, paper_ids: list[uuid.UUID]
-) -> int:
+async def _count_with_fulltext(session: AsyncSession, paper_ids: list[uuid.UUID]) -> int:
     """这批论文里有本地全文（full_text_path 非空）的篇数（一条 count，不抓 PDF）。"""
     if not paper_ids:
         return 0

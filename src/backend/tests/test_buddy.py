@@ -176,16 +176,11 @@ async def test_stats_only_count_this_users_data(client):
 
         from app.models.user import User
 
-        users = {
-            u.email: u.id
-            for u in (await session.execute(select(User))).scalars().all()
-        }
+        users = {u.email: u.id for u in (await session.execute(select(User))).scalars().all()}
         a, b = users["buddy-a@example.com"], users["buddy-b@example.com"]
         for i in range(3):
             session.add(
-                UserLibraryEntry(
-                    user_id=a, dedup_key=str(uuid.uuid4()), title=f"A{i}", saved=True
-                )
+                UserLibraryEntry(user_id=a, dedup_key=str(uuid.uuid4()), title=f"A{i}", saved=True)
             )
         # 只浏览没收藏的条目不算"收进库"
         session.add(
@@ -232,9 +227,7 @@ async def test_opening_follows_the_page_the_user_is_on(client, agent_on):
     headers = {"Authorization": f"Bearer {token}"}
 
     cold = (await client.get("/api/chat/buddy/greeting", headers=headers)).json()
-    on_paper = (
-        await client.get("/api/chat/buddy/greeting?page=paper", headers=headers)
-    ).json()
+    on_paper = (await client.get("/api/chat/buddy/greeting?page=paper", headers=headers)).json()
     assert on_paper["question"] != cold["question"]
     assert len(on_paper["cards"]) == 4
 

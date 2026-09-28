@@ -20,7 +20,8 @@ async def _setup(client):
     project_id = uuid.UUID(resp.json()["id"])
 
     async with get_sessionmaker()() as session:
-        p1 = await add_paper(session,
+        p1 = await add_paper(
+            session,
             project_id=project_id,
             source="arxiv",
             arxiv_id="2406.10001",
@@ -36,7 +37,8 @@ async def _setup(client):
             wiki_content="## TL;DR\n\n使用 [[Agent]] 与 [[规划]] 的方法。\n",
             status="compiled",
         )
-        p2 = await add_paper(session,
+        p2 = await add_paper(
+            session,
             project_id=project_id,
             source="arxiv",
             arxiv_id="2406.10002",
@@ -48,14 +50,16 @@ async def _setup(client):
             relevance_score=0.3,
             status="excluded",
         )
-        c1 = await add_concept(session,
+        c1 = await add_concept(
+            session,
             project_id=project_id,
             name="Agent",
             slug="agent",
             definition="能自主感知-决策-行动的智能体。",
             category="method",
         )
-        c2 = await add_concept(session,
+        c2 = await add_concept(
+            session,
             project_id=project_id,
             name="规划",
             slug="规划",
@@ -484,7 +488,8 @@ async def test_papers_advanced_filters(client):
     project_id, headers, ids = await _setup(client)
     async with get_sessionmaker()() as session:
         session.add(
-            await add_paper(session,
+            await add_paper(
+                session,
                 project_id=uuid.UUID(project_id),
                 title="Affiliation Paper",
                 authors=[{"name": "Carol Zhang"}],

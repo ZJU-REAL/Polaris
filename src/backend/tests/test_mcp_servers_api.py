@@ -91,9 +91,7 @@ async def test_env_is_encrypted_at_rest(client):
 
 async def test_stdio_without_a_command_is_refused(client):
     headers = await _owner(client)
-    resp = await client.post(
-        "/api/mcp-servers", json=_payload(command=None), headers=headers
-    )
+    resp = await client.post("/api/mcp-servers", json=_payload(command=None), headers=headers)
     assert resp.status_code == 400
     assert resp.json()["detail"] == "STDIO_NEEDS_COMMAND"
 
@@ -123,9 +121,7 @@ async def test_enabling_connects_and_registers_the_tools(client):
     from app.tools.registry import known_tools
 
     headers = await _owner(client)
-    resp = await client.post(
-        "/api/mcp-servers", json=_payload(enabled=True), headers=headers
-    )
+    resp = await client.post("/api/mcp-servers", json=_payload(enabled=True), headers=headers)
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["last_error"] is None, body["last_error"]
@@ -138,9 +134,7 @@ async def test_disabling_removes_the_tools(client):
     from app.tools.registry import known_tools
 
     headers = await _owner(client)
-    created = await client.post(
-        "/api/mcp-servers", json=_payload(enabled=True), headers=headers
-    )
+    created = await client.post("/api/mcp-servers", json=_payload(enabled=True), headers=headers)
     server_id = created.json()["id"]
 
     resp = await client.patch(
@@ -183,9 +177,7 @@ async def test_deleting_a_server_removes_its_tools(client):
     from app.tools.registry import known_tools
 
     headers = await _owner(client)
-    created = await client.post(
-        "/api/mcp-servers", json=_payload(enabled=True), headers=headers
-    )
+    created = await client.post("/api/mcp-servers", json=_payload(enabled=True), headers=headers)
     server_id = created.json()["id"]
 
     resp = await client.delete(f"/api/mcp-servers/{server_id}", headers=headers)

@@ -230,8 +230,9 @@ async def test_poll_and_cancel_reject_foreign_handle(tmp_path):
 
 
 async def test_cancel_kills_process_group_and_is_idempotent(tmp_path):
-    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
-                            start_new_session=True)
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
+    )
     plugin = FMURunner(workdir=tmp_path)
     try:
         await plugin.cancel(str(proc.pid))

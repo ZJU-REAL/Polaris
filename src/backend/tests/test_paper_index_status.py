@@ -53,9 +53,7 @@ async def _chunks(session, paper_id) -> list[PaperChunk]:
     return list(
         (
             await session.execute(
-                select(PaperChunk)
-                .where(PaperChunk.paper_id == paper_id)
-                .order_by(PaperChunk.seq)
+                select(PaperChunk).where(PaperChunk.paper_id == paper_id).order_by(PaperChunk.seq)
             )
         )
         .scalars()
@@ -540,9 +538,7 @@ async def test_collecting_libraries_lists_only_admitted_and_visible(client):
         session.add(paper)
         await session.flush()
         me = (
-            await session.execute(
-                _select(User).where(User.email == "collect-owner@example.com")
-            )
+            await session.execute(_select(User).where(User.email == "collect-owner@example.com"))
         ).scalar_one()
         libs = {}
         for name, status, is_public, score in (
@@ -551,9 +547,7 @@ async def test_collecting_libraries_lists_only_admitted_and_visible(client):
             ("打分没过", "excluded", True, 0.2),
             ("别人的个人库", "scored", False, 0.85),
         ):
-            lib = DirectionLibrary(
-                name=name, is_public=is_public, submitted_by=me.id
-            )
+            lib = DirectionLibrary(name=name, is_public=is_public, submitted_by=me.id)
             session.add(lib)
             await session.flush()
             session.add(

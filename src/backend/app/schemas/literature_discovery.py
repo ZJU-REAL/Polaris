@@ -88,8 +88,7 @@ class SourceAdapter(Protocol):
 
     name: str
 
-    async def search(self, request: SourceSearchRequest) -> SourceSearchPage:
-        ...
+    async def search(self, request: SourceSearchRequest) -> SourceSearchPage: ...
 
 
 class SearchRunRead(BaseModel):

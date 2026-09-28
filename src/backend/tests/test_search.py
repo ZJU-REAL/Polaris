@@ -63,9 +63,7 @@ async def _setup(client):
 async def test_search_across_entities(client):
     project_id, headers = await _setup(client)
 
-    resp = await client.get(
-        "/api/global-search", params={"q": "graph"}, headers=headers
-    )
+    resp = await client.get("/api/global-search", params={"q": "graph"}, headers=headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["query"] == "graph"
@@ -93,9 +91,7 @@ async def test_search_matches_are_case_insensitive_and_scoped(client):
     types = {h["type"] for h in resp.json()["hits"]}
     assert types == {"paper"}
 
-    resp = await client.get(
-        "/api/global-search", params={"q": "不存在的关键词"}, headers=headers
-    )
+    resp = await client.get("/api/global-search", params={"q": "不存在的关键词"}, headers=headers)
     assert resp.status_code == 200
     assert resp.json()["hits"] == []
 
@@ -157,9 +153,7 @@ async def test_search_skips_the_recycle_bin(client):
     pid = uuid.UUID(project_id)
 
     async def types_for(q: str) -> set[str]:
-        r = await client.get(
-            "/api/global-search", params={"q": q}, headers=headers
-        )
+        r = await client.get("/api/global-search", params={"q": q}, headers=headers)
         assert r.status_code == 200, r.text
         return {hit["type"] for hit in r.json()["hits"]}
 

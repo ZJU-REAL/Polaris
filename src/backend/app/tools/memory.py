@@ -94,4 +94,3 @@ async def recall(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
             for r in rows
         ]
     }
-

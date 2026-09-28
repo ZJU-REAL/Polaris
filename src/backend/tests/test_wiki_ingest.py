@@ -1297,9 +1297,7 @@ async def test_one_manual_sync_does_not_cancel_everyone_elses_daily_sync(
     async with get_sessionmaker()() as session:
         # 有人手动同步了第一个库（created_by 非空，且已跑完）
         me = (
-            await session.execute(
-                select(User).where(User.email == "fanout-manual@example.com")
-            )
+            await session.execute(select(User).where(User.email == "fanout-manual@example.com"))
         ).scalar_one()
         session.add(
             VoyageRun(
@@ -1325,9 +1323,7 @@ async def test_one_manual_sync_does_not_cancel_everyone_elses_daily_sync(
     assert enqueued == created
 
     async with get_sessionmaker()() as session:
-        synced = {
-            str((await session.get(VoyageRun, uuid.UUID(rid))).library_id) for rid in created
-        }
+        synced = {str((await session.get(VoyageRun, uuid.UUID(rid))).library_id) for rid in created}
     assert second in synced, "别人手动同步了一个库，不该让这个库当天不再自动同步"
     assert first in synced, "手动同步跑在池子更新之前，替代不了这一轮"
 
@@ -2158,9 +2154,7 @@ async def test_digest_only_survives_a_backward_clock_jump(client, queue_stub, wi
     original = ingest_service_mod.datetime
     ingest_service_mod.datetime = _RewoundDateTime
     try:
-        resp = await client.post(
-            f"/api/libraries/{library_id}/digests/generate", headers=headers
-        )
+        resp = await client.post(f"/api/libraries/{library_id}/digests/generate", headers=headers)
     finally:
         ingest_service_mod.datetime = original
 

@@ -292,9 +292,7 @@ async def test_import_title_only_pool_hit_and_miss(client):
     assert resp.json()["detail"].startswith("PARSE_FAILED")
 
     # 三选一都不给 → 422（pydantic 校验）
-    resp = await client.post(
-        f"/api/projects/{project_id}/shelf/import", json={}, headers=headers
-    )
+    resp = await client.post(f"/api/projects/{project_id}/shelf/import", json={}, headers=headers)
     assert resp.status_code == 422
 
 

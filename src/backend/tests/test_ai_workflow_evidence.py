@@ -166,9 +166,10 @@ async def test_wiki_compile_injects_and_persists_supplied_fulltext_evidence(monk
     assert "A grounded full-text result." in llm.messages[1].content
     assert compiled.content.count("<!-- polaris-ai-evidence:") == 1
     assert str(bundle.manifest[0]["anchor_id"]) in compiled.content
-    assert "A grounded full-text result." not in compiled.content.split(
-        "<!-- polaris-ai-evidence:", 1
-    )[1]
+    assert (
+        "A grounded full-text result."
+        not in compiled.content.split("<!-- polaris-ai-evidence:", 1)[1]
+    )
 
 
 @pytest.mark.asyncio

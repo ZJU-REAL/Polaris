@@ -110,11 +110,6 @@ class PackSchema(BaseModel):
     stage: str | None = None
 
 
-#: 学科没声明文献来源时，新建文献库用什么。OpenAlex 覆盖全部学科（含 arXiv 预印本的
-#: 正式版本），是「不知道你做什么」时唯一不偏向某个领域的选择（#821）。
-DEFAULT_SOURCES: tuple[str, ...] = ("openalex",)
-
-
 class PackLiterature(BaseModel):
     """学科的文献口径：这个领域的人去哪里找论文（#821）。
 
@@ -305,8 +300,12 @@ def known_disciplines() -> set[str]:
     return {pack.name for pack in discover_packs()}
 
 
-def default_sources_for(discipline: str | None) -> list[str]:
-    """新建文献库时默认勾选的来源：学科包声明的，没有则 DEFAULT_SOURCES。
+def pack_sources(discipline: str | None) -> list[str] | None:
+    """学科包声明的默认来源；没选学科、包不在或包没声明时返回 None。
+
+    None 的意思是「跟部署默认走」——管理员在「文献检索」设置里配的那份来源清单
+    （services/literature_settings）。代码里不另设默认值：以前写死的是 arXiv，
+    默认值属于学科或部署，不属于代码（#821）。
 
     现扫而不是查缓存，与 known_disciplines 同理：用户刚丢进去的包立刻生效。
     """
@@ -314,4 +313,4 @@ def default_sources_for(discipline: str | None) -> list[str]:
         for pack in discover_packs():
             if pack.name == discipline and pack.literature is not None:
                 return list(pack.literature.sources)
-    return list(DEFAULT_SOURCES)
+    return None

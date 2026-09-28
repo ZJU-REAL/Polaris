@@ -22,9 +22,7 @@ async def _hdr(client, email):
 
 async def _user_id(email: str) -> uuid.UUID:
     async with get_sessionmaker()() as session:
-        return (
-            (await session.execute(select(User).where(User.email == email))).scalar_one().id
-        )
+        return (await session.execute(select(User).where(User.email == email))).scalar_one().id
 
 
 async def _make_run(*, project_id=None, created_by=None) -> uuid.UUID:
@@ -43,9 +41,7 @@ async def _make_run(*, project_id=None, created_by=None) -> uuid.UUID:
 
 
 async def _project(client, hdr, *, name="假设树课题") -> uuid.UUID:
-    resp = await client.post(
-        "/api/projects", json={"name": name, "statement": "s"}, headers=hdr
-    )
+    resp = await client.post("/api/projects", json={"name": name, "statement": "s"}, headers=hdr)
     assert resp.status_code == 201, resp.text
     return uuid.UUID(resp.json()["id"])
 
@@ -152,9 +148,7 @@ async def test_prune_cascades_to_whole_subtree(client):
         await tree_service.transition(session, a, "expanded")
         await tree_service.transition(session, a, "pruned")
 
-        statuses = {
-            n.id: n.status for n in await tree_service.tree_for_run(session, run_id)
-        }
+        statuses = {n.id: n.status for n in await tree_service.tree_for_run(session, run_id)}
         assert statuses[a.id] == "pruned"
         assert statuses[a1.id] == "pruned"
         assert statuses[a2.id] == "pruned"
@@ -261,23 +255,17 @@ async def test_tree_read_api_and_visibility(client):
     assert by_id[str(child.id)]["parent_id"] == str(root.id)
     assert by_id[str(child.id)]["kind"] == "experiment"
 
-    resp = await client.get(
-        f"/api/voyages/{run_id}/hypothesis-tree/{child.id}", headers=owner
-    )
+    resp = await client.get(f"/api/voyages/{run_id}/hypothesis-tree/{child.id}", headers=owner)
     assert resp.status_code == 200
     assert resp.json()["statement"] == "验证实验"
 
     # 节点必须属于路径里的 run：跨 run 直取 404
-    resp = await client.get(
-        f"/api/voyages/{run_id}/hypothesis-tree/{other_root.id}", headers=owner
-    )
+    resp = await client.get(f"/api/voyages/{run_id}/hypothesis-tree/{other_root.id}", headers=owner)
     assert resp.status_code == 404
 
     # 外人（非课题主人、非创建者）：树与单节点都 404
     stranger = await _hdr(client, "hyptree-stranger@example.com")
     resp = await client.get(f"/api/voyages/{run_id}/hypothesis-tree", headers=stranger)
     assert resp.status_code == 404
-    resp = await client.get(
-        f"/api/voyages/{run_id}/hypothesis-tree/{root.id}", headers=stranger
-    )
+    resp = await client.get(f"/api/voyages/{run_id}/hypothesis-tree/{root.id}", headers=stranger)
     assert resp.status_code == 404

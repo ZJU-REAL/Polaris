@@ -1419,7 +1419,7 @@ export interface DisciplinePackSummary {
   description: string;
   /** 这个包带来几条抽取 schema；0 = 方法卡沿用内置字段（如计算机科学） */
   schema_count: number;
-  /** 新建文献库默认勾选的来源（#821） */
+  /** 新建文献库默认勾选的来源；空 = 包没声明，跟部署默认走（#821） */
   sources: string[];
   /** 选了 arXiv 时的分类快捷项；空 = 该学科在 arXiv 上没有对应分类 */
   arxiv_categories: string[];
@@ -4039,7 +4039,7 @@ export const api = {
   listDisciplines(): Promise<DisciplinePackSummary[]> {
     return request<DisciplinePackSummary[]>('/disciplines');
   },
-  /** 不选学科（「通用」）时新建文献库默认用哪些来源（#821）。 */
+  /** 不选学科（「通用」）时新建文献库默认用哪些来源：部署默认，即文献检索设置里的来源（#821）。 */
   getDisciplineDefaults(): Promise<{ sources: string[] }> {
     return request<{ sources: string[] }>('/disciplines/defaults');
   },

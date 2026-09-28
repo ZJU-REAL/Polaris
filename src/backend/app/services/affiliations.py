@@ -62,6 +62,7 @@ async def set_affiliation_extraction_mode(
     await session.commit()
     return mode
 
+
 # 标题页范围：作者-机构对应比纯机构列表信息量大，略放宽到 3500 字符
 _HEAD_CHARS = 3500
 _MAX_TOKENS = 900  # 输出逐作者映射，比纯机构数组略大

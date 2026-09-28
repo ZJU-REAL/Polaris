@@ -116,9 +116,7 @@ async def _seed_library(client):
             )
             session.add(paper)
             await session.flush()
-            session.add(
-                LibraryPaper(library_id=library_id, paper_id=paper.id, status="included")
-            )
+            session.add(LibraryPaper(library_id=library_id, paper_id=paper.id, status="included"))
         await session.commit()
     return library_id, user_id, headers
 
@@ -164,11 +162,20 @@ async def test_zotero_import_dedup_attachments_and_summary(
     events = await _read_events(fake_redis, "ztest")
     items = [event["data"] for event in events if event["event"] == "batch_item"]
     assert [item["status"] for item in items] == [
-        "created", "existing", "existing", "existing", "created", "invalid", "created", "created",
+        "created",
+        "existing",
+        "existing",
+        "existing",
+        "created",
+        "invalid",
+        "created",
+        "created",
     ]
     # 三级去重理由逐级命中：DOI（大小写不敏感）→ arXiv（去版本号）→ 规范化标题
     assert [item["reason"] for item in items if item["status"] == "existing"] == [
-        "doi", "arxiv", "title",
+        "doi",
+        "arxiv",
+        "title",
     ]
     assert items[5]["error"]  # 缺 title 的条目带原因
     assert items[6].get("attachment") is True
@@ -180,10 +187,14 @@ async def test_zotero_import_dedup_attachments_and_summary(
 
     async with get_sessionmaker()() as session:
         member_count = (
-            await session.execute(
-                select(LibraryPaper).where(LibraryPaper.library_id == library_id)
+            (
+                await session.execute(
+                    select(LibraryPaper).where(LibraryPaper.library_id == library_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(member_count) == 7  # 3 既有 + 4 新导入，重复条目没建新行
 
         attached = (
@@ -192,9 +203,7 @@ async def test_zotero_import_dedup_attachments_and_summary(
         assert attached.pdf_path and attached.full_text_path  # 附件走上传入口，全文一并抽好
 
         weird = (
-            await session.execute(
-                select(Paper).where(Paper.title.ilike("%Online Tool%"))
-            )
+            await session.execute(select(Paper).where(Paper.title.ilike("%Online Tool%")))
         ).scalar_one()
         # 异常字段兜底：biblatex date 取年份，note 里的 arXiv 线索提出来
         assert weird.year == 2024

@@ -112,9 +112,7 @@ async def test_personal_export_excludes_other_users_and_unsaved(client):
     # 另一个用户的个人库导出看不到本人收藏
     other = await register_and_login(client, email="pexport-other@example.com")
     other_headers = {"Authorization": f"Bearer {other}"}
-    resp = await client.get(
-        "/api/me/library/export/citations?format=bibtex", headers=other_headers
-    )
+    resp = await client.get("/api/me/library/export/citations?format=bibtex", headers=other_headers)
     assert resp.status_code == 200, resp.text
     assert "Mine Saved" not in resp.text
 
@@ -149,9 +147,7 @@ async def test_semantic_falls_back_to_keyword_on_sqlite(client):
     await _save(client, headers, p1)
     await _save(client, headers, p2)
 
-    resp = await client.get(
-        "/api/me/library?tab=saved&mode=semantic&q=attention", headers=headers
-    )
+    resp = await client.get("/api/me/library?tab=saved&mode=semantic&q=attention", headers=headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["mode_used"] == "keyword"  # 回退

@@ -41,6 +41,8 @@ def supported_sources() -> tuple[str, ...]:
 def credential_sources() -> tuple[str, ...]:
     # easyscholar 只做期刊分级（venue_metrics），不是检索源，仅在凭据面出现
     return (*supported_sources(), "easyscholar")
+
+
 DEFAULT_SCORE_WEIGHTS = {
     "relevance": 0.45,
     "evidence_quality": 0.20,

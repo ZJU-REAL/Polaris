@@ -378,9 +378,7 @@ async def get_manuscript_ai_disclosure(
     可见性与稿件详情同口径（非本人 404）。零 LLM 调用，facts 一并返回供前端展示。
     """
     manuscript = await _member_manuscript(session, manuscript_id, user)
-    facts = await ai_disclosure_service.build_disclosure_facts(
-        session, manuscript_id=manuscript.id
-    )
+    facts = await ai_disclosure_service.build_disclosure_facts(session, manuscript_id=manuscript.id)
     rendered = ai_disclosure_service.render_disclosure(facts, style=style, lang=lang)
     return {**rendered, "facts": facts}
 

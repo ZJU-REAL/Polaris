@@ -98,9 +98,7 @@ class FakeAgentSocket:
 def _serve(ws, fake_redis, hub, **overrides):
     kwargs = {"heartbeat_timeout": 5.0, "auth_timeout": 2.0, "wake_poll": 0.05}
     kwargs.update(overrides)
-    return asyncio.create_task(
-        runner_ws.serve_agent(ws, redis=fake_redis, hub=hub, **kwargs)
-    )
+    return asyncio.create_task(runner_ws.serve_agent(ws, redis=fake_redis, hub=hub, **kwargs))
 
 
 async def _agent_online(resource_id: uuid.UUID) -> bool:
@@ -140,9 +138,7 @@ async def test_register_flow_and_token_single_use(client, fake_redis):
 
     # 机器凭据：kind=ws，只存 secret 摘要（加密），明文任何列都不落
     async with get_sessionmaker()() as session:
-        credential = await session.get(
-            ConnectionCredential, uuid.UUID(resource["credential_id"])
-        )
+        credential = await session.get(ConnectionCredential, uuid.UUID(resource["credential_id"]))
         assert credential.kind == "ws"
         assert credential.host == "gpu-home"
         assert credential.private_key_encrypted is None

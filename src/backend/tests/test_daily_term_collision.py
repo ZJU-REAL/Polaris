@@ -129,9 +129,7 @@ async def test_both_sources_reach_the_pool_when_they_share_a_term(client, two_so
     assert categories == ["machine learning"]
 
 
-async def test_a_broken_source_does_not_take_the_other_ones_papers_with_it(
-    client, two_sources
-):
+async def test_a_broken_source_does_not_take_the_other_ones_papers_with_it(client, two_sources):
     # 订阅按人存（#806）：得先有一个人，才谈得上订阅和信息流
     await register_and_login(client)
     two_sources(

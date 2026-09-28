@@ -162,7 +162,8 @@ async def test_unavailable_source_is_reported_not_silently_skipped(client):
 
     async with get_sessionmaker()() as session:
         await daily_feed.set_subscriptions(
-            session, [daily_feed.Subscription(source="ghost", terms=("anything",))],
+            session,
+            [daily_feed.Subscription(source="ghost", terms=("anything",))],
             user=await owner_of(session),
         )
     async with get_sessionmaker()() as session:
@@ -183,7 +184,8 @@ async def test_entry_with_only_a_doi_reaches_the_pool(client, civil_source):
 
     async with get_sessionmaker()() as session:
         await daily_feed.set_subscriptions(
-            session, [daily_feed.Subscription(source="civil", terms=("blast",))],
+            session,
+            [daily_feed.Subscription(source="civil", terms=("blast",))],
             user=await owner_of(session),
         )
 

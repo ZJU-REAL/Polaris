@@ -67,8 +67,8 @@ async def _run(
         created_by = None
         if attended:
             created_by = (
-                await session.execute(select(User.id).order_by(User.created_at))
-            ).scalars().first()
+                (await session.execute(select(User.id).order_by(User.created_at))).scalars().first()
+            )
         run = VoyageRun(
             kind=kind,
             goal="ask 契约测试",
@@ -131,8 +131,8 @@ async def test_fatal_step_library_run_notifies_owner(client, queue_stub):
     await register_and_login(client)
     async with get_sessionmaker()() as session:
         owner_id = (
-            await session.execute(select(User.id).order_by(User.created_at))
-        ).scalars().first()
+            (await session.execute(select(User.id).order_by(User.created_at))).scalars().first()
+        )
         run = VoyageRun(
             kind="custom",
             goal="库级 ask 通知",
@@ -174,12 +174,16 @@ async def test_raise_ask_idempotent_on_replay(client, queue_stub):
     await engine.run(run_id)  # 重放
     async with get_sessionmaker()() as session:
         asks = (
-            await session.execute(
-                select(VoyageMessage).where(
-                    VoyageMessage.run_id == run_id, VoyageMessage.kind == "ask"
+            (
+                await session.execute(
+                    select(VoyageMessage).where(
+                        VoyageMessage.run_id == run_id, VoyageMessage.kind == "ask"
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(asks) == 1 and asks[0].status == "open"
 
 
@@ -216,12 +220,16 @@ async def test_answer_retry_resumes_and_consumes(client, queue_stub, bus_recorde
         run = await session.get(VoyageRun, run_id)
         assert run.status == "done"
         messages = (
-            await session.execute(
-                select(VoyageMessage)
-                .where(VoyageMessage.run_id == run_id)
-                .order_by(VoyageMessage.seq)
+            (
+                await session.execute(
+                    select(VoyageMessage)
+                    .where(VoyageMessage.run_id == run_id)
+                    .order_by(VoyageMessage.seq)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         the_ask = next(m for m in messages if m.kind == "ask")
         assert the_ask.status == "consumed"
         # 回答文本镜像成建议消息，并在重试执行时被消费进 params
@@ -229,9 +237,7 @@ async def test_answer_retry_resumes_and_consumes(client, queue_stub, bus_recorde
         assert mirror.consumed_at is not None
         step = (
             await session.execute(
-                select(VoyageStep).where(
-                    VoyageStep.run_id == run_id, VoyageStep.status == "passed"
-                )
+                select(VoyageStep).where(VoyageStep.run_id == run_id, VoyageStep.status == "passed")
             )
         ).scalar_one()
         assert "参数已修，重试" in (step.params.get("user_guidance") or [])
@@ -300,12 +306,16 @@ async def test_cancel_supersedes_open_ask(client, queue_stub):
     assert resp.status_code == 200
     async with get_sessionmaker()() as session:
         asks = (
-            await session.execute(
-                select(VoyageMessage).where(
-                    VoyageMessage.run_id == run_id, VoyageMessage.kind == "ask"
+            (
+                await session.execute(
+                    select(VoyageMessage).where(
+                        VoyageMessage.run_id == run_id, VoyageMessage.kind == "ask"
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert [a.status for a in asks] == ["superseded"]
     # 已取消：回答入口自然 409（open 提问已不存在）
     resp = await client.post(
@@ -457,8 +467,10 @@ async def test_done_criteria_continue_appends_even_with_bad_anchor(
 
     async with get_sessionmaker()() as session:
         first_step_id = (
-            await session.execute(select(VoyageStep.id).where(VoyageStep.run_id == run_id))
-        ).scalars().first()
+            (await session.execute(select(VoyageStep.id).where(VoyageStep.run_id == run_id)))
+            .scalars()
+            .first()
+        )
 
     async def bad_anchor_edit(run, failed_step, diagnosis, plan_state, user_guidance=None):
         return {
@@ -485,7 +497,7 @@ async def test_done_criteria_continue_appends_even_with_bad_anchor(
                             "requires_gate": "experiment.run",
                         }
                     ],
-                }
+                },
             ],
         }
 

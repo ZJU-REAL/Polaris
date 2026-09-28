@@ -473,4 +473,3 @@ async def model_rerank(
             "rubric_applied": bool(score_rubric),
             "error": f"{type(exc).__name__}: {exc}"[:500],
         }
-

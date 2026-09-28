@@ -35,9 +35,7 @@ async def test_anonymous_cannot_list_disciplines(client):
 
 async def test_the_builtin_packs_are_listed(client):
     token = await register_and_login(client, email="disc@example.com")
-    resp = await client.get(
-        "/api/disciplines", headers={"Authorization": f"Bearer {token}"}
-    )
+    resp = await client.get("/api/disciplines", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     names = {row["name"] for row in body}
@@ -98,8 +96,6 @@ async def test_a_broken_pack_does_not_break_the_listing(client, tmp_path, monkey
 
 async def test_the_listing_is_ordered_so_the_picker_is_stable(client):
     token = await register_and_login(client, email="disc4@example.com")
-    resp = await client.get(
-        "/api/disciplines", headers={"Authorization": f"Bearer {token}"}
-    )
+    resp = await client.get("/api/disciplines", headers={"Authorization": f"Bearer {token}"})
     titles = [r["title"] for r in resp.json()]
     assert titles == sorted(titles), "顺序不定的话，同一个下拉菜单每次打开都在跳"

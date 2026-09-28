@@ -749,8 +749,7 @@ async def writing_compile(ctx: ActionContext, params: dict[str, Any]) -> dict[st
 
         picked = sorted(error_diags, key=_root_first)[:3]
         summary = "；".join(
-            (f"{d['file']}:{d['line']}: " if d.get("file") and d.get("line") else "")
-            + d["message"]
+            (f"{d['file']}:{d['line']}: " if d.get("file") and d.get("line") else "") + d["message"]
             for d in picked
         )
         raise RuntimeError(f"终编译未通过（status={result['status']}）：{summary or '无诊断'}")

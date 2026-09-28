@@ -22,9 +22,7 @@ from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 
 class GuidanceDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "guidance_documents"
-    __table_args__ = (
-        UniqueConstraint("slug", "version", name="uq_guidance_documents_slug_ver"),
-    )
+    __table_args__ = (UniqueConstraint("slug", "version", name="uq_guidance_documents_slug_ver"),)
 
     slug: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)

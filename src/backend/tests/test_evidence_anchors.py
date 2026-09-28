@@ -45,9 +45,7 @@ def test_payloads_include_sentence_paragraph_and_chunk_anchors() -> None:
     full_text = "First sentence. Second sentence.\n\nA new paragraph."
     assert all(
         payload.content_revision
-        == content_revision(
-            payload.quoted_text if payload.anchor_type == "chunk" else full_text
-        )
+        == content_revision(payload.quoted_text if payload.anchor_type == "chunk" else full_text)
         for payload in payloads
     )
     assert all(payload.locator["page_start"] == 4 for payload in payloads)
@@ -98,12 +96,16 @@ async def test_persist_is_idempotent_and_keeps_reparse_revision(app) -> None:
         await session.commit()
         assert first == 3 and second == 0 and third == 3
         rows = (
-            await session.execute(
-                __import__("sqlalchemy").select(PaperEvidenceAnchor).where(
-                    PaperEvidenceAnchor.paper_id == paper.id
+            (
+                await session.execute(
+                    __import__("sqlalchemy")
+                    .select(PaperEvidenceAnchor)
+                    .where(PaperEvidenceAnchor.paper_id == paper.id)
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(rows) == 6
 
 
@@ -147,13 +149,19 @@ async def test_resolve_falls_back_to_chunk_then_paper(app) -> None:
         await persist_chunk_anchors(session, paper_id=paper.id, chunks=[chunk])
         await session.commit()
         anchor = (
-            await session.execute(
-                __import__("sqlalchemy").select(PaperEvidenceAnchor).where(
-                    PaperEvidenceAnchor.paper_id == paper.id,
-                    PaperEvidenceAnchor.anchor_type == "sentence",
+            (
+                await session.execute(
+                    __import__("sqlalchemy")
+                    .select(PaperEvidenceAnchor)
+                    .where(
+                        PaperEvidenceAnchor.paper_id == paper.id,
+                        PaperEvidenceAnchor.anchor_type == "sentence",
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert anchor is not None
         chunk.text = "A completely unrelated replacement."
         await session.flush()

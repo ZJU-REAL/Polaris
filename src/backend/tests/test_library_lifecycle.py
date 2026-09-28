@@ -127,10 +127,14 @@ async def test_delete_project_keeps_library_and_content_orphans_association(clie
         assert membership is not None
         # 概念是全平台一份，按库内论文的关联推导
         concept_count = (
-            await session.execute(
-                select(Concept).where(Concept.id.in_(library_concept_ids([library_id])))
+            (
+                await session.execute(
+                    select(Concept).where(Concept.id.in_(library_concept_ids([library_id])))
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(concept_count) == 1
         # 论文内容池行本身也不动
         assert await session.get(Paper, paper_id) is not None

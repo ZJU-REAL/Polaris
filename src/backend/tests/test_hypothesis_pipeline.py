@@ -226,12 +226,18 @@ async def _seed_fuels(session, library_id, ids):
     bridge = await add_concept(session, project_id=project_id, name="bridge", slug="hyp-bridge")
     gamma = await add_concept(session, project_id=project_id, name="gamma", slug="hyp-gamma")
     await add_paper(
-        session, project_id=project_id, title="Fuel Pair One",
-        status="included", concepts=[alpha, bridge],
+        session,
+        project_id=project_id,
+        title="Fuel Pair One",
+        status="included",
+        concepts=[alpha, bridge],
     )
     await add_paper(
-        session, project_id=project_id, title="Fuel Pair Two",
-        status="included", concepts=[bridge, gamma],
+        session,
+        project_id=project_id,
+        title="Fuel Pair Two",
+        status="included",
+        concepts=[bridge, gamma],
     )
     # 燃料 3：B 的缺口台账条目
     session.add(
@@ -270,9 +276,9 @@ async def test_generate_fuels_change_candidates_and_trace(client):
     assert set(fuels["methods"]) == {str(ids["A"]), str(ids["M"])}
     assert fuels["gaps"] == [str(ids["B"])]
     # 概念对的 a/c 取 uuid 规范序（随机 uuid 下方向不定），按名字集合断言
-    assert [
-        sorted((p["concept_a"], p["concept_c"])) for p in fuels["concept_pairs"]
-    ] == [["alpha", "gamma"]]
+    assert [sorted((p["concept_a"], p["concept_c"])) for p in fuels["concept_pairs"]] == [
+        ["alpha", "gamma"]
+    ]
 
 
 async def test_generate_fuel_service_failure_degrades_silently(client, monkeypatch):

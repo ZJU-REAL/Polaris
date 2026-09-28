@@ -208,9 +208,7 @@ def _merge_list(left: Any, right: Any) -> list[Any]:
 
 def _merge_pair(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str, Any]:
     richer, other = (
-        (left, right)
-        if _metadata_richness(left) >= _metadata_richness(right)
-        else (right, left)
+        (left, right) if _metadata_richness(left) >= _metadata_richness(right) else (right, left)
     )
     merged = dict(richer)
     for key, value in other.items():
@@ -221,9 +219,7 @@ def _merge_pair(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str, 
             metadata = dict(current) if isinstance(current, Mapping) else {}
             for metadata_key, metadata_value in value.items():
                 if metadata_key == "retrieval_hits":
-                    metadata[metadata_key] = _merge_list(
-                        metadata.get(metadata_key), metadata_value
-                    )
+                    metadata[metadata_key] = _merge_list(metadata.get(metadata_key), metadata_value)
                 elif not metadata.get(metadata_key) and metadata_value not in (None, "", []):
                     metadata[metadata_key] = metadata_value
             merged[key] = metadata
@@ -298,8 +294,7 @@ def _dimension_scores(
 ) -> dict[str, float]:
     text_tokens = _tokens(
         " ".join(
-            str(candidate.get(field) or "")
-            for field in ("title", "abstract", "venue", "keywords")
+            str(candidate.get(field) or "") for field in ("title", "abstract", "venue", "keywords")
         )
     )
     query_tokens = _tokens(" ".join([topic, *keywords]))

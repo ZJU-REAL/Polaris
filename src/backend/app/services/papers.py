@@ -1077,9 +1077,7 @@ async def _process_saved_pdf(
                 )
                 apply_author_affiliations(paper, mapping)
         except Exception:  # noqa: BLE001
-            logger.warning(
-                "affiliation extraction failed for paper %s", paper.id, exc_info=True
-            )
+            logger.warning("affiliation extraction failed for paper %s", paper.id, exc_info=True)
     await session.commit()
     # 摘要兜底块的向量 = 论文级向量的拷贝（零 token，不受任何开关控制）
     from app.services.chunks import sync_abstract_chunk_vectors

@@ -108,14 +108,10 @@ async def apply_profile_to_query_plan(
         keywords=keywords,
     )
     sources = [
-        str(item).strip().lower()
-        for item in config.get("sources") or []
-        if str(item).strip()
+        str(item).strip().lower() for item in config.get("sources") or [] if str(item).strip()
     ]
     current["queries"] = [
-        {**channel, "source": source}
-        for source in dict.fromkeys(sources)
-        for channel in channels
+        {**channel, "source": source} for source in dict.fromkeys(sources) for channel in channels
     ]
     current["interdisciplinary"] = {
         "profile_id": str(profile.id),

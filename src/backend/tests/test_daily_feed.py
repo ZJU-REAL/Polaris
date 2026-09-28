@@ -449,9 +449,7 @@ async def test_compile_entry_links_concepts_without_library(client, monkeypatch)
     item = items[0]
 
     for entry in items:
-        resp = await client.post(
-            f"/api/daily/papers/{entry['entry_id']}/compile", headers=headers
-        )
+        resp = await client.post(f"/api/daily/papers/{entry['entry_id']}/compile", headers=headers)
         assert resp.status_code == 200, resp.text
         assert "[[" in resp.json()["wiki_content"]  # 正文里有双链
 
@@ -757,9 +755,7 @@ async def test_daily_feed_voyage_end_to_end(client, monkeypatch):
         assert all(s.status == "passed" for s in run.steps)
 
     token = await register_and_login(client, email="e2e@example.com")
-    resp = await client.get(
-        "/api/daily/papers", headers={"Authorization": f"Bearer {token}"}
-    )
+    resp = await client.get("/api/daily/papers", headers={"Authorization": f"Bearer {token}"})
     assert resp.json()["total"] == 1
 
 
@@ -942,8 +938,6 @@ async def test_daily_fetch_notes_but_does_not_fail_on_a_quiet_day(client, monkey
         [{"kind": "no_error"}], observation=obs, checkpoint=ctx.checkpoint
     )
     assert verdict is None or verdict["passed"] is True
-
-
 
 
 async def test_sync_status_reports_failed_categories(client, monkeypatch):
@@ -1423,9 +1417,7 @@ async def test_probe_reports_whether_todays_batch_is_out(client, monkeypatch):
     monkeypatch.setattr(
         daily_feed,
         "get_arxiv_client",
-        lambda: _StubArxiv(
-            {"cs.AI": [_rss_entry("2608.77001", "没收过的")]}, batch_date=yesterday
-        ),
+        lambda: _StubArxiv({"cs.AI": [_rss_entry("2608.77001", "没收过的")]}, batch_date=yesterday),
     )
     async with get_sessionmaker()() as session:
         fresh, _ = await daily_feed.todays_batch_available(session)
@@ -1675,9 +1667,7 @@ async def test_probing_slows_down_after_exhaustion_instead_of_stopping():
     )
     # 探满但过了复查间隔：再探一次
     long_ago = (now - dt.timedelta(minutes=SLOW_PROBE_MINUTES + 1)).isoformat()
-    assert should_probe_now(
-        {"attempts": 10, "last_probe_at": long_ago}, now=now, max_attempts=10
-    )
+    assert should_probe_now({"attempts": 10, "last_probe_at": long_ago}, now=now, max_attempts=10)
 
 
 async def test_probe_gate_is_permissive_when_the_timestamp_is_missing_or_broken():
@@ -1799,7 +1789,6 @@ async def test_probe_says_no_when_everything_is_already_in_the_pool(client, monk
 
         fresh, _ = await daily_feed.todays_batch_available(session)
     assert fresh is False
-
 
 
 async def test_probe_asks_every_category_not_just_the_first(client, monkeypatch):
@@ -1986,9 +1975,7 @@ async def test_leftovers_from_yesterday_do_not_count_as_todays_batch(client, mon
     monkeypatch.setattr(
         daily_feed,
         "get_arxiv_client",
-        lambda: _StubArxiv(
-            {"cs.AI": [_rss_entry("2608.95000", "昨天那批")]}, batch_date=yesterday
-        ),
+        lambda: _StubArxiv({"cs.AI": [_rss_entry("2608.95000", "昨天那批")]}, batch_date=yesterday),
     )
     async with get_sessionmaker()() as session:
         await daily_feed.sync_daily_feed(session)
@@ -2054,9 +2041,7 @@ async def test_todays_batch_still_triggers_once_published(client, monkeypatch):
     monkeypatch.setattr(
         daily_feed,
         "get_arxiv_client",
-        lambda: _StubArxiv(
-            {"cs.AI": [_rss_entry("2608.95002", "今天那批")]}, batch_date=today
-        ),
+        lambda: _StubArxiv({"cs.AI": [_rss_entry("2608.95002", "今天那批")]}, batch_date=today),
     )
     async with get_sessionmaker()() as session:
         fresh, declared = await daily_feed.todays_batch_available(session)

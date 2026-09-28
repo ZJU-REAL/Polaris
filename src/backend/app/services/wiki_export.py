@@ -142,9 +142,7 @@ async def build_obsidian_zip_for_libraries(
         else []
     )
     paper_rows.sort(
-        key=lambda pm: -(
-            pm[1].relevance_score if pm[1].relevance_score is not None else -1e18
-        )
+        key=lambda pm: -(pm[1].relevance_score if pm[1].relevance_score is not None else -1e18)
     )
     papers = [p for p, _ in paper_rows]
     membership_of = {p.id: m for p, m in paper_rows}

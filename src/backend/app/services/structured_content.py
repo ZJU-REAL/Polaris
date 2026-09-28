@@ -328,14 +328,14 @@ def rewrite_markdown_asset_urls(
         url = asset_urls.get(resolved or "")
         if url is None:
             return match.group(0)
-        return f'{match.group("prefix")}<{url}>{match.group("suffix")}'
+        return f"{match.group('prefix')}<{url}>{match.group('suffix')}"
 
     def html_replacement(match: re.Match[str]) -> str:
         resolved = _resolved_reference(markdown_path, match.group("reference"))
         url = asset_urls.get(resolved or "")
         if url is None:
             return match.group(0)
-        return f'{match.group("prefix")}{url}{match.group("suffix")}'
+        return f"{match.group('prefix')}{url}{match.group('suffix')}"
 
     rewritten = _MARKDOWN_DESTINATION.sub(markdown_replacement, markdown)
     return _HTML_DESTINATION.sub(html_replacement, rewritten)

@@ -210,9 +210,7 @@ async def restore_to_shelf(
     return ShelfItemRead.model_validate(item)
 
 
-@router.delete(
-    "/projects/{project_id}/shelf/{paper_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/projects/{project_id}/shelf/{paper_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_from_shelf(
     project_id: uuid.UUID,
     paper_id: uuid.UUID,
@@ -224,9 +222,7 @@ async def remove_from_shelf(
     await _require_member(session, project_id, user)
     try:
         if hard:
-            await shelf_service.purge_from_shelf(
-                session, project_id=project_id, paper_id=paper_id
-            )
+            await shelf_service.purge_from_shelf(session, project_id=project_id, paper_id=paper_id)
         else:
             await shelf_service.remove_from_shelf(
                 session, project_id=project_id, paper_id=paper_id, user_id=user.id

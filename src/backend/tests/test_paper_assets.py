@@ -33,7 +33,7 @@ async def _user(client, email: str) -> tuple[dict[str, str], uuid.UUID]:
     token = await register_and_login(client, email=email)
     headers = {"Authorization": f"Bearer {token}"}
     async with get_sessionmaker()() as session:
-        user_id = (await session.scalar(select(User.id).where(User.email == email)))
+        user_id = await session.scalar(select(User.id).where(User.email == email))
     return headers, user_id
 
 
@@ -131,9 +131,7 @@ async def test_public_asset_can_be_granted_without_copying_blob(app, client):
         target_library = await _library(session, user_id=user_id)
         paper = await _paper_in_library(session, source_library)
         session.add(
-            LibraryPaper(
-                library_id=target_library.id, paper_id=paper.id, status="included"
-            )
+            LibraryPaper(library_id=target_library.id, paper_id=paper.id, status="included")
         )
         asset = await create_or_reuse_asset(
             session,

@@ -84,9 +84,7 @@ def test_desktop_redis_is_in_process(monkeypatch):
     import app.core.redis as redis_mod
 
     monkeypatch.setattr(redis_mod, "_client", None)
-    monkeypatch.setattr(
-        "app.core.redis.get_settings", lambda: Settings(profile="desktop")
-    )
+    monkeypatch.setattr("app.core.redis.get_settings", lambda: Settings(profile="desktop"))
     client = redis_mod.get_redis()
     assert type(client).__module__.startswith("fakeredis")
     monkeypatch.setattr(redis_mod, "_client", None)

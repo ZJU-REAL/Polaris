@@ -66,9 +66,7 @@ async def create_resource(
 
 async def list_resources(session: AsyncSession, *, owner_id: uuid.UUID) -> Sequence[Resource]:
     stmt = (
-        select(Resource)
-        .where(Resource.owner_id == owner_id)
-        .order_by(Resource.created_at.desc())
+        select(Resource).where(Resource.owner_id == owner_id).order_by(Resource.created_at.desc())
     )
     return (await session.execute(stmt)).scalars().all()
 

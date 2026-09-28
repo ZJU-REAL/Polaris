@@ -182,9 +182,7 @@ async def enrich_paper(
         await emit("download", "skipped", "no arxiv id")
     else:
         try:
-            content = await literature_sources.require_source("arxiv").download_pdf(
-                paper.arxiv_id
-            )
+            content = await literature_sources.require_source("arxiv").download_pdf(paper.arxiv_id)
             paper.pdf_path = str(save_pdf(str(paper_id), content))
             await session.commit()
             from app.services.file_projection import project_paper_pdf
@@ -330,9 +328,7 @@ async def enrich_paper(
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
-            logger.warning(
-                "enrich %s extraction failed for %s", schema.id, paper_id, exc_info=True
-            )
+            logger.warning("enrich %s extraction failed for %s", schema.id, paper_id, exc_info=True)
             paper = await _rollback_and_reload()
 
     # 方法库双轴索引（#663）：方法卡落表后同步刷 purpose/mechanism 向量。
@@ -481,9 +477,7 @@ async def _run_enrichment_unbounded(
                     bus, task_id, "error", {"message": "paper not found"}
                 )
                 return
-            target = (
-                await session.get(DirectionLibrary, library_id) if library_id else None
-            )
+            target = await session.get(DirectionLibrary, library_id) if library_id else None
             await enrich_paper(
                 session,
                 paper,
@@ -635,9 +629,7 @@ async def _run_batch_import(
         waits = [wait_for_enrichment(index, child_id) for index, child_id in enrichment_tasks]
         for completed in asyncio.as_completed(waits):
             index = await completed
-            await publish_paper_task_event(
-                bus, task_id, "batch_enriched", {"index": index}
-            )
+            await publish_paper_task_event(bus, task_id, "batch_enriched", {"index": index})
 
         await publish_paper_task_event(
             bus,

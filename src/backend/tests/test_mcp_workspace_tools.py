@@ -320,9 +320,9 @@ async def test_manuscript_cross_project_denied(client):
         headers=headers,
     )
     manuscript_id = resp.json()["id"]
-    project_b = (
-        await client.post("/api/projects", json={"name": "ms-b"}, headers=headers)
-    ).json()["id"]
+    project_b = (await client.post("/api/projects", json={"name": "ms-b"}, headers=headers)).json()[
+        "id"
+    ]
 
     message = await _call_expect_error(
         client,

@@ -31,9 +31,7 @@ class PaperAsset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __tablename__ = "paper_assets"
     __table_args__ = (
-        UniqueConstraint(
-            "paper_id", "blob_id", "source", name="uq_paper_assets_paper_blob_source"
-        ),
+        UniqueConstraint("paper_id", "blob_id", "source", name="uq_paper_assets_paper_blob_source"),
         Index("ix_paper_assets_paper_state", "paper_id", "state"),
     )
 

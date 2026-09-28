@@ -69,7 +69,8 @@ async def _seed_paper_with_figures(project_id: str) -> str:
         },
     ]
     async with get_sessionmaker()() as session:
-        paper = await add_paper(session,
+        paper = await add_paper(
+            session,
             project_id=uuid.UUID(project_id),
             source="manual",
             title="Retrieval Augmented Generation",
@@ -114,9 +115,7 @@ async def test_figure_tools_direct(client):
     res = await tools.run_tool(ctx, "list_paper_figures", {"paper_id": paper_id})
     assert len(res["figures"]) == 3
     assert res["figures"][0]["kind"] == "method"
-    assert res["figures"][0]["download_url"].endswith(
-        f"/papers/{paper_id}/figures/0/image"
-    )
+    assert res["figures"][0]["download_url"].endswith(f"/papers/{paper_id}/figures/0/image")
     assert res["figures"][0]["download_url_expires_at"] is None
     assert res["figures"][2]["download_url"] is None
     assert res["figures"][2]["download_url_expires_at"] is None
@@ -167,11 +166,21 @@ async def test_related_papers_shared_concept(client):
             slug="rag",
             definition="检索增强",
         )
-        p1 = await add_paper(session,
-            project_id=pid, source="manual", title="Paper A", status="compiled", concepts=[concept]
+        p1 = await add_paper(
+            session,
+            project_id=pid,
+            source="manual",
+            title="Paper A",
+            status="compiled",
+            concepts=[concept],
         )
-        p2 = await add_paper(session,
-            project_id=pid, source="manual", title="Paper B", status="compiled", concepts=[concept]
+        p2 = await add_paper(
+            session,
+            project_id=pid,
+            source="manual",
+            title="Paper B",
+            status="compiled",
+            concepts=[concept],
         )
         session.add_all([p1, p2])
         await session.commit()

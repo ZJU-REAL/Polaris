@@ -68,9 +68,7 @@ class Helm:
         if "__parse_error__" in call.input:
             # 弱模型上高频：参数流到一半坏掉。单独成一类，因为提示不同——它该重发这次
             # 调用，而不是换个工具。
-            return self._failure(
-                call, {"error": "参数不是合法 JSON，请重新发起这次调用"}, started
-            )
+            return self._failure(call, {"error": "参数不是合法 JSON，请重新发起这次调用"}, started)
         try:
             result = await asyncio.wait_for(
                 run_tool(self._ctx, call.name, call.input), timeout=TOOL_TIMEOUT_SECONDS

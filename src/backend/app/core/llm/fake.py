@@ -607,7 +607,6 @@ class FakeProvider(LLMProvider):
             ensure_ascii=False,
         )
 
-
     # 引文意图的确定性替身规则（citation_graph.py 的 prompt 对齐）：真模型按语义判
     # 五档意图，fake 只按上下文关键词给可预期的结果——测试要的是「分类会落库、
     # 会分组展示」这条链路，不是判得多准。规则顺序即优先级。
@@ -1326,9 +1325,7 @@ class FakeProvider(LLMProvider):
                     }
                 )
             else:
-                out.append(
-                    {"index": item.get("index"), "stance": "speculation", "paper_ids": []}
-                )
+                out.append({"index": item.get("index"), "stance": "speculation", "paper_ids": []})
         return json.dumps({"items": out}, ensure_ascii=False)
 
     @staticmethod

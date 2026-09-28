@@ -110,9 +110,7 @@ async def _pymupdf_content(client):
 
 
 async def test_mineru_manifest_serves_utf8_markdown_and_signed_assets(app, client):
-    headers, _user_id, library_id, paper_id, _asset_id, version_id = await _mineru_content(
-        client
-    )
+    headers, _user_id, library_id, paper_id, _asset_id, version_id = await _mineru_content(client)
     response = await client.get(
         f"/api/libraries/{library_id}/papers/{paper_id}/structured-content",
         headers=headers,

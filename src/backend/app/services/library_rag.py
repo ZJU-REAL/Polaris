@@ -387,14 +387,10 @@ def _strip_invalid_citations(answer_text: str, allowed: set[str]) -> tuple[str, 
     return cleaned, stripped
 
 
-async def _paper_rows(
-    session: AsyncSession, paper_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, Paper]:
+async def _paper_rows(session: AsyncSession, paper_ids: list[uuid.UUID]) -> dict[uuid.UUID, Paper]:
     if not paper_ids:
         return {}
-    rows = (
-        (await session.execute(select(Paper).where(Paper.id.in_(paper_ids)))).scalars().all()
-    )
+    rows = (await session.execute(select(Paper).where(Paper.id.in_(paper_ids)))).scalars().all()
     return {p.id: p for p in rows}
 
 
@@ -510,9 +506,7 @@ async def answer(
         chunks = (
             (
                 await session.execute(
-                    _member_chunks_stmt(library_id).order_by(
-                        PaperChunk.paper_id, PaperChunk.seq
-                    )
+                    _member_chunks_stmt(library_id).order_by(PaperChunk.paper_id, PaperChunk.seq)
                 )
             )
             .scalars()
@@ -546,9 +540,7 @@ async def answer(
     for _round in range(max(0, max_rounds - 1)):
         if not candidates:
             break  # 一条都没命中：没有可供扩展的依据，扩展只会放大噪声
-        papers = await _paper_rows(
-            session, list({c.chunk.paper_id for c in candidates.values()})
-        )
+        papers = await _paper_rows(session, list({c.chunk.paper_id for c in candidates.values()}))
         new_queries = await _expand_queries(
             llm,
             question=question,

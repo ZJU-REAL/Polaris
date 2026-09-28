@@ -167,9 +167,7 @@ async def all_subscriptions(session: AsyncSession) -> list[Subscription]:
 
     停用的账号不计入：他们的词不该继续让平台每天替他们抓。
     """
-    users = (
-        (await session.execute(select(User).where(User.is_active.is_(True)))).scalars().all()
-    )
+    users = (await session.execute(select(User).where(User.is_active.is_(True)))).scalars().all()
     by_source: dict[str, list[str]] = {}
     for member in users:
         for subscription in await get_subscriptions(session, member):
@@ -257,9 +255,7 @@ async def get_categories(session: AsyncSession, user: User) -> list[str]:
     return [str(c) for c in value]
 
 
-async def set_categories(
-    session: AsyncSession, categories: list[str], *, user: User
-) -> list[str]:
+async def set_categories(session: AsyncSession, categories: list[str], *, user: User) -> list[str]:
     cleaned: list[str] = []
     for raw in categories:
         cat = raw.strip()
@@ -467,10 +463,7 @@ def _merge_status(
         "count": existing["count"] + state["count"],
         # 任一源失败就报 error：这个词今天的论文会残缺，而静默残缺比整体失败更危险
         "status": "error" if "error" in (existing["status"], state["status"]) else "ok",
-        "detail": "；".join(
-            d for d in (existing.get("detail"), state.get("detail")) if d
-        )
-        or None,
+        "detail": "；".join(d for d in (existing.get("detail"), state.get("detail")) if d) or None,
     }
     dates = [d for d in (existing.get("batch_date"), state.get("batch_date")) if d]
     if dates:
@@ -680,9 +673,7 @@ async def embed_touched_papers(
     """
     try:
         chunked = await ensure_chunks_for_papers(session, paper_ids=paper_ids)
-        stats = await embed_papers_missing_vectors(
-            session, paper_ids=paper_ids, user_id=user_id
-        )
+        stats = await embed_papers_missing_vectors(session, paper_ids=paper_ids, user_id=user_id)
         # 兜底块的向量 = 刚建好的论文级向量的拷贝（零 token），故排在嵌入之后
         from app.services.chunks import sync_abstract_chunk_vectors
 
@@ -701,9 +692,7 @@ async def embed_touched_papers(
         return {"enabled": True, "embedded": 0, "failed": 0, "embed_error": str(e)}
 
 
-async def ensure_chunks_for_papers(
-    session: AsyncSession, *, paper_ids: list[uuid.UUID]
-) -> int:
+async def ensure_chunks_for_papers(session: AsyncSession, *, paper_ids: list[uuid.UUID]) -> int:
     """给这批论文补可检索分段（没有全文→标题+摘要单块），返回新建了分段的篇数。
 
     每日推送不下 PDF，这里建出来的基本都是摘要兜底块；日后真抓了 PDF，
@@ -1137,9 +1126,7 @@ async def _relevance_page(
                     cast(literal(anchor.centroid, PgVector()), PgVector())
                 )
                 # 论文缺向量（嵌入失败的兜底）→ 该锚点退回关键词，与 anchor_score 同口径
-                score_exprs.append(
-                    func.coalesce(cos, kw_expr if kw_expr is not None else 0.0)
-                )
+                score_exprs.append(func.coalesce(cos, kw_expr if kw_expr is not None else 0.0))
             elif kw_expr is not None:
                 score_exprs.append(kw_expr)
         # 余弦可为负；Python 侧只保留正分（负相关不该把论文压到窗口底），SQL 用 0 兜底对齐
@@ -1921,9 +1908,7 @@ async def record_probe(
     batch_date: str | None,
     exhausted: bool = False,
 ) -> dict[str, Any]:
-    """记一次「探了但今天那批还没出来」。返回记完之后的状态。
-
-    """
+    """记一次「探了但今天那批还没出来」。返回记完之后的状态。"""
     state = await probe_state(session, now=now)
     state["attempts"] += 1
     state["batch_date"] = batch_date
@@ -1955,9 +1940,7 @@ async def already_ran_today(session: AsyncSession, kind: str, *, now: dt.datetim
     """今天（UTC）是否已经建过这种任务。"""
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     found = await session.scalar(
-        select(VoyageRun.id)
-        .where(VoyageRun.kind == kind, VoyageRun.created_at >= start)
-        .limit(1)
+        select(VoyageRun.id).where(VoyageRun.kind == kind, VoyageRun.created_at >= start).limit(1)
     )
     return found is not None
 
@@ -2097,9 +2080,7 @@ async def get_retention_days(session: AsyncSession) -> int:
     return DEFAULT_RETENTION_DAYS
 
 
-async def set_retention_days(
-    session: AsyncSession, days: int, *, user: User | None = None
-) -> int:
+async def set_retention_days(session: AsyncSession, days: int, *, user: User | None = None) -> int:
     if not (1 <= days <= 90):
         raise ValueError(f"retention out of range: {days}")
     await owner_settings.write_setting(

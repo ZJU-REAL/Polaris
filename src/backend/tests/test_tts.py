@@ -132,9 +132,7 @@ async def test_admin_discovers_provider_voices(client):
         )
     )
 
-    response = await client.post(
-        "/api/admin/settings/tts/voices", headers=admin, json=config
-    )
+    response = await client.post("/api/admin/settings/tts/voices", headers=admin, json=config)
 
     assert response.status_code == 200, response.text
     assert response.json() == {"voices": ["default", "calm"], "sample_rate": 24000}

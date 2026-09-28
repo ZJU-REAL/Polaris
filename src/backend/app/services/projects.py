@@ -13,6 +13,7 @@ from app.schemas.project import ProjectCreate, ProjectUpdate
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
+
 def slugify(name: str) -> str:
     slug = _SLUG_RE.sub("-", name.lower()).strip("-")
     return slug or uuid.uuid4().hex[:8]
@@ -114,9 +115,7 @@ async def get_project(
     列表看得到的，点进去必须打得开——这是 :func:`list_projects` 的单条镜像，
     两边一起改。课题作用域的读取口（想法/实验/闸门等）大多经由这里鉴权。
     """
-    stmt = select(Project).where(
-        Project.id == project_id, in_my_projects(Project.id, user_id)
-    )
+    stmt = select(Project).where(Project.id == project_id, in_my_projects(Project.id, user_id))
     return (await session.execute(stmt)).scalar_one_or_none()
 
 

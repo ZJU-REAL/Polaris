@@ -28,12 +28,8 @@ router = APIRouter(prefix="/voyages", tags=["hypotheses"])
 ARTIFACT_WHITELIST = frozenset({"discovery-summary.json", "discovery-disclosure.json"})
 
 
-async def _viewable_run(
-    session: AsyncSession, voyage_id: uuid.UUID, user: User
-) -> VoyageRun:
-    run = await voyages_service.get_voyage(
-        session, voyage_id=voyage_id, user_id=user.id, user=user
-    )
+async def _viewable_run(session: AsyncSession, voyage_id: uuid.UUID, user: User) -> VoyageRun:
+    run = await voyages_service.get_voyage(session, voyage_id=voyage_id, user_id=user.id, user=user)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="VOYAGE_NOT_FOUND")
     return run
@@ -92,9 +88,7 @@ async def get_voyage_artifact(
     return {"name": name, "content": json.loads(raw) if isinstance(raw, str) else raw}
 
 
-@router.get(
-    "/{voyage_id}/hypothesis-tree/{node_id}", response_model=HypothesisNodeRead
-)
+@router.get("/{voyage_id}/hypothesis-tree/{node_id}", response_model=HypothesisNodeRead)
 async def get_hypothesis_node(
     voyage_id: uuid.UUID,
     node_id: uuid.UUID,

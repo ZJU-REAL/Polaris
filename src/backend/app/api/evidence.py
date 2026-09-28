@@ -54,9 +54,13 @@ async def resolve_library_evidence(
         else []
     )
     result = await resolve_evidence_anchor(session, anchor, current_chunks=chunks)
-    if version is None or await asset_service.readable_asset(
-        session, asset_id=version.asset_id, library_id=library_id
-    ) is None:
+    if (
+        version is None
+        or await asset_service.readable_asset(
+            session, asset_id=version.asset_id, library_id=library_id
+        )
+        is None
+    ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="EVIDENCE_ASSET_NOT_FOUND")
     resolved_chunk = next(
         (chunk for chunk in chunks if chunk.id == result.chunk_id),

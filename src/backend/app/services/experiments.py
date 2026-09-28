@@ -225,9 +225,7 @@ async def create_experiment(
                 "extra_notes": params.extra_notes if params else None,
                 # 开题问答（AI 按 idea 生成的问题 + 用户回答）：进 plan/codegen prompt
                 "intake": (
-                    [qa.model_dump() for qa in params.intake]
-                    if params and params.intake
-                    else None
+                    [qa.model_dump() for qa in params.intake] if params and params.intake else None
                 ),
                 # 执行后端（Runner v2，#675/#716）：动作层分派点
                 # （actions_experiment._resolve_runner_plugin）从这里读，经注册表拿插件
@@ -373,9 +371,7 @@ async def purge_experiments(
     if ids is None:
         rows = [
             exp
-            for exp, _ in await list_experiments(
-                session, project_ids=[project_id], trashed=True
-            )
+            for exp, _ in await list_experiments(session, project_ids=[project_id], trashed=True)
         ]
     else:
         rows = [

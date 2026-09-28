@@ -109,9 +109,7 @@ async def list_project_notes(
     if library_ids:
         scope_conditions.append(
             PaperNote.paper_id.in_(
-                select(LibraryPaper.paper_id).where(
-                    LibraryPaper.library_id.in_(library_ids)
-                )
+                select(LibraryPaper.paper_id).where(LibraryPaper.library_id.in_(library_ids))
             )
         )
     in_scope = or_(*scope_conditions)

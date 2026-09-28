@@ -106,9 +106,7 @@ async def test_manual_add_pool_hit_complete_still_scores_new_membership(client, 
     await paper_enrich.await_task(task_id)
 
     async with get_sessionmaker()() as session:
-        membership = await membership_of(
-            session, project_id=proj_b, paper_id=resp.json()["id"]
-        )
+        membership = await membership_of(session, project_id=proj_b, paper_id=resp.json()["id"])
         assert membership.relevance_score is not None
         assert membership.relevance_reason
         assert membership.scored_at is not None
@@ -154,9 +152,7 @@ async def test_manual_add_pool_hit_already_scored_does_not_relaunch(client, fake
         from app.models.paper import Paper
         from app.services.libraries import get_library_for_project
 
-        membership = await membership_of(
-            session, project_id=proj_b, paper_id=paper_id
-        )
+        membership = await membership_of(session, project_id=proj_b, paper_id=paper_id)
         assert membership.relevance_score is not None  # 前提：这一轮确实打上分了
 
         paper = await session.get(Paper, uuid.UUID(paper_id))
@@ -290,9 +286,7 @@ async def test_paper_task_events_auth(client, fake_redis):
     assert resp.status_code == 404
 
     # 不存在的 task_id → 404
-    resp = await client.get(
-        f"/api/paper-tasks/{uuid.uuid4().hex}/events", headers=headers_a
-    )
+    resp = await client.get(f"/api/paper-tasks/{uuid.uuid4().hex}/events", headers=headers_a)
     assert resp.status_code == 404
 
 

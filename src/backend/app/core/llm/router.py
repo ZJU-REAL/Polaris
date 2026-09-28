@@ -47,6 +47,7 @@ class LLMNotConfiguredError(RuntimeError):
     前端据此提示「请先在设置里配置大模型」。
     """
 
+
 # 科研环节枚举（docs/task-system.md §7；M2 新增 embedding，见 docs/task-system.md §7；
 # 文献管理增强新增 reading（AI 伴读），见 docs/task-system.md §7（原 api-lit.md §3））
 #
@@ -1105,7 +1106,6 @@ class LLMRouter:
                 voyage_id=voyage_id,
                 library_id=library_id,
             )
-
 
     async def stream_events(
         self,

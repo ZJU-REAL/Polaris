@@ -258,9 +258,7 @@ def parse_tei(tei_xml: str) -> ParseResult | None:
     )
     if not result.metadata and not result.references and not result.sections:
         return None  # 空响应视同解析失败，让选优走 fallback
-    result.quality.coverage = compute_coverage(
-        result, metadata=True, references=True, body=False
-    )
+    result.quality.coverage = compute_coverage(result, metadata=True, references=True, body=False)
     return result
 
 

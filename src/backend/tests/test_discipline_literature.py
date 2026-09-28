@@ -1,8 +1,8 @@
 """学科决定去哪里找文献，而不是代码写死 arXiv（#821）。
 
 以前新建文献库没选来源就等于只用 arXiv，建库表单上摆着一排 cs.* 分类：做临床、做结构
-的人第一步就被问一个他的领域里不存在的分类体系。现在默认来源属于学科包；不选学科给
-覆盖全学科的通用来源；存量库（来源为空）仍按当年的含义只用 arXiv。
+的人第一步就被问一个他的领域里不存在的分类体系。现在默认来源属于学科包；不选学科就用
+部署默认（管理员在文献检索设置里配的来源）；存量库（来源为空）仍按当年的含义只用 arXiv。
 """
 
 import pytest
@@ -65,28 +65,39 @@ def test_computer_science_is_a_discipline_not_the_default():
     assert "cs" in packs
     assert "arxiv" in packs["cs"].literature.sources
     assert "cs.LG" in packs["cs"].literature.arxiv_categories
-    # 通用默认不偏向任何学科，尤其不是 arXiv
-    assert dp.DEFAULT_SOURCES == ("openalex",)
-    assert "arxiv" not in dp.default_sources_for(None)
+    # 代码里不再有自己的默认来源：不选学科 = 跟部署默认走
+    assert dp.pack_sources(None) is None
 
 
 def test_life_science_packs_default_to_biomedical_sources():
-    assert dp.default_sources_for("clinical")[0] == "pubmed"
-    assert dp.default_sources_for("wetlab")[0] == "pubmed"
-    assert "arxiv" not in dp.default_sources_for("structural")
+    assert dp.pack_sources("clinical")[0] == "pubmed"
+    assert dp.pack_sources("wetlab")[0] == "pubmed"
+    assert "arxiv" not in dp.pack_sources("structural")
 
 
-def test_an_unknown_discipline_falls_back_to_the_general_default():
-    assert dp.default_sources_for("nope") == list(dp.DEFAULT_SOURCES)
+def test_an_unknown_discipline_follows_the_deployment_default():
+    assert dp.pack_sources("nope") is None
 
 
 # ---- 新建文献库 ----
 
 
-async def test_new_library_without_discipline_uses_the_general_sources(client):
+async def test_new_library_without_discipline_uses_the_deployment_sources(client):
+    """「通用」库用管理员配的来源；管理员改了，之后新建的库跟着变。"""
+    from app.services.literature_settings import DEFAULTS
+
     headers = await _headers(client)
     lib = await _create(client, headers)
-    assert lib["definition"]["keywords"]["sources"] == ["openalex"]
+    assert lib["definition"]["keywords"]["sources"] == DEFAULTS["sources"]
+
+    resp = await client.put(
+        "/api/admin/settings/literature-search",
+        json={"sources": ["europepmc", "crossref"]},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    lib = await _create(client, headers)
+    assert lib["definition"]["keywords"]["sources"] == ["europepmc", "crossref"]
 
 
 async def test_new_library_follows_its_discipline(client):
@@ -130,8 +141,15 @@ async def test_discipline_list_carries_literature_defaults(client):
     assert by_name["clinical"]["sources"][0] == "pubmed"
 
 
-async def test_general_defaults_endpoint(client):
+async def test_general_defaults_endpoint_reports_the_deployment_sources(client):
+    from app.services.literature_settings import DEFAULTS
+
     headers = await _headers(client)
     resp = await client.get("/api/disciplines/defaults", headers=headers)
     assert resp.status_code == 200
-    assert resp.json() == {"sources": ["openalex"]}
+    assert resp.json() == {"sources": DEFAULTS["sources"]}
+    await client.put(
+        "/api/admin/settings/literature-search", json={"sources": ["pubmed"]}, headers=headers
+    )
+    resp = await client.get("/api/disciplines/defaults", headers=headers)
+    assert resp.json() == {"sources": ["pubmed"]}

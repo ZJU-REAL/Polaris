@@ -97,9 +97,7 @@ class MethodVector(_VectorColumns, Base):
     # "purpose" | "mechanism"（services/method_index.py 的 AXES）
     axis: Mapped[str] = mapped_column(String(16), primary_key=True)
     #: 这份向量出自哪张卡（"method" | "<包名>.method"）
-    schema_id: Mapped[str] = mapped_column(
-        String(64), primary_key=True, server_default="method"
-    )
+    schema_id: Mapped[str] = mapped_column(String(64), primary_key=True, server_default="method")
 
 
 class IdeaVector(_VectorColumns, Base):

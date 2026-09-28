@@ -189,9 +189,7 @@ async def _match_pool_papers(
     return matched
 
 
-async def ensure_citation_edges(
-    session: AsyncSession, paper: Paper, *, force: bool = False
-) -> int:
+async def ensure_citation_edges(session: AsyncSession, paper: Paper, *, force: bool = False) -> int:
     """为一篇论文建引文边；已建过则跳过（force 重建先删后插）。调用方负责 commit。
 
     返回新建边数。没有全文（或全文里解析不出文献表）返回 0——增量钩子据此
@@ -253,7 +251,7 @@ def _fallback_context(ref: PaperCitation, paper: Paper) -> str:
     """无上下文句的降级输入：条目原文 + citing 论文标题摘要。"""
     abstract = (paper.abstract or "")[:300]
     return f"[REF] {ref.cited_ref_raw}\n[CITING] {paper.title or ''}. {abstract}"[
-        :MAX_CONTEXT_CHARS * 2
+        : MAX_CONTEXT_CHARS * 2
     ]
 
 
@@ -334,9 +332,7 @@ async def classify_citation_intents(
         )
         parsed = _parse_intent_response(result.content)
         if not parsed:
-            logger.warning(
-                "citation intent batch unparseable for paper %s (batch %d)", paper.id, i
-            )
+            logger.warning("citation intent batch unparseable for paper %s (batch %d)", paper.id, i)
             continue
         for ref in batch:
             hit = parsed.get(ref.ref_index)

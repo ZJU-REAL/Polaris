@@ -565,14 +565,10 @@ class SSHExecutor:
             stderr_offset=stderr_offset,
         )
 
-    async def diagnose_managed_command(
-        self, handle: ManagedCommandHandle
-    ) -> dict[str, str]:
+    async def diagnose_managed_command(self, handle: ManagedCommandHandle) -> dict[str, str]:
         return await self._managed_commands().diagnose(handle)
 
-    async def managed_command_gpu_usage(
-        self, handle: ManagedCommandHandle
-    ) -> ManagedGPUUsage:
+    async def managed_command_gpu_usage(self, handle: ManagedCommandHandle) -> ManagedGPUUsage:
         return await self._managed_commands().gpu_usage(handle)
 
     async def stop_managed_command(self, handle: ManagedCommandHandle) -> ManagedStopResult:

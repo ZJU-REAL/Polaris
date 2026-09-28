@@ -89,9 +89,7 @@ async def test_discovery_run_hit_and_source_attempt_are_scoped_and_cascading(app
 
         assert (
             await session.scalar(
-                select(LiteratureSearchHit.id)
-                .where(LiteratureSearchHit.run_id == run.id)
-                .limit(1)
+                select(LiteratureSearchHit.id).where(LiteratureSearchHit.run_id == run.id).limit(1)
             )
         ) is not None
 
@@ -99,9 +97,7 @@ async def test_discovery_run_hit_and_source_attempt_are_scoped_and_cascading(app
         await session.commit()
         assert (
             await session.scalar(
-                select(LiteratureSearchHit.id)
-                .where(LiteratureSearchHit.run_id == run.id)
-                .limit(1)
+                select(LiteratureSearchHit.id).where(LiteratureSearchHit.run_id == run.id).limit(1)
             )
         ) is None
         assert (

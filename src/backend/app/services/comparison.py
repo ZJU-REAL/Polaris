@@ -28,6 +28,7 @@ from app.services.extraction.schemas import SKELETON_SCHEMA
 # 更多论文的横向归纳属于综述场景，本批次刻意不做（见模块 docstring）。
 MAX_COMPARISON_PAPERS = 10
 
+
 def comparison_fields(discipline: str | None = None) -> tuple[tuple[str, str, str, str], ...]:
     """对比表的行：(字段名, kind, schema id, 界面标签)。
 

@@ -58,9 +58,7 @@ async def can_access_project(
 
     审批闸门、跑技能、开报告都用它，口径与 in_my_projects 一致。
     """
-    stmt = select(Project.id).where(
-        Project.id == project_id, in_my_projects(Project.id, user_id)
-    )
+    stmt = select(Project.id).where(Project.id == project_id, in_my_projects(Project.id, user_id))
     return (await session.execute(stmt)).first() is not None
 
 

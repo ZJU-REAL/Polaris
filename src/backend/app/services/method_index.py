@@ -73,6 +73,7 @@ async def method_schema_ids(session: AsyncSession, library_id: uuid.UUID | None)
         ids.append(f"{discipline}{DISCIPLINE_METHOD_SUFFIX}")
     return ids
 
+
 #: 双轴：进向量的两个 text 字段。list 字段（baseline/dataset）与 protocol 只做
 #: 展示与关键词降级，不进向量——它们是复现要素，不是语义轴。
 AXES = ("purpose", "mechanism")
@@ -368,9 +369,7 @@ async def search_methods(
         return scored[:limit], "semantic"
 
     pool = scored[: max(limit, _DIFFERENT_POOL_MIN)]
-    pool.sort(
-        key=lambda c: (c["mechanism_similarity"], -c["similarity"], str(c["paper_id"]))
-    )
+    pool.sort(key=lambda c: (c["mechanism_similarity"], -c["similarity"], str(c["paper_id"])))
     return pool[:limit], "semantic"
 
 

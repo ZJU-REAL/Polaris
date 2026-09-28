@@ -74,11 +74,7 @@ async def get_index_status(session: AsyncSession, paper: Paper) -> PaperIndexSta
     chunk_count, source = int(row[0]), row[1]
 
     paper_rows = (
-        (
-            await session.execute(
-                select(PaperVector).where(PaperVector.paper_id == paper.id)
-            )
-        )
+        (await session.execute(select(PaperVector).where(PaperVector.paper_id == paper.id)))
         .scalars()
         .all()
     )
@@ -93,9 +89,7 @@ async def get_index_status(session: AsyncSession, paper: Paper) -> PaperIndexSta
         .scalars()
         .all()
     )
-    current_chunk_rows = [
-        v for v in chunk_rows if space is not None and v.space == space.key
-    ]
+    current_chunk_rows = [v for v in chunk_rows if space is not None and v.space == space.key]
     return PaperIndexStatus(
         paper_vector=_vector_status(paper_rows, space),
         chunk_vector=_vector_status(chunk_rows, space),
@@ -114,9 +108,7 @@ def _vector_status(rows: list, space) -> VectorStatus:
         return VectorStatus(built=True, built_at=newest.built_at, model=newest.model)
     if rows:  # 只有别的空间的向量：建过，但当前模型下不可用
         newest = max(rows, key=lambda v: v.built_at)
-        return VectorStatus(
-            built=False, built_at=newest.built_at, model=newest.model, stale=True
-        )
+        return VectorStatus(built=False, built_at=newest.built_at, model=newest.model, stale=True)
     return VectorStatus(built=False, built_at=None, model=None)
 
 

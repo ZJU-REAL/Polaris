@@ -377,13 +377,9 @@ async def retry_failed_tournament_matches(
             created_by=user.id,
         )
     except ideas_service.IdeaVoyageConflictError as e:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, detail="IDEA_VOYAGE_ALREADY_RUNNING"
-        ) from e
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEA_VOYAGE_ALREADY_RUNNING") from e
     except ideas_service.TournamentRetryUnavailableError as e:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, detail="TOURNAMENT_RETRY_UNAVAILABLE"
-        ) from e
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="TOURNAMENT_RETRY_UNAVAILABLE") from e
     await queue.enqueue("run_voyage", str(run.id))
     return VoyageRead.model_validate(run)
 

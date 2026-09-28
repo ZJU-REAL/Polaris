@@ -64,34 +64,24 @@ async def test_shelf_trash_restore_purge_and_empty(client):
     assert resp.status_code == 404
 
     # 召回：回到默认列表，回收站清空
-    resp = await client.post(
-        f"/api/projects/{project_id}/shelf/{p1}/restore", headers=headers
-    )
+    resp = await client.post(f"/api/projects/{project_id}/shelf/{p1}/restore", headers=headers)
     assert resp.status_code == 200, resp.text
     assert resp.json()["trashed_at"] is None
     page = await _shelf(client, headers, project_id)
     assert sorted(i["paper_id"] for i in page["items"]) == sorted([p1, p2])
     assert (await _shelf(client, headers, project_id, trashed="true"))["total"] == 0
     # 不在回收站里的条目召回 → 404
-    resp = await client.post(
-        f"/api/projects/{project_id}/shelf/{p1}/restore", headers=headers
-    )
+    resp = await client.post(f"/api/projects/{project_id}/shelf/{p1}/restore", headers=headers)
     assert resp.status_code == 404
 
     # 彻底删除：两边都没有
-    resp = await client.delete(
-        f"/api/projects/{project_id}/shelf/{p1}?hard=true", headers=headers
-    )
+    resp = await client.delete(f"/api/projects/{project_id}/shelf/{p1}?hard=true", headers=headers)
     assert resp.status_code == 204
     assert [i["paper_id"] for i in (await _shelf(client, headers, project_id))["items"]] == [p2]
     assert (await _shelf(client, headers, project_id, trashed="true"))["total"] == 0
     async with get_sessionmaker()() as session:
         rows = (
-            (
-                await session.execute(
-                    select(TopicPaper).where(TopicPaper.paper_id == uuid.UUID(p1))
-                )
-            )
+            (await session.execute(select(TopicPaper).where(TopicPaper.paper_id == uuid.UUID(p1))))
             .scalars()
             .all()
         )
@@ -101,9 +91,7 @@ async def test_shelf_trash_restore_purge_and_empty(client):
     resp = await client.delete(f"/api/projects/{project_id}/shelf/{p2}", headers=headers)
     assert resp.status_code == 204
     p3 = await _seed_paper(project_id, title="Still Shelved", status="scored")
-    await client.post(
-        f"/api/projects/{project_id}/shelf", json={"paper_id": p3}, headers=headers
-    )
+    await client.post(f"/api/projects/{project_id}/shelf", json={"paper_id": p3}, headers=headers)
     resp = await client.post(f"/api/projects/{project_id}/shelf/trash/empty", headers=headers)
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"deleted": 1}
@@ -288,9 +276,7 @@ async def test_library_revisit_pulls_entry_out_of_trash(client):
     """重新打开阅读页 = 又要看它：条目出回收站，回到浏览记录。"""
     project_id, headers = await _setup(client, name="lib-revisit")
     paper_id = await _seed_paper(project_id, title="Reopened Paper", status="included")
-    resp = await client.post(
-        "/api/me/library/visits", json={"paper_id": paper_id}, headers=headers
-    )
+    resp = await client.post("/api/me/library/visits", json={"paper_id": paper_id}, headers=headers)
     entry_id = resp.json()["id"]
     await client.delete(f"/api/me/library/{entry_id}?mode=unsave", headers=headers)
     assert (await _library(client, headers, "trash"))["total"] == 1
@@ -327,9 +313,7 @@ async def test_trashed_shelf_row_does_not_keep_orphan_paper(client):
         await session.commit()
         assert await session.get(Paper, paper_id) is not None
 
-    resp = await client.delete(
-        f"/api/projects/{project_id}/shelf/{paper_id}", headers=headers
-    )
+    resp = await client.delete(f"/api/projects/{project_id}/shelf/{paper_id}", headers=headers)
     assert resp.status_code == 204
 
     # 进回收站后：不再算引用，本体被回收（书架行随外键级联清理）

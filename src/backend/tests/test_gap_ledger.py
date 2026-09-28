@@ -316,9 +316,7 @@ async def test_gaps_endpoint(client, tmp_path):
     assert body["entries"][0]["source_span"]
 
     # kind 过滤透传
-    resp = await client.get(
-        f"/api/libraries/{library_id}/gaps?kind=limitation", headers=headers
-    )
+    resp = await client.get(f"/api/libraries/{library_id}/gaps?kind=limitation", headers=headers)
     assert [e["kind"] for e in resp.json()["entries"]] == ["limitation"]
     # 枚举外 kind 直接 422（Query pattern 校验）
     resp = await client.get(f"/api/libraries/{library_id}/gaps?kind=nope", headers=headers)

@@ -38,9 +38,7 @@ def test_venue_identity_rejects_placeholders_and_prefers_issn():
     assert normalize_venue(" Unknown journal ") is None
     assert venue_identity({"venue": "Unknown journal"}) is None
 
-    identity = venue_identity(
-        {"venue": "Journal of Tests", "metadata": {"issn_l": "1234-567X"}}
-    )
+    identity = venue_identity({"venue": "Journal of Tests", "metadata": {"issn_l": "1234-567X"}})
     assert identity == VenueIdentity(
         key="issn:1234-567X",
         name="Journal of Tests",
@@ -109,9 +107,7 @@ async def test_metric_provider_failure_is_visible_but_candidate_remains_usable(c
 
 
 def test_verified_metrics_map_only_to_bounded_impact_score():
-    score = metric_impact_score(
-        {"impact_factor": 12.5, "h_index": 150, "jcr_quartile": "Q1"}
-    )
+    score = metric_impact_score({"impact_factor": 12.5, "h_index": 150, "jcr_quartile": "Q1"})
     assert score is not None and 0 < score <= 1
     assert metric_impact_score({"provider_error": "TIMEOUT"}) is None
 
@@ -157,11 +153,7 @@ async def test_easyscholar_provider_maps_rank_fields_without_storing_secret():
             request=request,
             json={
                 "code": 200,
-                "data": {
-                    "officialRank": {
-                        "all": {"sciif": "6.2", "sci": "Q1", "sciBase": "2区"}
-                    }
-                },
+                "data": {"officialRank": {"all": {"sciif": "6.2", "sci": "Q1", "sciBase": "2区"}}},
             },
         )
 

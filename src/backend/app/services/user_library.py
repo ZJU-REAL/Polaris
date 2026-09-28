@@ -266,13 +266,9 @@ async def list_entries(
     if tab == "trash":
         stmt = stmt.where(UserLibraryEntry.trashed_at.is_not(None))
     elif tab == "saved":
-        stmt = stmt.where(
-            UserLibraryEntry.saved.is_(True), UserLibraryEntry.trashed_at.is_(None)
-        )
+        stmt = stmt.where(UserLibraryEntry.saved.is_(True), UserLibraryEntry.trashed_at.is_(None))
     else:  # history：看过的条目（收藏但从未打开过的不算浏览记录）
-        stmt = stmt.where(
-            UserLibraryEntry.visit_count > 0, UserLibraryEntry.trashed_at.is_(None)
-        )
+        stmt = stmt.where(UserLibraryEntry.visit_count > 0, UserLibraryEntry.trashed_at.is_(None))
     if q:
         pattern = f"%{q}%"
         stmt = stmt.where(

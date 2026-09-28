@@ -217,15 +217,12 @@ def load_pack(name: str) -> ProcessPack:
     packs = _load_all()
     pack = packs.get(name)
     if pack is None:
-        raise ProcessPackError(
-            f"未知流程包 {name!r}；可选：{', '.join(sorted(packs)) or '（无）'}"
-        )
+        raise ProcessPackError(f"未知流程包 {name!r}；可选：{', '.join(sorted(packs)) or '（无）'}")
     if pack.extends is not None:
         parent = packs.get(pack.extends)
         if parent is None:
             raise ProcessPackError(
-                f"流程包 {name!r} 继承的 {pack.extends!r} 不存在；"
-                f"可选：{', '.join(sorted(packs))}"
+                f"流程包 {name!r} 继承的 {pack.extends!r} 不存在；可选：{', '.join(sorted(packs))}"
             )
         if parent.extends is not None:
             raise ProcessPackError(

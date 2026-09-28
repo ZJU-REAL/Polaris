@@ -548,9 +548,7 @@ register_source(
     SourceSpec(
         id="pubmed",
         build=lambda ctx: PubMedAdapter("pubmed", ctx.multi_source),
-        default_factory=lambda client: PubMedAdapter(
-            "pubmed", client or _shared_multi_source()
-        ),
+        default_factory=lambda client: PubMedAdapter("pubmed", client or _shared_multi_source()),
     )
 )
 for _name in ("crossref", "europepmc", "hal", "core", "base", "sciverse"):

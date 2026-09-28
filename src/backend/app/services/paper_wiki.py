@@ -34,9 +34,7 @@ async def upsert_wiki(
         await session.execute(select(PaperWiki).where(PaperWiki.paper_id == paper.id))
     ).scalar_one_or_none()
     if wiki is None:
-        wiki = PaperWiki(
-            paper_id=paper.id, content=content, model=model, compiled_by=compiled_by
-        )
+        wiki = PaperWiki(paper_id=paper.id, content=content, model=model, compiled_by=compiled_by)
         session.add(wiki)
     else:
         wiki.content = content
@@ -48,13 +46,12 @@ async def upsert_wiki(
     # 留下的临时占位——那份是对着某一个库的方向写的，不该被别的库当成论文摘要看。
     from app.services.obsidian_vault_sync import extract_tldr
 
-    if (compiled_tldr := extract_tldr(content)):
+    if compiled_tldr := extract_tldr(content):
         paper.tldr = compiled_tldr
     await session.flush()
     # 内存里的 paper 跟上（后续 link_paper_concepts / 出参都直接读 paper.wiki_content）
     set_committed_value(paper, "wiki", wiki)
     return wiki
-
 
 
 async def content_for(session: AsyncSession, paper_id: uuid.UUID) -> str | None:

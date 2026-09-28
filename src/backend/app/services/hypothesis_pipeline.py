@@ -182,9 +182,7 @@ def _ordered_paper_ids(chunks: list[PaperChunk]) -> list[str]:
     return out
 
 
-async def _paper_titles(
-    session: AsyncSession, paper_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, str]:
+async def _paper_titles(session: AsyncSession, paper_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
     if not paper_ids:
         return {}
     rows = (
@@ -419,8 +417,7 @@ async def _gather_fuels(
         gaps = []
     if gaps:
         sections["open_gaps"] = [
-            {"paper_id": str(g.paper_id), "kind": g.kind, "statement": g.statement}
-            for g in gaps
+            {"paper_id": str(g.paper_id), "kind": g.kind, "statement": g.statement} for g in gaps
         ]
         trace["gaps"] = list(dict.fromkeys(str(g.paper_id) for g in gaps))
 
@@ -545,9 +542,7 @@ async def generate(
         # 检索留痕（确定性数据，D6 披露 #655）：发出过什么查询、捞回了哪些论文。
         # 三路灵感只有语义路有查询文本；引文远端/多样窗按路记论文集合。
         "trace": {
-            "queries": [
-                {"query": direction, "paper_ids": _ordered_paper_ids(semantic_chunks)}
-            ],
+            "queries": [{"query": direction, "paper_ids": _ordered_paper_ids(semantic_chunks)}],
             "inspiration_paper_ids": {
                 "semantic": _ordered_paper_ids(semantic_chunks),
                 "citation_far": _ordered_paper_ids(far_chunks),
@@ -609,9 +604,7 @@ def sanitize_grounding(
             stance, ids = "speculation", []
         chosen = set(ids)
         snippets = [entry["snippet"] for entry in pool if entry["paper_id"] in chosen]
-        out.append(
-            {"subclaim": subclaim, "stance": stance, "paper_ids": ids, "snippets": snippets}
-        )
+        out.append({"subclaim": subclaim, "stance": stance, "paper_ids": ids, "snippets": snippets})
     return out
 
 
@@ -829,9 +822,7 @@ async def feasibility(
     papers = []
     if grounded_ids:
         papers = (
-            (await session.execute(select(Paper).where(Paper.id.in_(grounded_ids))))
-            .scalars()
-            .all()
+            (await session.execute(select(Paper).where(Paper.id.in_(grounded_ids)))).scalars().all()
         )
     venues: dict[str, int] = {}
     years: list[int] = []
@@ -877,9 +868,7 @@ async def feasibility(
 # ---- 评分 ----
 
 
-def score_hypothesis(
-    grounding: list[dict[str, Any]], novelty_report: dict[str, Any]
-) -> float:
+def score_hypothesis(grounding: list[dict[str, Any]], novelty_report: dict[str, Any]) -> float:
     """score = novel 比例 × support 覆盖率（见模块 docstring 的 why）。"""
     total = len(grounding)
     if total == 0:

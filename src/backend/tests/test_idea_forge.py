@@ -44,7 +44,8 @@ async def _seed_compiled_papers(project_id: str, n: int = 3) -> list[str]:
     async with get_sessionmaker()() as session:
         ids = []
         for i in range(n):
-            paper = await add_paper(session,
+            paper = await add_paper(
+                session,
                 project_id=uuid.UUID(project_id),
                 source="manual",
                 title=f"Compiled paper {i}",

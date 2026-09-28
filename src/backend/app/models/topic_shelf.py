@@ -41,9 +41,7 @@ class TopicPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     # 课题语境的「为什么相关」备注
     note: Mapped[str | None] = mapped_column(Text)
-    added_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL")
-    )
+    added_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     # 回收站：移出书架 = 软删（trashed_at 置位），可召回 / 彻底删除 / 清空。
     # 唯一键 uq_topic_papers_topic_paper 覆盖软删行，故同一篇再次入架走「复活」
     # （services/topic_shelf.py::add_to_shelf），不插新行。

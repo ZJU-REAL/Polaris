@@ -271,9 +271,7 @@ async def test_extract_dual_track_end_to_end(tmp_path, monkeypatch):
     respx.post("http://grobid.test/api/processFulltextDocument").mock(
         return_value=Response(200, text=TEI_SAMPLE)
     )
-    respx.post("http://mineru.test/file_parse").mock(
-        return_value=Response(200, json=MINERU_SAMPLE)
-    )
+    respx.post("http://mineru.test/file_parse").mock(return_value=Response(200, json=MINERU_SAMPLE))
     paper_id = uuid.uuid4().hex
     outcome = await extract_with_dual_track(paper_id, _make_pdf(tmp_path))
     assert outcome.used_adapters
@@ -297,9 +295,7 @@ async def test_extract_adapter_failure_degrades_to_fallback(tmp_path, monkeypatc
 
     monkeypatch.setattr(get_settings(), "grobid_url", "http://grobid.test", raising=False)
     monkeypatch.setattr(get_settings(), "mineru_parse_url", "http://mineru.test", raising=False)
-    respx.post("http://grobid.test/api/processFulltextDocument").mock(
-        return_value=Response(500)
-    )
+    respx.post("http://grobid.test/api/processFulltextDocument").mock(return_value=Response(500))
     respx.post("http://mineru.test/file_parse").mock(return_value=Response(500))
     pdf_path = _make_pdf(tmp_path)
     paper_id = uuid.uuid4().hex

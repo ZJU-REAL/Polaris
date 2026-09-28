@@ -78,9 +78,7 @@ def normalize_robot_id(platform: ChatBotPlatform, raw: str) -> str:
     return value
 
 
-async def list_configs(
-    session: AsyncSession, *, user_id: uuid.UUID
-) -> Sequence[ChatBotConfig]:
+async def list_configs(session: AsyncSession, *, user_id: uuid.UUID) -> Sequence[ChatBotConfig]:
     stmt = select(ChatBotConfig).where(ChatBotConfig.user_id == user_id)
     return (await session.execute(stmt)).scalars().all()
 
@@ -240,9 +238,7 @@ async def _send_part(
             timestamp_s = int(time.time())
             response = await client.post(
                 f"{FEISHU_WEBHOOK_PREFIX}{robot_id}",
-                json=_feishu_payload(
-                    title, text, link, secret=secret, timestamp_s=timestamp_s
-                ),
+                json=_feishu_payload(title, text, link, secret=secret, timestamp_s=timestamp_s),
             )
     except httpx.RequestError as exc:
         raise ChatBotDeliveryError("network_error") from exc

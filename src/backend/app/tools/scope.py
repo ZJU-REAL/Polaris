@@ -71,9 +71,7 @@ async def project_ids_for(session: AsyncSession, ctx: ToolContext) -> list[uuid.
         return [ctx.project_id]
     if ctx.user_id is None:
         return []
-    rows = await session.execute(
-        select(Project.id).where(Project.owner_id == ctx.user_id)
-    )
+    rows = await session.execute(select(Project.id).where(Project.owner_id == ctx.user_id))
     return list(rows.scalars().all())
 
 

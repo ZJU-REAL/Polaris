@@ -96,9 +96,7 @@ async def list_manuscripts(ctx: ToolContext, args: dict[str, Any]) -> dict[str, 
 )
 async def get_manuscript(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
-        manuscript = await _get_manuscript(
-            session, ctx, args.get("manuscript_id"), with_files=True
-        )
+        manuscript = await _get_manuscript(session, ctx, args.get("manuscript_id"), with_files=True)
         files = [
             {
                 "path": f.path,
@@ -137,9 +135,7 @@ async def read_manuscript_file(ctx: ToolContext, args: dict[str, Any]) -> dict[s
     if not path:
         raise ValueError("read_manuscript_file 需要非空 path")
     async with get_sessionmaker()() as session:
-        manuscript = await _get_manuscript(
-            session, ctx, args.get("manuscript_id"), with_files=True
-        )
+        manuscript = await _get_manuscript(session, ctx, args.get("manuscript_id"), with_files=True)
         target = next((f for f in manuscript.files if f.path == path), None)
         if target is None:
             available = ", ".join(sorted(f.path for f in manuscript.files)[:20])

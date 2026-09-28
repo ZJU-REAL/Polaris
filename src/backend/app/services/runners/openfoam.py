@@ -151,9 +151,7 @@ class OpenFOAMRunner(ContainerBackendBase):
         solver = str(ctx.plan.get("solver") or "").strip()
         command = LAUNCH_TEMPLATES.get(solver)
         if command is None:
-            raise RunnerError(
-                f"求解器 {solver!r} 不在白名单 {list(ALLOWED_SOLVERS)} 内，拒绝启动"
-            )
+            raise RunnerError(f"求解器 {solver!r} 不在白名单 {list(ALLOWED_SOLVERS)} 内，拒绝启动")
         image = str(ctx.plan.get("image") or "").strip() or DEFAULT_IMAGE
         handle = await substrate.launch(image=image, command=command)
         ctx.scratch["container"] = handle
@@ -221,10 +219,7 @@ class OpenFOAMRunner(ContainerBackendBase):
         if not rows:
             return []
         ncols = len(rows[0])
-        names = [
-            header[i] if i < len(header) else f"col{i}"
-            for i in range(1, ncols)
-        ]
+        names = [header[i] if i < len(header) else f"col{i}" for i in range(1, ncols)]
         stride = max(1, -(-len(rows) // _MAX_SERIES_POINTS))
         points: list[dict[str, Any]] = []
         for step, row in enumerate(rows):

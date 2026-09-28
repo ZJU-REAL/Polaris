@@ -190,6 +190,7 @@ def _restore_managed_handle(data: Any) -> ManagedCommandHandle | None:
     except (KeyError, TypeError, ValueError):
         return None
 
+
 METRIC_LINE_RE = re.compile(r"POLARIS_METRIC\s+(\{.*\})")
 _FIGURE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")  # 远端文件名白名单（防目录穿越）
 
@@ -358,8 +359,7 @@ def _render_attempt_archive(
         delta = c.get("conditions_delta")
         delta_s = json.dumps(delta, ensure_ascii=False) if delta else "—"
         header = (
-            f"\n[尝试 seq={c.get('seq')} | 主指标={c.get('primary_value')}{star}"
-            f" | 对照={delta_s}]"
+            f"\n[尝试 seq={c.get('seq')} | 主指标={c.get('primary_value')}{star} | 对照={delta_s}]"
         )
         if c is not best and id(c) not in recent:
             observation = str(c.get("observation") or "")[:200]
@@ -831,9 +831,7 @@ async def _refresh_user_guidance(ctx: ActionContext, params: dict[str, Any]) -> 
             pending = await messages_service.pending_chat_messages(session, ctx.run.id)
             if pending:
                 merged = list(params.get("user_guidance") or []) + [m.text for m in pending]
-                step = (
-                    await session.get(VoyageStep, ctx.step_id) if ctx.step_id else None
-                )
+                step = await session.get(VoyageStep, ctx.step_id) if ctx.step_id else None
                 if step is not None:
                     step_params = dict(step.params or {})
                     step_params["user_guidance"] = merged
@@ -934,16 +932,10 @@ def _validate_command_assessment(data: Any) -> ModelAssessment:
         evidence=tuple(str(item)[:500] for item in evidence[:12])
         if isinstance(evidence, list)
         else (),
-        proposed_action=CommandAction(
-            str(data.get("proposed_action") or "continue_monitoring")
-        ),
-        next_check_seconds=max(
-            5.0, min(float(data.get("next_check_seconds") or 30), 600.0)
-        ),
+        proposed_action=CommandAction(str(data.get("proposed_action") or "continue_monitoring")),
+        next_check_seconds=max(5.0, min(float(data.get("next_check_seconds") or 30), 600.0)),
         safe_to_interrupt=data.get("safe_to_interrupt") is True,
-        user_message=str(data["user_message"])[:1000]
-        if data.get("user_message")
-        else None,
+        user_message=str(data["user_message"])[:1000] if data.get("user_message") else None,
     )
 
 
@@ -1143,9 +1135,7 @@ async def _monitor_managed_command(
                 final.stderr_tail = final.stderr_tail or (
                     "remote process disappeared without recording an exit status"
                 )
-            append_lifecycle(
-                f"command process disappeared with exit status {final.exit_status}"
-            )
+            append_lifecycle(f"command process disappeared with exit status {final.exit_status}")
             return final, executor
 
         soft_reached = bool(
@@ -1664,11 +1654,11 @@ _SIGNATURE_ESCALATE_AT = 2
 _error_signature = error_signature
 
 
-
 def _err_tail_line(err_text: str) -> str:
     """报错文本 → 给用户看的尾部关键行（原文，非归一化签名）。"""
     lines = [ln.strip() for ln in (err_text or "").strip().splitlines() if ln.strip()]
     return (lines[-1] if lines else "")[:200]
+
 
 def _render_fix_ledger(ledger: list[dict[str, Any]]) -> str:
     """修复台账 → prompt 注入段（空台账返回空串）。"""
@@ -2180,8 +2170,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                         "ask": {
                             "ask_kind": "command_recovery",
                             "question": (
-                                f"远端环境准备失败：{report.message[-500:]}\n\n"
-                                f"建议：{next_step}"
+                                f"远端环境准备失败：{report.message[-500:]}\n\n建议：{next_step}"
                             ),
                             "context": {"failure": report.to_dict(), "next_step": next_step},
                             "options": [
@@ -2382,9 +2371,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     user=user_prompt,
                     validate=validate_files,
                 )
-                changed = sorted(
-                    k for k in new_files if new_files.get(k) != files.get(k)
-                )
+                changed = sorted(k for k in new_files if new_files.get(k) != files.get(k))
                 fix_ledger.append({"signature": signature, "changed": ", ".join(changed)})
                 files = new_files
                 ctx.checkpoint["exp_files"] = files
@@ -2565,9 +2552,7 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     user=user_prompt,
                     validate=validate_files,
                 )
-                changed = sorted(
-                    k for k in new_files if new_files.get(k) != files.get(k)
-                )
+                changed = sorted(k for k in new_files if new_files.get(k) != files.get(k))
                 fix_ledger.append({"signature": signature, "changed": ", ".join(changed)})
                 files = new_files
                 ctx.checkpoint["exp_files"] = files
@@ -3244,6 +3229,7 @@ async def _poll_run(
             raise RuntimeError(f"运行超出预算 max_hours={max_hours}，已 kill（pid={run.pid}）")
 
         await asyncio.sleep(RUN_POLL_SECONDS)
+
 
 # ---- 5. 图表：metrics_all.json → LLM 绘图脚本 → run_plot → 拉回 → VLM 质检 ----
 

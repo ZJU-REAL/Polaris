@@ -201,9 +201,7 @@ async def list_memories(
     """我让 Buddy 一直记得的事。"""
     _require_enabled()
     rows = await buddy.list_memories(session, user_id=user.id)
-    return [
-        {"id": str(r.id), "text": r.text, "created_at": r.created_at.isoformat()} for r in rows
-    ]
+    return [{"id": str(r.id), "text": r.text, "created_at": r.created_at.isoformat()} for r in rows]
 
 
 @router.post("/memories", status_code=201)
@@ -338,9 +336,7 @@ async def run_turn(
             budget_chars = route.context_window * 2  # window/2 token × 4 字符/token
     except Exception:  # noqa: BLE001 — 路由解析失败不该挡住对话，走缺省预算
         budget_chars = None
-    history = await store.replay(
-        session, conversation_id=conv.id, budget_chars=budget_chars
-    )
+    history = await store.replay(session, conversation_id=conv.id, budget_chars=budget_chars)
     # 长期记忆随 extra_system 追加在末尾（与方向说明同处）：稳定前缀不动，
     # 缓存前缀才不会每轮作废。
     memories = await buddy.render_memories(session, user_id=user.id)

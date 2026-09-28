@@ -131,9 +131,7 @@ def test_automatic_repair_is_confidence_scope_and_progress_bounded():
         expected_evidence="registry responds",
         minimal_retry="artifact.download",
     )
-    assert not may_apply_recovery_automatically(
-        infrastructure, repeated_without_progress=0
-    )
+    assert not may_apply_recovery_automatically(infrastructure, repeated_without_progress=0)
 
 
 # ---- 脱敏加固（见 test_managed_ssh 里的输出读取加固） ----

@@ -472,6 +472,8 @@ async def test_penalize_extends_the_shared_gate(cache_redis):
     ttl = await cache_redis.pttl("lit:arxiv:gate")
     assert ttl > 1000
     assert b._interval > 0  # b 会在 acquire 时撞上这个闸门
+
+
 @respx.mock
 async def test_listing_is_cached_regardless_of_the_declared_date(cache_redis):
     """取回的公告一律进缓存，陈旧程度由**短 TTL**控制。

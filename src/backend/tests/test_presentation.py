@@ -104,7 +104,6 @@ async def _setup(client):
     return headers, resp.json()["id"]
 
 
-
 async def test_create_presentation_voyage(client, queue_stub):
     headers, project_id = await _setup(client)
     # 无论文 → 404；papers 属于项目校验
@@ -118,7 +117,8 @@ async def test_create_presentation_voyage(client, queue_stub):
     from app.core.db import get_sessionmaker
 
     async with get_sessionmaker()() as session:
-        paper = await add_paper(session,
+        paper = await add_paper(
+            session,
             project_id=uuid.UUID(project_id),
             title="Self-Rewarding Language Models",
             abstract="LLM as its own reward model.",

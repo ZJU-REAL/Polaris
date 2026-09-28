@@ -215,9 +215,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "created_by" not in columns["direction_libraries"]
     assert "submitted_by" in columns["direction_libraries"]
     # 治理列已随个人化定位删除（#614）
-    assert not {"role", "read_only", "llm_access", "token_quota", "features"} & columns[
-        "users"
-    ]
+    assert not {"role", "read_only", "llm_access", "token_quota", "features"} & columns["users"]
     # 假设/实验树节点表（#637，设计报告 §8.2）
     assert "hypothesis_nodes" in columns["_tables"]
     assert {
@@ -252,9 +250,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"provider", "identity_key", "metrics", "expires_at"} <= columns[
         "literature_venue_metric_cache"
     ]
-    assert {"trigger", "schedule_version", "scheduled_for"} <= columns[
-        "literature_search_runs"
-    ]
+    assert {"trigger", "schedule_version", "scheduled_for"} <= columns["literature_search_runs"]
     assert {
         "library_id",
         "enabled",
@@ -346,9 +342,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "skill_listings" not in columns["_tables"]
     # #741：跨学科指引搬离 v1，落 guidance_documents
     assert "guidance_documents" in columns["_tables"]
-    assert {"slug", "version", "name", "body", "targets", "steps"} <= columns[
-        "guidance_documents"
-    ]
+    assert {"slug", "version", "name", "body", "targets", "steps"} <= columns["guidance_documents"]
     # 发表机构列（高级检索）
     assert "affiliations" in columns["papers"]
     # 用户系统 U1：治理列已在 head 删除，只剩头像列
@@ -562,9 +556,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"paper_id", "asset_id", "version_no", "parser", "status", "is_current"} <= columns[
         "paper_content_versions"
     ]
-    assert {"content_version_id", "seq", "text", "section_path"} <= columns[
-        "paper_content_chunks"
-    ]
+    assert {"content_version_id", "seq", "text", "section_path"} <= columns["paper_content_chunks"]
     assert {"content_version_id", "space", "dim", "embedding"} <= columns[
         "paper_content_version_vectors"
     ]
@@ -861,9 +853,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     version, columns = _inspect_db(db_path)
     assert version == VENUE_METRIC_REVISION
     assert "literature_discovery_schedules" not in columns["_tables"]
-    assert not {"trigger", "schedule_version", "scheduled_for"} & columns[
-        "literature_search_runs"
-    ]
+    assert not {"trigger", "schedule_version", "scheduled_for"} & columns["literature_search_runs"]
 
     # Then remove venue metrics and return to immutable scope versions.
     command.downgrade(cfg, "-1")
@@ -882,9 +872,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == INTERDISCIPLINARY_REVISION
-    assert not {"query_matrix", "evidence_balance"} & columns[
-        "interdisciplinary_research_profiles"
-    ]
+    assert not {"query_matrix", "evidence_balance"} & columns["interdisciplinary_research_profiles"]
 
     # 再退掉跨学科档案迁移，回到 OA 缓存版本。
     command.downgrade(cfg, "-1")
@@ -903,11 +891,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == EVIDENCE_ANCHOR_REVISION
-    assert not {
-        "download_api_keys",
-        "download_batches",
-        "download_batch_items",
-    } & columns["_tables"]
+    assert (
+        not {
+            "download_api_keys",
+            "download_batches",
+            "download_batch_items",
+        }
+        & columns["_tables"]
+    )
 
     # 再退掉证据锚点迁移，回到解析内容版本。
     command.downgrade(cfg, "-1")
@@ -919,12 +910,15 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PDF_ASSET_REVISION
-    assert not {
-        "paper_content_versions",
-        "paper_content_chunks",
-        "paper_content_version_vectors",
-        "paper_content_chunk_vectors",
-    } & columns["_tables"]
+    assert (
+        not {
+            "paper_content_versions",
+            "paper_content_chunks",
+            "paper_content_version_vectors",
+            "paper_content_chunk_vectors",
+        }
+        & columns["_tables"]
+    )
 
     # 再退掉 PDF 资产迁移，回到文献发现合同版本。
     command.downgrade(cfg, "-1")
@@ -936,11 +930,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREVIOUS_HEAD_REVISION
-    assert not {
-        "literature_search_runs",
-        "literature_search_hits",
-        "literature_source_attempts",
-    } & columns["_tables"]
+    assert (
+        not {
+            "literature_search_runs",
+            "literature_search_hits",
+            "literature_source_attempts",
+        }
+        & columns["_tables"]
+    )
 
     # 再退掉集成令牌。
     command.downgrade(cfg, "-1")
@@ -1394,9 +1391,7 @@ def test_schema_hygiene_migration_merges_owner_and_purges_private_llm_rows(tmp_p
     try:
         with engine.connect() as conn:
             merged = dict(
-                conn.execute(
-                    text("SELECT id, submitted_by FROM direction_libraries")
-                ).fetchall()
+                conn.execute(text("SELECT id, submitted_by FROM direction_libraries")).fetchall()
             )
             # 老存量的归属人回填；常态行不动
             assert merged == {"lib-legacy": owner, "lib-normal": owner}
@@ -1444,8 +1439,13 @@ def test_skill_convergence_data_move_and_roundtrip(tmp_path):
                     "created_at, updated_at) VALUES (:id, :sid, :ver, :manifest, :body, "
                     "'2026-01-01 00:00:00', '2026-01-01 00:00:00')"
                 ),
-                {"id": vid, "sid": skill_id, "ver": ver,
-                 "manifest": json.dumps(manifest), "body": body},
+                {
+                    "id": vid,
+                    "sid": skill_id,
+                    "ver": ver,
+                    "manifest": json.dumps(manifest),
+                    "body": body,
+                },
             )
         for lid, status in ((live_id, "approved"), (dead_id, "delisted")):
             conn.execute(
@@ -1462,8 +1462,10 @@ def test_skill_convergence_data_move_and_roundtrip(tmp_path):
     command.upgrade(cfg, SKILLS_CONVERGENCE_REVISION)
     with engine.connect() as conn:
         docs = conn.execute(
-            text("SELECT id, version, name, body, targets, steps FROM guidance_documents "
-                 "ORDER BY version")
+            text(
+                "SELECT id, version, name, body, targets, steps FROM guidance_documents "
+                "ORDER BY version"
+            )
         ).fetchall()
         assert [(d.id, d.version, d.body) for d in docs] == [
             (v1_id, 1, "body one"),  # id 沿用 skill_versions.id（存量 checkpoint 可对回）
@@ -1477,9 +1479,7 @@ def test_skill_convergence_data_move_and_roundtrip(tmp_path):
             text("SELECT is_archived FROM skills WHERE id = :id"), {"id": skill_id}
         ).scalar_one()
         assert archived == 1
-        rows = dict(
-            conn.execute(text("SELECT id, delisted_at FROM skill_listings")).fetchall()
-        )
+        rows = dict(conn.execute(text("SELECT id, delisted_at FROM skill_listings")).fetchall())
         assert rows[live_id] is None  # approved → 在架
         assert rows[dead_id] is not None  # delisted → 下架时间取 updated_at
 

@@ -28,7 +28,7 @@ async def test_every_searchable_source_is_listed(client):
 
 
 async def test_sources_carry_a_hint_about_their_field(client):
-    """"europepmc" 对一个做结构的人不构成任何提示——要能判断「这个源和我有没有关系」。"""
+    """ "europepmc" 对一个做结构的人不构成任何提示——要能判断「这个源和我有没有关系」。"""
     headers = await _auth(client, "src2@example.com")
     rows = (await client.get("/api/literature-sources", headers=headers)).json()
     by_id = {r["id"]: r for r in rows}

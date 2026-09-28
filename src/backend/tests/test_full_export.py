@@ -33,9 +33,7 @@ async def _seed_full_plane(client, headers) -> tuple[uuid.UUID, str]:
     1 个 discovery run（树 + 产物）+ 1 实验 + 1 稿件。返回 (user_id, 库名)。"""
     user_id = await _user_id_of(client, headers)
     lib_name = "全量导出测试库"
-    project_id, _library_id = await make_project_with_library(
-        client, headers, name=lib_name
-    )
+    project_id, _library_id = await make_project_with_library(client, headers, name=lib_name)
     pid = uuid.UUID(project_id)
     async with get_sessionmaker()() as session:
         p1 = await add_paper(
