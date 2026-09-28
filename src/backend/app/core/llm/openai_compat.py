@@ -258,6 +258,69 @@ def _tool_call_events(delta: dict[str, Any]) -> list[StreamEvent]:
     return events
 
 
+def _embedding_vectors(body: Any, expected: int, url: str) -> list[list[float]]:
+    """把 ``/embeddings`` 的响应还原成与输入等长、同序的向量列表（#819）。
+
+    「OpenAI 兼容」的服务在这个端点上并不都回 OpenAI 的格式。实际见到的几种：
+
+    - ``{"data": [{"index": i, "embedding": [...]}]}``：OpenAI、vLLM、
+      llama.cpp 的 ``/v1/embeddings``；
+    - ``[{"index": i, "embedding": [[...]]}]``：llama.cpp 的原生 ``/embeddings``——Base URL
+      没写 ``/v1`` 时打到的就是它，顶层是列表，每条向量还多包一层；
+    - ``[[...], [...]]``：只回向量数组的服务（如 TEI 的 ``/embed``）；
+    - ``{"embeddings": [[...]]}``：Ollama 风格。
+
+    以前只认第一种，其余一律 ``resp.json()["data"]`` 抛 TypeError/KeyError，报错里看不出
+    服务端到底回了什么。认不出的形状现在明说收到了哪些键；向量条数与输入对不上也
+    直接报错，而不是让后面按下标配对时悄悄错位。
+    """
+    if isinstance(body, dict):
+        if isinstance(body.get("data"), list):
+            items: list[Any] = body["data"]
+        elif isinstance(body.get("embeddings"), list):
+            items = body["embeddings"]
+        else:
+            raise ValueError(f"unrecognised embeddings response from {url}: keys={sorted(body)}")
+    elif isinstance(body, list):
+        items = body
+    else:
+        raise ValueError(f"unrecognised embeddings response from {url}: {type(body).__name__}")
+
+    if items and all(isinstance(item, dict) for item in items):
+        # 按 index 还原顺序；没有 index 的按原顺序
+        ordered = sorted(enumerate(items), key=lambda pair: pair[1].get("index", pair[0]))
+        raw = [item.get("embedding") for _, item in ordered]
+    else:
+        raw = items
+
+    vectors = [_one_vector(v, url) for v in raw]
+    if len(vectors) != expected:
+        raise ValueError(
+            f"embeddings response from {url} has {len(vectors)} vectors for {expected} inputs"
+        )
+    return vectors
+
+
+def _one_vector(value: Any, url: str) -> list[float]:
+    # llama.cpp 原生端点把每条向量包成 [[...]]。开了池化时只有一行，取出来即可；
+    # 多行是按 token 返回（服务端没开池化），那不是一条句向量，不能自作主张地平均
+    if isinstance(value, list) and value and isinstance(value[0], list):
+        if len(value) != 1:
+            raise ValueError(
+                f"embeddings from {url} came back per token ({len(value)} rows): the server "
+                "has pooling disabled — start llama.cpp with --pooling mean (or last/cls), "
+                "or use its /v1 endpoint"
+            )
+        value = value[0]
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(x, int | float) and not isinstance(x, bool) for x in value)
+    ):
+        raise ValueError(f"embeddings response from {url} contains a non-numeric vector")
+    return [float(x) for x in value]
+
+
 class OpenAICompatProvider(LLMProvider):
     name = "openai_compat"
     supports_tools = True
@@ -633,10 +696,7 @@ class OpenAICompatProvider(LLMProvider):
             )
             resp = await self._post_with_retry(url, {"model": model, "input": texts})
         resp.raise_for_status()
-        data = resp.json()["data"]
-        # 按 index 还原顺序（OpenAI 兼容端点保证有 index 字段）
-        data.sort(key=lambda item: item.get("index", 0))
-        vectors = [item["embedding"] for item in data]
+        vectors = _embedding_vectors(resp.json(), len(texts), url)
         if not qwen3_embedding:
             return vectors
         return [
