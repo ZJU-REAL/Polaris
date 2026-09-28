@@ -357,7 +357,10 @@ class OpenAICompatProvider(LLMProvider):
                 continue
             return resp
         raise RuntimeError(
-            f"openai_compat 请求 {url} 重试 {self._max_attempts} 次后仍失败：{last_exc}"
+            # 带上异常类型：超时类异常的 str() 常常是空的，只写 {last_exc} 时整条错误以
+            # 冒号结尾、什么原因都没说（真实建库的概念链接步骤里就是这样）
+            f"openai_compat 请求 {url} 重试 {self._max_attempts} 次后仍失败："
+            f"{type(last_exc).__name__}: {last_exc}"
         )
 
     def __init__(
