@@ -598,6 +598,15 @@ input {
   column-gap: 24px;
 }
 
+/* 设置里的可折叠分组（如实验环境的「Python / 机器学习」）：不相关的人一眼能跳过 */
+.settings-disclosure {
+  border: 0.5px solid var(--border-2); border-radius: 10px; padding: 10px 14px; margin-top: 6px;
+}
+.settings-disclosure > summary {
+  cursor: pointer; user-select: none; font-size: 12.5px; font-weight: 650; color: var(--text-2);
+}
+.settings-disclosure-note { margin-left: 10px; font-size: 11.5px; font-weight: 400; color: var(--text-3); }
+
 /* 开关/选项列表：左边说明右边控件，逐行分隔 */
 .settings-list > * + * { border-top: 0.5px solid var(--border-2); }
 .settings-row {
