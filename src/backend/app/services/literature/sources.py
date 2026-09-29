@@ -89,6 +89,8 @@ class OpenAlexAdapter:
             return await self.client.get_by_arxiv(value)
         if kind == "doi":
             return await self.client.get_by_doi(value)
+        if kind == "pmid":
+            return await self.client.get_by_pmid(value)
         raise ValueError(f"openalex cannot resolve identifier kind: {kind}")
 
     async def search_works(self, query: str, **kwargs: Any) -> list[dict[str, Any]]:
@@ -522,7 +524,7 @@ register_source(
         id="openalex",
         build=_build_openalex,
         default_factory=_default_openalex,
-        resolve_kinds=("arxiv", "doi"),
+        resolve_kinds=("arxiv", "doi", "pmid"),
         resolve_priority=1,
     )
 )

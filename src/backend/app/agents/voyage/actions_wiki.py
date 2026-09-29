@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
@@ -70,6 +70,7 @@ from app.services.literature import sources as literature_sources
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
 from app.services.paper_enrich import paper_embedding_text
+from app.services.paper_identifiers import semantic_scholar_ref
 from app.services.paper_wiki import upsert_wiki
 from app.services.papers import delete_membership_hard
 from app.services.relevance import (
@@ -1093,6 +1094,17 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
 # ---- 2. 引文雪球（Semantic Scholar） ----
 
 
+def _anchor_ref(anchor: dict[str, Any]) -> str | None:
+    """锚点 → S2 引用写法：arXiv 编号优先，其次 DOI、PMID；都没有返回 None。"""
+    if anchor.get("arxiv_id"):
+        return semantic_scholar_ref("arxiv", normalize_arxiv_id(str(anchor["arxiv_id"])))
+    if anchor.get("doi"):
+        return semantic_scholar_ref("doi", str(anchor["doi"]).strip())
+    if anchor.get("pmid"):
+        return semantic_scholar_ref("pmid", str(anchor["pmid"]).strip())
+    return None
+
+
 @register("wiki.snowball")
 async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     knobs = _knobs(ctx)
@@ -1113,29 +1125,32 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
         if library is None:
             raise ValueError(f"library not found for project: {ctx.run.project_id}")
         definition = library_definition(library)
+        # 种子是 Semantic Scholar 的引用写法（arXiv:… / DOI:… / PMID:…）。以前只收 arXiv
+        # 编号：填 DOI 或 PMID 的锚点、以及没有 arXiv 号的候选论文一律不参与扩展——
+        # 非 CS 的库等于没有引用扩展（#821）。
         anchors = [
-            normalize_arxiv_id(str(a.get("arxiv_id")))
+            ref
             for a in (definition.get("anchor_papers") or [])
-            if isinstance(a, dict) and a.get("arxiv_id")
+            if isinstance(a, dict) and (ref := _anchor_ref(a))
         ]
-        candidate_ids = (
-            (
-                await session.execute(
-                    select(Paper.arxiv_id)
-                    .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                    .where(
-                        LibraryPaper.library_id == library.id,
-                        LibraryPaper.status == "candidate",
-                        Paper.arxiv_id.is_not(None),
-                    )
-                    .order_by(Paper.published_at.desc().nulls_last())
-                    .limit(10)
+        candidate_rows = (
+            await session.execute(
+                select(Paper.arxiv_id, Paper.doi)
+                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                .where(
+                    LibraryPaper.library_id == library.id,
+                    LibraryPaper.status == "candidate",
+                    or_(Paper.arxiv_id.is_not(None), Paper.doi.is_not(None)),
                 )
+                .order_by(Paper.published_at.desc().nulls_last())
+                .limit(10)
             )
-            .scalars()
-            .all()
-        )
-        frontier: list[str] = list(dict.fromkeys(anchors + list(candidate_ids)))
+        ).all()
+        candidate_refs = [
+            semantic_scholar_ref("arxiv", aid) if aid else semantic_scholar_ref("doi", doi)
+            for aid, doi in candidate_rows
+        ]
+        frontier: list[str] = list(dict.fromkeys(anchors + candidate_refs))
         arxiv_ids, dois, titles = await _existing_keys(session, library.id)
         processed_seeds = 0
 
@@ -1147,7 +1162,7 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
                 processed_seeds += 1
                 try:
                     # snowball 能力 = 参考文献 + 施引文献的合并清单（顺序同旧拼接）
-                    expanded = await s2.snowball(f"arXiv:{seed}")
+                    expanded = await s2.snowball(seed)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:  # noqa: BLE001 — 单个种子失败不打断批处理
@@ -1214,9 +1229,13 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
                     titles.add(title.lower())
                     if aid:
                         arxiv_ids.add(aid)
-                        next_frontier.append(aid)
                     if doi:
                         dois.add(doi)
+                    # 下一层用 S2 自己的 paperId：任何学科的论文都有，不再只扩展有 arXiv 号的
+                    if item.get("paperId"):
+                        next_frontier.append(str(item["paperId"]))
+                    elif aid:
+                        next_frontier.append(semantic_scholar_ref("arxiv", aid))
                     if paper is None:
                         continue
                     new_papers.append(paper)

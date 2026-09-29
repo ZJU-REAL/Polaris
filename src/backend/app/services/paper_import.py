@@ -254,6 +254,47 @@ async def resolve_arxiv_fields_batch(arxiv_ids: list[str]) -> list[dict[str, Any
     return results
 
 
+async def resolve_refs_batch(refs: list[str]) -> list[dict[str, Any]]:
+    """批量解析任意标识（arXiv / DOI / PMID），结果与输入顺序一一对应（#821）。
+
+    arXiv 编号仍走一次批量请求；DOI、PMID 逐项经 OpenAlex，共用同一个墙钟预算。
+    每项结果带 ``kind`` 与规范值；认不出或查不到的只在该项返回 ``error``。
+    """
+    from app.services.paper_identifiers import parse_paper_ref
+
+    parsed = [parse_paper_ref(raw) for raw in refs]
+    arxiv_values = [ref.value for ref in parsed if ref is not None and ref.kind == "arxiv"]
+    arxiv_results = (
+        iter(await resolve_arxiv_fields_batch(arxiv_values)) if arxiv_values else iter(())
+    )
+    deadline = asyncio.get_running_loop().time() + _BATCH_FALLBACK_BUDGET_SECONDS
+    out: list[dict[str, Any]] = []
+    for raw, ref in zip(refs, parsed, strict=True):
+        if ref is None:
+            out.append({"kind": None, "error": f"不是可识别的 arXiv 编号、DOI 或 PMID：{raw}"})
+            continue
+        if ref.kind == "arxiv":
+            out.append({"kind": "arxiv", **next(arxiv_results)})
+            continue
+        base = {"kind": ref.kind, ref.kind: ref.value}
+        if asyncio.get_running_loop().time() >= deadline:
+            out.append({**base, "error": f"解析超时，未能确认 {ref.value}（可稍后重试）"})
+            continue
+        try:
+            fields = (
+                await _fields_from_doi(ref.value)
+                if ref.kind == "doi"
+                else await _fields_from_pmid(ref.value)
+            )
+            out.append({**base, **fields, ref.kind: ref.value})
+        except ParseFailedError as e:
+            out.append({**base, "error": str(e)})
+        except Exception as e:  # noqa: BLE001 — 单项失败不影响其它锚点
+            logger.warning("anchor metadata lookup failed for %s", ref.value, exc_info=True)
+            out.append({**base, "error": f"{type(e).__name__}: {e}"})
+    return out
+
+
 async def _fields_from_doi(doi: str) -> dict[str, Any]:
     doi = doi.strip().removeprefix("https://doi.org/")
     # DOI 目前只有 OpenAlex 能解析（resolvers_for("doi")）；注册新源后自动排进级联
@@ -269,6 +310,35 @@ async def _fields_from_doi(doi: str) -> dict[str, Any]:
         "doi": meta.get("doi") or doi,
         "url": meta.get("url") or f"https://doi.org/{doi}",
         "published_at": _parse_iso(meta.get("published")),
+    }
+
+
+async def _fields_from_pmid(pmid: str) -> dict[str, Any]:
+    """按 PubMed 编号解析（经 OpenAlex，#821）。以前 PMID 没有入口，粘进来会被当成 arXiv 编号。"""
+    from app.services.paper_identifiers import normalize_pmid
+
+    try:
+        normalized = normalize_pmid(pmid)
+    except ValueError as e:
+        raise ParseFailedError(f"PMID 必须是数字，例如 31452104（收到 {pmid!r}）") from e
+    try:
+        meta = await _source("openalex").resolve("pmid", normalized)
+    except Exception as e:  # noqa: BLE001 - upstream failures become a readable import error
+        raise ParseFailedError(f"查询 PMID {normalized} 失败（{type(e).__name__}）") from e
+    if meta is None or not meta.get("title"):
+        raise ParseFailedError(f"OpenAlex 上查不到 PMID {normalized}")
+    doi = meta.get("doi")
+    return {
+        "title": meta["title"],
+        "authors": meta.get("authors"),
+        "affiliations": meta.get("affiliations") or [],
+        "abstract": meta.get("abstract"),
+        "year": meta.get("year"),
+        "venue": meta.get("venue"),
+        "doi": doi,
+        "url": meta.get("url") or f"https://pubmed.ncbi.nlm.nih.gov/{normalized}/",
+        "published_at": _parse_iso(meta.get("published")),
+        "external_ids": {k: v for k, v in (("pmid", normalized), ("doi", doi)) if v},
     }
 
 
@@ -330,12 +400,15 @@ async def resolve_fields(
     doi: str | None = None,
     corpus_id: str | None = None,
     bibtex: str | None = None,
+    pmid: str | None = None,
 ) -> dict[str, Any]:
-    """按来源解析论文字段（arxiv > doi > bibtex）；失败抛 ParseFailedError。"""
+    """按来源解析论文字段（arxiv > doi > pmid > corpus_id > bibtex）；失败抛 ParseFailedError。"""
     if arxiv_id:
         return await _fields_from_arxiv(arxiv_id)
     if doi:
         return await _fields_from_doi(doi)
+    if pmid:
+        return await _fields_from_pmid(pmid)
     if corpus_id:
         return await _fields_from_corpus_id(corpus_id)
     return parse_bibtex_entry(bibtex or "")
@@ -397,6 +470,7 @@ async def resolve_or_create_pool_paper(
     corpus_id: str | None = None,
     bibtex: str | None = None,
     title: str | None = None,
+    pmid: str | None = None,
 ) -> ManualAddResult:
     """个人补充入库的公共链路：先查全局内容池，命中直接复用；未命中才抓取解析入池。
 
@@ -422,11 +496,14 @@ async def resolve_or_create_pool_paper(
     if not (
         normalized_arxiv
         or clean_doi
+        or (pmid and pmid.strip())
         or (corpus_id and corpus_id.strip())
         or (bibtex and bibtex.strip())
     ):
-        raise ParseFailedError("按标题没有找到这篇论文，请提供 arXiv 编号或 DOI")
-    fields = await resolve_fields(arxiv_id=arxiv_id, doi=doi, corpus_id=corpus_id, bibtex=bibtex)
+        raise ParseFailedError("按标题没有找到这篇论文，请提供 arXiv 编号、DOI 或 PMID")
+    fields = await resolve_fields(
+        arxiv_id=arxiv_id, doi=doi, corpus_id=corpus_id, bibtex=bibtex, pmid=pmid
+    )
     # 解析出的规范 id 再查一次池（输入可能是版本号 / 别名，bibtex 里也可能带 DOI）
     paper = await find_pool_paper(
         session,
@@ -454,6 +531,7 @@ async def add_manual_paper(
     doi: str | None = None,
     corpus_id: str | None = None,
     bibtex: str | None = None,
+    pmid: str | None = None,
 ) -> ManualAddResult:
     """手动添加一篇文献到课题起源库（source=manual，成员行 status=included）。
 
@@ -470,6 +548,7 @@ async def add_manual_paper(
         doi=doi,
         corpus_id=corpus_id,
         bibtex=bibtex,
+        pmid=pmid,
         project_id=project_id,
     )
 
@@ -483,6 +562,7 @@ async def add_manual_paper_to_library(
     corpus_id: str | None = None,
     bibtex: str | None = None,
     project_id: uuid.UUID | None = None,
+    pmid: str | None = None,
 ) -> ManualAddResult:
     """手动添加一篇文献到**指定库**（库工作台入口，含独立库 project_id=None）。
 
@@ -492,7 +572,9 @@ async def add_manual_paper_to_library(
     - 新论文只落元数据行；PDF 下载/全文抽取/向量化/打分由后台任务补全
     project_id 仅用于 LLM 记账归因（补机构等），独立库为空。
     """
-    fields = await resolve_fields(arxiv_id=arxiv_id, doi=doi, corpus_id=corpus_id, bibtex=bibtex)
+    fields = await resolve_fields(
+        arxiv_id=arxiv_id, doi=doi, corpus_id=corpus_id, bibtex=bibtex, pmid=pmid
+    )
     dedup_key = pool_dedup_key(
         arxiv_id=fields.get("arxiv_id"),
         doi=fields.get("doi"),

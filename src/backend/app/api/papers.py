@@ -239,6 +239,7 @@ async def add_paper_manually(
             doi=data.doi,
             corpus_id=data.corpus_id,
             bibtex=data.bibtex,
+            pmid=data.pmid,
         )
     except paper_import_service.DuplicatePaperError as e:
         return JSONResponse(
@@ -502,13 +503,31 @@ async def resolve_paper_meta_batch(
     data: ResolvedPaperBatchCreate,
     _: User = Depends(current_active_user),
 ) -> ResolvedPaperBatchRead:
-    """批量解析锚点元数据；单项失败留在结果中，不影响其它 arXiv id。"""
-    results = await paper_import_service.resolve_arxiv_fields_batch(data.arxiv_ids)
+    """批量解析锚点元数据；单项失败留在结果中，不影响其它项。
+
+    ``refs`` 接受 arXiv 编号、DOI、PMID（#821）；旧的 ``arxiv_ids`` 照旧可用。
+    """
+    if data.refs:
+        results = await paper_import_service.resolve_refs_batch(data.refs)
+    else:
+        results = [
+            {"kind": "arxiv", **fields}
+            for fields in await paper_import_service.resolve_arxiv_fields_batch(
+                data.arxiv_ids or []
+            )
+        ]
+    inputs = data.refs or data.arxiv_ids or []
     return ResolvedPaperBatchRead(
         items=[
             ResolvedPaperBatchItem(
                 index=index,
-                arxiv_id=str(fields.get("arxiv_id") or data.arxiv_ids[index]),
+                kind=fields.get("kind"),
+                arxiv_id=str(
+                    fields.get("arxiv_id")
+                    or (inputs[index] if fields.get("kind") == "arxiv" else "")
+                ),
+                doi=fields.get("doi"),
+                pmid=fields.get("pmid") or (fields.get("external_ids") or {}).get("pmid"),
                 title=str(fields.get("title") or ""),
                 year=fields.get("year"),
                 authors=[

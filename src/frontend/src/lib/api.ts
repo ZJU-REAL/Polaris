@@ -261,7 +261,10 @@ export interface RubricDimension {
 
 export interface AnchorPaper {
   title: string;
+  /** 标识三选一（#821）：arXiv 编号、DOI、PMID */
   arxiv_id?: string;
+  doi?: string;
+  pmid?: string;
   url?: string;
   reason?: string;
 }
@@ -1268,10 +1271,11 @@ export interface HighlightCreateInput {
   note?: string | null;
 }
 
-/** 手动添加文献：三选一。 */
+/** 手动添加文献：五选一。 */
 export type PaperImportInput =
   | { arxiv_id: string }
   | { doi: string }
+  | { pmid: string }
   | { corpus_id: string }
   | { bibtex: string };
 
@@ -1288,7 +1292,7 @@ export type PaperBatchItemStatus = 'created' | 'existing' | 'invalid' | 'failed'
 
 export interface PaperBatchItemResult {
   index: number;
-  source: 'arxiv_id' | 'doi' | 'corpus_id' | 'bibtex' | 'unknown';
+  source: 'arxiv_id' | 'doi' | 'pmid' | 'corpus_id' | 'bibtex' | 'unknown';
   input: string;
   status: PaperBatchItemStatus;
   paper_id?: string;
@@ -1794,6 +1798,7 @@ export interface ShelfItemRead {
 export interface ShelfImportInput {
   arxiv_id?: string;
   doi?: string;
+  pmid?: string;
   title?: string;
 }
 
@@ -3422,6 +3427,10 @@ export interface ResolvedPaper {
 
 export interface ResolvedPaperBatchItem extends ResolvedPaper {
   index: number;
+  /** 标识类型；认不出时为 null（error 说明原因） */
+  kind?: 'arxiv' | 'doi' | 'pmid' | null;
+  doi?: string | null;
+  pmid?: string | null;
   error: string | null;
 }
 
@@ -5609,6 +5618,10 @@ export const api = {
   /** 这篇论文被哪些文献库收录了（只列可见的库）。 */
   getCollectingLibraries(paperId: string): Promise<CollectingLibrary[]> {
     return request<CollectingLibrary[]>(`/papers/${paperId}/libraries`);
+  },
+  /** 批量解析任意标识（arXiv 编号 / DOI / PMID，#821）。 */
+  resolvePaperRefs(refs: string[]): Promise<{ items: ResolvedPaperBatchItem[] }> {
+    return requestJson<{ items: ResolvedPaperBatchItem[] }>('/papers/resolve-batch', 'POST', { refs });
   },
   resolvePapersByArxivIds(arxivIds: string[]): Promise<{ items: ResolvedPaperBatchItem[] }> {
     return requestJson<{ items: ResolvedPaperBatchItem[] }>('/papers/resolve-batch', 'POST', {

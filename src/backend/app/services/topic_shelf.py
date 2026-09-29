@@ -319,6 +319,7 @@ async def import_to_shelf(
     arxiv_id: str | None = None,
     doi: str | None = None,
     title: str | None = None,
+    pmid: str | None = None,
 ) -> ShelfImportResult:
     """个人补充入库：先按 dedup 查全局池，命中直接入架；未命中抓取解析入池后入架。
 
@@ -327,7 +328,7 @@ async def import_to_shelf(
     paper_import.ParseFailedError（路由映射 422）。
     """
     result = await paper_import.resolve_or_create_pool_paper(
-        session, arxiv_id=arxiv_id, doi=doi, title=title
+        session, arxiv_id=arxiv_id, doi=doi, title=title, pmid=pmid
     )
     item = await add_to_shelf(
         session, project_id=project_id, paper_id=result.paper.id, user_id=user_id

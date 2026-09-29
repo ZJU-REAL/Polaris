@@ -65,14 +65,15 @@ class ShelfNoteUpdate(BaseModel):
 
 
 class ShelfImportRequest(BaseModel):
-    """个人补充入库：arxiv_id / doi / title 至少给一个。"""
+    """个人补充入库：arxiv_id / doi / pmid / title 至少给一个。"""
 
     arxiv_id: str | None = None
     doi: str | None = None
+    pmid: str | None = None
     title: str | None = None
 
     @model_validator(mode="after")
     def _at_least_one(self) -> "ShelfImportRequest":
-        if not (self.arxiv_id or self.doi or (self.title and self.title.strip())):
-            raise ValueError("arxiv_id / doi / title 至少给一个")
+        if not (self.arxiv_id or self.doi or self.pmid or (self.title and self.title.strip())):
+            raise ValueError("arxiv_id / doi / pmid / title 至少给一个")
         return self

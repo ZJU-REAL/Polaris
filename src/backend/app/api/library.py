@@ -252,6 +252,7 @@ async def import_entry(
             doi=body.doi,
             corpus_id=body.corpus_id,
             bibtex=body.bibtex,
+            pmid=body.pmid,
         )
     except paper_import_service.ParseFailedError as e:
         raise HTTPException(

@@ -16,7 +16,9 @@ import {
   type IngestStart,
   type IngestState,
   type IngestTimeRange,
+  type ResolvedPaperBatchItem,
 } from '../../lib/api';
+import { recognizePaperRef, refInput, refKey, refLabel } from '../../lib/paper-ref';
 import { tr } from '../../lib/i18n';
 import { splitPaperInput } from './paperInput';
 
@@ -101,22 +103,37 @@ function KnobRange({
 
 const MAX_ANCHOR_PAPERS = 50;
 
-function normalizeAnchorArxivId(raw: string): string {
-  return raw
-    .trim()
-    .replace(/^arxiv:\s*/i, '')
-    .replace(/^https?:\/\/(?:www\.)?arxiv\.org\/abs\//i, '')
-    .replace(/v\d+$/i, '');
+/** 草稿 → 认得出的标识（去重）与认不出的原文。标识不限 arXiv（#821）：DOI、PMID 同样可以当锚点。 */
+function parseAnchorRefs(raw: string): { refs: string[]; unknown: string[] } {
+  const refs: string[] = [];
+  const unknown: string[] = [];
+  const seen = new Set<string>();
+  for (const piece of splitPaperInput(raw)) {
+    const ref = recognizePaperRef(piece);
+    if (!ref) {
+      unknown.push(piece);
+      continue;
+    }
+    const key = refKey(refInput(ref));
+    if (!seen.has(key)) {
+      seen.add(key);
+      refs.push(piece);
+    }
+  }
+  return { refs, unknown };
 }
 
-function parseAnchorIds(raw: string): string[] {
-  const normalized = splitPaperInput(raw)
-    .map(normalizeAnchorArxivId)
-    .filter(Boolean);
-  return [...new Set(normalized)];
+/** 解析结果 → 锚点：按类型落到 arxiv_id / doi / pmid 之一。 */
+function anchorFromResolved(raw: string, item: ResolvedPaperBatchItem | undefined): AnchorPaper {
+  const ref = recognizePaperRef(raw);
+  const base: AnchorPaper = { title: item?.title || '' };
+  if (!ref) return base;
+  if (ref.kind === 'arxiv') return { ...base, arxiv_id: item?.arxiv_id || ref.value };
+  if (ref.kind === 'doi') return { ...base, doi: item?.doi || ref.value };
+  return { ...base, pmid: item?.pmid || ref.value };
 }
 
-/** 锚点论文编辑器：批量填写 arXiv id，题目由系统一次性补上。
+/** 锚点论文编辑器：批量填写 arXiv 编号 / DOI / PMID，题目由系统一次性补上。
  *
  * 从「收录设置」搬到这里——锚点是给「从锚点论文扩展」用的输入，放在收录设置里
  * 与检索/打分的配置混在一起，用户找不到它跟哪个动作有关。 */
@@ -135,8 +152,22 @@ function AnchorEditor({
   const [busy, setBusy] = useState(false);
 
   async function add() {
-    const existing = new Set(anchors.map((anchor) => normalizeAnchorArxivId(anchor.arxiv_id || '')));
-    const ids = parseAnchorIds(draft).filter((id) => !existing.has(id));
+    const existing = new Set(anchors.map(refKey));
+    const { refs, unknown } = parseAnchorRefs(draft);
+    if (unknown.length > 0) {
+      toast(
+        tr(
+          `认不出这些编号：${unknown.join('、')}。请用 arXiv 编号、DOI 或 PMID。`,
+          `Not recognisable: ${unknown.join(', ')}. Use arXiv IDs, DOIs or PMIDs.`,
+        ),
+        'error',
+      );
+      return;
+    }
+    const ids = refs.filter((raw) => {
+      const ref = recognizePaperRef(raw);
+      return ref ? !existing.has(refKey(refInput(ref))) : false;
+    });
     if (ids.length === 0) {
       toast(tr('这篇已经在列表里了', 'Already in the list'), 'info');
       return;
@@ -153,25 +184,22 @@ function AnchorEditor({
     }
     setBusy(true);
     try {
-      const resolved = await api.resolvePapersByArxivIds(ids);
-      const additions = ids.map((id, index) => ({
-        arxiv_id: resolved.items[index]?.arxiv_id || id,
-        title: resolved.items[index]?.title || '',
-      }));
+      const resolved = await api.resolvePaperRefs(ids);
+      const additions = ids.map((raw, index) => anchorFromResolved(raw, resolved.items[index]));
       const failed = resolved.items.filter((item) => item.error).length;
       onChange([...anchors, ...additions]);
       if (failed > 0) {
         toast(
-          tr(`${failed} 篇未解析出题目，已按 arXiv ID 添加。`, `${failed} titles could not be resolved; IDs were added.`),
+          tr(`${failed} 篇未解析出题目，已按编号添加。`, `${failed} titles could not be resolved; the IDs were added.`),
           'info',
         );
       }
       setDraft('');
     } catch {
-      onChange([...anchors, ...ids.map((id) => ({ arxiv_id: id, title: '' }))]);
+      onChange([...anchors, ...ids.map((raw) => anchorFromResolved(raw, undefined))]);
       setDraft('');
       toast(
-        tr('题目批量解析暂时不可用，已按 arXiv ID 添加。', 'Title resolution is unavailable; the arXiv IDs were added.'),
+        tr('题目批量解析暂时不可用，已按编号添加。', 'Title resolution is unavailable; the IDs were added.'),
         'info',
       );
     } finally {
@@ -184,9 +212,9 @@ function AnchorEditor({
       {anchors.length > 0 && (
         <div className="col gap6">
           {anchors.map((a, i) => (
-            <div key={`${a.arxiv_id}-${i}`} className="row gap8" style={{ alignItems: 'center' }}>
+            <div key={`${refKey(a)}-${i}`} className="row gap8" style={{ alignItems: 'center' }}>
               <span className="pill sm mono" style={{ background: 'var(--surface-3)' }}>
-                {a.arxiv_id}
+                {refLabel(a)}
               </span>
               <span style={{ fontSize: 12.5, flex: 1, minWidth: 0 }} className="ellipsis">
                 {a.title || <span className="muted">{tr('（题目未解析）', '(title unresolved)')}</span>}
@@ -218,16 +246,16 @@ function AnchorEditor({
               }
             }}
             placeholder={tr(
-              '多个 arXiv ID 或 URL 可用空格、逗号或换行分隔\n2005.11401, https://arxiv.org/abs/2406.00001',
-              'Separate multiple arXiv IDs or URLs with spaces, commas, or new lines\n2005.11401, https://arxiv.org/abs/2406.00001',
+              '多个 arXiv 编号、DOI 或 PMID（也可粘贴链接）用空格、逗号或换行分隔\n2005.11401, 10.1038/s41586-020-2649-2, PMID:31452104',
+              'Separate arXiv IDs, DOIs or PMIDs (links work too) with spaces, commas, or new lines\n2005.11401, 10.1038/s41586-020-2649-2, PMID:31452104',
             )}
           />
           <div className="row" style={{ justifyContent: 'flex-end' }}>
             <button type="button" className="btn btn-soft sm" disabled={busy || !draft.trim()} onClick={() => void add()}>
               {busy
                 ? tr('解析中…', 'Resolving…')
-                : parseAnchorIds(draft).length > 1
-                  ? tr(`添加 ${parseAnchorIds(draft).length} 篇`, `Add ${parseAnchorIds(draft).length}`)
+                : parseAnchorRefs(draft).refs.length > 1
+                  ? tr(`添加 ${parseAnchorRefs(draft).refs.length} 篇`, `Add ${parseAnchorRefs(draft).refs.length}`)
                   : tr('添加', 'Add')}
             </button>
           </div>

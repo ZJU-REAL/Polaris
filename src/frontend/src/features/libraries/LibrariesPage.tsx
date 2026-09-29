@@ -15,7 +15,6 @@ import { useLibraries, libraryPath, type LibraryFilters } from './hooks';
 import { DisciplineSelect } from './DisciplineSelect';
 import {
   InclusionSettingsForm,
-  ARXIV_ID_RE,
   hasInclusionKeywords,
   keywordsFromInclusion,
   type InclusionValue,
@@ -272,9 +271,6 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
   // 留空，不在前端编一个默认值——建库时服务端会按同样的规则补上
   const defaultSources = pack?.sources.length ? pack.sources : generalQuery.data?.sources ?? [];
 
-  const badAnchors = incl.anchors.filter(
-    (a) => !!a.arxiv_id && a.arxiv_id.trim() !== '' && !ARXIV_ID_RE.test(a.arxiv_id.trim()),
-  );
 
   const mutation = useMutation({
     mutationFn: (input: Parameters<typeof api.createLibrary>[0]) => api.createLibrary(input),
@@ -299,10 +295,6 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
     }
     if (!statement.trim()) {
       toast(tr('请填写一句话说明', 'Enter a one-sentence statement'), 'info');
-      return;
-    }
-    if (badAnchors.length > 0) {
-      toast(tr('有锚点论文填了非法 arXiv 编号，请修正后再提交', 'Some anchor papers have invalid arXiv ids — fix them first'), 'error');
       return;
     }
     // 只选了来源、没填分类和关键词，也必须把 keywords 发出去：

@@ -53,6 +53,10 @@ def _simplify(work: dict[str, Any]) -> dict[str, Any]:
         "issn_l": primary_source.get("issn_l") if isinstance(primary_source, dict) else None,
         "issns": primary_source.get("issn") if isinstance(primary_source, dict) else [],
         "cited_by_count": work.get("cited_by_count", 0),
+        # PubMed 编号：OpenAlex 给的是链接形式 https://pubmed.ncbi.nlm.nih.gov/<id>
+        "pmid": (
+            str((work.get("ids") or {}).get("pmid") or "").rstrip("/").rsplit("/", 1)[-1] or None
+        ),
         # 作者 + 每位作者的机构（OpenAlex 结构化给出 authorships[].institutions）
         "authors": [
             {
@@ -123,6 +127,11 @@ class OpenAlexClient:
     async def get_by_doi(self, doi: str) -> dict[str, Any] | None:
         """按 DOI 取 work 元数据（含 cited_by_count）；不存在返回 None。"""
         work = await self._get(f"/works/doi:{doi}")
+        return _simplify(work) if work else None
+
+    async def get_by_pmid(self, pmid: str) -> dict[str, Any] | None:
+        """按 PubMed 编号取 work 元数据；不存在返回 None（#821）。"""
+        work = await self._get(f"/works/pmid:{pmid}")
         return _simplify(work) if work else None
 
     async def get_by_arxiv(self, arxiv_id: str) -> dict[str, Any] | None:

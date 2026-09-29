@@ -448,7 +448,7 @@ async def test_batch_endpoint_preserves_corpus_id(client, monkeypatch):
 
     assert resp.status_code == 202, resp.text
     assert captured["items"] == [
-        {"arxiv_id": None, "doi": None, "corpus_id": "13756489", "bibtex": None}
+        {"arxiv_id": None, "doi": None, "pmid": None, "corpus_id": "13756489", "bibtex": None}
     ]
 
 

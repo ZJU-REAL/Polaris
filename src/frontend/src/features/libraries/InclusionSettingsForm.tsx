@@ -6,7 +6,8 @@ import { tr } from '../../lib/i18n';
 
 /* ============================================================
    收录设置共享表单（受控）——建库弹窗与文献库收录设置卡共用。
-   五块：文献来源 / arXiv 分类 chips / 检索关键词 chips / 锚点论文 / 打分标准（rubric）；
+   几块：文献来源 / arXiv 分类 chips / 检索关键词 chips / 打分标准（rubric）；
+   锚点论文在「导入」页编辑（IngestTab 的 AnchorEditor），这里只把已有值原样带回保存。
    顺序即提问顺序——先问「从哪里找」，arXiv 分类只在选了 arXiv 时才出现，
    做临床、做结构的人不该被一个跟自己无关的分类体系拦在第一步；
 
@@ -15,8 +16,6 @@ import { tr } from '../../lib/i18n';
    写死 arXiv 与一排 cs.*，于是每个人建库都先看到计算机的分类。
    ============================================================ */
 
-// arXiv id 宽松校验：2401.01234 / 2401.01234v2 / 老式 hep-th/9901001
-export const ARXIV_ID_RE = /^(\d{4}\.\d{4,5}(v\d+)?|[a-z-]+\/\d{7}(v\d+)?)$/i;
 
 /**
  * 收录设置 → 后端 keywords。
@@ -58,7 +57,6 @@ export interface InclusionSettingsFormProps {
   value: InclusionValue;
   onChange: (v: InclusionValue) => void;
   showRubric?: boolean;
-  showAnchors?: boolean;
   /** 只读：隐藏 AI 生成 / 增删按钮，禁用所有输入，仅展示已配置项。 */
   readOnly?: boolean;
   /**
@@ -83,12 +81,11 @@ export function InclusionSettingsForm({
   value,
   onChange,
   showRubric,
-  showAnchors,
   readOnly,
   defaultSources,
   arxivQuickPicks = [],
 }: InclusionSettingsFormProps) {
-  const { arxiv_categories, include, rubric, anchors } = value;
+  const { arxiv_categories, include, rubric } = value;
   const sources = value.sources ?? [];
   const exclude = value.exclude ?? [];
   const patch = (p: Partial<InclusionValue>) => onChange({ ...value, ...p });
@@ -138,17 +135,6 @@ export function InclusionSettingsForm({
   function removeKeyword(field: 'include' | 'exclude', k: string) {
     const current = field === 'include' ? include : exclude;
     patch({ [field]: current.filter((x) => x !== k) } as Partial<InclusionValue>);
-  }
-
-  // —— 锚点论文 ——
-  function updateAnchor(i: number, p: Partial<AnchorPaper>) {
-    patch({ anchors: anchors.map((a, j) => (j === i ? { ...a, ...p } : a)) });
-  }
-  function addAnchor() {
-    patch({ anchors: [...anchors, { title: '' }] });
-  }
-  function removeAnchor(i: number) {
-    patch({ anchors: anchors.filter((_, j) => j !== i) });
   }
 
   // —— 打分标准（rubric） ——
@@ -367,95 +353,6 @@ export function InclusionSettingsForm({
           />
         )}
       </div>
-
-      {/* —— 锚点论文 —— */}
-      {showAnchors && (
-        <div className="col gap8">
-          <BlockLabel
-            zh="锚点论文"
-            en="Anchor papers"
-            right={
-              readOnly ? undefined : (
-                <button type="button" className="btn btn-soft sm" onClick={addAnchor}>
-                  <Icon name="plus" size={12} />
-                  {tr('添加论文', 'Add paper')}
-                </button>
-              )
-            }
-          />
-          {anchors.length === 0 ? (
-            <div className="muted" style={{ fontSize: 12.5 }}>
-              {readOnly
-                ? tr('未设锚点论文。', 'No anchor papers set.')
-                : tr('可留空；抓取时会解析这些论文并做参考文献扩展。', 'Optional; ingest resolves these and expands references.')}
-            </div>
-          ) : (
-            <div className="col gap10">
-              {anchors.map((a, i) => {
-                const badId = !!a.arxiv_id && a.arxiv_id.trim() !== '' && !ARXIV_ID_RE.test(a.arxiv_id.trim());
-                return (
-                  <div key={i} style={{ border: '0.5px solid var(--border)', borderRadius: 9, padding: 12 }}>
-                    <div className="row gap8" style={{ alignItems: 'flex-start' }}>
-                      <div className="col gap8" style={{ flex: 1, minWidth: 0 }}>
-                        <label className="col gap4">
-                          <span className="muted" style={{ fontSize: 11.5 }}>{tr('标题（必填）', 'Title (required)')}</span>
-                          <input
-                            className="input"
-                            value={a.title}
-                            disabled={readOnly}
-                            onChange={(e) => updateAnchor(i, { title: e.target.value })}
-                            placeholder={tr('论文标题', 'Paper title')}
-                          />
-                        </label>
-                        <div className="row gap8 wrap">
-                          <label className="col gap4" style={{ width: 220 }}>
-                            <span className="muted" style={{ fontSize: 11.5 }}>{tr('arXiv 编号（选填）', 'arXiv id (optional)')}</span>
-                            <input
-                              className="input mono"
-                              style={{ fontSize: 12.5 }}
-                              value={a.arxiv_id ?? ''}
-                              disabled={readOnly}
-                              onChange={(e) => updateAnchor(i, { arxiv_id: e.target.value })}
-                              placeholder="2401.01234"
-                            />
-                          </label>
-                          <label className="col gap4" style={{ flex: 1, minWidth: 180 }}>
-                            <span className="muted" style={{ fontSize: 11.5 }}>{tr('入选理由（选填）', 'Reason (optional)')}</span>
-                            <input
-                              className="input"
-                              value={a.reason ?? ''}
-                              disabled={readOnly}
-                              onChange={(e) => updateAnchor(i, { reason: e.target.value })}
-                              placeholder={tr('为什么把它当作锚点', 'Why it anchors this direction')}
-                            />
-                          </label>
-                        </div>
-                        {badId && (
-                          <div style={{ color: 'var(--danger-tx)', fontSize: 11.5 }}>
-                            {tr('不是合法 arXiv 编号', 'Not a valid arXiv id')}
-                          </div>
-                        )}
-                      </div>
-                      {!readOnly && (
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          title={tr('删除论文', 'Remove paper')}
-                          aria-label={tr('删除论文', 'Remove paper')}
-                          onClick={() => removeAnchor(i)}
-                          style={{ flexShrink: 0 }}
-                        >
-                          <Icon name="trash" size={14} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* —— 打分标准（rubric） —— */}
       {showRubric && (
