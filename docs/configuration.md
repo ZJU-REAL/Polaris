@@ -31,11 +31,12 @@ Placement test, in order:
 4. Is it someone's preference? → `users.settings` (owner-scoped, namespaced key). Is it machine
    state, a derived cache, or an operator guardrail? → `system_settings`.
 
-Migration notes (one release only): reads of the migrated preference keys fall back to the legacy
-`system_settings` rows when the new key is absent, and the desktop market endpoint reads through to
-the old electron-store value (migrating a non-default value into the kernel KV on first read).
-Writes go to the new home only. The fallbacks and the legacy rows are removed together next
-release.
+Migration notes: the backend's read fallback to the legacy `system_settings` rows is gone (#821).
+Migration `d3f9a1c7e2b4` copies any legacy value the owner didn't have yet onto the owner, then
+deletes the legacy rows, so preferences have one home. The desktop market endpoint still reads
+through to the old electron-store value once (moving a non-default value into the kernel KV);
+removing that could drop a custom endpoint for anyone who hasn't opened the market since
+upgrading.
 
 ## Application settings (`POLARIS_` prefix)
 

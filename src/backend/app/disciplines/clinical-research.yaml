@@ -8,6 +8,7 @@
 # 放进 <data_dir>/disciplines/ 的同名文件会覆盖本包。
 name: clinical
 title: 临床与流行病学
+title_en: Clinical & epidemiology
 description: >-
   面向临床试验与观察性研究的抽取口径，按 PICO 拆解：研究人群、干预、对照、结局，
   外加研究设计。结局按条目存（指标/效应量/区间），便于跨研究比较效应大小而不是只看结论。
@@ -70,3 +71,5 @@ schemas:
 # 文献口径（#821）：临床证据在 PubMed / Europe PMC 上；OpenAlex 兜住非生物医学期刊
 literature:
   sources: [pubmed, europepmc, openalex]
+description_en: >-
+  Clinical and epidemiological research, with PICO-style method cards; new libraries search PubMed, Europe PMC and OpenAlex.

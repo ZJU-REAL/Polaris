@@ -125,9 +125,7 @@ async def test_legacy_key_keeps_its_flat_shape(client):
             user=await owner_of(session),
         )
     async with get_sessionmaker()() as session:
-        stored = await owner_settings.read_setting(
-            session, daily_feed.CATEGORIES_USER_KEY, legacy_key=daily_feed.CATEGORIES_SETTING_KEY
-        )
+        stored = await owner_settings.read_setting(session, daily_feed.CATEGORIES_USER_KEY)
     assert stored == ["cs.AI"], "旧键必须还是扁平分类列表，老读者才不会看见不认识的形状"
 
 

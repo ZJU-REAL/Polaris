@@ -67,13 +67,13 @@ export function DisciplineSelect({ value, onChange, disabled, maxWidth = 360 }: 
         )}
         {options.map((p) => (
           <option key={p.name} value={p.name}>
-            {p.title}
+            {tr(p.title, p.title_en || p.title)}
           </option>
         ))}
       </select>
-      {current?.description && (
+      {(current?.description || current?.description_en) && current && (
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-          {current.description}
+          {tr(current.description, current.description_en || current.description)}
         </p>
       )}
       {missing && (

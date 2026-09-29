@@ -8,6 +8,7 @@
 # 放进 <data_dir>/disciplines/ 的同名文件会覆盖本包，所以用户可以从它改起。
 name: structural
 title: 结构工程
+title_en: Structural engineering
 description: >-
   面向结构/土木方向的抽取口径：把论文的做法按「结构对象 — 作用 — 分析手段 — 验证」
   拆开，替代以数据集与基线为中心的机器学习口径。
@@ -64,3 +65,5 @@ schemas:
 # 文献口径（#821）：结构工程的期刊论文走 Crossref（DOI 注册处）与 OpenAlex
 literature:
   sources: [crossref, openalex]
+description_en: >-
+  Structures and materials: members, loads, analysis methods and validation; new libraries search Crossref and OpenAlex.

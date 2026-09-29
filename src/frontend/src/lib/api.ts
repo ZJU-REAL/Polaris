@@ -1417,6 +1417,9 @@ export interface DisciplinePackSummary {
   name: string;
   title: string;
   description: string;
+  /** 英文界面用的名称与说明；包没给时为 null，回落到 title / description */
+  title_en?: string | null;
+  description_en?: string | null;
   /** 这个包带来几条抽取 schema；0 = 方法卡沿用内置字段（如计算机科学） */
   schema_count: number;
   /** 新建文献库默认勾选的来源；空 = 包没声明，跟部署默认走（#821） */
