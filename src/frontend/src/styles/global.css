@@ -1634,6 +1634,37 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 
 
 /* ============================================================
+   设置页：左侧分组导航 + 右侧内容（#818 之后的修正）
+   ============================================================ */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+.settings-layout-nav { position: sticky; top: 12px; }
+.settings-layout-main { min-width: 0; }
+.settings-nav { display: flex; flex-direction: column; gap: 18px; }
+.settings-nav-group { display: flex; flex-direction: column; gap: 2px; }
+/* 分节标题：比条目小一号、灰、字距放开——一眼看得出它是标题而不是一个可点的项 */
+.settings-nav-heading {
+  font-size: 11px; font-weight: 650; letter-spacing: 0.06em;
+  color: var(--text-3); padding: 0 10px 6px;
+}
+.settings-nav-item {
+  display: block; width: 100%; text-align: left;
+  border: none; background: transparent; cursor: pointer;
+  padding: 7px 10px; border-radius: 8px;
+  font-family: var(--sans); font-size: 13px; font-weight: 500; color: var(--text-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background 0.12s, color 0.12s;
+}
+.settings-nav-item:hover { background: var(--nav-hover); color: var(--text); }
+/* 选中态与主侧栏 .nav-item.active 同一口径 */
+.settings-nav-item.active { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.settings-nav-select { display: none; }
+
+/* ============================================================
    主区变窄时（多半是 PolarisBuddy 拉开了，而不是窗口变小）
    ============================================================ */
 @container mainarea (max-width: 1180px) {
@@ -1660,6 +1691,11 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 }
 
 @container mainarea (max-width: 900px) {
+  /* 设置页：竖栏会吃掉太多正文宽度，换成分组下拉框 */
+  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .settings-layout-nav { position: static; }
+  .settings-nav { display: none; }
+  .settings-nav-select { display: block; width: 100%; max-width: 360px; }
   /* 统计卡：两列比四列挤成竖排单字强得多 */
   .dash-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dash-main { display: block; }
