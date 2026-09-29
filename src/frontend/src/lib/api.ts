@@ -2081,6 +2081,11 @@ export interface LibraryDigestRead extends LibraryDigestSummary {
 }
 
 /** 实验的全局环境设置（所有实验共用一份）。空串 = 不配置该项。 */
+export interface ExperimentEnvVar {
+  name: string;
+  value: string;
+}
+
 export interface ExperimentEnvSettings {
   /** 本机模型根目录，如 /hf/model */
   model_root: string;
@@ -2092,6 +2097,8 @@ export interface ExperimentEnvSettings {
   hf_endpoint: string;
   /** 实验机出外网的 HTTP 代理（凭据上单独配了的以凭据为准） */
   proxy_url: string;
+  /** 自定义环境变量：每个实验都导出；写代码的模型只看得到名字 */
+  env_vars: ExperimentEnvVar[];
 }
 
 export interface ManagedCommandWatchdogAdminSettings {

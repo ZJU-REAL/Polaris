@@ -60,6 +60,13 @@ class EmbeddingSpaceAdoptResult(BaseModel):
     previous: str | None = None
 
 
+class ExperimentEnvVar(BaseModel):
+    """一条自定义环境变量。名字/值的校验在服务层（experiment_settings）。"""
+
+    name: str
+    value: str = ""
+
+
 class ExperimentEnvSettings(BaseModel):
     """实验的全局环境设置（所有实验共用一份）。
 
@@ -72,6 +79,8 @@ class ExperimentEnvSettings(BaseModel):
     pip_index_url: str = ""  # pip 镜像源
     hf_endpoint: str = ""  # HF 镜像端点，如 https://hf-mirror.com
     proxy_url: str = ""  # 实验机出外网的 HTTP 代理
+    # 自定义环境变量：每个实验都导出；给模型的提示词里只列名字，不列值
+    env_vars: list[ExperimentEnvVar] = Field(default_factory=list)
 
 
 class ManagedCommandWatchdogAdminSettings(BaseModel):

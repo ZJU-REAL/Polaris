@@ -32,6 +32,7 @@ import functools
 import json
 import math
 import re
+import shlex
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -522,7 +523,7 @@ def _prompt_with_context(base: str, ctx: ActionContext) -> str:
     return "".join(parts) + ctx.evidence_guidance()
 
 
-def _env_facts_prompt(env_settings: dict[str, str]) -> str:
+def _env_facts_prompt(env_settings: dict[str, Any]) -> str:
     """把「实验设置」里的环境事实拼成一段提示词，附到 codegen 的 user prompt 后面。
 
     没配任何一项就返回空串（不往提示词里塞噪声）。这段是**事实陈述**而非建议：模型
@@ -538,7 +539,7 @@ def _env_facts_prompt(env_settings: dict[str, str]) -> str:
         )
     if env_settings.get("dataset_root"):
         root = env_settings["dataset_root"]
-        lines.append(f"- 本机数据集都放在 {root} 下（环境变量 $POLARIS_DATASET_ROOT）。")
+        lines.append(f"- 本机数据都放在 {root} 下（环境变量 $POLARIS_DATASET_ROOT）。")
     if env_settings.get("pip_index_url"):
         lines.append(
             f"- pip 镜像源已由平台配好（PIP_INDEX_URL={env_settings['pip_index_url']}），"
@@ -549,12 +550,19 @@ def _env_facts_prompt(env_settings: dict[str, str]) -> str:
             f"- HF 端点已由平台配好（HF_ENDPOINT={env_settings['hf_endpoint']}），"
             "代码里不要再改它。"
         )
+    # 自定义变量只报名字：值可能是密钥，不该进提示词；代码按名字从环境里读即可
+    names = [v["name"] for v in env_settings.get("env_vars") or [] if v.get("name")]
+    if names:
+        lines.append(
+            "- 平台已导出这些环境变量，需要时从环境里读（如 os.environ[...]），"
+            "不要把它们的值写死在代码里：" + "、".join(names) + "。"
+        )
     if not lines:
         return ""
     return "\n\n本机环境（平台实配，按此写代码，不要臆测）：\n" + "\n".join(lines)
 
 
-def diagnose_failure(err_text: str, env_settings: dict[str, str] | None = None) -> str:
+def diagnose_failure(err_text: str, env_settings: dict[str, Any] | None = None) -> str:
     """把 stderr 里**确定性可辨认**的失败归类，回一句定向提示给修复循环。
 
     修复循环原本只把 stderr 原样丢回给模型，指望它自己看出问题。对「路径写错」这种
@@ -635,7 +643,7 @@ def _platform_env_files(
     *,
     proxy_url: str | None = None,
     no_proxy_extra: str = "",
-    env_settings: dict[str, str] | None = None,
+    env_settings: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """平台生成的 env.sh（固定内容，非 LLM 产物）：恒定导出 POLARIS_WORKDIR，
     hf_mirror 时追加 HF_ENDPOINT 镜像；服务器配置了出网代理时导出 http(s)_proxy，
@@ -666,6 +674,9 @@ def _platform_env_files(
     )
     if hf_endpoint:
         lines.append(f"export HF_ENDPOINT={hf_endpoint}")
+    # 自定义环境变量：名字已过白名单，值整体加引号（可含空格等，不含换行）
+    for var in settings.get("env_vars") or []:
+        lines.append(f"export {var['name']}={shlex.quote(var['value'])}")
     if proxy_url:
         no_proxy = "localhost,127.0.0.1"
         if _params(ctx).get("hf_mirror"):

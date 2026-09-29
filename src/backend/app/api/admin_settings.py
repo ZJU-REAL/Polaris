@@ -139,7 +139,7 @@ async def adopt_embedding_space(
 async def get_experiment_env(
     session: AsyncSession = Depends(get_session),
 ) -> ExperimentEnvSettings:
-    """实验的全局环境设置（模型/数据集位置、pip 镜像、HF 端点、代理）。"""
+    """实验的全局环境设置（代理、数据位置、自定义环境变量、Python 相关的镜像与目录）。"""
     return ExperimentEnvSettings(**await experiment_settings_service.get_settings(session))
 
 

@@ -198,3 +198,79 @@ def test_experiment_done_criteria_requires_a_result():
     }
     verdict, _ = run_deterministic_checks(checks_list, observation=None, checkpoint=with_result)
     assert verdict is None or verdict["passed"]
+
+
+# ---- 自定义环境变量：固定字段偏 Python/ML，别的领域靠这一项（通用出口）----
+
+
+def test_env_vars_validate_names_and_values():
+    ok = es.validate(
+        {
+            "env_vars": [
+                {"name": "WANDB_PROJECT", "value": "polaris runs"},
+                {"name": "", "value": "空行丢弃"},
+                {"name": "matlab_root", "value": "/opt/MATLAB/R2024b"},
+            ]
+        }
+    )
+    assert ok["env_vars"] == [
+        {"name": "WANDB_PROJECT", "value": "polaris runs"},
+        {"name": "matlab_root", "value": "/opt/MATLAB/R2024b"},
+    ]
+    bad_cases = (
+        [{"name": "1ABC", "value": "x"}],  # 不是合法标识符
+        [{"name": "A B", "value": "x"}],
+        [{"name": "PATH", "value": "/tmp"}],  # 不许覆盖平台/shell 的变量
+        [{"name": "https_proxy", "value": "http://x"}],  # 大小写不敏感
+        [{"name": "X", "value": "a"}, {"name": "X", "value": "b"}],  # 重名
+        [{"name": "X", "value": "line1\nexport Y=2"}],  # 换行会拆出新命令
+    )
+    for env_vars in bad_cases:
+        with pytest.raises(es.InvalidExperimentSettingError) as exc:
+            es.validate({"env_vars": env_vars})
+        assert exc.value.field == "env_vars"
+
+
+def test_env_sh_quotes_custom_env_vars():
+    """值整体加引号：元字符原样成为值的一部分，不会被 shell 执行。"""
+    env = ax._platform_env_files(
+        _Ctx(),
+        env_settings={
+            **es.DEFAULTS,
+            "env_vars": [
+                {"name": "SPICE_LIB", "value": "/opt/spice lib"},
+                {"name": "TRICKY", "value": "$(whoami); rm -rf /"},
+            ],
+        },
+    )["env.sh"]
+    assert "export SPICE_LIB='/opt/spice lib'" in env
+    assert "export TRICKY='$(whoami); rm -rf /'" in env
+
+
+def test_codegen_prompt_lists_env_var_names_not_values():
+    """值可能是密钥：提示词里只报名字。"""
+    facts = ax._env_facts_prompt(
+        {**es.DEFAULTS, "env_vars": [{"name": "WANDB_API_KEY", "value": "sk-secret"}]}
+    )
+    assert "WANDB_API_KEY" in facts
+    assert "sk-secret" not in facts
+
+
+async def test_env_vars_roundtrip_through_admin_api(client):
+    from tests.conftest import register_and_login
+
+    token = await register_and_login(client)
+    h = {"Authorization": f"Bearer {token}"}
+    r = await client.get("/api/admin/settings/experiment-env", headers=h)
+    assert r.status_code == 200
+    assert r.json()["env_vars"] == []
+
+    body = {**r.json(), "env_vars": [{"name": "COMSOL_HOME", "value": "/opt/comsol62"}]}
+    r = await client.put("/api/admin/settings/experiment-env", json=body, headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["env_vars"] == [{"name": "COMSOL_HOME", "value": "/opt/comsol62"}]
+
+    bad = {**body, "env_vars": [{"name": "PATH", "value": "/tmp"}]}
+    r = await client.put("/api/admin/settings/experiment-env", json=bad, headers=h)
+    assert r.status_code == 422
+    assert r.json()["detail"] == "INVALID_EXPERIMENT_SETTING:env_vars"
