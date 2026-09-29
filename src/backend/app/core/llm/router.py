@@ -533,6 +533,7 @@ class LLMRouter:
                     base_url=route.base_url,
                     user_agent=route.user_agent,
                     timeout=timeout,
+                    max_attempts=attempts,
                 )
             elif route.provider_kind == "fake":
                 self._providers[key] = FakeProvider()

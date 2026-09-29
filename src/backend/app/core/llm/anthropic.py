@@ -1,8 +1,10 @@
 """Anthropic Messages API Provider，基于 httpx（不依赖官方 SDK）。
 
-complete / stream / stream_events 三个接口完整；缓存与重试仍留 TODO。
+complete / stream / stream_events 三个接口完整。429 / 529（过载）/ 5xx / 网络错误按
+指数退避重试（尊重 Retry-After），与 OpenAI 兼容 provider 同一口径（#821）。
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -40,6 +42,21 @@ _API_VERSION = "2023-06-01"
 _DEFAULT_MAX_TOKENS = 4096
 # 老模型不认 output_config.effort（该参数只在 4.6+ 上 GA）；命中即去掉重试一次
 _EFFORT_REJECT_MARKERS = ("effort", "output_config")
+# 值得重试的状态：529 是 Anthropic 的「服务过载」，高峰期很常见；408 是网关超时。
+# 以前一律不重试——一次 429 或 529 就让整个环节失败，而 OpenAI 兼容 provider 早就会退避
+_RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504, 529})
+_BACKOFF_BASE_SECONDS = 1.0
+
+
+def _retry_delay(resp: httpx.Response, attempt: int) -> float:
+    """优先听 Retry-After（封顶 60 秒），没有就指数退避。"""
+    retry_after = resp.headers.get("retry-after")
+    if retry_after:
+        try:
+            return min(60.0, max(1.0, float(retry_after)))
+        except ValueError:
+            pass
+    return _BACKOFF_BASE_SECONDS * (2**attempt)
 
 
 def _messages_url(base_url: str | None) -> str:
@@ -112,8 +129,10 @@ class AnthropicProvider(LLMProvider):
         user_agent: str | None = None,
         client: httpx.AsyncClient | None = None,
         timeout: float = 300.0,
+        max_attempts: int = 3,
     ) -> None:
         self._api_key = api_key
+        self._max_attempts = max(1, max_attempts)
         self._api_url = _messages_url(base_url)
         self._user_agent = user_agent.strip() if user_agent else None
         self._client = client or httpx.AsyncClient(timeout=timeout)
@@ -200,6 +219,43 @@ class AnthropicProvider(LLMProvider):
                 payload["tool_choice"] = {"type": "auto"}
         return payload
 
+    async def _post_with_retry(self, payload: dict[str, Any]) -> httpx.Response:
+        """429 / 529 / 5xx / 网络错误重试，其余状态原样返回给调用方判断。
+
+        「不支持 effort」不在重试之列：那不是临时故障，交回 complete 去掉参数再发。
+        """
+        last_exc: Exception | None = None
+        for attempt in range(self._max_attempts):
+            try:
+                resp = await self._client.post(self._api_url, headers=self._headers(), json=payload)
+            except (httpx.TransportError, httpx.TimeoutException) as e:
+                last_exc = e
+                if attempt < self._max_attempts - 1:
+                    await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
+                continue
+            if (
+                "output_config" in payload
+                and resp.status_code >= 400
+                and _rejects_effort(resp.text)
+            ):
+                return resp
+            if resp.status_code in _RETRYABLE_STATUS and attempt < self._max_attempts - 1:
+                delay = _retry_delay(resp, attempt)
+                logger.warning(
+                    "anthropic %s，%.0fs 后重试（%d/%d）",
+                    resp.status_code,
+                    delay,
+                    attempt + 1,
+                    self._max_attempts,
+                )
+                await asyncio.sleep(delay)
+                continue
+            return resp
+        raise RuntimeError(
+            f"anthropic 请求 {self._api_url} 重试 {self._max_attempts} 次后仍失败："
+            f"{type(last_exc).__name__}: {last_exc}"
+        )
+
     async def complete(
         self,
         messages: Sequence[Message],
@@ -212,11 +268,8 @@ class AnthropicProvider(LLMProvider):
         tools: Sequence[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
     ) -> CompletionResult:
-        # TODO(M2): 重试/限速/错误分类
-        resp = await self._client.post(
-            self._api_url,
-            headers=self._headers(),
-            json=self._payload(
+        resp = await self._post_with_retry(
+            self._payload(
                 messages,
                 model,
                 temperature,
@@ -226,15 +279,13 @@ class AnthropicProvider(LLMProvider):
                 effort=effort,
                 tools=tools,
                 tool_choice=tool_choice,
-            ),
+            )
         )
         if effort is not None and resp.status_code >= 400 and _rejects_effort(resp.text):
             # 该模型不认这个档位：去掉参数重试一次，别让配错档位打断整个环节
             logger.warning("模型 %s 不支持 effort=%s，已去掉该参数重试", model, effort)
-            resp = await self._client.post(
-                self._api_url,
-                headers=self._headers(),
-                json=self._payload(
+            resp = await self._post_with_retry(
+                self._payload(
                     messages,
                     model,
                     temperature,
@@ -243,7 +294,7 @@ class AnthropicProvider(LLMProvider):
                     images=images,
                     tools=tools,
                     tool_choice=tool_choice,
-                ),
+                )
             )
         resp.raise_for_status()
         data = resp.json()
@@ -326,44 +377,72 @@ class AnthropicProvider(LLMProvider):
         )
         usage: dict[str, Any] = {}
         finish_reason: str | None = None
-        async with self._client.stream(
-            "POST", self._api_url, headers=self._headers(), json=payload
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                event = json.loads(line[len("data:") :].strip())
-                kind = event.get("type")
-                if kind == "message_start":
-                    usage.update((event.get("message") or {}).get("usage") or {})
-                elif kind == "content_block_start":
-                    block = event.get("content_block") or {}
-                    if block.get("type") == "tool_use":
-                        yield ToolUseStart(
-                            int(event.get("index", 0)),
-                            str(block.get("id") or ""),
-                            str(block.get("name") or ""),
+        # 只在拿到第一个事件之前重试：开流就 429 / 529 / 断连时退避再开；事件已经在
+        # 往外吐时出错不能重来——调用方已经收到的那部分会被重复一遍
+        started = False
+        for attempt in range(self._max_attempts):
+            delay = _BACKOFF_BASE_SECONDS * (2**attempt)
+            try:
+                async with self._client.stream(
+                    "POST", self._api_url, headers=self._headers(), json=payload
+                ) as resp:
+                    if resp.status_code in _RETRYABLE_STATUS and attempt < self._max_attempts - 1:
+                        await resp.aread()
+                        delay = _retry_delay(resp, attempt)
+                        logger.warning(
+                            "anthropic stream %s，%.0fs 后重试（%d/%d）",
+                            resp.status_code,
+                            delay,
+                            attempt + 1,
+                            self._max_attempts,
                         )
-                elif kind == "content_block_delta":
-                    delta = event.get("delta") or {}
-                    dtype = delta.get("type")
-                    if dtype == "input_json_delta":
-                        yield ToolUseArgsDelta(
-                            int(event.get("index", 0)), delta.get("partial_json") or ""
-                        )
-                    elif dtype == "thinking_delta":
-                        yield ThinkingDelta(delta.get("thinking") or "")
-                    elif dtype == "signature_delta":
-                        yield ThinkingDelta("", delta.get("signature"))
-                    elif text := delta.get("text"):
-                        yield TextDelta(text)
-                elif kind == "content_block_stop":
-                    yield ToolUseStop(int(event.get("index", 0)))
-                elif kind == "message_delta":
-                    usage.update(event.get("usage") or {})
-                    if reason := (event.get("delta") or {}).get("stop_reason"):
-                        finish_reason = reason
+                    else:
+                        resp.raise_for_status()
+                        started = True
+                        async for line in resp.aiter_lines():
+                            if not line.startswith("data:"):
+                                continue
+                            event = json.loads(line[len("data:") :].strip())
+                            kind = event.get("type")
+                            if kind == "message_start":
+                                usage.update((event.get("message") or {}).get("usage") or {})
+                            elif kind == "content_block_start":
+                                block = event.get("content_block") or {}
+                                if block.get("type") == "tool_use":
+                                    yield ToolUseStart(
+                                        int(event.get("index", 0)),
+                                        str(block.get("id") or ""),
+                                        str(block.get("name") or ""),
+                                    )
+                            elif kind == "content_block_delta":
+                                delta = event.get("delta") or {}
+                                dtype = delta.get("type")
+                                if dtype == "input_json_delta":
+                                    yield ToolUseArgsDelta(
+                                        int(event.get("index", 0)), delta.get("partial_json") or ""
+                                    )
+                                elif dtype == "thinking_delta":
+                                    yield ThinkingDelta(delta.get("thinking") or "")
+                                elif dtype == "signature_delta":
+                                    yield ThinkingDelta("", delta.get("signature"))
+                                elif text := delta.get("text"):
+                                    yield TextDelta(text)
+                            elif kind == "content_block_stop":
+                                yield ToolUseStop(int(event.get("index", 0)))
+                            elif kind == "message_delta":
+                                usage.update(event.get("usage") or {})
+                                if reason := (event.get("delta") or {}).get("stop_reason"):
+                                    finish_reason = reason
+                        break
+            except (httpx.TransportError, httpx.TimeoutException):
+                if started or attempt >= self._max_attempts - 1:
+                    raise
+                logger.warning(
+                    "anthropic stream connection failed, retrying (%d/%d)",
+                    attempt + 1,
+                    self._max_attempts,
+                )
+            await asyncio.sleep(delay)
         yield StreamDone(
             finish_reason=normalize_finish_reason(finish_reason), usage=normalize_usage(usage)
         )
