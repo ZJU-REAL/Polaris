@@ -61,12 +61,10 @@ from app.services.paper_import import _parse_iso
 
 logger = logging.getLogger(__name__)
 
-# 订阅分类是用户偏好（#737 配置分层）：存 owner 用户的 settings['daily.categories']，
-# 旧 system_settings 键只作迁移期只读回退（deprecated，一期后连旧行一起删）。
+# 订阅按人存（#806）：各人 settings['daily.categories'] / ['daily.subscriptions']。
 # 每日池的默认源。它不再是「唯一的源」，只是历史扁平配置归一化时的归属。
 ARXIV_SOURCE = "arxiv"
 
-CATEGORIES_SETTING_KEY = "daily_feed_categories"
 CATEGORIES_USER_KEY = "daily.categories"
 # 非 arXiv 源的订阅单独一个键：旧键的形状与 legacy 读路径因此完全不受影响
 SUBSCRIPTIONS_USER_KEY = "daily.subscriptions"
@@ -1799,8 +1797,7 @@ def feed_state(
 
 # ---- 抓取时刻（可配置） ----
 
-SYNC_TIME_SETTING_KEY = "daily_feed_sync_time"
-# 用户偏好（#737）：存 owner settings['daily.sync_time']（"HH:MM"），旧键只读回退。
+# 用户偏好（#737）：存 owner settings['daily.sync_time']（"HH:MM"）。
 SYNC_TIME_USER_KEY = "daily.sync_time"
 
 #: 默认**开始探测**的时刻（UTC）= 北京时间 09:30。
@@ -1816,7 +1813,7 @@ DEFAULT_SYNC_UTC = (1, 30)
 async def get_sync_time(session: AsyncSession) -> tuple[int, int]:
     """抓取时刻（UTC 时、分）。存量值非法时回落默认。"""
     value = await owner_settings.read_setting(
-        session, SYNC_TIME_USER_KEY, legacy_key=SYNC_TIME_SETTING_KEY
+        session, SYNC_TIME_USER_KEY
     )
     if isinstance(value, str) and ":" in value:
         hh, _, mm = value.partition(":")
@@ -1836,7 +1833,7 @@ async def set_sync_time(
         raise ValueError(f"invalid time: {hour}:{minute}")
     value = f"{hour:02d}:{minute:02d}"
     await owner_settings.write_setting(
-        session, SYNC_TIME_USER_KEY, value, legacy_key=SYNC_TIME_SETTING_KEY, user=user
+        session, SYNC_TIME_USER_KEY, value, user=user
     )
     await session.commit()
     return hour, minute
@@ -2085,8 +2082,7 @@ async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | Non
 
 # ---- 保留期（可配置） ----
 
-RETENTION_SETTING_KEY = "daily_feed_retention_days"
-# 用户偏好（#737）：存 owner settings['daily.retention_days']，旧键只读回退。
+# 用户偏好（#737）：存 owner settings['daily.retention_days']。
 RETENTION_USER_KEY = "daily.retention_days"
 
 #: 每日池默认保留天数。这张表同时是**库同步的取数窗口**（同步全量重扫它），所以保留期
@@ -2098,7 +2094,7 @@ DEFAULT_RETENTION_DAYS = 14
 async def get_retention_days(session: AsyncSession) -> int:
     """保留天数（默认 14）。存量值非法时回落默认。"""
     value = await owner_settings.read_setting(
-        session, RETENTION_USER_KEY, legacy_key=RETENTION_SETTING_KEY
+        session, RETENTION_USER_KEY
     )
     if isinstance(value, int) and 1 <= value <= 90:
         return value
@@ -2109,7 +2105,7 @@ async def set_retention_days(session: AsyncSession, days: int, *, user: User | N
     if not (1 <= days <= 90):
         raise ValueError(f"retention out of range: {days}")
     await owner_settings.write_setting(
-        session, RETENTION_USER_KEY, days, legacy_key=RETENTION_SETTING_KEY, user=user
+        session, RETENTION_USER_KEY, days, user=user
     )
     await session.commit()
     return days
@@ -2117,7 +2113,6 @@ async def set_retention_days(session: AsyncSession, days: int, *, user: User | N
 
 # ---- 库同步的扫描范围（可配置） ----
 
-SYNC_SCOPE_SETTING_KEY = "library_sync_scope"
 # 用户偏好（#737，与保留天数同族的取数口味）：存 owner settings['daily.sync_scope']。
 SYNC_SCOPE_USER_KEY = "daily.sync_scope"
 
@@ -2134,7 +2129,7 @@ SYNC_SCOPES = ("since_last", "daily", "full")
 
 async def get_sync_scope(session: AsyncSession) -> str:
     value = await owner_settings.read_setting(
-        session, SYNC_SCOPE_USER_KEY, legacy_key=SYNC_SCOPE_SETTING_KEY
+        session, SYNC_SCOPE_USER_KEY
     )
     return value if value in SYNC_SCOPES else DEFAULT_SYNC_SCOPE
 
@@ -2143,7 +2138,7 @@ async def set_sync_scope(session: AsyncSession, scope: str, *, user: User | None
     if scope not in SYNC_SCOPES:
         raise ValueError(f"unknown scope: {scope}")
     await owner_settings.write_setting(
-        session, SYNC_SCOPE_USER_KEY, scope, legacy_key=SYNC_SCOPE_SETTING_KEY, user=user
+        session, SYNC_SCOPE_USER_KEY, scope, user=user
     )
     await session.commit()
     return scope

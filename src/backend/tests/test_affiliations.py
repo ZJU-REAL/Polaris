@@ -248,7 +248,9 @@ def test_parse_and_strip_block_absent():
 # ---- 抽取模式读写 + 管理员端点 ----
 
 
-async def test_affiliation_mode_default_and_roundtrip(app):
+async def test_affiliation_mode_default_and_roundtrip(client):
+    # 偏好存在 owner 身上（#737）：得先有一个人
+    await register_and_login(client, email="affil-mode@example.com")
     async with get_sessionmaker()() as session:
         assert await get_affiliation_extraction_mode(session) == "on_add"  # 默认
         assert await set_affiliation_extraction_mode(session, "on_compile") == "on_compile"
@@ -477,11 +479,12 @@ async def test_fetch_extract_on_compile_skips_dedicated_llm(
         return FAKE_MAPPING
 
     monkeypatch.setattr(actions_wiki, "extract_author_affiliations_llm", _count)
-    async with get_sessionmaker()() as session:
-        await set_affiliation_extraction_mode(session, "on_compile")
     paper_id, run = await _setup_scored_paper(
         client, tmp_path, full_text=FULL_TEXT, published=False
     )
+    # 偏好存在 owner 身上：setup 注册了用户之后才写得进去
+    async with get_sessionmaker()() as session:
+        await set_affiliation_extraction_mode(session, "on_compile")
     with respx.mock(assert_all_called=False) as router:
         router.get(url__regex=r"https://api\.openalex\.org/.*").mock(
             return_value=httpx.Response(200, json=OPENALEX_WORK)

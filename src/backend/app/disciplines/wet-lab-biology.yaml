@@ -7,6 +7,7 @@
 # 放进 <data_dir>/disciplines/ 的同名文件会覆盖本包。
 name: wetlab
 title: 实验生物学
+title_en: Wet-lab biology
 description: >-
   面向分子/细胞/动物实验的抽取口径：把论文的做法按「生物体系 — 扰动 — 读出 — 对照」
   拆开。生命科学论文的可复现性几乎全压在对照设置上，所以它是独立字段而不是塞进方法描述。
@@ -63,3 +64,5 @@ schemas:
 literature:
   sources: [pubmed, europepmc, openalex]
   arxiv_categories: [q-bio.BM, q-bio.CB, q-bio.GN, q-bio.MN, q-bio.NC, q-bio.QM]
+description_en: >-
+  Experimental biology: system, perturbation, readout and controls; new libraries search PubMed, Europe PMC and OpenAlex.

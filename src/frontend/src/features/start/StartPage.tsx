@@ -32,8 +32,8 @@ const ENTRIES: { to: string; icon: IconName; zh: [string, string]; en: [string, 
   {
     to: '/daily',
     icon: 'heart',
-    zh: ['每日新论文', 'arXiv 每日新提交，可以点赞、收录进文献库、看 AI 解读。'],
-    en: ['Daily papers', "Fresh arXiv submissions every day — like them, add them to a library, read the AI digest."],
+    zh: ['每日新论文', '按你订阅的来源（arXiv 分类、PubMed 检索词）每天送来新论文，可以点赞、收录进文献库、看 AI 解读。'],
+    en: ['Daily papers', 'New papers every day from what you subscribe to (arXiv categories, PubMed searches) — like them, add them to a library, read the AI digest.'],
   },
   {
     to: '/lab',

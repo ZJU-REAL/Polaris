@@ -1,6 +1,7 @@
 """OpenAI 兼容接口 Provider（DeepSeek / vLLM / OpenRouter 等），基于 httpx。
 
-429/5xx 自动指数退避重试（尊重 Retry-After）；tool-use 留 TODO。
+429/5xx 自动指数退避重试（尊重 Retry-After）；支持工具调用（tools / tool_choice /
+tool_calls 往返），服务端不支持时抛 ToolsUnsupportedError 交调用方降级。
 """
 
 import asyncio

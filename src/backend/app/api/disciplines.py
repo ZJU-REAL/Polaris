@@ -24,6 +24,9 @@ class DisciplineRead(BaseModel):
     name: str
     title: str
     description: str
+    #: 英文界面用的名称与说明；包没给时为 None，界面回落到 title / description
+    title_en: str | None = None
+    description_en: str | None = None
     #: 这个包带来几条抽取 schema。0 表示方法卡沿用内置字段（如计算机科学）
     schema_count: int
     #: 新建文献库默认勾选的来源；空 = 包没声明，跟部署默认走（见 /disciplines/defaults，#821）
@@ -68,6 +71,8 @@ async def list_disciplines(
                 name=pack.name,
                 title=pack.title,
                 description=pack.description,
+                title_en=pack.title_en,
+                description_en=pack.description_en,
                 schema_count=len(pack.schemas),
                 sources=list(pack.literature.sources) if pack.literature else [],
                 arxiv_categories=list(pack.literature.arxiv_categories if pack.literature else ()),

@@ -10,6 +10,7 @@
 # 放进 <data_dir>/disciplines/ 的同名文件会覆盖本包。
 name: cs
 title: 计算机科学
+title_en: Computer science
 description: >-
   计算机科学与人工智能。方法卡沿用内置字段（目的、手段、基线、数据集）；新建文献库
   默认从 arXiv 与 OpenAlex 取文献，并提供 cs.* 分类快捷项。
@@ -32,3 +33,5 @@ literature:
     - cs.MA
     - cs.NE
     - stat.ML
+description_en: >-
+  Computer science and AI. Method cards keep the general fields (purpose, mechanism, baseline, dataset); new libraries search arXiv and OpenAlex by default, with cs.* category shortcuts.

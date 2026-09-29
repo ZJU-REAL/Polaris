@@ -7,6 +7,7 @@
 # 放进 <data_dir>/disciplines/ 的同名文件会覆盖本包。
 name: synthesis
 title: 合成化学与材料
+title_en: Synthetic chemistry & materials
 description: >-
   面向合成/制备类工作的抽取口径：把论文的做法按「目标物 — 路线与条件 — 表征 — 性能」
   拆开。性能指标按条目存（指标/数值/条件），而不是压成一段描述。
@@ -70,3 +71,5 @@ schemas:
 literature:
   sources: [crossref, openalex]
   arxiv_categories: [cond-mat.mtrl-sci, physics.chem-ph, cond-mat.soft]
+description_en: >-
+  Synthesis and materials preparation, with performance metrics as entries; new libraries search Crossref and OpenAlex.

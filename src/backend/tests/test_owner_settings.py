@@ -1,4 +1,4 @@
-"""#737 配置分层：用户偏好存 owner 用户的 settings，旧 system_settings 键只读回退。"""
+"""#737 配置分层：用户偏好存 owner 用户的 settings。旧 system_settings 行的回退已删（#821 E2）。"""
 
 from sqlalchemy import select
 
@@ -79,10 +79,10 @@ async def test_daily_preferences_live_on_the_owner(client):
         assert "daily.sync_time" not in (other.settings or {})
         # 新写入不再落 system_settings
         for key in (
-            daily_feed.CATEGORIES_SETTING_KEY,
-            daily_feed.RETENTION_SETTING_KEY,
-            daily_feed.SYNC_TIME_SETTING_KEY,
-            daily_feed.SYNC_SCOPE_SETTING_KEY,
+            "daily_feed_categories",
+            "daily_feed_retention_days",
+            "daily_feed_sync_time",
+            "library_sync_scope",
         ):
             assert await session.get(SystemSetting, key) is None
         # 读路径（worker 同款：只有 session）取到同一份真相
@@ -91,47 +91,45 @@ async def test_daily_preferences_live_on_the_owner(client):
         assert await daily_feed.get_sync_scope(session) == "full"
 
 
-async def test_legacy_system_settings_rows_are_read_as_fallback(client):
-    """迁移期回退：新键缺席时读旧 system_settings 行；写过新键后旧行失效。"""
+async def test_legacy_system_settings_rows_are_no_longer_read(client):
+    """回退只说好留一期（#737），#821 E2 删了：旧行即使还在也不再被读到。
+
+    迁移 d3f9a1c7e2b4 已先把旧行里 owner 还没有的值补到 owner 身上再删行，所以正常
+    部署上根本不会剩下旧行；这里验证的是读路径确实只认 owner.settings。
+    """
     from app.core.db import get_sessionmaker
     from app.services import daily_feed, tts
     from app.services.affiliations import get_affiliation_extraction_mode
 
     await register_and_login(client)
     async with get_sessionmaker()() as session:
-        session.add(SystemSetting(key=daily_feed.CATEGORIES_SETTING_KEY, value=["q-bio.NC"]))
-        session.add(SystemSetting(key=daily_feed.RETENTION_SETTING_KEY, value=9))
+        session.add(SystemSetting(key="daily_feed_retention_days", value=9))
         session.add(SystemSetting(key="affiliation_extraction_mode", value="on_compile"))
-        session.add(
-            SystemSetting(key=tts.SETTING_KEY, value={"enabled": True, "model": "legacy-model"})
-        )
+        session.add(SystemSetting(key="tts_config", value={"enabled": True, "model": "legacy"}))
         await session.commit()
 
-        assert await daily_feed.get_retention_days(session) == 9
-        assert await get_affiliation_extraction_mode(session) == "on_compile"
-        assert (await tts.get_admin_settings(session))["model"] == "legacy-model"
+        assert await daily_feed.get_retention_days(session) != 9
+        assert await get_affiliation_extraction_mode(session) == "on_add"
+        assert (await tts.get_admin_settings(session)).get("model") != "legacy"
 
-        # 写新值 → 存到 owner，旧行原样保留但不再被读到
         await daily_feed.set_retention_days(session, 21)
         assert await daily_feed.get_retention_days(session) == 21
-        legacy = await session.get(SystemSetting, daily_feed.RETENTION_SETTING_KEY)
-        assert legacy is not None and legacy.value == 9
 
 
-async def test_writes_without_any_user_fall_back_to_legacy_rows(app):
-    """还没有任何用户（种子/引导阶段）：写退回旧行，读也能读回来，不丢数据。
+async def test_writing_a_preference_with_no_user_at_all_says_so(app):
+    """以前退回写 system_settings 旧行；读路径不再读它之后那样写就是写丢，所以明说。
 
-    用保留天数当抓手而不是订阅：订阅按人存（#806），没有人的时候本来就无人可订，
-    那条路径不该也不能退回一个全局行。
+    实际不会走到：所有写入都来自已登录用户的请求。
     """
+    import pytest
+
     from app.core.db import get_sessionmaker
     from app.services import daily_feed
+    from app.services.owner_settings import NoOwnerError
 
     async with get_sessionmaker()() as session:
-        await daily_feed.set_retention_days(session, 12)
-        assert await daily_feed.get_retention_days(session) == 12
-        row = await session.get(SystemSetting, daily_feed.RETENTION_SETTING_KEY)
-        assert row is not None and row.value == 12
+        with pytest.raises(NoOwnerError):
+            await daily_feed.set_retention_days(session, 12)
 
 
 async def test_tts_and_affiliation_settings_live_on_the_owner(client):
@@ -162,7 +160,7 @@ async def test_tts_and_affiliation_settings_live_on_the_owner(client):
         stored = await _owner_settings_snapshot(session)
         assert stored["tts.admin"]["model"] == "my-voice-model"
         assert stored["affiliations.extraction_mode"] == "on_compile"
-        assert await session.get(SystemSetting, tts.SETTING_KEY) is None
+        assert await session.get(SystemSetting, "tts_config") is None
         assert await session.get(SystemSetting, "affiliation_extraction_mode") is None
         # 个人 TTS 偏好与全局档互不覆盖（同住一个 settings 字典的不同键）
         _, effective = await tts.effective_settings(

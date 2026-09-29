@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b5e2c8d41f7a"  # 每日池条目记来源 (#821)
+HEAD_REVISION = "d3f9a1c7e2b4"  # 删掉偏好的旧 system_settings 行 (#821 E2)
+DAILY_FEED_SOURCES_REVISION = "b5e2c8d41f7a"  # 每日池条目记来源 (#821)
 INPUT_BUDGETS_REVISION = "a8d3e5f71c42"  # 路由的输入预算 (#811)
 RERANK_PATH_REVISION = "e3a7c91f20b6"  # provider 的 rerank 路径 (#810)
 DAILY_SUBS_REVISION = "c1d80a3fb492"  # 每日订阅按人存 (#806)
@@ -643,7 +644,12 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 每日池条目记来源（#821）：增量同步按库的来源筛池
     assert "sources" in columns["daily_feed_entries"]
 
-    # 先退掉每日池条目的来源列。
+    # 先退掉「删偏好旧行」（只动数据，不动表结构）。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == DAILY_FEED_SOURCES_REVISION
+
+    # 再退掉每日池条目的来源列。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == INPUT_BUDGETS_REVISION
@@ -1577,3 +1583,56 @@ def test_hypothesis_seq_backfill_follows_the_previous_best_effort_order(tmp_path
         n = conn.execute(text("SELECT COUNT(*) FROM hypothesis_nodes")).scalar_one()
     assert n == 4
     engine.dispose()
+
+
+def test_legacy_preference_rows_move_to_the_owner_then_go(tmp_path):
+    """#821 E2：删 read_setting 的旧行回退之前，先把旧行里 owner 还没有的值补到 owner
+    身上——那正是回退此刻还在读的值，删掉之后行为不变。owner 已有的值不被旧行覆盖。"""
+    import json
+
+    db_path = tmp_path / "legacy-prefs.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, DAILY_FEED_SOURCES_REVISION)
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    user_cols = (
+        "id, email, hashed_password, is_active, is_superuser, is_verified, "
+        "display_name, username_locked, settings, created_at, updated_at"
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"INSERT INTO users ({user_cols}) VALUES "
+                "('00000000-0000-0000-0000-000000000001', 'owner@e.com', 'x', 1, 0, 1, "
+                "'', 0, :settings, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            ),
+            {"settings": json.dumps({"daily.sync_time": "07:15"})},
+        )
+        for key, value in (
+            ("daily_feed_sync_time", "03:00"),  # owner 已有新键：不覆盖
+            ("daily_feed_retention_days", 9),  # owner 没有：补上
+            ("tts_config", {"model": "legacy-voice"}),
+            ("daily_feed_categories", ["cs.AI"]),  # 只删不搬
+            ("literature_search", {"sources": ["pubmed"]}),  # 不相干的行：不动
+        ):
+            conn.execute(
+                text(
+                    "INSERT INTO system_settings (key, value, created_at, updated_at) "
+                    "VALUES (:k, :v, '2026-01-01', '2026-01-01')"
+                ),
+                {"k": key, "v": json.dumps(value)},
+            )
+
+    command.upgrade(cfg, "head")
+
+    with engine.begin() as conn:
+        raw = conn.execute(
+            text("SELECT settings FROM users WHERE email = 'owner@e.com'")
+        ).scalar_one()
+        keys = {row[0] for row in conn.execute(text("SELECT key FROM system_settings")).all()}
+    settings = json.loads(raw) if isinstance(raw, str) else raw
+    assert settings["daily.sync_time"] == "07:15"
+    assert settings["daily.retention_days"] == 9
+    assert settings["tts.admin"] == {"model": "legacy-voice"}
+    assert "daily.categories" not in settings
+    assert keys == {"literature_search"}

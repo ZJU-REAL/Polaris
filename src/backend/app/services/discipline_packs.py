@@ -148,6 +148,9 @@ class DisciplinePack(BaseModel):
     name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
     title: str = Field(min_length=1, max_length=128)
     description: str = Field(default="", max_length=1000)
+    #: 英文界面用的名称与说明；缺省时英文界面也显示 title / description（#821）
+    title_en: str | None = Field(default=None, max_length=128)
+    description_en: str | None = Field(default=None, max_length=1000)
     schemas: tuple[PackSchema, ...] = Field(default=(), max_length=8)
     literature: PackLiterature | None = None
 
