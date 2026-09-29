@@ -24,7 +24,7 @@ type AddTab = 'library' | 'manual';
 // 模块级常量不调 tr()：保留 zh/en 字段，渲染处再 tr
 const TABS: { v: AddTab; zh: string; en: string }[] = [
   { v: 'library', zh: '从文献库', en: 'From library' },
-  { v: 'manual', zh: '手动添加', en: 'By arXiv / DOI' },
+  { v: 'manual', zh: '手动添加', en: 'By arXiv / DOI / PMID' },
 ];
 
 export function AddPaperModal({
@@ -72,7 +72,12 @@ export function AddPaperModal({
   const submitImport = () => {
     const input: ShelfImportInput | null = parsePaperRef(importInput);
     if (!input) {
-      toast(tr('先输入 arXiv 编号或 DOI', 'Enter an arXiv ID or DOI first'), 'info');
+      toast(
+        importInput.trim()
+          ? tr('认不出这个编号：请输入 arXiv 编号、DOI 或 PMID', 'Not a recognisable arXiv ID, DOI or PMID')
+          : tr('先输入 arXiv 编号、DOI 或 PMID', 'Enter an arXiv ID, DOI or PMID first'),
+        'info',
+      );
       return;
     }
     void onImport(input)
@@ -119,7 +124,7 @@ export function AddPaperModal({
             <div className="empty" style={{ padding: '28px 14px' }}>{tr('搜索中…', 'Searching…')}</div>
           ) : results.length === 0 ? (
             <div className="empty" style={{ padding: '28px 14px' }}>
-              {tr('文献库里没搜到，试试手动添加页签', 'Nothing found — try the “By arXiv / DOI” tab')}
+              {tr('文献库里没搜到，试试手动添加页签', 'Nothing found — try the “By arXiv / DOI / PMID” tab')}
             </div>
           ) : (
             <div className="col" style={{ marginTop: 8 }}>
@@ -161,7 +166,7 @@ export function AddPaperModal({
           )}
         </div>
       ) : (
-        /* ======== 手动添加：arXiv / DOI ======== */
+        /* ======== 手动添加：arXiv / DOI / PMID ======== */
         <div style={{ marginTop: 14 }}>
           <div className="row gap10">
             <input
@@ -173,7 +178,10 @@ export function AddPaperModal({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') submitImport();
               }}
-              placeholder={tr('arXiv 编号（如 2401.12345）或 DOI（如 10.1234/abc）', 'arXiv ID (e.g. 2401.12345) or DOI (e.g. 10.1234/abc)')}
+              placeholder={tr(
+                'arXiv 编号（2401.12345）、DOI（10.1234/abc）或 PMID（31452104），也可粘贴链接',
+                'arXiv ID (2401.12345), DOI (10.1234/abc) or PMID (31452104); links work too',
+              )}
             />
             <button
               className="btn btn-primary sm"

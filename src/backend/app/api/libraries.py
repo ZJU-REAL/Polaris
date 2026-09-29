@@ -878,6 +878,7 @@ async def add_library_paper_manually(
             doi=data.doi,
             corpus_id=data.corpus_id,
             bibtex=data.bibtex,
+            pmid=data.pmid,
             project_id=library.project_id,
         )
     except paper_import_service.DuplicatePaperError as e:

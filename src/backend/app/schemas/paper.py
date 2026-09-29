@@ -216,20 +216,23 @@ class PaperPdfUrlIn(BaseModel):
 
 
 class PaperManualCreate(BaseModel):
-    """手动添加文献：arxiv_id / doi / corpus_id / bibtex 四选一。"""
+    """手动添加文献：arxiv_id / doi / pmid / corpus_id / bibtex 五选一。"""
 
     arxiv_id: str | None = None
     doi: str | None = None
+    pmid: str | None = None
     corpus_id: str | None = None
     bibtex: str | None = None
 
     @model_validator(mode="after")
     def _exactly_one(self) -> "PaperManualCreate":
         provided = [
-            v for v in (self.arxiv_id, self.doi, self.corpus_id, self.bibtex) if v and v.strip()
+            v
+            for v in (self.arxiv_id, self.doi, self.pmid, self.corpus_id, self.bibtex)
+            if v and v.strip()
         ]
         if len(provided) != 1:
-            raise ValueError("arxiv_id / doi / corpus_id / bibtex 必须且只能填一个")
+            raise ValueError("arxiv_id / doi / pmid / corpus_id / bibtex 必须且只能填一个")
         return self
 
 
@@ -247,14 +250,29 @@ class PaperManualBatchTaskRead(BaseModel):
 
 
 class ResolvedPaperBatchCreate(BaseModel):
-    """批量解析锚点论文元数据（只读，不入库）。"""
+    """批量解析锚点论文元数据（只读，不入库）。
 
-    arxiv_ids: list[str] = Field(min_length=1, max_length=50)
+    ``refs`` 是任意标识（arXiv 编号 / DOI / PMID，含链接写法，#821）；``arxiv_ids``
+    是它出现之前的旧入口，保留给存量调用。两者给一个。
+    """
+
+    arxiv_ids: list[str] | None = Field(default=None, min_length=1, max_length=50)
+    refs: list[str] | None = Field(default=None, min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def _one_of(self) -> "ResolvedPaperBatchCreate":
+        if not (self.arxiv_ids or self.refs):
+            raise ValueError("arxiv_ids / refs 给一个")
+        return self
 
 
 class ResolvedPaperBatchItem(BaseModel):
     index: int
-    arxiv_id: str
+    #: 标识类型：arxiv / doi / pmid；认不出时为 None（error 说明原因）
+    kind: str | None = None
+    arxiv_id: str = ""
+    doi: str | None = None
+    pmid: str | None = None
     title: str = ""
     year: int | None = None
     authors: list[str] = []

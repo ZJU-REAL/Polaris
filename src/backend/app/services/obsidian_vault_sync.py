@@ -18,7 +18,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
@@ -31,6 +31,7 @@ from app.services.dedup import pool_dedup_key
 from app.services.libraries import create_library, get_source_library_ids
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import figure_path, papers_dir
+from app.services.paper_identifiers import normalize_pmid
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,10 @@ _TLDR_RE = re.compile(r"^## TL;DR\s*\n(.+?)(?=\n##\s|\Z)", re.MULTILINE | re.DOT
 @dataclass(slots=True)
 class VaultPaper:
     slug: str
-    arxiv_id: str
+    # 标识三选一（#821）：以前只收 arXiv 编号，非 arXiv 的论文整个 vault 都导不进来
+    arxiv_id: str | None
+    doi: str | None
+    pmid: str | None
     title: str
     abstract: str | None
     authors: list[str]
@@ -59,6 +63,49 @@ class VaultPaper:
     figure_path: Path | None
     figure_meta: dict[str, Any] | None
     concept_slugs: set[str] = field(default_factory=set)
+
+    @property
+    def key(self) -> str:
+        return _identity_key(self.arxiv_id, self.doi, self.pmid)
+
+
+def _identity_key(arxiv_id: str | None, doi: str | None, pmid: str | None) -> str:
+    """一篇 vault 论文的身份：arXiv 编号优先，其次 DOI、PMID（#821）。"""
+    if arxiv_id:
+        return f"arxiv:{arxiv_id.lower()}"
+    if doi:
+        return f"doi:{doi.lower()}"
+    return f"pmid:{pmid}"
+
+
+def _source_name(source: VaultPaper) -> str:
+    return "arxiv" if source.arxiv_id else ("doi" if source.doi else "pubmed")
+
+
+def _paper_url(paper: VaultPaper) -> str:
+    if paper.arxiv_id:
+        return f"https://arxiv.org/abs/{paper.arxiv_id}"
+    if paper.doi:
+        return f"https://doi.org/{paper.doi}"
+    return f"https://pubmed.ncbi.nlm.nih.gov/{paper.pmid}/"
+
+
+def _external_ids(source: VaultPaper) -> dict[str, str]:
+    return {
+        k: v
+        for k, v in (("ArXiv", source.arxiv_id), ("doi", source.doi), ("pmid", source.pmid))
+        if v
+    }
+
+
+def _pool_key(source: VaultPaper) -> str:
+    return pool_dedup_key(
+        arxiv_id=source.arxiv_id,
+        doi=source.doi,
+        title=source.title,
+        year=source.published_at.year if source.published_at else None,
+        authors=[{"name": name} for name in source.authors],
+    )
 
 
 @dataclass(slots=True)
@@ -203,18 +250,23 @@ def scan_vault(root: Path) -> VaultSnapshot:
     trends_raw = trends_path.read_text(encoding="utf-8") if trends_path.is_file() else None
 
     papers: list[VaultPaper] = []
-    seen_arxiv: set[str] = set()
+    seen_keys: set[str] = set()
     for meta_path in sorted(meta_dir.glob("*.json")):
         meta = _read_json(meta_path)
         slug = str(meta.get("slug") or meta_path.stem).strip()
         raw_arxiv = str(meta.get("arxiv_id") or "").strip()
+        raw_doi = str(meta.get("doi") or "").strip().removeprefix("https://doi.org/")
+        raw_pmid = str(meta.get("pmid") or "").strip()
         title = str(meta.get("title") or "").strip()
-        if not raw_arxiv or not title:
-            raise ValueError(f"paper needs arxiv_id and title: {meta_path}")
-        arxiv_id = normalize_arxiv_id(raw_arxiv)
-        if arxiv_id in seen_arxiv:
-            raise ValueError(f"duplicate arXiv id {arxiv_id} in {meta_path}")
-        seen_arxiv.add(arxiv_id)
+        if not (raw_arxiv or raw_doi or raw_pmid) or not title:
+            raise ValueError(f"paper needs a title and one of arxiv_id / doi / pmid: {meta_path}")
+        arxiv_id = normalize_arxiv_id(raw_arxiv) if raw_arxiv else None
+        doi = raw_doi or None
+        pmid = normalize_pmid(raw_pmid) if raw_pmid else None
+        key = _identity_key(arxiv_id, doi, pmid)
+        if key in seen_keys:
+            raise ValueError(f"duplicate paper {key} in {meta_path}")
+        seen_keys.add(key)
 
         wiki_candidates = [
             root / "wiki" / "papers" / f"{slug}.md",
@@ -235,6 +287,8 @@ def scan_vault(root: Path) -> VaultSnapshot:
             VaultPaper(
                 slug=slug,
                 arxiv_id=arxiv_id,
+                doi=doi,
+                pmid=pmid,
                 title=title,
                 abstract=(str(meta["abstract"]).strip() if meta.get("abstract") else None),
                 authors=[str(author).strip() for author in authors if str(author).strip()],
@@ -289,7 +343,7 @@ def render_markdown(
         paper_id = (paper_ids_by_slug or {}).get(slug)
         if paper_id is not None:
             return f"[[paper:{paper_id}|{label or paper.title}]]"
-        return f"[{label or paper.title}](https://arxiv.org/abs/{paper.arxiv_id})"
+        return f"[{label or paper.title}]({_paper_url(paper)})"
 
     body = _CONCEPT_LINK_RE.sub(concept_repl, body)
     body = _PAPER_LINK_RE.sub(paper_repl, body)
@@ -366,23 +420,31 @@ async def _resolve_library(
 
 
 async def _paper_pool(session: AsyncSession, snapshot: VaultSnapshot) -> dict[str, Paper]:
-    ids = [paper.arxiv_id for paper in snapshot.papers]
-    keys = [f"arxiv:{arxiv_id.lower()}" for arxiv_id in ids]
-    rows = list(
-        (
-            await session.execute(
-                select(Paper).where(or_(Paper.arxiv_id.in_(ids), Paper.dedup_key.in_(keys)))
-            )
-        )
-        .scalars()
-        .all()
-    )
+    """vault 里的论文在全局池里已有哪些：按 arXiv 编号、DOI、池去重键逐层匹配。
+
+    返回 {identity key: Paper}。去重键这一层兜住只有 PMID 的论文——它们建池时的去重键
+    是标题哈希，不按它匹配的话每次重新同步都会再建一份。
+    """
+    by_arxiv = {s.arxiv_id.lower(): s.key for s in snapshot.papers if s.arxiv_id}
+    by_doi = {s.doi.lower(): s.key for s in snapshot.papers if s.doi}
+    by_dedup = {_pool_key(s): s.key for s in snapshot.papers}
+    conditions = [Paper.dedup_key.in_(list(by_dedup))]
+    if by_arxiv:
+        conditions.append(Paper.arxiv_id.in_([s.arxiv_id for s in snapshot.papers if s.arxiv_id]))
+    if by_doi:
+        conditions.append(func.lower(Paper.doi).in_(list(by_doi)))
+    rows = list((await session.execute(select(Paper).where(or_(*conditions)))).scalars().all())
     found: dict[str, Paper] = {}
     for paper in rows:
+        key = None
         if paper.arxiv_id:
-            found[normalize_arxiv_id(paper.arxiv_id)] = paper
-        elif paper.dedup_key and paper.dedup_key.startswith("arxiv:"):
-            found[paper.dedup_key.removeprefix("arxiv:")] = paper
+            key = by_arxiv.get(normalize_arxiv_id(paper.arxiv_id).lower())
+        if key is None and paper.doi:
+            key = by_doi.get(paper.doi.lower())
+        if key is None and paper.dedup_key:
+            key = by_dedup.get(paper.dedup_key)
+        if key is not None:
+            found.setdefault(key, paper)
     return found
 
 
@@ -433,17 +495,13 @@ async def _sync_concepts(
 
 def _fill_missing_metadata(paper: Paper, source: VaultPaper) -> None:
     if not paper.source:
-        paper.source = "arxiv"
-    if not paper.arxiv_id:
+        paper.source = _source_name(source)
+    if not paper.arxiv_id and source.arxiv_id:
         paper.arxiv_id = source.arxiv_id
+    if not paper.doi and source.doi:
+        paper.doi = source.doi
     if not paper.dedup_key:
-        paper.dedup_key = pool_dedup_key(
-            arxiv_id=source.arxiv_id,
-            doi=None,
-            title=source.title,
-            year=source.published_at.year if source.published_at else None,
-            authors=[{"name": name} for name in source.authors],
-        )
+        paper.dedup_key = _pool_key(source)
     if not paper.abstract:
         paper.abstract = source.abstract
     if not paper.authors:
@@ -453,9 +511,9 @@ def _fill_missing_metadata(paper: Paper, source: VaultPaper) -> None:
     if not paper.year and source.published_at:
         paper.year = source.published_at.year
     if not paper.url:
-        paper.url = f"https://arxiv.org/abs/{source.arxiv_id}"
+        paper.url = _paper_url(source)
     if not paper.external_ids:
-        paper.external_ids = {"ArXiv": source.arxiv_id}
+        paper.external_ids = _external_ids(source)
     if not paper.tldr:
         paper.tldr = extract_tldr(source.wiki_raw)
 
@@ -721,7 +779,7 @@ async def sync_obsidian_vault(
 
     stats.memberships_created = len(snapshot.papers) - len(existing_members)
     for source in snapshot.papers:
-        paper = pool.get(source.arxiv_id)
+        paper = pool.get(source.key)
         has_wiki = paper is not None and paper.id in existing_wikis
         if source.wiki_raw:
             if not has_wiki:
@@ -784,31 +842,26 @@ async def sync_obsidian_vault(
         )
 
     for offset, source in enumerate(snapshot.papers, start=1):
-        paper = pool.get(source.arxiv_id)
+        paper = pool.get(source.key)
         if paper is None:
             authors = [{"name": name} for name in source.authors]
             paper = new_paper(
-                dedup_key=pool_dedup_key(
-                    arxiv_id=source.arxiv_id,
-                    doi=None,
-                    title=source.title,
-                    year=source.published_at.year if source.published_at else None,
-                    authors=authors,
-                ),
-                source="arxiv",
+                dedup_key=_pool_key(source),
+                source=_source_name(source),
                 arxiv_id=source.arxiv_id,
-                external_ids={"ArXiv": source.arxiv_id},
+                doi=source.doi,
+                external_ids=_external_ids(source),
                 title=source.title,
                 authors=authors,
                 abstract=source.abstract,
                 year=source.published_at.year if source.published_at else None,
-                url=f"https://arxiv.org/abs/{source.arxiv_id}",
+                url=_paper_url(source),
                 published_at=source.published_at,
                 tldr=extract_tldr(source.wiki_raw),
             )
             session.add(paper)
             await session.flush()
-            pool[source.arxiv_id] = paper
+            pool[source.key] = paper
         else:
             _fill_missing_metadata(paper, source)
 
@@ -928,9 +981,7 @@ async def sync_obsidian_vault(
         library=library,
         stats=stats,
         paper_ids_by_slug={
-            source.slug: pool[source.arxiv_id].id
-            for source in snapshot.papers
-            if source.arxiv_id in pool
+            source.slug: pool[source.key].id for source in snapshot.papers if source.key in pool
         },
     )
     state = dict(library.ingest_state or {})

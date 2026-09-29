@@ -203,3 +203,53 @@ async def test_sync_is_idempotent(app, tmp_path):
             assert (await session.scalar(select(func.count()).select_from(model))) == 1
         assert (await session.scalar(select(func.count()).select_from(PaperChunk))) == 1
         assert (await session.scalar(select(func.count()).select_from(paper_concepts))) == 1
+
+
+async def test_papers_without_an_arxiv_id_sync_and_do_not_duplicate(app, tmp_path):
+    """vault 里只有 DOI 或只有 PMID 的论文以前整个 vault 都导不进来（#821）；
+    只有 PMID 的论文去重靠池去重键，重新同步不能再建一份。"""
+    vault = _make_vault(tmp_path / "vault")
+    for slug, extra in (
+        ("doi-paper", {"doi": "https://doi.org/10.1016/j.cell.2020.01.001"}),
+        ("pmid-paper", {"pmid": "PMID: 31452104"}),
+    ):
+        meta = {
+            "title": f"{slug} title",
+            "authors": ["Grace Hopper"],
+            "published": "2024-05-01",
+            "slug": slug,
+            **extra,
+        }
+        (vault / "raw/meta" / f"{slug}.json").write_text(json.dumps(meta), encoding="utf-8")
+    owner_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    async with get_sessionmaker()() as session:
+        session.add(
+            User(
+                id=owner_id,
+                email="vault-ids@example.com",
+                hashed_password="test",
+                is_active=True,
+                is_superuser=False,
+                is_verified=True,
+                display_name="Owner",
+            )
+        )
+        await session.flush()
+        session.add(
+            Project(id=project_id, name="Ids", slug=f"ids-{project_id.hex[:8]}", owner_id=owner_id)
+        )
+        await session.commit()
+
+        first = await sync_obsidian_vault(session, vault_path=vault, project_id=project_id)
+        assert first.new_papers == 3
+        second = await sync_obsidian_vault(session, vault_path=vault, project_id=project_id)
+        assert second.new_papers == 0
+        assert second.reused_papers == 3
+
+        papers = {p.title: p for p in (await session.execute(select(Paper))).scalars().all()}
+        assert len(papers) == 3
+        assert papers["doi-paper title"].doi == "10.1016/j.cell.2020.01.001"
+        assert papers["doi-paper title"].url == "https://doi.org/10.1016/j.cell.2020.01.001"
+        assert papers["pmid-paper title"].external_ids == {"pmid": "31452104"}
+        assert papers["pmid-paper title"].url == "https://pubmed.ncbi.nlm.nih.gov/31452104/"

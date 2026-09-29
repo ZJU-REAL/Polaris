@@ -155,6 +155,7 @@ async def import_to_shelf(
             user_id=user.id,
             arxiv_id=body.arxiv_id,
             doi=body.doi,
+            pmid=body.pmid,
             title=body.title,
         )
     except paper_import_service.ParseFailedError as e:

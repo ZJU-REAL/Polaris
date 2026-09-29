@@ -125,7 +125,7 @@ export function AddToLibraryModal({
       >
         <Segmented<AddMethod>
           options={[
-            { v: 'ref', label: tr('arXiv 编号 / DOI', 'arXiv ID / DOI') },
+            { v: 'ref', label: tr('arXiv 编号 / DOI / PMID', 'arXiv ID / DOI / PMID') },
             { v: 'corpus', label: 'Corpus ID' },
             { v: 'bibtex', label: tr('粘贴 BibTeX', 'Paste BibTeX') },
           ]}
