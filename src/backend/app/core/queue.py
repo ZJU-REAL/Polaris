@@ -70,6 +70,9 @@ class ArqTaskQueue:
         pool = await self._get_pool()
         await pool.enqueue_job(func, *args, **kwargs)
 
+    async def enqueue_job(self, func: str, *args: Any, **kwargs: Any) -> None:
+        await self.enqueue(func, *args, **kwargs)
+
     async def close(self) -> None:
         if self._pool is not None:
             await self._pool.aclose()
@@ -130,6 +133,10 @@ class InlineTaskQueue:
         self._tasks[job_id] = task
         task.add_done_callback(lambda t, jid=job_id: self._finish(jid, t))
 
+    async def enqueue_job(self, func: str, *args: Any, **kwargs: Any) -> None:
+        """Worker-context adapter, also used during Desktop startup recovery."""
+        await self.enqueue(func, *args, **kwargs)
+
     def _finish(self, job_id: str, task: asyncio.Task[Any]) -> None:
         self._tasks.pop(job_id, None)
         if not task.cancelled() and task.exception() is not None:
@@ -139,6 +146,17 @@ class InlineTaskQueue:
         """等待所有在途任务结束（测试与优雅停机用）。"""
         while self._tasks:
             await asyncio.gather(*list(self._tasks.values()), return_exceptions=True)
+
+    async def cancel_and_drain(self, *, timeout: float = 15.0) -> None:
+        """Cancel in-flight Desktop jobs and bound application shutdown latency."""
+        tasks = set(self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        if not tasks:
+            return
+        _done, pending = await asyncio.wait(tasks, timeout=timeout)
+        if pending:
+            logger.warning("timed out cancelling %s inline task(s)", len(pending))
 
 
 _queue: TaskQueue | None = None

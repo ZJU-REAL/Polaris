@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
 from app.models.activity import Activity
+from app.models.base import utcnow
 from app.models.experiment import (
     EXPERIMENT_STATUSES,
     EXPERIMENT_TERMINAL_STATUSES,
@@ -479,6 +480,16 @@ async def resume_from_waiting_by_voyage(
     return experiment
 
 
+async def _open_cleanup_executor(experiment: Experiment, credential: SSHCredential) -> Any:
+    from app.agents.voyage.runner import ContainerRunner, parse_container_spec
+
+    executor = await ssh_exec.open_executor(
+        credential=credential, exp_id=str(experiment.id), project_id=experiment.project_id,
+    )
+    spec = parse_container_spec((experiment.plan or {}).get("container"))
+    return ContainerRunner.from_executor(executor, spec=spec) if spec is not None else executor
+
+
 async def stop_managed_command_by_voyage(
     session: AsyncSession,
     voyage_id: uuid.UUID,
@@ -494,12 +505,9 @@ async def stop_managed_command_by_voyage(
     handle = managed_handle_from_data(handle_data)
     if credential is None or handle is None:
         return ManagedStopResult(status="invalid_handle", confirmed=False)
-    executor = await ssh_exec.open_executor(
-        credential=credential,
-        exp_id=str(experiment.id),
-        project_id=experiment.project_id,
-    )
+    executor = await _open_cleanup_executor(experiment, credential)
     try:
+        await _bind_managed_workspace(session, executor, experiment, handle)
         return await executor.stop_managed_command(handle)
     finally:
         await executor.close()
@@ -538,6 +546,69 @@ def managed_handle_from_data(handle_data: Any) -> ManagedCommandHandle | None:
         return None
 
 
+def _positive_pids(values: Any) -> set[int]:
+    result: set[int] = set()
+    for value in values if isinstance(values, (list, tuple, set)) else ():
+        try:
+            pid = int(value)
+        except (ValueError, TypeError, OverflowError):
+            continue
+        if pid > 0:
+            result.add(pid)
+    return result
+
+
+def _cleanup_identity(cleanup: dict[str, Any]) -> tuple[Any, ...]:
+    handle = managed_handle_from_data(cleanup.get("handle"))
+    return (
+        cleanup.get("workspace_id"),
+        (handle.operation_id, handle.attempt_id, handle.process_id, handle.process_group_id)
+        if handle else cleanup.get("handle"),
+        tuple(sorted(_positive_pids(cleanup.get("pids")))),
+        cleanup.get("launch_attempt_id"),
+        cleanup.get("operation_context"),
+    )
+
+
+def _run_workspace(experiment: Experiment, run: ExperimentRun) -> str | None:
+    state = experiment.iteration_state or {}
+    metadata = state.get("run_metadata") or {}
+    return (metadata.get(str(run.id)) or {}).get("workspace_id")
+
+
+async def _bind_managed_workspace(
+    session: AsyncSession,
+    executor: Any,
+    experiment: Experiment,
+    handle: ManagedCommandHandle,
+) -> str | None:
+    """Restore the workspace which owns this handle before reading remote files."""
+    cleanup = (experiment.iteration_state or {}).get("remote_cleanup") or {}
+    saved = managed_handle_from_data(cleanup.get("handle"))
+    workspace_id = None
+    if saved is not None and (
+        saved.operation_id, saved.attempt_id, saved.process_id, saved.process_group_id
+    ) == (handle.operation_id, handle.attempt_id, handle.process_id, handle.process_group_id):
+        workspace_id = cleanup.get("workspace_id")
+    if workspace_id is None:
+        rows = (
+            await session.execute(
+                select(ExperimentRun).where(
+                    ExperimentRun.experiment_id == experiment.id,
+                    ExperimentRun.pid == handle.process_id,
+                )
+            )
+        ).scalars().all()
+        workspaces = {_run_workspace(experiment, row) for row in rows}
+        workspaces.discard(None)
+        if len(workspaces) > 1:
+            raise ValueError("managed handle has ambiguous run workspace")
+        workspace_id = next(iter(workspaces), None)
+    if workspace_id is not None:
+        executor.bind_run_workspace(workspace_id)
+    return workspace_id
+
+
 async def managed_command_gpu_usage_by_voyage(
     session: AsyncSession,
     voyage_id: uuid.UUID,
@@ -553,12 +624,9 @@ async def managed_command_gpu_usage_by_voyage(
     credential = await session.get(SSHCredential, experiment.credential_id)
     if credential is None:
         return ManagedGPUUsage(status="credential_unavailable", process_alive=False)
-    executor = await ssh_exec.open_executor(
-        credential=credential,
-        exp_id=str(experiment.id),
-        project_id=experiment.project_id,
-    )
+    executor = await _open_cleanup_executor(experiment, credential)
     try:
+        await _bind_managed_workspace(session, executor, experiment, handle)
         return await executor.managed_command_gpu_usage(handle)
     finally:
         await executor.close()
@@ -568,31 +636,43 @@ async def managed_command_gpu_usage_by_voyage(
 
 
 async def cancel_experiment(session: AsyncSession, experiment: Experiment) -> Experiment:
-    """取消：voyage 置 cancelled（协作式）+ 运行中 run 置 failed + 尽力 kill 远端进程。
+    """Persist cancellation, then verify remote cleanup before releasing capacity.
 
-    先提交 DB 状态再做 SSH kill（审计写入用独立连接，避免持有未提交事务时死锁；
-    kill 是尽力而为，SSH 不可达不阻塞取消）。
+    SSH failure does not block local cancellation. Its durable pending marker and
+    running rows remain available to startup/periodic reconciliation.
     """
     if experiment.status in EXPERIMENT_TERMINAL_STATUSES:
         raise ExperimentAlreadyFinishedError(str(experiment.id))
 
-    if experiment.voyage_id is not None:
-        voyage = await session.get(VoyageRun, experiment.voyage_id)
-        if voyage is not None and voyage.status not in TERMINAL_STATUSES:
-            voyage.status = "cancelled"
-
-    stmt = select(ExperimentRun).where(
-        ExperimentRun.experiment_id == experiment.id, ExperimentRun.status == "running"
-    )
-    runs = (await session.execute(stmt)).scalars().all()
-    pids = [int(run.pid) for run in runs if run.pid]
-    for run in runs:
-        run.status = "failed"
-    credential = (
-        await session.get(SSHCredential, experiment.credential_id)
-        if experiment.credential_id and pids
+    voyage = (
+        await session.get(VoyageRun, experiment.voyage_id)
+        if experiment.voyage_id is not None
         else None
     )
+    if voyage is not None and voyage.status not in TERMINAL_STATUSES:
+        voyage.status = "cancelled"
+
+    runs = (
+        await session.execute(
+            select(ExperimentRun).where(
+                ExperimentRun.experiment_id == experiment.id,
+                ExperimentRun.status == "running",
+            )
+        )
+    ).scalars().all()
+    state = dict(experiment.iteration_state or {})
+    cleanup = dict(state.get("remote_cleanup") or {})
+    legacy_handle = (voyage.checkpoint or {}).get("managed_command_waiting") if voyage else None
+    if legacy_handle and not cleanup.get("handle"):
+        cleanup["handle"] = legacy_handle
+    if runs or cleanup:
+        cleanup.update(status="pending", reason="cancelled")
+        cleanup["pids"] = sorted(
+            _positive_pids(cleanup.get("pids"))
+            | {int(run.pid) for run in runs if run.pid}
+        )
+        state["remote_cleanup"] = cleanup
+        experiment.iteration_state = state
 
     experiment.status = "cancelled"
     session.add(
@@ -606,28 +686,216 @@ async def cancel_experiment(session: AsyncSession, experiment: Experiment) -> Ex
     )
     await session.commit()
     await session.refresh(experiment)
-
-    if credential is not None:
-        await _kill_pids(credential, experiment, pids)
+    await reconcile_remote_cleanup(session, experiment)
     return experiment
 
 
-async def _kill_pids(credential: SSHCredential, experiment: Experiment, pids: list[int]) -> None:
-    """尽力而为的远端 kill（DB 状态已提交后调用）。"""
-    try:
-        executor = await ssh_exec.open_executor(
-            credential=credential,
-            exp_id=str(experiment.id),
-            project_id=experiment.project_id,
+async def reconcile_remote_cleanup(session: AsyncSession, experiment: Experiment) -> bool:
+    """Retry terminal cleanup; release capacity only after external exit is confirmed.
+
+    Managed handles are authoritative and belong to an immutable run workspace.
+    A corrupt/replaced handle cannot fall back to a blind PID kill. Legacy root
+    runs retain their observed-dead-PID fallback until their final reconciliation.
+    """
+    if experiment.status not in EXPERIMENT_TERMINAL_STATUSES:
+        return False
+    state = dict(experiment.iteration_state or {})
+    raw_cleanup = state.get("remote_cleanup")
+    if raw_cleanup is not None and not isinstance(raw_cleanup, dict):
+        return False  # Corrupt durable ownership is not evidence that remote work exited.
+    cleanup = dict(raw_cleanup or {})
+    voyage = (
+        await session.get(VoyageRun, experiment.voyage_id)
+        if experiment.voyage_id is not None else None
+    )
+    legacy_handle = (voyage.checkpoint or {}).get("managed_command_waiting") if voyage else None
+    if legacy_handle and not cleanup.get("handle"):
+        cleanup["handle"] = legacy_handle
+    runs = (
+        await session.execute(
+            select(ExperimentRun).where(
+                ExperimentRun.experiment_id == experiment.id,
+                ExperimentRun.status == "running",
+            )
         )
-    except Exception as e:  # noqa: BLE001 — kill 是尽力而为
-        logger.warning("cancel: SSH 连接失败，跳过远端 kill：%s", e)
-        return
+    ).scalars().all()
+    if not cleanup and not runs:
+        if experiment.voyage_id is not None:
+            from app.services import resource_leases
+
+            await resource_leases.release_for_run(session, experiment.voyage_id)
+        return True
+
+    cleanup.update(status="pending")
+    cleanup["pids"] = sorted(
+        _positive_pids(cleanup.get("pids")) | {int(run.pid) for run in runs if run.pid}
+    )
+    expected_identity = _cleanup_identity(cleanup)
+    state["remote_cleanup"] = cleanup
+    experiment.iteration_state = state
+    await session.commit()
+
+    credential = (
+        await session.get(SSHCredential, experiment.credential_id)
+        if experiment.credential_id is not None else None
+    )
+    confirmed_runs: set[uuid.UUID] = set()
+    confirmed_pids: set[int] = set()
+    fully_confirmed = True
+    stop_status = "credential_unavailable"
+    executor = None
     try:
-        for pid in pids:
-            try:
-                await executor.kill_pid(pid)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("cancel: kill pid=%s 失败：%s", pid, e)
+        if credential is None:
+            fully_confirmed = False
+        else:
+            executor = await _open_cleanup_executor(experiment, credential)
+            handle_data = cleanup.get("handle")
+            handle = managed_handle_from_data(handle_data)
+            intent = cleanup.get("operation_context")
+            if handle is None and handle_data is None and isinstance(intent, dict):
+                if intent.get("operation") not in {
+                    "environment-prepare", "dependency-install", "application-smoke",
+                    "plot-dependencies", "experiment-plot",
+                }:
+                    raise ValueError("invalid pending operation identity")
+                executor.bind_run_workspace(cleanup.get("workspace_id"))
+                recovered = await executor.recover_managed_command(OperationContext(
+                    phase=str(intent["phase"]), operation=str(intent["operation"]),
+                    display_command=str(intent["display_command"]),
+                ))
+                # An older terminal pointer cannot confirm a newly reserved launch.
+                if recovered and recovered.attempt_id == cleanup.get("launch_attempt_id"):
+                    handle = recovered
+            if intent is not None and handle_data is None and handle is None:
+                fully_confirmed = False
+                stop_status = "launch_identity_unavailable"
+            invalid_handle = handle_data is not None and handle is None
+            if invalid_handle:
+                fully_confirmed = False
+                stop_status = "invalid_handle"
+            elif handle is not None:
+                handle_workspace = (
+                    cleanup.get("workspace_id") if intent and handle_data is None
+                    else await _bind_managed_workspace(session, executor, experiment, handle)
+                )
+                outcome = await executor.stop_managed_command(handle)
+                stop_status = outcome.status
+                fully_confirmed = bool(outcome)
+                if outcome:
+                    confirmed_pids.add(handle.process_id)
+
+            targets = [(run, run.pid) for run in runs]
+            targets.extend(
+                (None, pid) for pid in cleanup["pids"]
+                if not any(run.pid == pid for run in runs)
+            )
+            if handle is None and not targets:
+                fully_confirmed = False
+                stop_status = "identity_unavailable"
+            for run, pid in targets:
+                workspace_id = _run_workspace(experiment, run) if run is not None else None
+                if handle is not None and (
+                    (run is None and pid == handle.process_id)
+                    or (
+                        run is not None and handle.operation_id == "experiment-run"
+                        and workspace_id == handle_workspace
+                        and (pid == handle.process_id or (pid is None and workspace_id))
+                    )
+                ):
+                    if handle.process_id in confirmed_pids:
+                        if run is not None:
+                            run.pid = handle.process_id
+                            confirmed_runs.add(run.id)
+                    else:
+                        fully_confirmed = False
+                    continue  # A refused managed stop cannot fall back to PID signalling.
+                if invalid_handle:
+                    continue
+                executor.bind_run_workspace(workspace_id)
+                recovered = await executor.recover_managed_command(
+                    OperationContext(
+                        phase="application.run",
+                        operation="experiment-run",
+                        display_command=run.command if run is not None else "bash run.sh",
+                        target=experiment.server_host,
+                        repair_scope=RepairScope.APPLICATION_FILES,
+                    )
+                )
+                if recovered is not None:
+                    if pid is not None and recovered.process_id != pid:
+                        fully_confirmed = False
+                        stop_status = "identity_changed"
+                        continue
+                    outcome = await executor.stop_managed_command(recovered)
+                    stop_status = outcome.status
+                    if not outcome:
+                        fully_confirmed = False
+                        continue
+                    pid = recovered.process_id
+                    if run is not None:
+                        run.pid = pid
+                elif workspace_id is not None or pid is None:
+                    fully_confirmed = False
+                    stop_status = "identity_unavailable"
+                    continue
+                else:
+                    await executor.kill_pid(pid)
+                    if await executor.check_pid(pid):
+                        fully_confirmed = False
+                        stop_status = "stop_unconfirmed"
+                        continue
+                    stop_status = "legacy_pid_exited"
+                confirmed_pids.add(pid)
+                if run is not None:
+                    confirmed_runs.add(run.id)
+    except Exception as exc:  # noqa: BLE001 - SSH unavailability does not undo local cancellation
+        fully_confirmed = False
+        stop_status = f"cleanup_unavailable:{type(exc).__name__}"
+        logger.warning(
+            "remote cleanup unavailable for experiment %s: %s", experiment.id, type(exc).__name__
+        )
     finally:
-        await executor.close()
+        if executor is not None:
+            try:
+                await executor.close()
+            except Exception:  # noqa: BLE001 - verified process termination is still valid
+                logger.warning("remote cleanup connection close failed for %s", experiment.id)
+
+    for run in runs:
+        if run.id in confirmed_runs:
+            run.status = "failed"
+            run.exit_code = run.exit_code if run.exit_code is not None else -15
+            run.finished_at = utcnow()
+    # The API eagerly loads experiment.runs; refresh-expire cascades would
+    # discard these verified run updates if they were not flushed first.
+    await session.flush()
+    # Remote I/O cannot clear a different attempt saved by a concurrent worker.
+    await session.refresh(experiment)
+    state = dict(experiment.iteration_state or {})
+    current_cleanup = state.get("remote_cleanup") or {}
+    if current_cleanup and _cleanup_identity(current_cleanup) != expected_identity:
+        fully_confirmed = False
+    elif fully_confirmed:
+        state.pop("remote_cleanup", None)
+        if voyage is not None:
+            await session.refresh(voyage)
+            checkpoint = dict(voyage.checkpoint or {})
+            checkpoint.pop("managed_command_waiting", None)
+            voyage.checkpoint = checkpoint
+    else:
+        # A partially completed cleanup must not signal already confirmed PIDs
+        # again on a later retry; those IDs may have been reused meanwhile.
+        cleanup["pids"] = sorted(_positive_pids(cleanup.get("pids")) - confirmed_pids)
+        saved_handle = managed_handle_from_data(cleanup.get("handle"))
+        if saved_handle is not None and saved_handle.process_id in confirmed_pids:
+            cleanup.pop("handle", None)
+            cleanup.pop("workspace_id", None)
+        cleanup["stop_status"] = stop_status
+        state["remote_cleanup"] = cleanup
+    experiment.iteration_state = state
+    await session.commit()
+    if fully_confirmed and experiment.voyage_id is not None:
+        from app.services import resource_leases
+
+        await resource_leases.release_for_run(session, experiment.voyage_id)
+    return fully_confirmed

@@ -26,6 +26,7 @@ from app.models.manuscript import Manuscript, ManuscriptFile
 from app.models.paper import Paper
 from app.models.review import ReviewMessage, ReviewSession
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
+from app.services import manuscripts as manuscripts_service
 from app.services.literature.openalex import OpenAlexClient
 from app.services.literature.semantic_scholar import SemanticScholarClient
 from app.services.manuscripts import CompileRequiredError
@@ -113,12 +114,17 @@ async def create_review_voyage(
         raise CompileRequiredError(str(manuscript.id))
     if await find_active_review_voyage(session, manuscript) is not None:
         raise ReviewInProgressError(str(manuscript.id))
+    await manuscripts_service.refresh_fact_pack(session, manuscript)
+    binding = await manuscripts_service.build_review_binding(session, manuscript)
+    if (manuscript.latest_compile or {}).get("source_digest") != binding["source_digest"]:
+        raise CompileRequiredError(str(manuscript.id))
     run = VoyageRun(
         kind=REVIEW_VOYAGE_KIND,
         goal=f"论文评审：{manuscript.title}",
         status="planning",
         cursor=0,
         checkpoint={
+            "review_binding": binding,
             "params": {
                 "manuscript_id": str(manuscript.id),
                 "personas": resolve_review_personas(personas),
@@ -162,7 +168,11 @@ async def load_tex_files(session: AsyncSession, manuscript_id: uuid.UUID) -> lis
         .order_by(ManuscriptFile.path)
     )
     files = (await session.execute(stmt)).scalars().all()
-    return [(f.path, f.content) for f in files if f.path.endswith(".tex")]
+    from app.services.crdt_rooms import get_crdt_rooms
+
+    rooms = get_crdt_rooms()
+    return [(f.path, rooms.room_content(f.id) if rooms.room_content(f.id) is not None
+             else f.content) for f in files if f.path.endswith(".tex")]
 
 
 def _context_snippet(text: str, start: int, end: int) -> str:

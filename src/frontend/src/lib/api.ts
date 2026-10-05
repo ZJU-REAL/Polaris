@@ -2552,6 +2552,9 @@ export interface ExperimentHypothesis {
 export interface PrimaryMetric {
   name: string;
   direction: 'maximize' | 'minimize';
+  /** Exact metric path frozen for this comparable research segment. */
+  selector?: string;
+  min_delta?: number;
 }
 
 /** 实验类型（harness 通用化后 plan 回写；老实验可能缺省 → 前端按「未分类」处理）。 */
@@ -2662,6 +2665,56 @@ export interface ExperimentIterationState {
   no_improve_streak?: number;
   debug_count?: number;
   stopped_reason?: string | null;
+  research_contract?: ExperimentResearchContract | null;
+  evaluations?: ExperimentEvaluation[];
+  incumbent?: ExperimentIncumbent | null;
+  result_bundle?: ExperimentResultBundle | null;
+}
+
+/** Versioned evidence records are the authority for comparisons and selection. */
+export interface ExperimentResearchContract {
+  contract_id: string;
+  protocol_id: string;
+  protocol: { primary_metric?: PrimaryMetric };
+}
+
+export interface ExperimentEvaluationPoint {
+  step?: number | null;
+  value?: number | null;
+}
+
+export interface ExperimentEvaluation {
+  evaluation_id: string;
+  run_id: string;
+  seq: number;
+  candidate_id: string;
+  contract_id: string;
+  protocol_id: string;
+  status: string;
+  exit_code: number | null;
+  primary_value: number | null;
+  valid: boolean;
+  invalid_reasons?: string[];
+  metrics?: Record<string, ExperimentEvaluationPoint[]> | null;
+}
+
+export interface ExperimentIncumbent {
+  evaluation_id: string;
+  candidate_id: string;
+  primary_value: number | null;
+  contract_id: string;
+  protocol_id: string;
+}
+
+export interface ExperimentResultBundle {
+  bundle_id?: string;
+  contract_id: string;
+  protocol_id: string;
+  research_contract?: ExperimentResearchContract | null;
+  selected_candidate?: { candidate_id: string } | null;
+  selected_evaluations?: ExperimentEvaluation[];
+  valid_evaluations?: ExperimentEvaluation[];
+  invalid_evaluations?: ExperimentEvaluation[];
 }
 
 export interface ExperimentDetail extends ExperimentRead {

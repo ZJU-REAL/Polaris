@@ -11,8 +11,10 @@
 """
 
 import logging
+import math
 import posixpath
 import re
+import shlex
 import uuid
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -47,6 +49,21 @@ ENV_SOURCE_PREFIX = "[ -f env.sh ] && . ./env.sh;"
 _PROXY_URL_RE = re.compile(r"^https?://[A-Za-z0-9.\-]+(:\d+)?$")
 
 
+def validate_managed_run_timeout(timeout_seconds: float | None) -> float | None:
+    """Validate the only numeric substitution in the remote deadline template."""
+    if timeout_seconds is None:
+        return None
+    if isinstance(timeout_seconds, bool):
+        raise ValueError("managed run timeout must be finite and positive")
+    try:
+        seconds = float(timeout_seconds)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("managed run timeout must be finite and positive") from exc
+    if not math.isfinite(seconds) or seconds <= 0 or float(f"{seconds:.6f}") <= 0:
+        raise ValueError("managed run timeout must be finite and positive at microsecond precision")
+    return seconds
+
+
 def validate_proxy_url(url: str | None) -> str | None:
     """代理 URL 严格校验（该值会拼进远端 shell 的 export，格式外一律拒绝）。"""
     if not url:
@@ -59,6 +76,19 @@ def validate_proxy_url(url: str | None) -> str | None:
 
 class SSHExecError(Exception):
     """SSH 执行层错误基类。"""
+
+
+class ManagedRuntimeUnavailableError(SSHExecError):
+    """Missing platform tools are environment failures, never candidate code failures."""
+
+    def __init__(self, executable: str, *, target: str, contained: bool = False) -> None:
+        self.operation_context = OperationContext(
+            phase="environment.prepare", operation="managed-runtime-preflight",
+            display_command=f"check required executable {executable}", target=target,
+            repair_scope=RepairScope.INFRASTRUCTURE,
+        )
+        runtime = "inside the container" if contained else "on the remote host"
+        super().__init__(f"managed execution requires {executable} {runtime}")
 
 
 class SSHPathViolationError(SSHExecError):
@@ -468,6 +498,7 @@ class SSHExecutor:
         self.project_id = project_id
         self.actor = actor
         self.proxy_url = validate_proxy_url(proxy_url)
+        self._run_workspace_id: str | None = None
 
     def _proxy_prefix(self) -> str:
         """setup 阶段（env.sh 尚未写入/不 source）需要的代理导出前缀。"""
@@ -480,12 +511,85 @@ class SSHExecutor:
         )
 
     @property
-    def workdir(self) -> str:
+    def experiment_workdir(self) -> str:
+        """Stable environment/cache root, shared by this experiment's runs."""
         return f"{WORKDIR_ROOT_SHELL}/{self.exp_id}"
 
     @property
+    def run_workspace_id(self) -> str | None:
+        return self._run_workspace_id
+
+    @property
+    def workdir(self) -> str:
+        if self._run_workspace_id is not None:
+            return f"{self.experiment_workdir}/.polaris/runs/{self._run_workspace_id}"
+        return self.experiment_workdir
+
+    @property
     def _sftp_dir(self) -> str:
-        return f"{WORKDIR_ROOT_SFTP}/{self.exp_id}"
+        root = f"{WORKDIR_ROOT_SFTP}/{self.exp_id}"
+        if self._run_workspace_id is not None:
+            return f"{root}/.polaris/runs/{self._run_workspace_id}"
+        return root
+
+    def bind_run_workspace(self, run_id: str | None) -> None:
+        """Select an existing run directory without changing remote files.
+
+        Recovery must restore this binding before inspecting a managed handle:
+        operation pointers and outputs belong to the same UUID directory.
+        ``None`` restores the experiment root for environment repair or delivery.
+        """
+        self._run_workspace_id = validate_exp_id(run_id) if run_id is not None else None
+
+    async def prepare_run_workspace(self, run_id: str, files: dict[str, str]) -> str:
+        """Create a fresh run directory from the selected candidate's files.
+
+        Outputs and managed operation pointers are private to the run. Only the
+        prepared environment and download cache are linked to the experiment
+        root. Existing run directories are never overwritten during preparation.
+        """
+        safe_run_id = validate_exp_id(run_id)
+        reserved = {
+            ".polaris", ".venv", "data_cache", "metrics.json", "run.log", "run.exit",
+            "setup.log", "setup.exit",
+        }
+        normalized: dict[str, str] = {}
+        for name, content in files.items():
+            rel = _validate_relpath(name)
+            if rel.split("/", 1)[0] in reserved:
+                raise SSHPathViolationError(f"候选文件使用平台保留路径：{name!r}")
+            normalized[rel] = str(content)
+        root = self.experiment_workdir
+        target = f"{root}/.polaris/runs/{safe_run_id}"
+        created = await self._run(f"mkdir -p {root}/.polaris/runs && mkdir {target}")
+        if created.exit_status != 0:
+            raise SSHExecError("实验运行目录创建失败或已经存在，拒绝覆写")
+        previous = self._run_workspace_id
+        self.bind_run_workspace(safe_run_id)
+        try:
+            linked = await self._run(
+                f"mkdir -p {root}/data_cache && "
+                f"ln -s ../../../.venv {target}/.venv && "
+                f"ln -s ../../../data_cache {target}/data_cache"
+            )
+            if linked.exit_status != 0:
+                raise SSHExecError("实验运行目录共享环境与缓存链接失败")
+            # Fixed support filenames only; content (including model credentials)
+            # stays on the remote host and never appears in command/audit output.
+            support = [name for name in ("env.sh", "llm_config.json") if name not in normalized]
+            if support:
+                copied = await self._run(
+                    f"for support in {' '.join(support)}; do "
+                    f"if [ -f {root}/$support ]; then "
+                    f"cp {root}/$support {target}/$support || exit $?; fi; done"
+                )
+                if copied.exit_status != 0:
+                    raise SSHExecError("实验运行目录平台环境文件复制失败")
+            await self.write_files(normalized)
+        except Exception:
+            self._run_workspace_id = previous
+            raise
+        return self.workdir
 
     async def close(self) -> None:
         await self._session.close()
@@ -586,7 +690,7 @@ class SSHExecutor:
             rel = _validate_relpath(name)
             parent = posixpath.dirname(rel)
             if parent:
-                await self._run(f"mkdir -p {self.workdir}/{parent}")
+                await self._run(f"mkdir -p {self.workdir}/{shlex.quote(parent)}")
             path = f"{self._sftp_dir}/{rel}"
             await self._audit(f"sftp:write {self.workdir}/{rel} ({len(content)} bytes)")
             await self._session.write_file(path, str(content))
@@ -618,7 +722,9 @@ class SSHExecutor:
             timeout=timeout,
         )
 
-    async def launch_managed_smoke(self) -> ManagedCommandHandle:
+    async def launch_managed_smoke(
+        self, *, attempt_id: str | None = None
+    ) -> ManagedCommandHandle:
         command = f"cd {self.workdir} && {{ {ENV_SOURCE_PREFIX} bash run.sh --smoke; }}"
         return await self.start_managed_command(
             OperationContext(
@@ -630,7 +736,7 @@ class SSHExecutor:
                 stall_timeout_seconds=600,
                 repair_scope=RepairScope.APPLICATION_FILES,
             ),
-            command,
+            command, attempt_id=attempt_id,
         )
 
     async def run_plot(self, timeout: float = PLOT_TIMEOUT_SECONDS) -> SSHResult:
@@ -638,6 +744,26 @@ class SSHExecutor:
         return await self._run(
             f"cd {self.workdir} && {{ {ENV_SOURCE_PREFIX} .venv/bin/python plot_figures.py; }}",
             timeout=timeout,
+        )
+
+    async def launch_managed_plot(
+        self, *, attempt_id: str | None = None
+    ) -> ManagedCommandHandle:
+        command = (
+            f"cd {self.workdir} && {{ {ENV_SOURCE_PREFIX} .venv/bin/python plot_figures.py; }}"
+        )
+        return await self.start_managed_command(
+            OperationContext(
+                phase="application.plot",
+                operation="experiment-plot",
+                display_command="python plot_figures.py",
+                target=self.host,
+                soft_timeout_seconds=PLOT_TIMEOUT_SECONDS,
+                stall_timeout_seconds=600,
+                hard_timeout_seconds=PLOT_TIMEOUT_SECONDS,
+                repair_scope=RepairScope.APPLICATION_FILES,
+            ),
+            command, attempt_id=attempt_id,
         )
 
     async def ensure_plot_deps(self, timeout: float = SETUP_TIMEOUT_SECONDS) -> SSHResult:
@@ -655,6 +781,32 @@ class SSHExecutor:
             f'python -c "import matplotlib" 2>/dev/null || '
             f"{{ {self._proxy_prefix()}pip install{index_arg} matplotlib; }}; }}",
             timeout=timeout,
+        )
+
+    async def launch_managed_plot_deps(
+        self, *, attempt_id: str | None = None
+    ) -> ManagedCommandHandle:
+        from app.core.config import get_settings
+
+        index = get_settings().pip_index_url
+        index_arg = f" -i {index}" if index else ""
+        command = (
+            f"cd {self.workdir} && {{ {ENV_SOURCE_PREFIX} "
+            f'python -c "import matplotlib" 2>/dev/null || '
+            f"{{ {self._proxy_prefix()}pip install{index_arg} matplotlib; }}; }}"
+        )
+        return await self.start_managed_command(
+            OperationContext(
+                phase="dependency.plot",
+                operation="plot-dependencies",
+                display_command="ensure matplotlib is available",
+                target=self.host,
+                soft_timeout_seconds=600,
+                stall_timeout_seconds=900,
+                hard_timeout_seconds=SETUP_TIMEOUT_SECONDS,
+                repair_scope=RepairScope.DEPENDENCY_FILES,
+            ),
+            command, attempt_id=attempt_id,
         )
 
     async def list_dir(self, subdir: str) -> list[str]:
@@ -692,6 +844,25 @@ class SSHExecutor:
         await self._audit(f"sftp:read {self.workdir}/{rel}")
         return await self._session.read_file(f"{self._sftp_dir}/{rel}")
 
+    async def remove_candidate_files(self, paths: list[str]) -> None:
+        """Remove only explicitly tracked obsolete source files from delivery."""
+        reserved = {".polaris", ".venv", "data_cache", "figures", "metrics.json", "run.log",
+                    "run.exit", "env.sh", "llm_config.json", "metrics_all.json",
+                    "result_bundle.json", "MEMORY.md"}
+        normalized = []
+        for path in paths:
+            rel = _validate_relpath(path)
+            if rel.split("/", 1)[0] in reserved:
+                raise SSHPathViolationError("refusing to remove a platform/output path")
+            normalized.append(rel)
+        if normalized:
+            result = await self._run(
+                f"cd {self.workdir} && rm -f -- "
+                + " ".join(shlex.quote(path) for path in sorted(set(normalized)))
+            )
+            if result.exit_status != 0:
+                raise SSHExecError("obsolete candidate source removal failed")
+
     async def read_metrics_json(self) -> str | None:
         """读 workdir/metrics.json（可选：训练脚本可能写的指标文件）；缺失返回 None。"""
         result = await self._run(f"cat {self.workdir}/metrics.json 2>/dev/null")
@@ -717,10 +888,19 @@ class SSHExecutor:
             raise SSHExecError(f"launch_run 未返回 PID：{result.stdout!r}") from e
         return pid, command
 
-    async def launch_managed_run(self) -> ManagedCommandHandle:
+    async def launch_managed_run(
+        self, timeout_seconds: float | None = None
+    ) -> ManagedCommandHandle:
+        seconds = validate_managed_run_timeout(timeout_seconds)
+        deadline = ""
+        if seconds is not None:
+            available = await self._run("command -v timeout >/dev/null 2>&1")
+            if available.exit_status != 0:
+                raise ManagedRuntimeUnavailableError("timeout", target=self.host)
+            deadline = f"timeout --signal=TERM --kill-after=5s {seconds:.6f}s "
         command = (
             f"cd {self.workdir} && {{ export PYTHONUNBUFFERED=1; "
-            f"{ENV_SOURCE_PREFIX} stdbuf -oL -eL bash run.sh; }}"
+            f"{ENV_SOURCE_PREFIX} {deadline}stdbuf -oL -eL bash run.sh; }}"
         )
         return await self.start_managed_command(
             OperationContext(
@@ -730,6 +910,7 @@ class SSHExecutor:
                 target=self.host,
                 soft_timeout_seconds=600,
                 stall_timeout_seconds=900,
+                hard_timeout_seconds=seconds,
                 repair_scope=RepairScope.APPLICATION_FILES,
             ),
             command,
@@ -788,7 +969,9 @@ class SSHExecutor:
             raise SSHExecError(f"launch_setup 未返回 PID：{result.stdout!r}") from e
         return pid, command
 
-    async def launch_managed_setup(self) -> ManagedCommandHandle:
+    async def launch_managed_setup(
+        self, *, attempt_id: str | None = None
+    ) -> ManagedCommandHandle:
         command = f"cd {self.workdir} && {self._install_script()}"
         return await self.start_managed_command(
             OperationContext(
@@ -800,10 +983,12 @@ class SSHExecutor:
                 stall_timeout_seconds=900,
                 repair_scope=RepairScope.DEPENDENCY_FILES,
             ),
-            command,
+            command, attempt_id=attempt_id,
         )
 
-    async def prepare_managed(self) -> ManagedCommandHandle | None:
+    async def prepare_managed(
+        self, *, attempt_id: str | None = None
+    ) -> ManagedCommandHandle | None:
         return None
 
     async def read_setup_exit(self) -> int | None:

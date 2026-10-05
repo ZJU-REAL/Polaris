@@ -191,3 +191,19 @@ def test_snapshot_dict_redacts_the_command_and_target_too():
     assert "ghp_abcdefghijklmnopqrst01" not in data["context"]["display_command"]
     assert "s3cret" not in data["context"]["target"]
     assert "hf_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" not in data["stdout_tail"]
+
+
+
+def test_hard_deadline_stops_even_a_healthy_command_with_continuous_output():
+    from dataclasses import replace
+
+    snapshot = _snapshot(output_changed=True, seconds_since_output=0)
+    snapshot.context = replace(snapshot.context, hard_timeout_seconds=180)
+    advice = ModelAssessment(
+        state=CommandState.PROGRESSING,
+        confidence=1,
+        reason="training loss continues to improve",
+        proposed_action=CommandAction.CONTINUE_MONITORING,
+    )
+    assert adjudicate_command(snapshot, advice).action == CommandAction.STOP_AND_REPAIR
+    assert adjudicate_command(snapshot, None).action == CommandAction.STOP_AND_REPAIR

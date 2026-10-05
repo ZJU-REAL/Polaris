@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import codecs
 import contextlib
 import re
 import time
@@ -208,12 +209,24 @@ class SSHManagedCommands:
                 current_prefix = self._attempt_prefix(operation_id, current)
                 current_pid = await self._read_positive_int(f"{current_prefix}.pid")
                 current_exit = await self._read_int(f"{current_prefix}.exit")
-                if current_pid is not None and current_exit is None:
+                if current_pid is not None:
+                    current_pgid = (
+                        await self._read_positive_int(f"{current_prefix}.pgid") or current_pid
+                    )
                     alive = await self._run(f"kill -0 {current_pid} 2>/dev/null", 60)
-                    if alive.exit_status == 0:
-                        current_pgid = (
-                            await self._read_positive_int(f"{current_prefix}.pgid") or current_pid
-                        )
+                    group = await self._run("ps -eo pgid=,stat= 2>/dev/null", 60)
+                    group_alive = group.exit_status != 0
+                    for line in group.stdout.splitlines():
+                        fields = line.split()
+                        try:
+                            if int(fields[0]) == current_pgid and not fields[1].startswith("Z"):
+                                group_alive = True
+                                break
+                        except (ValueError, IndexError):
+                            continue
+                    # A recorded leader exit does not prove descendants exited.
+                    # Preserve unknown group state instead of launching a duplicate.
+                    if (current_exit is None and alive.exit_status == 0) or group_alive:
                         return ManagedCommandHandle(
                             operation_id=operation_id,
                             attempt_id=current,
@@ -377,6 +390,22 @@ class SSHManagedCommands:
         exit_status = await self._read_int(f"{prefix}.exit")
         alive_result = await self._run(f"kill -0 {pid} 2>/dev/null", 60)
         alive = alive_result.exit_status == 0
+        group_probe = await self._run("ps -eo pgid=,stat= 2>/dev/null", 60)
+        if group_probe.exit_status != 0:
+            # A missing leader alone does not prove that its children exited.
+            # Unknown group state must keep capacity reserved for reconciliation.
+            alive = True
+        else:
+            for line in group_probe.stdout.splitlines():
+                fields = line.split()
+                if len(fields) < 2:
+                    continue
+                try:
+                    if int(fields[0]) == pgid and not fields[1].startswith("Z"):
+                        alive = True
+                        break
+                except ValueError:
+                    continue
         stat_result = await self._run(
             f"stat -c '%s %Y' {prefix}.stdout {prefix}.stderr 2>/dev/null",
             60,
@@ -409,6 +438,8 @@ class SSHManagedCommands:
                     )
                 except ValueError:
                     pass
+        if group_probe.exit_status != 0:
+            process_state = "group_probe_unavailable"
         now = time.time()
         snapshot = CommandSnapshot(
             operation_id=handle.operation_id,
@@ -458,16 +489,17 @@ class SSHManagedCommands:
             if result.exit_status == 0 and result.stdout.strip():
                 with contextlib.suppress(Exception):
                     raw = base64.b64decode(result.stdout.strip(), validate=True)
-            next_offset = safe_offset + len(raw)
+            # A bounded byte read can end inside a valid UTF-8 character.
+            # Leave that suffix in the remote file so a fresh/reconnected reader
+            # can decode it with the next chunk, without process-local decoder state.
+            decoder = codecs.getincrementaldecoder("utf-8")("replace")
+            text = decoder.decode(raw, final=len(raw) < _MAX_OUTPUT_CHUNK_BYTES)
+            incomplete, _ = decoder.getstate()
+            consumed_bytes = len(raw) - len(incomplete)
+            next_offset = safe_offset + consumed_bytes
             next_offsets.append(next_offset)
-            if raw:
-                chunks.append(
-                    OutputChunk(
-                        stream=stream,
-                        text=raw.decode("utf-8", errors="replace"),
-                        offset=next_offset,
-                    )
-                )
+            if consumed_bytes:
+                chunks.append(OutputChunk(stream=stream, text=text, offset=next_offset))
         return chunks, next_offsets[0], next_offsets[1]
 
     async def diagnose(self, handle: ManagedCommandHandle) -> dict[str, str]:
@@ -590,22 +622,42 @@ class SSHManagedCommands:
             "case $pid:$pgid in *[!0-9:]*|:*) printf 'invalid_identity\\n'; exit 76;; esac\n"
             '[ "$pid" = "$expected_pid" ] && [ "$pgid" = "$expected_pgid" ] || '
             "{ printf 'identity_changed\\n'; exit 76; }\n"
-            "if ! kill -0 \"$pid\" 2>/dev/null; then printf 'already_exited\\n'; exit 0; fi\n"
+            "leader_alive=0\n"
+            'kill -0 "$pid" 2>/dev/null && leader_alive=1\n'
+            "group_alive() {\n"
+            "  group_rows=$(ps -eo pgid=,stat= 2>/dev/null) || return 2\n"
+            "  printf '%s\\n' \"$group_rows\" | "
+            "awk -v pgid=\"$pgid\" '$1 == pgid && $2 !~ /^Z/ {found=1} "
+            "END {exit !found}'\n"
+            "}\n"
+            "group_alive; group_status=$?\n"
+            '[ "$group_status" -ne 2 ] || '
+            "{ printf 'group_probe_unavailable\\n'; exit 1; }\n"
+            'if [ "$leader_alive" -eq 0 ] && [ "$group_status" -ne 0 ]; then '
+            "printf 'already_exited\\n'; exit 0; fi\n"
             'saved_ticks=$(cat "${prefix}.start_ticks" 2>/dev/null)\n'
-            'if [ -n "$saved_ticks" ]; then\n'
+            'if [ "$leader_alive" -eq 1 ] && [ -n "$saved_ticks" ]; then\n'
             "  current_ticks=$(awk '{print $22}' \"/proc/$pid/stat\" 2>/dev/null)\n"
             '  [ "$current_ticks" = "$saved_ticks" ] || '
             "{ printf 'process_reused\\n'; exit 76; }\n"
             "fi\n"
             'kill -TERM -- -"$pgid" 2>/dev/null || true\n'
             "i=0\n"
-            'while kill -0 "$pid" 2>/dev/null && [ $i -lt 20 ]; do '
-            "sleep 0.25; i=$((i+1)); done\n"
-            'if kill -0 "$pid" 2>/dev/null; then\n'
+            'while [ "$group_status" -eq 0 ] && [ $i -lt 20 ]; do\n'
+            "  sleep 0.25; i=$((i+1))\n"
+            "  group_alive; group_status=$?\n"
+            "done\n"
+            '[ "$group_status" -ne 2 ] || '
+            "{ printf 'group_probe_unavailable\\n'; exit 1; }\n"
+            'if [ "$group_status" -eq 0 ]; then\n'
             '  kill -KILL -- -"$pgid" 2>/dev/null || true\n'
             "  sleep 0.25\n"
+            "  group_alive; group_status=$?\n"
             "fi\n"
-            "if kill -0 \"$pid\" 2>/dev/null; then printf 'stop_unconfirmed\\n'; exit 1; fi\n"
+            '[ "$group_status" -ne 2 ] || '
+            "{ printf 'group_probe_unavailable\\n'; exit 1; }\n"
+            '[ "$group_status" -ne 0 ] || '
+            "{ printf 'stop_unconfirmed\\n'; exit 1; }\n"
             "printf 'stopped\\n'\n"
         )
         result = await self._run(script, 70)

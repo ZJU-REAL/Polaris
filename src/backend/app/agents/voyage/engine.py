@@ -42,6 +42,7 @@ from app.agents.voyage.sextant import Sextant
 from app.core.db import get_sessionmaker
 from app.core.events import EventBus
 from app.core.llm.router import LLMRouter, get_llm_router
+from app.core.voyage_lease import claim_execution, fence_execution
 from app.models.base import utcnow
 from app.models.gate import Gate
 from app.models.llm_config import LLMUsage
@@ -187,7 +188,9 @@ class VoyageEngine:
 
     async def run(self, run_id: uuid.UUID) -> None:
         """首次驱动：无 plan 则先规划，再进入执行循环。"""
-        await self._drive(run_id)
+        async with claim_execution(run_id, sessionmaker=self._sessionmaker) as acquired:
+            if acquired:
+                await self._drive(run_id)
 
     async def resume(self, run_id: uuid.UUID) -> None:
         """闸门审批 / paused_error 重试 / worker 重启后从断点续跑。
@@ -195,20 +198,27 @@ class VoyageEngine:
         失败节点复位重试（docs/task-system.md §7（原 voyage-loop.md）：人工修复代码后从断点续跑，
         前功不作废）：attempt 清零（历史已归档进 attempts），状态回 pending。
         """
-        async with self._sessionmaker() as session:
-            run = await session.get(VoyageRun, run_id)
-            if run is None or run.status in TERMINAL_STATUSES:
+        async with claim_execution(run_id, sessionmaker=self._sessionmaker) as acquired:
+            if not acquired:
                 return
-            stmt = (
-                select(VoyageStep)
-                .where(VoyageStep.run_id == run_id, VoyageStep.status.in_(("failed", "running")))
-                .order_by(VoyageStep.rank, VoyageStep.seq)
-            )
-            for row in (await session.execute(stmt)).scalars().all():
-                row.status = "pending"
-                row.attempt = 0
-            await session.commit()
-        await self._drive(run_id)
+            async with self._sessionmaker() as session:
+                run = await session.get(VoyageRun, run_id)
+                if run is None or run.status in TERMINAL_STATUSES:
+                    return
+                stmt = (
+                    select(VoyageStep)
+                    .where(
+                        VoyageStep.run_id == run_id,
+                        VoyageStep.status.in_(("failed", "running")),
+                    )
+                    .order_by(VoyageStep.rank, VoyageStep.seq)
+                )
+                for row in (await session.execute(stmt)).scalars().all():
+                    row.status = "pending"
+                    row.attempt = 0
+                await fence_execution(session, run.id)
+                await session.commit()
+            await self._drive(run_id)
 
     # ---- 事件发布 ----
 
@@ -394,6 +404,7 @@ class VoyageEngine:
 
             if ask_kind == "done_criteria" and choice == "accept":
                 ask.status = "consumed"
+                await fence_execution(session, run.id)
                 await session.commit()
                 await self._emit_log(run, "你确认按当前结果完成，任务收束", level="success")
                 await self._set_status(session, run, "done")
@@ -402,6 +413,7 @@ class VoyageEngine:
             if ask_kind == "planning_failed":
                 run.plan = None  # 重新规划（用户指示经建议消息注入 _plan）
                 ask.status = "consumed"
+                await fence_execution(session, run.id)
                 await session.commit()
                 continue
 
@@ -437,6 +449,7 @@ class VoyageEngine:
             # 其余（retry / continue / budget 追加等）：确定性效果已在 API 侧完成，
             # 失败节点由 resume() 复位、指示由建议消息注入，这里只标记消费
             ask.status = "consumed"
+            await fence_execution(session, run.id)
             await session.commit()
         return True
 
@@ -518,6 +531,7 @@ class VoyageEngine:
             messages_service.mark_chat_consumed(guidance_msgs)
         consume_ask.status = "consumed"
         await self._regen_plan_snapshot(session, run)
+        await fence_execution(session, run.id)
         await session.commit()
         await self._emit_log(run, f"已按你的指示扩展计划（新增 {added} 步）", level="plan")
         await self._set_status(session, run, "executing")
@@ -546,6 +560,7 @@ class VoyageEngine:
                 trigger_step=None,
             )
             await self._regen_plan_snapshot(session, run)
+        await fence_execution(session, run.id)
         await session.commit()
         await self._emit_log(run, f"{reason}：作废 {len(dropped)} 个未执行步骤", level="plan")
 
@@ -562,7 +577,9 @@ class VoyageEngine:
             .where(VoyageRun.id == run.id, VoyageRun.status != "cancelled")
             .values(status=status)
         )
+        await fence_execution(session, run.id)
         result = await session.execute(stmt)
+        await fence_execution(session, run.id)
         await session.commit()
         if result.rowcount == 0:
             run.status = await self._current_db_status(session, run.id)
@@ -605,6 +622,7 @@ class VoyageEngine:
                 expected_mode = mode_for_kind(run.kind)
                 if run.mode != expected_mode:
                     run.mode = expected_mode
+                    await fence_execution(session, run.id)
                     await session.commit()
                 await self._ensure_guidance_snapshot(session, run)
                 # 已回答的提问先变成行为（可能重置计划 / 扩展计划 / 直接收束）
@@ -642,6 +660,7 @@ class VoyageEngine:
             checkpoint["interdisciplinary_context"] = interdisciplinary
         checkpoint["guidance"] = snapshot
         run.checkpoint = checkpoint
+        await fence_execution(session, run.id)
         await session.commit()
 
     async def _plan(self, session: AsyncSession, run: VoyageRun) -> None:
@@ -657,6 +676,7 @@ class VoyageEngine:
             steps = await self.navigator.plan(run, context)
         except NavigatorError as e:
             run.plan = []
+            await fence_execution(session, run.id)
             await session.commit()
             await self._emit_log(run, f"规划失败：{e}", level="error")
             # 有人值守：转提问等指示；无人值守（cron）保持旧行为直接 failed
@@ -675,6 +695,7 @@ class VoyageEngine:
             run.done_criteria = done_criteria_for_kind(run.kind)
         if guidance_msgs:
             messages_service.mark_chat_consumed(guidance_msgs)
+        await fence_execution(session, run.id)
         await session.commit()
         await self._emit_log(run, f"计划就绪，共 {len(steps)} 步", level="success")
 
@@ -686,6 +707,7 @@ class VoyageEngine:
             if seq in existing:
                 continue
             session.add(self._new_step_row(run, seq=seq, rank=seq * _RANK_GAP, step_def=step_def))
+        await fence_execution(session, run.id)
         await session.commit()
 
     def _new_step_row(
@@ -745,6 +767,7 @@ class VoyageEngine:
             )
             if run.cursor != node_index:
                 run.cursor = node_index
+                await fence_execution(session, run.id)
                 await session.commit()
             if node is None:
                 await self._finalize(session, run)
@@ -776,6 +799,7 @@ class VoyageEngine:
                         trigger_step=None,
                     )
                     await self._regen_plan_snapshot(session, run)
+                    await fence_execution(session, run.id)
                     await session.commit()
                     await self._emit_log(
                         run,
@@ -896,6 +920,7 @@ class VoyageEngine:
         gates[str(node.id)] = {"gate_id": str(gate.id)}
         checkpoint["gates"] = gates
         run.checkpoint = checkpoint
+        await fence_execution(session, run.id)
         await session.commit()
         await self._emit_log(
             run, f"步骤 {node_index} 需要 {gate.kind} 人工审批，任务暂停", level="gate"
@@ -939,9 +964,11 @@ class VoyageEngine:
             step_row.params = params
             step_def["params"] = params  # step_def 在本次调用前构建，需同步
             messages_service.mark_chat_consumed(guidance_msgs, step_id=step_row.id)
+        await fence_execution(session, run.id)
         step_row.status = "running"
         step_row.attempt = step_row.attempt + 1
         step_row.started_at = utcnow()
+        await fence_execution(session, run.id)
         await session.commit()
         await self._emit_step(run, step_row)
         if guidance_msgs:
@@ -967,6 +994,7 @@ class VoyageEngine:
         )
         if checkpoint != dict(run.checkpoint or {}):
             run.checkpoint = checkpoint
+            await fence_execution(session, run.id)
             await session.commit()
 
         ctx = ActionContext(
@@ -977,12 +1005,14 @@ class VoyageEngine:
             step_id=step_row.id,
         )
         observation = await self.helm.execute(ctx, step_def)
+        await fence_execution(session, run.id)
         run.checkpoint = dict(ctx.checkpoint)
         snapshot = ctx.checkpoint.get("ai_evidence")
         manifest = snapshot.get("manifest") if isinstance(snapshot, dict) else []
         step_row.observation = attach_observation_evidence(observation, manifest or [])
         step_row.finished_at = utcnow()
         action_usage = observation.get("usage") if isinstance(observation, dict) else None
+        await fence_execution(session, run.id)
         await session.commit()
         await self._emit_step(run, step_row)
 
@@ -993,6 +1023,7 @@ class VoyageEngine:
             self._archive_attempt(step_row)  # 留痕：这次尝试以提问收场
             step_row.status = "pending"
             step_row.attempt = max(0, step_row.attempt - 1)
+            await fence_execution(session, run.id)
             await session.commit()
             await self._emit_step(run, step_row)
             context = ask_req.get("context")
@@ -1010,6 +1041,7 @@ class VoyageEngine:
 
         await self._set_status(session, run, "verifying")
         verdict, verify_usage = await self.sextant.verify(run, step_def, observation)
+        await fence_execution(session, run.id)
         step_row.verdict = verdict
         step_row.status = "passed" if verdict.get("passed") else "failed"
         passed = bool(verdict.get("passed"))
@@ -1027,6 +1059,7 @@ class VoyageEngine:
         # observation 未携带 usage 的动作（如 wiki 批处理）绕过了上面的累计，
         # 以 LLMUsage 明细（router 记账，含 voyage_id）为准刷新 run.usage
         await self._refresh_usage_from_ledger(session, run)
+        await fence_execution(session, run.id)
         await session.commit()
         await self._emit_step(run, step_row)
         return True
@@ -1132,6 +1165,7 @@ class VoyageEngine:
             params["diagnosis"] = diagnosis[:2000]
             node.params = params
             node.status = "pending"
+            await fence_execution(session, run.id)
             await session.commit()
             await self._emit_log(
                 run,
@@ -1261,6 +1295,7 @@ class VoyageEngine:
             trigger_step=node.title,
         )
         await self._regen_plan_snapshot(session, run)
+        await fence_execution(session, run.id)
         await session.commit()
         await self._emit_log(
             run,
@@ -1493,6 +1528,7 @@ class VoyageEngine:
         if consume_ask is not None:
             consume_ask.status = "consumed"
         await self._regen_plan_snapshot(session, run)
+        await fence_execution(session, run.id)
         await session.commit()
         if guidance_msgs:
             await self._post_agent_message(
@@ -1608,6 +1644,7 @@ class VoyageEngine:
         # run.plan 快照单向派生：已通过前缀 + 新尾部
         passed_defs = [_step_def_from_row(r, run.plan) for r in rows if r.status == "passed"]
         run.plan = passed_defs + list(new_tail)
+        await fence_execution(session, run.id)
         await session.commit()
         if guidance_msgs:
             await self._post_agent_message(

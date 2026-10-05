@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Icon } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Timeline, TimelineItem } from '../../components/ui/Timeline';
-import { MetricChart, type MetricChartSeries } from '../../components/ui/MetricChart';
+import { MetricChart } from '../../components/ui/MetricChart';
 import { fmtDuration, fmtTime } from '../../lib/format';
 import {
   type ExperimentDetail,
@@ -14,6 +14,7 @@ import {
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { stopReasonText } from './shared';
+import { selectMetricTraces, selectRunEvidence, type RunEvidence } from './runEvidence';
 
 /* ============================================================
    Run Tab —运行与迭代：
@@ -154,7 +155,10 @@ function ReflectionBlock({ reflection }: { reflection: RunReflection }) {
   );
 }
 
-function runMarker(run: ExperimentRunRead): { bg: string; color: string } {
+function runMarker(run: ExperimentRunRead, evidence: RunEvidence): { bg: string; color: string } {
+  if (run.status === 'succeeded' && evidence.kind === 'invalid') {
+    return { bg: 'var(--warn-bg)', color: 'var(--warn-tx)' };
+  }
   switch (run.status) {
     case 'succeeded':
       return { bg: 'var(--ok-bg)', color: 'var(--ok-tx)' };
@@ -167,31 +171,63 @@ function runMarker(run: ExperimentRunRead): { bg: string; color: string } {
   }
 }
 
+function invalidReasonText(reason: string): string {
+  if (reason.startsWith('runtime_source_changed:')) {
+    return tr('运行时源码已变化', 'Source changed during the run');
+  }
+  if (reason.startsWith('protected_file') || reason.startsWith('candidate_source')) {
+    return tr('源码保护检查未通过', 'Source protection check failed');
+  }
+  if (reason.includes('sample_count')) return tr('样本数量缺失或不完整', 'Missing or incomplete sample count');
+  if (reason === 'missing_or_unpaired_conditions') return tr('缺少同轮配对对照', 'Missing paired controls in this run');
+  if (reason === 'run_not_successful') return tr('运行未成功', 'The run did not succeed');
+  if (reason.includes('protocol') || reason.includes('contract')) return tr('评估协议不一致', 'Evaluation protocol mismatch');
+  if (reason.includes('identity')) return tr('评估来源身份不一致', 'Evaluation source identity mismatch');
+  if (reason.includes('metric')) return tr('主指标缺失或无效', 'Missing or invalid metric');
+  return tr('未通过结果验收', 'Result validation failed');
+}
+
 /** 迭代时间线的一轮卡片。 */
 function IterationCard({
   run,
-  prevValue,
+  evidence,
   direction,
 }: {
   run: ExperimentRunRead;
-  prevValue: number | null;
+  evidence: RunEvidence;
   direction: PrimaryMetric['direction'];
 }) {
-  const hasValue = typeof run.primary_value === 'number' && Number.isFinite(run.primary_value);
+  const label = evidence.kind === 'valid' ? tr('有效评估', 'Valid evaluation')
+    : evidence.kind === 'legacy' ? tr('历史成功运行', 'Legacy successful run')
+      : evidence.kind === 'invalid' ? tr('无效评估', 'Invalid evaluation')
+        : run.status === 'running' ? tr('待验收', 'Awaiting evaluation') : tr('未验收', 'Unverified');
   return (
     <div className="card" style={{ padding: '12px 16px' }}>
       <div className="row gap8" style={{ flexWrap: 'wrap' }}>
         <span className="mono" style={{ fontSize: 12, fontWeight: 700 }}>{tr(`第 ${run.seq} 轮`, `Run ${run.seq}`)}</span>
         <StatusPill status={run.status} sm />
-        {hasValue ? (
-          <PrimaryValue curr={run.primary_value as number} prev={prevValue} direction={direction} />
+        {evidence.value !== null ? evidence.comparable ? (
+          <PrimaryValue curr={evidence.value} prev={evidence.previousValue} direction={direction} />
+        ) : (
+          <span className="mono muted" style={{ fontSize: 13, fontWeight: 700 }}>
+            {fmtMetric(evidence.value)} · {tr('诊断值', 'diagnostic')}
+          </span>
         ) : (
           <span className="mono muted" style={{ fontSize: 11 }}>{tr('主指标 —', 'metric —')}</span>
         )}
+        <span className="pill sm" style={{
+          background: evidence.kind === 'invalid' ? 'var(--warn-bg)' : 'var(--surface-2)',
+          color: evidence.kind === 'invalid' ? 'var(--warn-tx)' : 'var(--text-3)',
+        }}>{label}</span>
         <div style={{ marginLeft: 'auto' }}>
           {run.reflection?.decision && <DecisionBadge decision={run.reflection.decision} />}
         </div>
       </div>
+      {evidence.kind === 'invalid' && evidence.reasons.length > 0 && (
+        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-3)' }}>
+          {[...new Set(evidence.reasons.map(invalidReasonText))].join(tr('；', '; '))}
+        </div>
+      )}
       <div
         className="mono"
         title={run.command}
@@ -268,36 +304,21 @@ function IterationStateBar({ exp, runCount }: { exp: ExperimentDetail; runCount:
 /* ---------------- Tab 主体 ---------------- */
 
 export function RunTab({ exp }: { exp: ExperimentDetail }) {
-  const runs = [...(exp.runs ?? [])].sort((a, b) => a.seq - b.seq);
-  const primary = exp.plan?.primary_metric;
-  const direction: PrimaryMetric['direction'] = primary?.direction === 'minimize' ? 'minimize' : 'maximize';
-
-  // 主指标趋势：primary_value by seq
-  const primaryPoints = runs
-    .filter((r) => typeof r.primary_value === 'number' && Number.isFinite(r.primary_value))
-    .map((r) => ({ step: r.seq, value: r.primary_value as number }));
-  const best =
-    primaryPoints.length > 0
-      ? primaryPoints.reduce((a, b) =>
-          direction === 'minimize' ? (b.value < a.value ? b : a) : (b.value > a.value ? b : a),
-        )
-      : null;
-
-  // 全部指标（POLARIS_METRIC by step）
-  const allSeries: MetricChartSeries[] = Object.entries(exp.metrics ?? {}).map(([name, points]) => ({
-    name,
-    points: (points ?? []).filter((p) => Number.isFinite(p.step) && Number.isFinite(p.value)),
+  const [metricChoice, setMetricChoice] = useState<string | null>(null);
+  const [showAllTraces, setShowAllTraces] = useState(false);
+  const evidence = selectRunEvidence(exp);
+  const { direction, primaryPoints, best, allSeries } = evidence;
+  const runs = evidence.runs;
+  const metricLabel = evidence.selector || tr('主指标', 'primary metric');
+  const metricNames = [...new Set(allSeries.map((series) => series.name))];
+  const activeMetric = metricChoice && metricNames.includes(metricChoice) ? metricChoice
+    : metricNames.includes(evidence.selector) ? evidence.selector : metricNames[0] ?? '';
+  const traceCount = allSeries.filter((series) => series.name === activeMetric).length;
+  const traces = selectMetricTraces(evidence, activeMetric, showAllTraces);
+  const metricSeries = traces.map((series) => ({
+    name: tr(`${series.name} · 第 ${series.runSeq} 轮`, `${series.name} · Run ${series.runSeq}`),
+    points: series.points,
   }));
-
-  // 供 Delta 对比的上一轮有值 run
-  let lastValue: number | null = null;
-  const prevValues: (number | null)[] = runs.map((r) => {
-    const prev = lastValue;
-    if (typeof r.primary_value === 'number' && Number.isFinite(r.primary_value)) {
-      lastValue = r.primary_value;
-    }
-    return prev;
-  });
 
   return (
     <div className="fadeup col gap20">
@@ -306,24 +327,26 @@ export function RunTab({ exp }: { exp: ExperimentDetail }) {
         <div className="row gap8" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
           <span className="section-h">
             <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('主指标趋势', 'Primary metric trend')} <span className="en-label" style={{ fontSize: 11 }}>{primary?.name ?? tr('主指标', 'primary metric')}</span>
+            {tr('主指标趋势', 'Primary metric trend')} <span className="en-label" style={{ fontSize: 11 }}>{metricLabel}</span>
           </span>
-          {primary && (
+          {evidence.selector && (
             <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
               {direction === 'minimize' ? tr('↓ 越低越好', '↓ lower is better') : tr('↑ 越高越好', '↑ higher is better')}
             </span>
           )}
           {best && (
             <span className="pill sm mono" style={{ marginLeft: 'auto', background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-              {tr(`最佳 第 ${best.step} 轮`, `Best: run ${best.step}`)} · {fmtMetric(best.value)}
+              {evidence.versioned ? tr(`已选 第 ${best.step} 轮`, `Selected: run ${best.step}`)
+                : tr(`历史最佳 第 ${best.step} 轮`, `Legacy best: run ${best.step}`)} · {fmtMetric(best.value)}
             </span>
           )}
         </div>
         {primaryPoints.length > 0 ? (
-          <MetricChart series={[{ name: primary?.name ?? 'primary', points: primaryPoints }]} height={180} />
+          <MetricChart series={[{ name: metricLabel, points: primaryPoints }]} height={180} />
         ) : (
           <div className="empty" style={{ padding: 26, fontSize: 12.5 }}>
-            {tr('暂无主指标数据', 'No primary metric data yet')}
+            {evidence.versioned ? tr('暂无有效主指标数据', 'No valid primary metric data yet')
+              : tr('暂无成功运行的主指标数据', 'No primary metrics from successful legacy runs yet')}
           </div>
         )}
         <IterationStateBar exp={exp} runCount={runs.length} />
@@ -344,11 +367,12 @@ export function RunTab({ exp }: { exp: ExperimentDetail }) {
           </div>
         ) : (
           <Timeline>
-            {runs.map((r, i) => {
-              const m = runMarker(r);
+            {runs.map((entry, i) => {
+              const r = entry.run;
+              const m = runMarker(r, entry);
               return (
                 <TimelineItem key={r.id} marker={`#${r.seq}`} markerBg={m.bg} markerColor={m.color} last={i === runs.length - 1}>
-                  <IterationCard run={r} prevValue={prevValues[i] ?? null} direction={direction} />
+                  <IterationCard run={r} evidence={entry} direction={direction} />
                 </TimelineItem>
               );
             })}
@@ -361,9 +385,37 @@ export function RunTab({ exp }: { exp: ExperimentDetail }) {
         <div className="card card-pad">
           <span className="section-h" style={{ marginBottom: 12 }}>
             <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('全部指标曲线', 'All metric curves')} <span className="en-label" style={{ fontSize: 11 }}>POLARIS_METRIC</span>
+            {evidence.versioned ? tr('有效评估指标曲线', 'Valid evaluation metrics')
+              : tr('历史成功运行指标', 'Successful legacy run metrics')} <span className="en-label" style={{ fontSize: 11 }}>POLARIS_METRIC</span>
           </span>
-          <MetricChart series={allSeries} />
+          <div className="row gap8" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
+            <label className="row gap6" style={{ fontSize: 11, color: 'var(--text-2)' }}>
+              {tr('指标', 'Metric')}
+              <select
+                className="input sm"
+                value={activeMetric}
+                onChange={(event) => setMetricChoice(event.target.value)}
+                style={{ width: 'auto', maxWidth: 320, fontSize: 11 }}
+              >
+                {metricNames.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </label>
+            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+              {tr('每条曲线对应一次运行评估', 'Each trace belongs to one run evaluation')}
+            </span>
+            {traceCount > 6 && (
+              <button className="btn btn-ghost sm" onClick={() => setShowAllTraces((value) => !value)}>
+                {showAllTraces ? tr('显示已选与最近轮次', 'Show selected and recent runs')
+                  : tr(`显示全部 ${traceCount} 轮`, `Show all ${traceCount} runs`)}
+              </button>
+            )}
+            {traces.length < traceCount && (
+              <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                {tr(`已选与最近轮次 · ${traces.length} / ${traceCount}`, `Selected and recent · ${traces.length} / ${traceCount}`)}
+              </span>
+            )}
+          </div>
+          <MetricChart series={metricSeries} />
         </div>
       )}
     </div>

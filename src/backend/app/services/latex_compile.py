@@ -484,6 +484,7 @@ async def compile_manuscript(session: AsyncSession, manuscript: Manuscript) -> d
     diagnostics: list[dict[str, Any]] = []
     status = "error"
     pdf_available = False
+    source_digest = None
 
     requested_engine = normalize_engine(manuscript.engine)
     resolved = _resolve_engine(requested_engine)
@@ -505,6 +506,14 @@ async def compile_manuscript(session: AsyncSession, manuscript: Manuscript) -> d
             if not (workdir / main_name).is_file():
                 main_name = _find_workdir_main(workdir) or main_name
             stem = Path(main_name).stem
+            source_rels = [
+                path.relative_to(workdir).as_posix()
+                for path in sorted(workdir.rglob("*"))
+                if path.is_file() and not _is_build_artifact(
+                    path.relative_to(workdir).as_posix(), stem
+                )
+            ]
+            source_digest = _digest_of(workdir, source_rels)
 
             # 请求的编译器不可用（如未装 TeX Live）→ 已回退 tectonic，提示一下
             if engine != requested_engine:
@@ -591,6 +600,7 @@ async def compile_manuscript(session: AsyncSession, manuscript: Manuscript) -> d
         "diagnostics": diagnostics,
         "compiled_at": datetime.now(UTC).isoformat(),
         "duration_ms": int((time.monotonic() - started) * 1000),
+        "source_digest": source_digest,
     }
     out_dir = version_dir(manuscript.id, version)
     out_dir.mkdir(parents=True, exist_ok=True)

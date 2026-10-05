@@ -226,7 +226,8 @@ async def test_no_improve_early_stop(client, queue_stub, fake_ssh, bus_recorder)
     assert detail["status"] == "done"
     assert len(detail["runs"]) == 3
     assert [r["primary_value"] for r in detail["runs"]] == [0.7, 0.7, 0.7]
-    assert detail["iteration_state"] == {
+    assert {key: detail["iteration_state"][key] for key in
+            ("no_improve_streak", "debug_count", "stopped_reason")} == {
         "no_improve_streak": 2,
         "debug_count": 0,
         "stopped_reason": "no_improve",
@@ -330,7 +331,8 @@ async def test_analyze_ask_pauses_then_guidance_continues(
     detail = await _get_detail(client, headers, exp_id)
     assert detail["status"] == "done"
     assert provider.saw_guidance  # 重跑的 reflection 看到了用户指示
-    assert detail["iteration_state"]["stopped_reason"] == "用户指示收尾（test）"
+    assert detail["iteration_state"]["stopped_reason"] == "decision_stop"
+    assert detail["iteration_state"]["proposed_stop_reason"] == "用户指示收尾（test）"
 
 
 async def test_analyze_without_runs_self_heals(client, queue_stub, fake_ssh, bus_recorder):
@@ -444,8 +446,10 @@ async def test_max_runs_truncates_iteration(client, queue_stub, fake_ssh, bus_re
     assert detail["iteration_state"]["stopped_reason"] == "max_runs"
 
 
-async def test_all_hypotheses_resolved_stops(client, queue_stub, fake_ssh, bus_recorder):
-    """假设全部非 testing 即停（哪怕 decision=improve），回写含 evidence。"""
+async def test_unreferenced_hypothesis_proposals_do_not_stop(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """LLM prose without frozen criteria and valid refs cannot resolve hypotheses."""
     updates = [
         {"index": 0, "status": "verified", "evidence": "证据 A（test）"},
         {"index": 1, "status": "falsified", "evidence": "证据 B（test）"},
@@ -460,11 +464,12 @@ async def test_all_hypotheses_resolved_stops(client, queue_stub, fake_ssh, bus_r
     )
 
     _, observation = await _iterate_observation(client, headers, voyage_id)
-    assert observation["stopped_reason"] == "hypotheses_resolved"
+    assert observation["stopped_reason"] == "no_improve"
     detail = await _get_detail(client, headers, exp_id)
-    assert len(detail["runs"]) == 1
+    assert len(detail["runs"]) == 3
     hyps = detail["plan"]["hypotheses"]
-    assert [h["status"] for h in hyps] == ["verified", "falsified"]
+    assert [h["status"] for h in hyps] == ["testing", "testing"]
+    assert [h["proposed_status"] for h in hyps] == ["verified", "falsified"]
     assert [h["evidence"] for h in hyps] == ["证据 A（test）", "证据 B（test）"]
 
 

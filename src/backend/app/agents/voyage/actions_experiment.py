@@ -28,6 +28,7 @@
 import ast
 import asyncio
 import contextlib
+import copy
 import functools
 import json
 import math
@@ -45,6 +46,7 @@ from app.agents.voyage.errorsig import error_signature, error_text
 from app.agents.voyage.runner import Runner, open_runner, parse_container_spec
 from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
+from app.core.voyage_lease import fence_execution
 from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.experiment import EXPERIMENT_TERMINAL_STATUSES, Experiment, ExperimentRun
@@ -54,11 +56,13 @@ from app.models.paper import Paper, PaperWiki
 from app.models.resource import Resource, ResourceLease
 from app.models.ssh_credential import SSHCredential
 from app.models.voyage import VoyageRun, VoyageStep
+from app.services import experiment_evidence as evidence_service
 from app.services import experiment_settings as experiment_settings_service
 from app.services import experiments as experiments_service
 from app.services import resource_leases as resource_leases_service
 from app.services import ssh_exec
 from app.services import voyage_messages as messages_service
+from app.services.experiment_metric_stream import MetricLineFramer
 from app.services.figure_annotate import prepare_image_for_llm
 from app.services.libraries import (
     dedupe_member_rows,
@@ -118,6 +122,10 @@ You diagnose a completed command failure from one structured report. Return JSON
 Do not invent missing evidence. Infrastructure, connection, authentication and external-service
 failures must not propose changes to generated dependency or application files.
 """
+
+
+class ManagedLaunchCancelled(RuntimeError):
+    """Cancellation was observed before a reserved remote launch."""
 
 
 class ManagedCommandNeedsUser(RuntimeError):
@@ -196,6 +204,12 @@ METRIC_LINE_RE = re.compile(r"POLARIS_METRIC\s+(\{.*\})")
 _FIGURE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")  # 远端文件名白名单（防目录穿越）
 
 PLAN_SYSTEM_PROMPT = """\
+主指标使用完整精确名称（或 primary_metric.selector），禁止模糊名称。
+数值可检验假设可增加 criterion={metric,operator,threshold}；
+对照判据增加 comparison=baseline_delta,treatment。
+不为因果或泛化主张编造数值判据。
+若声明 eval_protocol.n_examples，必须同时声明 sample_count_metric，并要求代码输出完成样本计数。
+评测源可声明 protected_files，方法修改范围可声明 allowed_files。
 你是 Experiment Lab 的实验规划师，基于晋级 idea 与相关 wiki 摘要产出实验计划。
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
 {"kind": "eval|training|agent|analysis|other",
@@ -206,7 +220,7 @@ PLAN_SYSTEM_PROMPT = """\
  "conditions": [{"name": "baseline", "role": "baseline", "description": "对照组"},
                 {"name": "treatment_a", "role": "treatment", "description": "处理组"}],
  "eval_protocol": {"dataset": "数据集/来源", "split": "评测划分", "metric": "评测指标",
-                   "n_examples": 100, "n_samples": 1},
+                   "n_examples": 100, "sample_count_metric": "evaluated_examples", "n_samples": 1},
  "datasets": [{"name": "HF数据集名或来源", "purpose": "test|corpus|train", "size_hint": "规模"}],
  "models": [{"ref": "HF模型名或本机绝对路径", "role": "eval|student|teacher|base"}],
  "container": {"image": "预置框架镜像", "gpus": "device=0,1", "shm_size": "16g"},
@@ -337,6 +351,7 @@ def _render_attempt_archive(
     per_file_cap: int = 2000,
     best_file_cap: int = 4000,
     recent_full: int = _ARCHIVE_RECENT_FULL,
+    direction: str = "maximize",
 ) -> str:
     """把历史尝试（源码+得分+轨迹）渲染进迭代 proposer 提示——通用的「先验经验档案」。
 
@@ -350,9 +365,13 @@ def _render_attempt_archive(
 
     def _score(c: dict[str, Any]) -> tuple[int, float]:
         v = c.get("primary_value")
-        return (1, float(v)) if isinstance(v, int | float) else (0, float("-inf"))
+        if c.get("valid") is False or not _is_storable_number(v):
+            return (0, float("-inf"))
+        return (1, float(v) if direction == "maximize" else -float(v))
 
     best = max(archive, key=_score)
+    if _score(best)[0] == 0:
+        best = None
     recent = set(map(id, archive[-max(recent_full, 0) :]))
     parts = [f"历史尝试档案（共 {len(archive)} 次；最优与最近 {recent_full} 次含源码全文）："]
     for c in archive:
@@ -502,6 +521,10 @@ def _prompt_with_context(base: str, ctx: ActionContext) -> str:
     """按 params.eval_model / hf_mirror / extra_notes 给 system prompt 条件追加段落。"""
     params = _params(ctx)
     parts = [base, STACK_GUARD_PROMPT_SECTION]
+    contract = ctx.checkpoint.get("research_contract")
+    if contract:
+        parts.append("冻结研究契约（摘要不能替代或修改）：\n"
+                     + json.dumps(contract, ensure_ascii=False))
     parts.append(ctx.workflow_guidance("experiment.plan"))
     if str(params.get("eval_model") or "").strip():
         parts.append(EVAL_MODEL_PROMPT_SECTION)
@@ -707,6 +730,9 @@ async def _eval_model_config_file(ctx: ActionContext) -> dict[str, str]:
 
 
 REFLECTION_SYSTEM_PROMPT = """\
+科学判决由平台检查冻结判据。
+hypothesis_updates 的 evidence_refs 必须列出本轮/历史有效评估的 evaluation_id。
+无有效证据或无判据保持 testing，不能把预算耗尽当 falsified。
 你是 Experiment Lab 的实验分析师，基于本轮运行结果做结构化反思并决定下一步。
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
 {"observation": "本轮结果观察", "diagnosis": "原因诊断",
@@ -730,6 +756,7 @@ REFLECTION_SYSTEM_PROMPT = """\
 """
 
 PLOT_SYSTEM_PROMPT = """\
+每条曲线绑定一个 evaluation/run/candidate。不要把不同 run 的同名 step 拼成连续训练轨迹。
 你是 Experiment Lab 的绘图工程师，为实验结果编写 matplotlib 绘图脚本。
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
 {"files": {"plot_figures.py": "脚本内容"}}
@@ -776,9 +803,27 @@ def _experiment_id(ctx: ActionContext) -> uuid.UUID:
 
 async def _get_experiment(session: AsyncSession, ctx: ActionContext) -> Experiment:
     experiment = await session.get(Experiment, _experiment_id(ctx))
-    if experiment is None:
-        raise ValueError(f"experiment not found: {_experiment_id(ctx)}")
+    if (experiment is None or experiment.project_id != ctx.run.project_id
+            or experiment.voyage_id != ctx.run.id):
+        raise ValueError("experiment is unavailable in this Voyage")
     return experiment
+
+
+async def _commit_action(
+    session: AsyncSession, ctx: ActionContext, *, publication: bool = False
+) -> bool:
+    """Fence domain publication in the same transaction as candidate/result writes."""
+    with session.no_autoflush:
+        await fence_execution(session, ctx.run.id)
+        if publication:
+            status = await session.scalar(select(VoyageRun.status).where(
+                VoyageRun.id == ctx.run.id
+            ))
+            if status in {"cancelled", "failed"}:
+                await session.rollback()
+                return False
+    await session.commit()
+    return True
 
 
 async def _set_status(
@@ -787,7 +832,7 @@ async def _set_status(
     if experiment.status == status:
         return
     experiment.status = status
-    await session.commit()
+    await _commit_action(session, ctx)
     await ctx.notify(
         {"type": "experiment.status", "experiment_id": str(experiment.id), "status": status}
     )
@@ -803,7 +848,9 @@ async def _mark_attention(ctx: ActionContext, reason: str) -> None:
     """
     async with get_sessionmaker()() as session:
         experiment = await session.get(Experiment, _experiment_id(ctx))
-        if experiment is None or experiment.status in EXPERIMENT_TERMINAL_STATUSES:
+        if (experiment is None or experiment.status in EXPERIMENT_TERMINAL_STATUSES
+                or experiment.project_id != ctx.run.project_id
+                or experiment.voyage_id != ctx.run.id):
             return
         session.add(
             Activity(
@@ -814,7 +861,7 @@ async def _mark_attention(ctx: ActionContext, reason: str) -> None:
                 payload={"experiment_id": str(experiment.id), "reason": reason[:1000]},
             )
         )
-        await session.commit()
+        await _commit_action(session, ctx)
 
 
 def _guidance_line(params: dict[str, Any]) -> str:
@@ -848,7 +895,7 @@ async def _refresh_user_guidance(ctx: ActionContext, params: dict[str, Any]) -> 
                     step_params["user_guidance"] = merged
                     step.params = step_params
                 messages_service.mark_chat_consumed(pending, step_id=ctx.step_id)
-                await session.commit()
+                await _commit_action(session, ctx)
                 params["user_guidance"] = merged
                 await ctx.log(f"已收到你的 {len(pending)} 条建议，立即用于当前修复")
     except Exception:  # noqa: BLE001 — 建议拉取失败不能影响修复主流程
@@ -866,6 +913,8 @@ def _guarded(func):
             return await func(ctx, params)
         except asyncio.CancelledError:
             raise
+        except ManagedLaunchCancelled:
+            return {"cancelled": True}
         except Exception as e:
             await _mark_attention(ctx, error_text(e))
             raise
@@ -1014,6 +1063,82 @@ async def _plan_failure_recovery(
         return None, f"自动诊断不可用：{type(exc).__name__}: {exc}"
 
 
+async def _reserve_managed_launch(
+    ctx: ActionContext, session: AsyncSession, executor: Runner,
+    experiment: Experiment, *, phase: str, operation: str, command: str,
+) -> str | None:
+    """Persist launch intent before slow I/O, including setup and smoke phases."""
+    state = _iteration_state(experiment)
+    attempt_id = str(uuid.uuid4())
+    state.setdefault("execution_started_at", utcnow().isoformat())
+    state["remote_cleanup"] = {
+        "status": "pending", "reason": "launching", "launch_attempt_id": attempt_id,
+        "workspace_id": getattr(executor, "run_workspace_id", None),
+        "operation_context": {"phase": phase, "operation": operation,
+                              "display_command": command},
+    }
+    experiment.iteration_state = state
+    return attempt_id if await _commit_action(session, ctx, publication=True) else None
+
+
+async def _run_managed_phase(
+    ctx: ActionContext, session: AsyncSession, executor: Runner, experiment: Experiment,
+    *, phase: str, operation: str, command: str, launch_method: str,
+    reconcile_only: bool = False,
+) -> tuple[CommandSnapshot | None, Runner, dict[str, Any] | None]:
+    """Use durable identity for repair and delivery commands as well as initial setup."""
+    desired_workspace = getattr(executor, "run_workspace_id", None)
+    cleanup = (_iteration_state(experiment).get("remote_cleanup") or {})
+    handle = _restore_managed_handle(cleanup.get("handle"))
+    intent = cleanup.get("operation_context")
+    if cleanup and handle is None and isinstance(intent, dict):
+        executor.bind_run_workspace(cleanup.get("workspace_id"))
+        recovered = await executor.recover_managed_command(OperationContext(
+            phase=str(intent["phase"]), operation=str(intent["operation"]),
+            display_command=str(intent["display_command"]), target=experiment.server_host,
+        ))
+        if recovered and recovered.attempt_id == cleanup.get("launch_attempt_id"):
+            handle = recovered
+    if cleanup and handle is None:
+        return None, executor, {"remote_operation_continues": True, "ask": {
+            "ask_kind": "action_ask", "question":
+            "已有远端操作的身份尚不能核对，保留资源并等待对账后再继续。",
+        }}
+    if handle is not None:
+        executor.bind_run_workspace(cleanup.get("workspace_id"))
+    else:
+        if reconcile_only:
+            return None, executor, None
+        executor.bind_run_workspace(desired_workspace)
+        attempt_id = await _reserve_managed_launch(
+            ctx, session, executor, experiment, phase=phase, operation=operation, command=command,
+        )
+        if attempt_id is None:
+            return None, executor, {"cancelled": True}
+        handle = await getattr(executor, launch_method)(attempt_id=attempt_id)
+    try:
+        snapshot, executor = await _monitor_managed_command(
+            ctx, session, executor, experiment, handle
+        )
+    except ManagedCommandNeedsUser as pending:
+        return None, executor, _managed_command_waiting_result(ctx, experiment, pending)
+    except ManagedCommandCancelled as cancelled:
+        return None, cancelled.executor, {"cancelled": True}
+    if reconcile_only:
+        executor.bind_run_workspace(desired_workspace)
+        ctx.checkpoint.pop("managed_command_waiting", None)
+        return snapshot, executor, None
+    if (handle.operation_id != operation
+            or getattr(executor, "run_workspace_id", None) != desired_workspace):
+        executor.bind_run_workspace(desired_workspace)
+        return await _run_managed_phase(
+            ctx, session, executor, experiment, phase=phase, operation=operation,
+            command=command, launch_method=launch_method,
+        )
+    ctx.checkpoint.pop("managed_command_waiting", None)
+    return snapshot, executor, None
+
+
 async def _monitor_managed_command(
     ctx: ActionContext,
     session: AsyncSession,
@@ -1030,6 +1155,53 @@ async def _monitor_managed_command(
     diagnostic_evidence: dict[str, str] | None = None
     next_assessment_at = 0.0
     reconnect_streak = 0
+    framer = MetricLineFramer()
+    state = _iteration_state(experiment)
+    state.setdefault("execution_started_at", utcnow().isoformat())
+    state["remote_cleanup"] = {
+        "status": "pending", "reason": "running",
+        "workspace_id": getattr(executor, "run_workspace_id", None),
+        "handle": _serialize_managed_handle(handle),
+    }
+    experiment.iteration_state = state
+    await _commit_action(session, ctx)
+
+    async def record_cleanup(confirmed: bool, reason: str) -> None:
+        state = _iteration_state(experiment)
+        if confirmed:
+            state.pop("remote_cleanup", None)
+            ctx.checkpoint.pop("managed_command_waiting", None)
+        else:
+            state["remote_cleanup"] = {
+                "status": "pending", "reason": reason,
+                "workspace_id": getattr(executor, "run_workspace_id", None),
+                "handle": _serialize_managed_handle(handle),
+            }
+        experiment.iteration_state = state
+        await _commit_action(session, ctx)
+
+    async def ingest_output(*, terminal: bool = False) -> None:
+        nonlocal stdout_offset, stderr_offset
+        while True:
+            old_offsets = (stdout_offset, stderr_offset)
+            chunks, stdout_offset, stderr_offset = await executor.read_managed_output(
+                handle, stdout_offset=stdout_offset, stderr_offset=stderr_offset,
+            )
+            for chunk in chunks:
+                experiments_service.append_terminal_output(
+                    experiment.id, operation=handle.operation_id,
+                    stream=chunk.stream, text=chunk.text,
+                )
+                if run is not None:
+                    experiments_service.append_local_log(experiment.id, run.seq, chunk.text)
+                    points = _evaluation_metric_lines(framer.feed(chunk.stream, chunk.text))
+                    run.metrics = merge_metrics(run.metrics, points)
+            if not terminal or old_offsets == (stdout_offset, stderr_offset):
+                break
+        if terminal and run is not None:
+            run.metrics = merge_metrics(run.metrics, _evaluation_metric_lines(framer.finish()))
+        if run is not None:
+            await _commit_action(session, ctx)
 
     def append_lifecycle(message: str) -> None:
         experiments_service.append_terminal_output(
@@ -1048,30 +1220,14 @@ async def _monitor_managed_command(
         nonlocal executor
         with contextlib.suppress(Exception):
             await executor.close()
+        workspace_id = getattr(executor, "run_workspace_id", None)
         executor = await _open_executor(session, ctx, experiment)
+        if workspace_id:
+            executor.bind_run_workspace(workspace_id)
 
     while True:
         try:
-            chunks, stdout_offset, stderr_offset = await executor.read_managed_output(
-                handle,
-                stdout_offset=stdout_offset,
-                stderr_offset=stderr_offset,
-            )
-            for chunk in chunks:
-                experiments_service.append_terminal_output(
-                    experiment.id,
-                    operation=handle.operation_id,
-                    stream=chunk.stream,
-                    text=chunk.text,
-                )
-                if run is not None:
-                    experiments_service.append_local_log(experiment.id, run.seq, chunk.text)
-                    points = parse_metric_lines(chunk.text)
-                    if points:
-                        run.metrics = merge_metrics(run.metrics, points)
-                        experiment.metrics = merge_metrics(experiment.metrics, points)
-            if run is not None and chunks:
-                await session.commit()
+            await ingest_output()
             snapshot = await executor.inspect_managed_command(
                 handle,
                 previous_token=previous_token,
@@ -1099,7 +1255,7 @@ async def _monitor_managed_command(
                     },
                 )
             )
-            await session.commit()
+            await _commit_action(session, ctx)
             append_lifecycle(
                 f"SSH connection lost; reconnecting to the same managed attempt "
                 f"({reconnect_streak}): {type(exc).__name__}"
@@ -1113,19 +1269,21 @@ async def _monitor_managed_command(
         if await _voyage_cancelled(session, ctx):
             append_lifecycle("voyage cancelled; stopping the current remote command")
             stopped = await executor.stop_managed_command(handle)
+            await record_cleanup(bool(stopped), "cancel_stop_unconfirmed")
             snapshot.process_alive = not stopped
-            if snapshot.exit_status is None:
-                snapshot.exit_status = -15 if stopped else -1
+            if stopped and snapshot.exit_status is None:
+                snapshot.exit_status = -15
             snapshot.stderr_tail = snapshot.stderr_tail or (
                 "remote command stopped after the voyage was cancelled"
                 if stopped
                 else "voyage was cancelled but the remote command could not be verified stopped"
             )
-            if run is not None:
+            if run is not None and stopped:
+                await ingest_output(terminal=True)
                 run.exit_code = snapshot.exit_status
                 run.status = "failed"
                 run.finished_at = utcnow()
-                await session.commit()
+                await _commit_action(session, ctx)
             await session.refresh(experiment)
             if experiment.status not in EXPERIMENT_TERMINAL_STATUSES:
                 await _set_status(ctx, session, experiment, "cancelled")
@@ -1137,6 +1295,17 @@ async def _monitor_managed_command(
             diagnostic_evidence = None
         previous_token = snapshot.progress_token
         if snapshot.exit_status is not None:
+            if snapshot.process_alive:
+                stopped = await executor.stop_managed_command(handle)
+                await record_cleanup(bool(stopped), "descendants_stop_unconfirmed")
+                if not stopped:
+                    raise ManagedCommandNeedsUser(handle, snapshot, None, CommandVerdict(
+                        CommandAction.ASK_USER_WHILE_RUNNING,
+                        "exit recorded but remote descendants are not confirmed stopped",
+                    ))
+                snapshot.process_alive = False
+            await ingest_output(terminal=True)
+            await record_cleanup(True, "completed")
             append_lifecycle(f"command completed with exit status {snapshot.exit_status}")
             return snapshot, executor
         if not snapshot.process_alive:
@@ -1147,7 +1316,34 @@ async def _monitor_managed_command(
                     "remote process disappeared without recording an exit status"
                 )
             append_lifecycle(f"command process disappeared with exit status {final.exit_status}")
+            await ingest_output(terminal=True)
+            await record_cleanup(True, "process_gone")
             return final, executor
+
+        hard_reached = bool(
+            snapshot.context.hard_timeout_seconds
+            and snapshot.elapsed_seconds >= snapshot.context.hard_timeout_seconds
+        )
+        started = (_iteration_state(experiment).get("execution_started_at")
+                   or (ctx.checkpoint.get("iterate") or {}).get("started_at"))
+        max_hours = float((experiment.budget or {}).get("max_hours") or 0)
+        hard_reached = hard_reached or bool(
+            started and max_hours
+            and _elapsed_hours(datetime.fromisoformat(str(started))) >= max_hours
+        )
+        if hard_reached:
+            stopped = await executor.stop_managed_command(handle)
+            await record_cleanup(bool(stopped), "hard_deadline_stop_unconfirmed")
+            if not stopped:
+                raise ManagedCommandNeedsUser(handle, snapshot, None, CommandVerdict(
+                    CommandAction.ASK_USER_WHILE_RUNNING,
+                    "hard deadline reached; remote stop remains unconfirmed",
+                ))
+            await ingest_output(terminal=True)
+            snapshot.process_alive = False
+            snapshot.exit_status = -15
+            snapshot.stderr_tail = "stopped at the absolute experiment hard deadline"
+            return snapshot, executor
 
         soft_reached = bool(
             snapshot.context.soft_timeout_seconds
@@ -1180,6 +1376,7 @@ async def _monitor_managed_command(
             elif verdict.action == CommandAction.STOP_AND_REPAIR:
                 append_lifecycle("stopping command after a high-confidence stalled assessment")
                 stopped = await executor.stop_managed_command(handle)
+                await record_cleanup(bool(stopped), "stall_stop_unconfirmed")
                 if not stopped:
                     raise ManagedCommandNeedsUser(handle, snapshot, assessment, verdict)
                 snapshot.process_alive = False
@@ -1187,6 +1384,7 @@ async def _monitor_managed_command(
                 snapshot.stderr_tail = snapshot.stderr_tail or (
                     "stopped after a confirmed sustained stall"
                 )
+                await ingest_output(terminal=True)
                 return snapshot, executor
 
         await asyncio.sleep(MANAGED_COMMAND_POLL_SECONDS)
@@ -1322,8 +1520,9 @@ def validate_plan(data: Any) -> dict[str, Any]:
         text = hyp.get("text") if isinstance(hyp, dict) else hyp
         if not isinstance(text, str) or not text.strip():
             raise ValueError("hypothesis missing text")
-        status = hyp.get("status") if isinstance(hyp, dict) else None
-        item = {"text": text.strip(), "status": status if status in _HYP_STATUSES else "testing"}
+        item = {"text": text.strip(), "status": "testing"}
+        if isinstance(hyp, dict) and isinstance(hyp.get("criterion"), dict):
+            item["criterion"] = hyp["criterion"]
         evidence = hyp.get("evidence") if isinstance(hyp, dict) else None
         if isinstance(evidence, str) and evidence.strip():
             item["evidence"] = evidence.strip()
@@ -1360,6 +1559,21 @@ def validate_plan(data: Any) -> dict[str, Any]:
         "primary_metric": {"name": pm_name.strip(), "direction": pm_direction},
         "budget_estimate": budget,
     }
+    if "min_delta" in pm:
+        if not _is_storable_number(pm["min_delta"]) or pm["min_delta"] < 0:
+            raise ValueError("primary_metric min_delta must be finite and non-negative")
+        out["primary_metric"]["min_delta"] = float(pm["min_delta"])
+    if "selector" in pm:
+        if not isinstance(pm["selector"], str) or not pm["selector"].strip():
+            raise ValueError("primary_metric selector must be an exact metric name")
+        out["primary_metric"]["selector"] = pm["selector"].strip()
+    if isinstance(data.get("evaluator_digest"), str):
+        out["evaluator_digest"] = data["evaluator_digest"]
+    for key in ("allowed_files", "protected_files"):
+        if key in data:
+            if not isinstance(data[key], list):
+                raise ValueError(f"{key} must be a list")
+            out[key] = [ssh_exec._validate_relpath(str(name)) for name in data[key]]
     # 对照实验的可选结构（复现类实验用）：conditions/eval_protocol/datasets 透传，供 setup
     # 代码生成与 analyze/report 对照分析消费。恰一个 baseline 才算有效对照。
     conditions = data.get("conditions")
@@ -1438,8 +1652,12 @@ def validate_files(data: Any) -> dict[str, str]:
     if not isinstance(files, dict) or not files:
         raise ValueError('expected {"files": {...}}')
     normalized: dict[str, str] = {}
+    reserved = {"metrics.json", "run.log", "run.exit", "env.sh", "llm_config.json",
+                "metrics_all.json", "result_bundle.json", "MEMORY.md"}
     for name, content in files.items():
         rel = ssh_exec._validate_relpath(str(name))
+        if rel in reserved or rel.split("/")[0] in {".polaris", ".venv", "data_cache"}:
+            raise ValueError(f"reserved experiment path: {rel}")
         normalized[rel] = str(content)
     for required in ("requirements.txt", "run.sh"):
         if required not in normalized:
@@ -1483,6 +1701,11 @@ def validate_reflection(data: Any) -> dict[str, Any]:
                 "evidence": str(evidence).strip() if evidence else "",
             }
         )
+        refs = upd.get("evidence_refs")
+        if refs is not None:
+            if not isinstance(refs, list) or not all(isinstance(ref, str) for ref in refs):
+                raise ValueError("hypothesis_update evidence_refs must be strings")
+            updates[-1]["evidence_refs"] = refs
     decision = data.get("decision")
     if decision not in _DECISIONS:
         raise ValueError("decision must be improve|debug|stop|ask")
@@ -1536,7 +1759,10 @@ def _is_storable_number(value: Any) -> bool:
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
         return False
-    return math.isfinite(value)
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def parse_metric_lines(text: str) -> list[dict[str, Any]]:
@@ -1561,7 +1787,7 @@ def parse_metric_lines(text: str) -> list[dict[str, Any]]:
         points.append(
             {
                 "name": name,
-                "step": int(step) if isinstance(step, int | float) else None,
+                "step": int(step) if _is_storable_number(step) else None,
                 "value": float(value),
             }
         )
@@ -1603,6 +1829,58 @@ def parse_metrics_json(text: str) -> list[dict[str, Any]]:
     return points
 
 
+def _evaluation_metric_lines(text: str) -> list[dict[str, Any]]:
+    """Preserve invalid final observations as JSON-safe null diagnostic values.
+
+    Dropping a final NaN would make a previous finite score look authoritative.
+    Public parser helpers retain their historical filtering contract; controlled
+    evaluations require this stricter ordered ingestion.
+    """
+    points = []
+    for line in text.splitlines():
+        match = re.search(r"\bPOLARIS_METRIC(?:\s+(.*)|$)", line)
+        if not match:
+            continue
+        try:
+            data = json.loads(match.group(1) or "")
+        except json.JSONDecodeError:
+            data = None
+        if not isinstance(data, dict) or not isinstance(data.get("name"), str):
+            points.append({"name": "__polaris_protocol_error__", "step": None, "value": None})
+            continue
+        value, step = data.get("value"), data.get("step")
+        if data["name"] == "__polaris_protocol_error__":
+            value = None
+        points.append({"name": data["name"],
+                       "step": int(step) if _is_storable_number(step) else None,
+                       "value": float(value) if _is_storable_number(value) else None})
+    return points
+
+
+def _evaluation_metrics_json(text: str) -> list[dict[str, Any]]:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = None
+    if not isinstance(data, dict):
+        return [{"name": "__polaris_protocol_error__", "step": None, "value": None}]
+    points = []
+    for name, series in data.items():
+        if name == "__polaris_protocol_error__":
+            points.append({"name": name, "step": None, "value": None})
+            continue
+        values = series if isinstance(series, list) else [{"value": series}]
+        if not values:
+            values = [{"value": None}]
+        for item in values:
+            item = item if isinstance(item, dict) else {"value": None}
+            value, step = item.get("value"), item.get("step")
+            points.append({"name": name,
+                           "step": int(step) if _is_storable_number(step) else None,
+                           "value": float(value) if _is_storable_number(value) else None})
+    return points
+
+
 def merge_metrics(target: dict[str, Any] | None, points: list[dict[str, Any]]) -> dict[str, Any]:
     """把指标点合并进 {name: [{step, value}]}（返回新 dict，便于 JSON 列写回）。"""
     merged: dict[str, Any] = {k: list(v) for k, v in (target or {}).items()}
@@ -1619,31 +1897,8 @@ def _metric_base(key: str) -> str:
 
 
 def extract_primary_value(metrics: dict[str, Any] | None, metric_name: str) -> float | None:
-    """从 run.metrics 取主指标最后一个值（无该指标返回 None）。
-
-    匹配做归一化（#20，线上实测）：生成代码打的指标名带条件/切片后缀
-    （``gsm8k_accuracy/baseline/val``），计划主指标叫 ``accuracy``——精确匹配
-    把成功的轮次全计成 0，完成标准死锁。匹配顺序：精确 → 基名相等 →
-    基名包含主指标名（多键命中时取键名最短的，倾向裸指标/baseline）。"""
-    metrics = metrics or {}
-    want = metric_name.strip().lower()
-
-    def last_value(series: Any) -> float | None:
-        if not isinstance(series, list) or not series:
-            return None
-        value = series[-1].get("value") if isinstance(series[-1], dict) else None
-        return float(value) if isinstance(value, int | float) else None
-
-    if metric_name in metrics:
-        return last_value(metrics[metric_name])
-    exact_base = [k for k in metrics if _metric_base(k) == want]
-    containing = [k for k in metrics if want in _metric_base(k)]
-    for candidates in (exact_base, containing):
-        for key in sorted(candidates, key=len):
-            value = last_value(metrics[key])
-            if value is not None:
-                return value
-    return None
+    """Only the frozen exact selector is comparable; ambiguous metric families are invalid."""
+    return _last_value((metrics or {}).get(metric_name))
 
 
 def is_improvement(value: float, best: float | None, direction: str) -> bool:
@@ -1706,51 +1961,18 @@ def _last_value(series: Any) -> float | None:
         v = last.get("value") if isinstance(last, dict) else last
     else:
         v = series
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
+    return float(v) if _is_storable_number(v) else None
 
 
 def _conditions_delta(experiment: Experiment) -> dict[str, Any] | None:
     """对照实验的确定性汇总：按 plan.conditions 把 experiment.metrics 里各指标末值归到
     对应 condition（指标名以 /<condition> 结尾即归属，只聚合主指标族），算每组均值与相对
     baseline 的 delta。无 conditions 或无可归属指标时返回 None（退化为原单指标分析）。"""
-    plan = experiment.plan or {}
-    conditions = plan.get("conditions")
-    if not isinstance(conditions, list) or not conditions:
+    if not (experiment.plan or {}).get("conditions"):
         return None
-    pm_name = str((plan.get("primary_metric") or {}).get("name") or "").strip()
-    pm_root = pm_name.split("/")[0] if pm_name else ""
-    lasts = {name: _last_value(s) for name, s in (experiment.metrics or {}).items()}
-
-    def _belongs(name: str, cond: str) -> bool:
-        if not (name.endswith(f"/{cond}") or name == cond):
-            return False
-        return not pm_root or name.split("/")[0] == pm_root or name == cond
-
-    scores: dict[str, float] = {}
-    for c in conditions:
-        cond = str(c.get("name") or "").strip()
-        if not cond:
-            continue
-        vals = [v for name, v in lasts.items() if v is not None and _belongs(name, cond)]
-        if vals:
-            scores[cond] = round(sum(vals) / len(vals), 3)
-    if not scores:
-        return None
-    baseline = next(
-        (
-            str(c.get("name")).strip()
-            for c in conditions
-            if c.get("role") == "baseline" and str(c.get("name")).strip() in scores
-        ),
-        None,
+    return evidence_service.condition_summary(
+        experiment.metrics or {}, evidence_service.freeze_research_contract(experiment.plan or {})
     )
-    deltas: dict[str, float] = {}
-    if baseline is not None:
-        deltas = {c: round(v - scores[baseline], 3) for c, v in scores.items() if c != baseline}
-    return {"baseline": baseline, "scores": scores, "deltas_vs_baseline": deltas}
 
 
 def _proposal_context(idea: Idea) -> str:
@@ -1850,7 +2072,7 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 validate=validate_plan,
             )
             experiment.plan = plan
-            await session.commit()
+            await _commit_action(session, ctx)
             pm_def = plan.get("primary_metric") or {}
             hyp_texts = [str(h.get("text", ""))[:80] for h in plan.get("hypotheses", [])]
             _remember(
@@ -1861,6 +2083,17 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 f"预算：{json.dumps(experiment.budget or {}, ensure_ascii=False)}",
             )
         plan = experiment.plan
+        state = _iteration_state(experiment)
+        if not state.get("research_contract"):
+            state["research_contract"] = evidence_service.freeze_research_contract(
+                plan, objective=ctx.run.goal, budget=experiment.budget,
+                objective_details={"idea_id": str(idea.id), "title": idea.title,
+                                   "summary": idea.summary, "research_type": idea.research_type,
+                                   "goal": copy.deepcopy(idea.goal)},
+            )
+            experiment.iteration_state = state
+            await _commit_action(session, ctx)
+        ctx.checkpoint["research_contract"] = copy.deepcopy(state["research_contract"])
 
         # 预算闸门默认不拦（#626）：显式 confirm_budget=True 才预置闸门 payload 并把
         # 实验转 awaiting_gate；默认直接放行，下一步 setup 会把状态推进到 setup
@@ -2090,7 +2323,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             await executor.mkdir_workdir()
             experiment.workdir = executor.workdir
             experiment.server_host = executor.host
-            await session.commit()
+            await _commit_action(session, ctx)
             await executor.write_files(platform_files)  # 平台文件写一次（不随修复变）
 
             # 资源预检（GPU + 模型/数据集）：确定性探测，记进观测（面板可见），有问题给早期告警。
@@ -2157,11 +2390,24 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             resumed_handle = _restore_managed_handle(
                 ctx.checkpoint.pop("managed_command_waiting", None)
             )
-            prepare_handle = (
-                resumed_handle
-                if resumed_handle and resumed_handle.operation_id == "environment-prepare"
-                else await executor.prepare_managed()
-            )
+            if resumed_handle:
+                # Reconcile the original operation before preparing a replacement container.
+                prepare_handle = (
+                    resumed_handle if resumed_handle.operation_id == "environment-prepare" else None
+                )
+            else:
+                launch_attempt = await _reserve_managed_launch(
+                    ctx, session, executor, experiment, phase="environment.prepare",
+                    operation="environment-prepare", command="prepare experiment environment",
+                )
+                if launch_attempt is None:
+                    return {"cancelled": True}
+                prepare_handle = await executor.prepare_managed(attempt_id=launch_attempt)
+                if prepare_handle is None:
+                    state = _iteration_state(experiment)
+                    state.pop("remote_cleanup", None)  # This preparation launched no operation.
+                    experiment.iteration_state = state
+                    await _commit_action(session, ctx)
             if prepare_handle is not None:
                 try:
                     prepare_snapshot, executor = await _monitor_managed_command(
@@ -2171,7 +2417,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     return _managed_command_waiting_result(ctx, experiment, pending)
                 except ManagedCommandCancelled as cancelled:
                     executor = cancelled.executor
-                    return {"cancelled": True, "workdir": experiment.workdir}
+                    return {"cancelled": True}
                 if prepare_snapshot.exit_status != 0:
                     report = failure_from_snapshot(prepare_snapshot)
                     _plan, next_step = await _plan_failure_recovery(ctx, report)
@@ -2198,7 +2444,18 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 hint = ""
                 failure_report: FailureReport | None = None
                 try:
-                    handle = resumed_handle or await executor.launch_managed_setup()
+                    launch_attempt = None
+                    if resumed_handle is None:
+                        launch_attempt = await _reserve_managed_launch(
+                            ctx, session, executor, experiment, phase="dependency.install",
+                            operation="dependency-install",
+                            command="install experiment dependencies",
+                        )
+                        if launch_attempt is None:
+                            return {"cancelled": True}
+                    handle = resumed_handle or await executor.launch_managed_setup(
+                        attempt_id=launch_attempt
+                    )
                     resumed_handle = None
                     snapshot, executor = await _monitor_managed_command(
                         ctx, session, executor, experiment, handle
@@ -2211,7 +2468,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     return _managed_command_waiting_result(ctx, experiment, pending)
                 except ManagedCommandCancelled as cancelled:
                     executor = cancelled.executor
-                    return {"cancelled": True, "workdir": experiment.workdir}
+                    return {"cancelled": True}
                 if exit_status == 0:
                     env_bits = [f"探测到 GPU {len(gpus)} 卡" if gpus else "未探测到 GPU"]
                     for warning in preflight_warnings:
@@ -2413,6 +2670,18 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             resumed_handle = _restore_managed_handle(
                 ctx.checkpoint.pop("managed_command_waiting", None)
             )
+            if resumed_handle and resumed_handle.operation_id != "application-smoke":
+                # An interrupted dependency repair is not a passed smoke test.
+                try:
+                    _snapshot, executor = await _monitor_managed_command(
+                        ctx, session, executor, experiment, resumed_handle
+                    )
+                except ManagedCommandNeedsUser as pending:
+                    return _managed_command_waiting_result(ctx, experiment, pending)
+                except ManagedCommandCancelled as cancelled:
+                    executor = cancelled.executor
+                    return {"cancelled": True}
+                resumed_handle = None
             while True:
                 attempts += 1
                 # 超时/断连也当作「可修的失败」（多为规模太大/太慢或环境问题），而非硬崩：
@@ -2420,7 +2689,17 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 hint = ""
                 failure_report: FailureReport | None = None
                 try:
-                    handle = resumed_handle or await executor.launch_managed_smoke()
+                    launch_attempt = None
+                    if resumed_handle is None:
+                        launch_attempt = await _reserve_managed_launch(
+                            ctx, session, executor, experiment, phase="application.smoke",
+                            operation="application-smoke", command="bash run.sh --smoke",
+                        )
+                        if launch_attempt is None:
+                            return {"cancelled": True}
+                    handle = resumed_handle or await executor.launch_managed_smoke(
+                        attempt_id=launch_attempt
+                    )
                     resumed_handle = None
                     snapshot, executor = await _monitor_managed_command(
                         ctx, session, executor, experiment, handle
@@ -2433,7 +2712,7 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     return _managed_command_waiting_result(ctx, experiment, pending)
                 except ManagedCommandCancelled as cancelled:
                     executor = cancelled.executor
-                    return {"cancelled": True, "workdir": experiment.workdir}
+                    return {"cancelled": True}
                 if exit_status == 0:
                     if fixes:
                         _remember(ctx, "试跑", f"自动修复 {fixes} 次后通过")
@@ -2575,13 +2854,18 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     # 模型做对了，平台把它的修复扔了。安装失败不在这里打断：下一轮
                     # 试跑的 stderr 会带出真实症状，交回修复循环。
                     await ctx.log("requirements.txt 有变更，重装依赖后再试跑")
-                    with contextlib.suppress(Exception):
-                        dep = await executor.setup_venv()
-                        if dep.exit_status != 0:
-                            await ctx.log(
-                                f"依赖重装未成功（exit={dep.exit_status}），试跑将带错重修",
-                                level="warn",
-                            )
+                    dep, executor, waiting = await _run_managed_phase(
+                        ctx, session, executor, experiment, phase="dependency.install",
+                        operation="dependency-install", command="install experiment dependencies",
+                        launch_method="launch_managed_setup",
+                    )
+                    if waiting is not None:
+                        return waiting
+                    if dep.exit_status != 0:
+                        await ctx.log(
+                            f"依赖重装未成功（exit={dep.exit_status}），试跑将带错重修",
+                            level="warn",
+                        )
         finally:
             await executor.close()
 
@@ -2613,8 +2897,9 @@ def _apply_hypothesis_updates(
 
 
 def _iteration_state(experiment: Experiment) -> dict[str, Any]:
-    state = experiment.iteration_state or {}
+    state = copy.deepcopy(experiment.iteration_state or {})
     return {
+        **state,
         "no_improve_streak": int(state.get("no_improve_streak") or 0),
         "debug_count": int(state.get("debug_count") or 0),
         "stopped_reason": state.get("stopped_reason"),
@@ -2622,7 +2907,9 @@ def _iteration_state(experiment: Experiment) -> dict[str, Any]:
 
 
 def _best_primary_value(runs: list[ExperimentRun], direction: str) -> float | None:
-    values = [r.primary_value for r in runs if r.primary_value is not None]
+    values = [r.primary_value for r in runs
+              if r.status == "succeeded" and r.exit_code == 0
+              and _is_storable_number(r.primary_value)]
     if not values:
         return None
     return max(values) if direction == "maximize" else min(values)
@@ -2631,214 +2918,347 @@ def _best_primary_value(runs: list[ExperimentRun], direction: str) -> float | No
 @register("experiment.run")
 @_guarded
 async def experiment_run(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
-    """单轮正式运行：launch → 轮询（cancel/日志镜像/指标/超时 kill）→ metrics 合并。
-
-    原 experiment.iterate 的一轮循环体（docs/task-system.md §7）：每轮是独立的
-    任务步骤，可见、可审计、可断点恢复；非零退出码不算步骤失败（observation 携带
-    exit_code，交由 experiment.analyze 诊断走 debug 分支）。
-    """
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as session:
+    """Persist source/identity before launch, reconcile attempts, then validate and promote."""
+    async with get_sessionmaker()() as session:
         experiment = await _get_experiment(session, ctx)
         await _set_status(ctx, session, experiment, "running")
-
-        plan: dict[str, Any] = dict(experiment.plan or {})
-        pm = plan.get("primary_metric") or {}
-        pm_name = str(pm.get("name") or "")
-        pm_direction = str(pm.get("direction") or "maximize")
-        if not pm_name:
-            raise ValueError("实验计划缺少 primary_metric，无法迭代")
-
+        state = _iteration_state(experiment)
+        contract = state.get("research_contract") or evidence_service.freeze_research_contract(
+            experiment.plan or {}, objective=ctx.run.goal, budget=experiment.budget
+        )
+        if not state.get("candidates") and (experiment.plan or {}).get("protected_files"):
+            contract = evidence_service.freeze_research_contract(
+                experiment.plan or {}, objective=ctx.run.goal, budget=experiment.budget,
+                initial_files=ctx.checkpoint.get("exp_files") or {},
+                objective_details=contract.get("objective_details"),
+            )
+        state["research_contract"] = contract
+        ctx.checkpoint["research_contract"] = copy.deepcopy(contract)
+        pm = contract["protocol"]["primary_metric"]
         budget = experiment.budget or {}
         max_hours = float(budget.get("max_hours") or 0)
         max_runs = int(budget.get("max_runs") or 0)
-
-        # 迭代起始时间（多轮共享；断点/恢复从 checkpoint 读回）
         iterate_cp = dict(ctx.checkpoint.get("iterate") or {})
-        if iterate_cp.get("started_at"):
-            iterate_started = datetime.fromisoformat(str(iterate_cp["started_at"]))
-        else:
-            iterate_started = utcnow()
-            iterate_cp["started_at"] = iterate_started.isoformat()
-            ctx.checkpoint["iterate"] = iterate_cp
-
-        prior_runs = (
-            (
-                await session.execute(
-                    select(ExperimentRun)
-                    .where(ExperimentRun.experiment_id == experiment.id)
-                    .order_by(ExperimentRun.seq)
+        iterate_cp.setdefault("started_at", state.get("iterate_started_at")
+                              or state.get("execution_started_at") or utcnow().isoformat())
+        state["iterate_started_at"] = iterate_cp["started_at"]
+        ctx.checkpoint["iterate"] = iterate_cp
+        iterate_started = datetime.fromisoformat(str(iterate_cp["started_at"]))
+        runs = list((await session.execute(
+            select(ExperimentRun).where(ExperimentRun.experiment_id == experiment.id)
+            .order_by(ExperimentRun.seq)
+        )).scalars().all())
+        metadata = dict(state.get("run_metadata") or {})
+        step_id = str(ctx.step_id) if ctx.step_id else None
+        previous = next((r for r in runs if metadata.get(str(r.id), {}).get("step_id") == step_id),
+                        None) if step_id else None
+        if previous and previous.status != "running":
+            evaluation = next((e for e in state.get("evaluations", [])
+                               if e["run_id"] == str(previous.id)), None)
+            if evaluation is not None:
+                iterate_cp["primary_metric_runs"] = sum(
+                    bool(e.get("valid")) for e in state.get("evaluations", [])
                 )
-            )
-            .scalars()
-            .all()
-        )
-        seq = (prior_runs[-1].seq + 1) if prior_runs else 1
-        # 重启重挂：上一轮还挂着 running（worker 重启/任务被打断），远端 nohup 进程仍在跑
-        # （或已留下 run.exit）——**重挂轮询同一进程**而不是再起一轮。否则新旧两棵进程树
-        # 共写同一 workdir 的 run.log/run.exit（旧 launcher 晚到覆写 run.exit → 新轮读到假
-        # 退出码；实测每次部署重启都会孤儿一轮训练）。_poll_run 天然处理三种情况：还活着
-        # →继续跟；已结束→读 run.exit 收尾；死了没退出码→判 failed 交 analyze 诊断。
-        stale = (
-            prior_runs[-1]
-            if prior_runs and prior_runs[-1].status == "running" and prior_runs[-1].pid
-            else None
-        )
-
-        # 恢复现场护栏：预算已满就不再启动（正常路径由 analyze 的终止判定拦截；
-        # 重挂不是新一轮，不受 max_runs 拦截）
-        for reason, exhausted in (
-            ("max_runs", bool(stale is None and max_runs and seq > max_runs)),
-            (
-                "max_hours",
-                bool(prior_runs and max_hours and _elapsed_hours(iterate_started) > max_hours),
-            ),
-        ):
-            if exhausted:
+                return {"run_id": str(previous.id), "seq": previous.seq,
+                        "exit_code": previous.exit_code, "run_status": previous.status,
+                        "primary_value": previous.primary_value,
+                        "evaluation_valid": evaluation["valid"]}
+        stale = previous or (runs[-1] if runs and runs[-1].status == "running" else None)
+        seq = stale.seq if stale else (runs[-1].seq + 1 if runs else 1)
+        # An exhausted budget can forbid a NEW launch; an old attempt must be reconciled first.
+        if stale is None:
+            reason = ("max_runs" if max_runs and seq > max_runs else
+                      "max_hours" if max_hours and _elapsed_hours(iterate_started) >= max_hours
+                      else None)
+            if reason:
+                state["stopped_reason"] = reason
+                experiment.iteration_state = state
+                await _commit_action(session, ctx)
                 iterate_cp["stopped_reason"] = reason
-                ctx.checkpoint["iterate"] = iterate_cp
-                return {
-                    "skipped": True,
-                    "stopped_reason": reason,
-                    "plan_signal": {"decision": "finish", "stopped_reason": reason},
-                }
-
-        best = _best_primary_value(list(prior_runs), pm_direction)
-        state = _iteration_state(experiment)
-
+                return {"skipped": True, "stopped_reason": reason,
+                        "plan_signal": {"decision": "finish", "stopped_reason": reason}}
         executor = await _open_executor(session, ctx, experiment)
+
+        async def launch_with_budget() -> ManagedCommandHandle | None:
+            if not await _commit_action(session, ctx, publication=True):
+                raise ManagedLaunchCancelled()
+            remaining = (max_hours * 3600 - _elapsed_hours(iterate_started) * 3600
+                         if max_hours else None)
+            if remaining is not None and remaining <= 0:
+                return None
+            return await executor.launch_managed_run(timeout_seconds=remaining)
+
         try:
-            managed_handle = _restore_managed_handle(
-                ctx.checkpoint.pop("managed_command_waiting", None)
-            )
             if stale is not None:
                 run = stale
-                seq = run.seq
-                # 重挂从日志头重放：清掉该轮已存的 metrics 避免重复合并（本地日志允许少量重复行）
+                meta = metadata.get(str(run.id), {})
+                if meta.get("workspace_id"):
+                    executor.bind_run_workspace(meta["workspace_id"])
+                candidate = next((c for c in state.get("candidates", [])
+                                  if c["candidate_id"] == meta.get("candidate_id")), None)
+                # Replay is scoped to this run; aggregate metrics are rebuilt after validation.
                 run.metrics = None
-                await session.commit()
-                if managed_handle is None:
-                    recovered = await executor.recover_managed_command(
-                        OperationContext(
-                            phase="application.run",
-                            operation="experiment-run",
-                            display_command=run.command,
-                            target=experiment.server_host,
-                            soft_timeout_seconds=600,
-                            stall_timeout_seconds=900,
-                            hard_timeout_seconds=max_hours * 3600 if max_hours else None,
-                            repair_scope=RepairScope.APPLICATION_FILES,
-                        )
-                    )
-                    # The remote current pointer is authoritative only when it still
-                    # names the process recorded for this database run.  A mismatch
-                    # falls back to the pre-managed compatibility path; it must never
-                    # attach an unrelated attempt merely because it shares a workdir.
-                    if recovered is not None and recovered.process_id == int(run.pid):
-                        managed_handle = recovered
+                recovered = await executor.recover_managed_command(OperationContext(
+                    phase="application.run", operation="experiment-run",
+                    display_command=run.command, target=experiment.server_host,
+                    soft_timeout_seconds=600, stall_timeout_seconds=900,
+                    hard_timeout_seconds=max_hours * 3600 if max_hours else None,
+                    repair_scope=RepairScope.APPLICATION_FILES,
+                ))
+                managed_handle = recovered if recovered and (
+                    run.pid is None or recovered.process_id == run.pid
+                ) else None
+                if managed_handle is not None:
+                    run.pid = managed_handle.process_id
+                elif run.pid is None:
+                    if candidate is None:
+                        raise ValueError("reserved run has no authoritative candidate snapshot")
+                    if not meta.get("workspace_prepared"):
+                        old_workspace = meta.get("workspace_id")
+                        workspace_id = str(uuid.uuid4())
+                        await executor.prepare_run_workspace(workspace_id, candidate["files"])
+                        meta["abandoned_workspace_ids"] = [
+                            *(meta.get("abandoned_workspace_ids") or []), old_workspace,
+                        ]
+                        meta["workspace_id"] = workspace_id
+                        meta["workspace_prepared"] = True
+                        state["run_metadata"] = metadata
+                        experiment.iteration_state = state
+                        await _commit_action(session, ctx)
+                    elif await executor.list_dir(".polaris/operations/experiment-run/attempts"):
+                        return {"run_id": str(run.id), "remote_operation_continues": True,
+                                "ask": {"ask_kind": "action_ask", "question":
+                                        "远端启动记录存在，但进程身份尚不能恢复；请等待对账或停止该任务。"}}
+                    else:
+                        for name, source in candidate["files"].items():
+                            if (await executor.read_file(name)).decode("utf-8") != source:
+                                raise ValueError("prepared run source changed before launch")
+                    managed_handle = await launch_with_budget()
+                    if managed_handle is not None:
+                        run.pid = managed_handle.process_id
+                elif meta.get("workspace_id"):
+                    return {"run_id": str(run.id), "remote_operation_continues": True,
+                            "ask": {"ask_kind": "action_ask", "question":
+                                    "当前运行的持久化进程身份无法核对，保留资源并等待远端对账。"}}
+                if not run.log_path:
+                    run.log_path = str(experiments_service.append_local_log(
+                        experiment.id, seq, ""
+                    ))
             else:
-                managed_handle = await executor.launch_managed_run()
-                base_context = managed_handle.context
-                managed_handle = ManagedCommandHandle(
-                    operation_id=managed_handle.operation_id,
-                    attempt_id=managed_handle.attempt_id,
-                    context=OperationContext(
-                        phase=base_context.phase,
-                        operation=base_context.operation,
-                        display_command=base_context.display_command,
-                        target=base_context.target,
-                        soft_timeout_seconds=base_context.soft_timeout_seconds,
-                        stall_timeout_seconds=base_context.stall_timeout_seconds,
-                        hard_timeout_seconds=max_hours * 3600 if max_hours else None,
-                        repair_scope=base_context.repair_scope,
-                    ),
-                    process_id=managed_handle.process_id,
-                    process_group_id=managed_handle.process_group_id,
+                files = validate_files({"files": ctx.checkpoint.get("exp_files") or {}})
+                protected = contract["protocol"].get("protected_files") or []
+                protected_sources = dict(state.get("protected_sources") or {})
+                if not protected_sources:
+                    protected_sources = {name: files[name] for name in protected if name in files}
+                    if len(protected_sources) != len(protected):
+                        raise ValueError("protected evaluator file missing from baseline")
+                    state["protected_sources"] = protected_sources
+                if any(files.get(name) != source for name, source in protected_sources.items()):
+                    raise ValueError("protected evaluator changed; a new protocol is required")
+                allowed = contract["protocol"].get("allowed_files") or []
+                if allowed and set(files) - set(allowed) - set(protected):
+                    raise ValueError("candidate changes files outside the research contract")
+                candidate = evidence_service.snapshot_candidate(
+                    files, parent_id=state.get("working_candidate_id"),
+                    change_type=str(state.get("next_change_type") or "method"),
+                    environment={"container": (experiment.plan or {}).get("container"),
+                                 "requirements": files.get("requirements.txt")},
                 )
-                log_path = experiments_service.append_local_log(experiment.id, seq, "")
-                run = ExperimentRun(
-                    experiment_id=experiment.id,
-                    seq=seq,
-                    command=managed_handle.context.display_command,
-                    status="running",
-                    pid=managed_handle.process_id,
-                    log_path=str(log_path),
-                    started_at=utcnow(),
-                )
+                candidates = list(state.get("candidates") or [])
+                if not any(c["candidate_id"] == candidate["candidate_id"] for c in candidates):
+                    candidates.append(candidate)
+                state["candidates"] = candidates
+                state["working_candidate_id"] = candidate["candidate_id"]
+                run_id = uuid.uuid4()
+                run = ExperimentRun(id=run_id, experiment_id=experiment.id, seq=seq,
+                                    command="bash run.sh", status="running", started_at=utcnow())
+                meta = {"step_id": step_id, "workspace_id": str(run_id),
+                        "candidate_id": candidate["candidate_id"],
+                        "contract_id": contract["contract_id"],
+                        "protocol_id": contract["protocol_id"]}
+                metadata[str(run_id)] = meta
+                state["run_metadata"] = metadata
+                state["remote_cleanup"] = {"status": "pending", "reason": "launching"}
+                experiment.iteration_state = state
                 session.add(run)
-                await session.commit()
-                await session.refresh(run)
+                if not await _commit_action(session, ctx, publication=True):
+                    return {"cancelled": True}
+                # JSON state becomes the ORM's committed value; never mutate its
+                # nested aliases while preparing a durable launch reservation.
+                state = _iteration_state(experiment)
+                metadata = state["run_metadata"]
+                meta = metadata[str(run_id)]
+                await executor.prepare_run_workspace(str(run_id), files)
+                meta["workspace_prepared"] = True
+                state["run_metadata"] = metadata
+                experiment.iteration_state = state
+                await _commit_action(session, ctx)
+                managed_handle = await launch_with_budget()
+                if managed_handle is not None:
+                    run.pid = managed_handle.process_id
+                    run.command = managed_handle.context.display_command
+                run.log_path = str(experiments_service.append_local_log(experiment.id, seq, ""))
+            if managed_handle is None and run.pid is None:
+                # Preparation used the last remaining budget; no remote job was launched.
+                run.status, run.exit_code, run.finished_at = "failed", -15, utcnow()
+                state["stopped_reason"] = "max_hours"
+                state.pop("remote_cleanup", None)
+                state["result_bundle"] = _result_bundle(experiment, state)
+                experiment.iteration_state = state
+                await _commit_action(session, ctx)
+                iterate_cp["stopped_reason"] = "max_hours"
+                return {"skipped": True, "seq": run.seq, "stopped_reason": "max_hours",
+                        "plan_signal": {"decision": "finish", "stopped_reason": "max_hours"}}
             if managed_handle is not None:
+                # The absolute controller deadline below survives reconnects and restarts.
+                state = _iteration_state(experiment)
+                state["remote_cleanup"] = {"status": "pending", "reason": "running",
+                                           "workspace_id": meta.get("workspace_id"),
+                                           "handle": _serialize_managed_handle(managed_handle)}
+                experiment.iteration_state = state
+                await _commit_action(session, ctx)
                 try:
-                    run_snapshot, executor = await _monitor_managed_command(
+                    snapshot, executor = await _monitor_managed_command(
                         ctx, session, executor, experiment, managed_handle, run=run
                     )
                 except ManagedCommandNeedsUser as pending:
                     return _managed_command_waiting_result(ctx, experiment, pending)
                 except ManagedCommandCancelled as cancelled:
                     executor = cancelled.executor
-                    return {
-                        "cancelled": True,
-                        "run_id": str(run.id),
-                        "seq": run.seq,
-                    }
-                run.exit_code = run_snapshot.exit_status
-                run.status = "succeeded" if run_snapshot.exit_status == 0 else "failed"
+                    return {"cancelled": True, "run_id": str(run.id), "seq": run.seq}
+                run.exit_code = snapshot.exit_status
+                run.status = "succeeded" if snapshot.exit_status == 0 else "failed"
                 run.finished_at = utcnow()
-                await session.commit()
-                observation = {
-                    "run_id": str(run.id),
-                    "seq": run.seq,
-                    "exit_code": run_snapshot.exit_status,
-                    "run_status": run.status,
-                    "metric_names": sorted((run.metrics or {}).keys()),
-                }
-                if run_snapshot.exit_status != 0:
-                    observation["failure"] = failure_from_snapshot(run_snapshot).to_dict()
+                observation = {"run_id": str(run.id), "seq": run.seq,
+                               "exit_code": run.exit_code, "run_status": run.status}
+                if snapshot.exit_status != 0:
+                    observation["failure"] = failure_from_snapshot(snapshot).to_dict()
             else:
-                # Compatibility for runs launched by versions before managed commands.
                 observation, executor = await _poll_run(
                     ctx, session, executor, experiment, run, max_hours
                 )
             if observation.get("cancelled"):
-                return observation  # _poll_run 已 kill 进程并同步实验状态
-
-            # 可选 workdir/metrics.json 合并（平台确定性解析，非 LLM）
-            metrics_text = await executor.read_metrics_json()
-            if metrics_text:
-                extra_points = parse_metrics_json(metrics_text)
-                if extra_points:
-                    run.metrics = merge_metrics(run.metrics, extra_points)
-                    experiment.metrics = merge_metrics(experiment.metrics, extra_points)
+                return observation
+            # Legacy root metrics have no run identity; never reuse them for a recovered run.
+            if meta.get("workspace_id"):
+                metrics_text = await executor.read_metrics_json()
+                if metrics_text:
+                    points = _evaluation_metrics_json(metrics_text)
+                    run.metrics = merge_metrics(run.metrics, points)
+            run.primary_value = extract_primary_value(run.metrics, pm.get("selector", pm["name"]))
+            state = _iteration_state(experiment)
+            if candidate is not None:
+                evaluation = evidence_service.make_evaluation(
+                    contract=contract, candidate=candidate, run_id=str(run.id), seq=run.seq,
+                    status=run.status, exit_code=run.exit_code, metrics=run.metrics or {},
+                    primary_value=run.primary_value, identity=meta,
+                    command=run.command, log_path=run.log_path,
+                    job_identity={"operation_id": managed_handle.operation_id,
+                                  "attempt_id": managed_handle.attempt_id}
+                    if managed_handle else {"pid": run.pid},
+                )
+                # Snapshot bytes are authoritative. Candidate-modified evaluator/source
+                # cannot pass even when it reports an attractive metric.
+                changed_sources = []
+                for name, source in candidate["files"].items():
+                    try:
+                        actual = (await executor.read_file(name)).decode("utf-8")
+                    except Exception as exc:
+                        if ssh_exec.is_connection_error(exc):
+                            raise
+                        actual = None
+                    if actual != source:
+                        changed_sources.append(name)
+                if changed_sources:
+                    evaluation["valid"] = False
+                    evaluation["invalid_reasons"].append(
+                        "runtime_source_changed:" + ",".join(sorted(changed_sources))
+                    )
+                old_incumbent = (state.get("incumbent") or {}).get("evaluation_id")
+                already_recorded = any(e["evaluation_id"] == evaluation["evaluation_id"]
+                                       for e in state.get("evaluations", []))
+                state = evidence_service.promote_candidate(state, evaluation, candidate, contract)
+                if evaluation["valid"] and not already_recorded:
+                    new_incumbent = (state.get("incumbent") or {}).get("evaluation_id")
+                    state["no_improve_streak"] = (0 if new_incumbent != old_incumbent else
+                                                  state["no_improve_streak"] + 1)
+                elif not evaluation["valid"] and not already_recorded:
+                    state["invalid_evaluation_count"] = int(state.get("invalid_evaluation_count")
+                                                             or 0) + 1
+                observation["evaluation_valid"] = evaluation["valid"]
+                observation["invalid_reasons"] = evaluation["invalid_reasons"]
+            else:
+                observation["evaluation_valid"] = False
+            # Failed/partial metrics stay on their run for diagnostics, outside scientific facts.
+            valid_evaluations = [e for e in state.get("evaluations", []) if e.get("valid")]
+            aggregate = {}
+            for evaluation in valid_evaluations:
+                for name, series in evaluation["metrics"].items():
+                    aggregate.setdefault(name, []).extend(series)
+            experiment.metrics = aggregate
+            iterate_cp["primary_metric_runs"] = len(valid_evaluations)
+            state["result_bundle"] = _result_bundle(experiment, state)
+            experiment.iteration_state = state
+            diagnostic = {"id": run.id, "seq": run.seq,
+                          "metrics": json.loads(json.dumps(run.metrics or {})),
+                          "primary_value": run.primary_value, "exit_code": run.exit_code,
+                          "status": run.status, "finished_at": run.finished_at}
+            if not await _commit_action(session, ctx, publication=True):
+                await session.refresh(experiment)
+                run = await session.get(ExperimentRun, diagnostic["id"])
+                run.metrics = diagnostic["metrics"]
+                run.primary_value = diagnostic["primary_value"]
+                if run.status == "running":
+                    run.status = diagnostic["status"]
+                    run.exit_code = diagnostic["exit_code"]
+                    run.finished_at = diagnostic["finished_at"]
+                persisted_state = _iteration_state(experiment)
+                iterate_cp["primary_metric_runs"] = sum(
+                    bool(e.get("valid")) for e in persisted_state.get("evaluations", [])
+                )
+                await _commit_action(session, ctx)
+                if experiment.status not in EXPERIMENT_TERMINAL_STATUSES:
+                    await _set_status(ctx, session, experiment, "cancelled")
+                return {"cancelled": True, "run_id": str(diagnostic["id"]),
+                        "seq": diagnostic["seq"]}
         finally:
             await executor.close()
-
-        # 主指标解析 + direction 感知比较（无提升连击数供 analyze 终止判定用）
-        primary_value = extract_primary_value(run.metrics, pm_name)
-        run.primary_value = primary_value
-        if primary_value is not None:
-            # 记账：真正拿到主指标的轮次数。voyage 级完成标准据此判「这趟到底有没有
-            # 结果」——否则每轮 exit 1、指标全空，只要写出了报告就照样宣告 done
-            # （实测 voyage 6c5df454：三轮里两轮 exit 1，全被判 passed，最后 done，
-            # 报告基于空数据。比直接失败更有害，因为它看起来是成功的）。
-            iterate_cp = dict(ctx.checkpoint.get("iterate") or {})
-            iterate_cp["primary_metric_runs"] = int(iterate_cp.get("primary_metric_runs") or 0) + 1
-            ctx.checkpoint["iterate"] = iterate_cp
-            if is_improvement(primary_value, best, pm_direction):
-                state["no_improve_streak"] = 0
-            else:
-                state["no_improve_streak"] += 1
-        experiment.iteration_state = dict(state)
-        await session.commit()
-
-        # 轮询之外的取消窗口（如 metrics 读取期间被取消）：同步实验状态后安静收尾
         if await _voyage_cancelled(session, ctx):
             await session.refresh(experiment)
             if experiment.status not in EXPERIMENT_TERMINAL_STATUSES:
                 await _set_status(ctx, session, experiment, "cancelled")
-            return {"cancelled": True, "seq": seq, "run_id": str(run.id)}
+            return {"cancelled": True, "run_id": str(run.id), "seq": run.seq}
+        return {**observation, "primary_value": run.primary_value,
+                "metric_names": sorted((run.metrics or {}).keys())}
 
-        return {**observation, "primary_value": primary_value}
+
+def _result_bundle(experiment: Experiment, state: dict[str, Any]) -> dict[str, Any]:
+    return evidence_service.build_result_bundle(
+        experiment_id=str(experiment.id), contract=state["research_contract"],
+        candidates=state.get("candidates", []), evaluations=state.get("evaluations", []),
+        selected_candidate_id=(state.get("incumbent") or {}).get("candidate_id"),
+        verdicts=state.get("scientific_verdicts", []), stopped_reason=state.get("stopped_reason"),
+    )
+
+
+async def _restore_selected_source(
+    ctx: ActionContext, experiment: Experiment, executor: Runner
+) -> dict[str, Any]:
+    state = _iteration_state(experiment)
+    bundle = _result_bundle(experiment, state)
+    selected = bundle.get("selected_candidate")
+    if selected:
+        tracked = set(ctx.checkpoint.get("exp_files") or {})
+        for candidate in state.get("candidates", []):
+            tracked.update(candidate.get("files") or {})
+        obsolete = sorted(tracked - set(selected["files"]))
+        await executor.remove_candidate_files(obsolete)
+        ctx.checkpoint["exp_files"] = dict(selected["files"])
+        await executor.write_files(selected["files"])
+    await executor.write_files({"result_bundle.json": json.dumps(bundle, ensure_ascii=False)})
+    state["result_bundle"] = bundle
+    experiment.iteration_state = state
+    return bundle
 
 
 @register("experiment.analyze")
@@ -2854,6 +3274,20 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         experiment = await _get_experiment(session, ctx)
+
+        if (_iteration_state(experiment).get("remote_cleanup") or {}):
+            # Finish the previous dependency repair before proposing or writing new files.
+            executor = await _open_executor(session, ctx, experiment)
+            try:
+                _snapshot, executor, waiting = await _run_managed_phase(
+                    ctx, session, executor, experiment, phase="dependency.install",
+                    operation="dependency-install", command="reconcile prior dependency repair",
+                    launch_method="launch_managed_setup", reconcile_only=True,
+                )
+                if waiting is not None:
+                    return waiting
+            finally:
+                await executor.close()
 
         plan: dict[str, Any] = dict(experiment.plan or {})
         pm = plan.get("primary_metric") or {}
@@ -2900,7 +3334,10 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             run.log_path, _LOG_TAIL_FOR_REFLECTION
         )
         hyp_count = len(plan.get("hypotheses", []))
-        cond_delta = _conditions_delta(experiment)
+        contract = state["research_contract"]
+        current_evaluation = next((e for e in state.get("evaluations", [])
+                                   if e["run_id"] == str(run.id)), None)
+        cond_delta = evidence_service.condition_summary(run.metrics or {}, contract)
         cond_line = (
             f"对照汇总（baseline vs treatment，平台确定性计算）："
             f"{json.dumps(cond_delta, ensure_ascii=False)}\n"
@@ -2913,6 +3350,8 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         guidance_line = _guidance_line(params)
         reflection_user = (
             f"实验计划：{json.dumps(plan, ensure_ascii=False)[:4000]}\n"
+            f"冻结研究契约（权威目标与判据）：{json.dumps(contract, ensure_ascii=False)}\n"
+            f"本轮有效性与证据引用：{json.dumps(current_evaluation, ensure_ascii=False)}\n"
             f"主指标：{json.dumps(pm, ensure_ascii=False)}（假设共 {hyp_count} 条）\n"
             f"{_memory_prompt(ctx)}"
             f"{guidance_line}"
@@ -2949,12 +3388,19 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         # 尝试存档（通用先验经验档案）：把本轮实现的源码/得分/轨迹存起来，供后续迭代 proposer 读取
         # 全量历史（不是只看上一轮）。记录产生本轮 run 的实现（当前 exp_files）。
         archive = list(ctx.checkpoint.get("attempt_archive") or [])
+        meta = (state.get("run_metadata") or {}).get(str(run.id), {})
+        candidate = next((c for c in state.get("candidates", [])
+                          if c["candidate_id"] == meta.get("candidate_id")), None)
+        archive = [entry for entry in archive if entry.get("seq") != run.seq]
         archive.append(
             {
                 "seq": run.seq,
                 "primary_value": run.primary_value,
                 "conditions_delta": cond_delta,
-                "files": dict(ctx.checkpoint.get("exp_files") or {}),
+                "files": dict(candidate["files"]) if candidate else {},
+                "valid": bool(current_evaluation and current_evaluation.get("valid")),
+                "evaluation_id": (current_evaluation or {}).get("evaluation_id"),
+                "candidate_id": meta.get("candidate_id"),
                 "trace": "\n".join(log_lines[-30:]),
                 "observation": reflection.get("observation"),
             }
@@ -2962,10 +3408,32 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         ctx.checkpoint["attempt_archive"] = archive
 
         # 假设回写 + iteration_state 落库
-        plan = _apply_hypothesis_updates(plan, reflection["hypothesis_updates"])
+        plan, verdicts = evidence_service.apply_scientific_verdicts(
+            plan, reflection["hypothesis_updates"], contract=contract,
+            evaluations=state.get("evaluations", []),
+        )
+        old_verdicts = {v["claim_id"]: v for v in state.get("scientific_verdicts", [])}
+        old_verdicts.update({v["claim_id"]: v for v in verdicts})
+        state["scientific_verdicts"] = list(old_verdicts.values())
+        authority = _result_bundle(experiment, state)
+        authoritative = {v["claim_id"]: v for v in authority["scientific_verdicts"]}
+        for claim in contract["claims"]:
+            if claim["index"] >= len(plan["hypotheses"]):
+                continue
+            hypothesis = plan["hypotheses"][claim["index"]]
+            verdict = authoritative.get(claim["claim_id"]) or {}
+            if hypothesis.get("text") != claim["text"] or (
+                "criterion" in hypothesis and hypothesis["criterion"] != claim.get("criterion")
+            ):
+                verdict = {}
+            hypothesis["scientific_verdict"] = verdict.get("verdict", "inconclusive")
+            hypothesis["status"] = {"supported": "verified", "refuted": "falsified"}.get(
+                hypothesis["scientific_verdict"], "testing"
+            )
         experiment.plan = plan
         experiment.iteration_state = dict(state)
-        await session.commit()
+        if not await _commit_action(session, ctx, publication=True):
+            return {"cancelled": True}
 
         # decision=ask：AI 拿不准，向用户提问（引擎收到 observation.ask 转 paused_ask；
         # 回答后本步骤重跑，回答文本经 params["user_guidance"] 注入上面的反思 prompt）
@@ -2989,7 +3457,8 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             }
 
         # decision 分支与终止条件（顺序与原 iterate 一致，docs/task-system.md §7）
-        hyps = plan.get("hypotheses", [])
+        resolved_claims = {v["claim_id"] for v in authority["scientific_verdicts"]
+                           if v["verdict"] in {"supported", "refuted"}}
         iterate_cp = dict(ctx.checkpoint.get("iterate") or {})
         iterate_started = (
             datetime.fromisoformat(str(iterate_cp["started_at"]))
@@ -2998,8 +3467,11 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         )
         stopped_reason: str | None = None
         if decision == "stop":
-            stopped_reason = reflection.get("stop_reason") or "decision_stop"
-        elif hyps and all(h.get("status") != "testing" for h in hyps):
+            state["proposed_stop_reason"] = reflection.get("stop_reason")
+            stopped_reason = "decision_stop"
+        elif contract["claims"] and all(
+            claim["claim_id"] in resolved_claims for claim in contract["claims"]
+        ):
             stopped_reason = "hypotheses_resolved"
         elif state["no_improve_streak"] >= no_improve_stop:
             stopped_reason = "no_improve"
@@ -3013,8 +3485,9 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         if stopped_reason:
             _remember(ctx, "终止判定", f"迭代结束：{stopped_reason}")
             state["stopped_reason"] = stopped_reason
+            state["result_bundle"] = _result_bundle(experiment, state)
             experiment.iteration_state = dict(state)
-            await session.commit()
+            await _commit_action(session, ctx)
             iterate_cp["stopped_reason"] = stopped_reason
             iterate_cp["last_completed_seq"] = run.seq
             ctx.checkpoint["iterate"] = iterate_cp
@@ -3029,7 +3502,10 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         if decision == "debug":
             state["debug_count"] += 1
             experiment.iteration_state = dict(state)
-            await session.commit()
+            await _commit_action(session, ctx)
+        state["next_change_type"] = "repair" if decision == "debug" else "method"
+        experiment.iteration_state = state
+        await _commit_action(session, ctx)
 
         # improve → 迭代优化 proposer（读全量尝试档案提下一候选）；debug → 按报错修当前文件
         files: dict[str, str] = dict(ctx.checkpoint.get("exp_files") or {})
@@ -3038,7 +3514,10 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             # 失败诊断也带上「历史尝试档案」：让 debug 能看见前面试过什么、哪些方案已被证伪，
             # 从而做方案级调整（换依赖/框架/加载方式）而非反复在同一条死路上改代码。
             prior = archive[:-1]  # 除当前失败轮外的历史尝试
-            archive_ctx = _render_attempt_archive(prior) if prior else ""
+            archive_ctx = (
+                _render_attempt_archive(prior, direction=pm.get("direction", "maximize"))
+                if prior else ""
+            )
             fix_user = (
                 (archive_ctx + "\n" if archive_ctx else "")
                 + _memory_prompt(ctx)
@@ -3054,7 +3533,7 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         else:
             system_prompt = _prompt_with_context(IMPROVE_SYSTEM_PROMPT, ctx)
             fix_user = (
-                _render_attempt_archive(archive)
+                _render_attempt_archive(archive, direction=pm.get("direction", "maximize"))
                 + "\n"
                 + _memory_prompt(ctx)
                 + guidance_line
@@ -3078,6 +3557,12 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         files = await _complete_json(
             ctx, system=system_prompt, user=fix_user, validate=validate_files
         )
+        allowed = contract["protocol"].get("allowed_files")
+        protected = state.get("protected_sources") or {}
+        if allowed and set(files) - set(allowed) - set(protected):
+            raise ValueError("candidate changes files outside the frozen contract")
+        if any(files.get(name) != source for name, source in protected.items()):
+            raise ValueError("protected evaluator changed; start a new protocol and baseline")
         executor = await _open_executor(session, ctx, experiment)
         try:
             await executor.write_files(files)
@@ -3085,19 +3570,25 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
                 # 与冒烟修复循环同理：requirements 变更必须真正重装（增量 pip），
                 # 否则下一轮 run 还在旧依赖上跑
                 await ctx.log("requirements.txt 有变更，重装依赖供下一轮使用")
-                with contextlib.suppress(Exception):
-                    dep = await executor.setup_venv()
-                    if dep.exit_status != 0:
-                        await ctx.log(
-                            f"依赖重装未成功（exit={dep.exit_status}），下一轮将带错重修",
-                            level="warn",
-                        )
+                dep, executor, waiting = await _run_managed_phase(
+                    ctx, session, executor, experiment, phase="dependency.install",
+                    operation="dependency-install", command="install experiment dependencies",
+                    launch_method="launch_managed_setup",
+                )
+                if waiting is not None:
+                    return waiting
+                if dep.exit_status != 0:
+                    await ctx.log(
+                        f"依赖重装未成功（exit={dep.exit_status}），下一轮将带错重修",
+                        level="warn",
+                    )
             await _sync_memory_file(ctx, executor)
         finally:
             await executor.close()
         ctx.checkpoint["exp_files"] = files
         iterate_cp["last_completed_seq"] = run.seq
         ctx.checkpoint["iterate"] = iterate_cp
+        await _commit_action(session, ctx)
 
         return {
             "seq": run.seq,
@@ -3141,7 +3632,7 @@ async def _poll_run(
         if points:
             run.metrics = merge_metrics(run.metrics, points)
             experiment.metrics = merge_metrics(experiment.metrics, points)
-        await session.commit()
+        await _commit_action(session, ctx)
 
     async def finish(exit_code: int | None) -> dict[str, Any]:
         try:
@@ -3152,7 +3643,7 @@ async def _poll_run(
         run.exit_code = exit_code
         run.status = "succeeded" if exit_code == 0 else "failed"
         run.finished_at = utcnow()
-        await session.commit()
+        await _commit_action(session, ctx)
         return {
             "run_id": str(run.id),
             "seq": run.seq,
@@ -3165,7 +3656,10 @@ async def _poll_run(
         nonlocal executor
         with contextlib.suppress(Exception):  # 旧连接已坏，关闭失败无所谓
             await executor.close()
+        workspace_id = getattr(executor, "run_workspace_id", None)
         executor = await _open_executor(session, ctx, experiment)
+        if workspace_id:
+            executor.bind_run_workspace(workspace_id)
 
     while True:
         # 协作式取消：每轮查 voyage 状态（仅 DB，不碰 SSH）
@@ -3181,7 +3675,7 @@ async def _poll_run(
                     raise
             run.status = "failed"
             run.finished_at = utcnow()
-            await session.commit()
+            await _commit_action(session, ctx)
             await session.refresh(experiment)
             if experiment.status not in EXPERIMENT_TERMINAL_STATUSES:
                 await _set_status(ctx, session, experiment, "cancelled")
@@ -3218,7 +3712,7 @@ async def _poll_run(
                     },
                 )
             )
-            await session.commit()
+            await _commit_action(session, ctx)
             await asyncio.sleep(_reconnect_backoff(conn_fail_streak))
             try:
                 await reconnect()
@@ -3236,7 +3730,7 @@ async def _poll_run(
                     raise
             run.status = "failed"
             run.finished_at = utcnow()
-            await session.commit()
+            await _commit_action(session, ctx)
             raise RuntimeError(f"运行超出预算 max_hours={max_hours}，已 kill（pid={run.pid}）")
 
         await asyncio.sleep(RUN_POLL_SECONDS)
@@ -3310,32 +3804,22 @@ async def _pull_figures(executor: Runner, experiment_id: uuid.UUID, names: list[
 async def experiment_figures(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
         experiment = await _get_experiment(session, ctx)
-        runs = (
-            (
-                await session.execute(
-                    select(ExperimentRun)
-                    .where(ExperimentRun.experiment_id == experiment.id)
-                    .order_by(ExperimentRun.seq)
-                )
-            )
-            .scalars()
-            .all()
-        )
         plan = experiment.plan or {}
-        # 平台确定性汇总：全部 run 的解析 metrics → workdir/metrics_all.json
+        executor = await _open_executor(session, ctx, experiment)
+        try:
+            bundle = await _restore_selected_source(ctx, experiment, executor)
+            await _commit_action(session, ctx)
+        finally:
+            await executor.close()
+        if ctx.checkpoint.get("plot_bundle_id") != bundle["bundle_id"]:
+            ctx.checkpoint.pop("plot_files", None)
+            ctx.checkpoint["plot_bundle_id"] = bundle["bundle_id"]
+        # Failed/partial evaluations are diagnostic evidence, outside plotting data.
         metrics_all = {
+            "bundle_id": bundle["bundle_id"],
+            "selected_candidate_id": (bundle.get("selected_candidate") or {}).get("candidate_id"),
             "primary_metric": plan.get("primary_metric"),
-            "runs": [
-                {
-                    "seq": r.seq,
-                    "status": r.status,
-                    "exit_code": r.exit_code,
-                    "primary_value": r.primary_value,
-                    "metrics": r.metrics or {},
-                }
-                for r in runs
-            ],
-            "experiment_metrics": experiment.metrics or {},
+            "runs": bundle["valid_evaluations"],
         }
         metrics_all_text = json.dumps(metrics_all, ensure_ascii=False)
 
@@ -3365,18 +3849,36 @@ async def experiment_figures(ctx: ActionContext, params: dict[str, Any]) -> dict
                         validate=validate_plot_files,
                     )
                     ctx.checkpoint["plot_files"] = plot_files
-                await executor.write_files(plot_files)
+                plot_id = str(uuid.uuid4())
+                await executor.prepare_run_workspace(
+                    plot_id, {**plot_files, "metrics_all.json": metrics_all_text}
+                )
+                attempts = list(ctx.checkpoint.get("plot_attempts") or [])
+                attempts.append({"workspace_id": plot_id, "bundle_id": bundle["bundle_id"],
+                                 "fix": fixes})
+                ctx.checkpoint["plot_attempts"] = attempts
                 await _sync_memory_file(ctx, executor)
 
-                # 绘图依赖确定性保证（幂等；失败不阻断——真实错误由 run_plot 暴露）
-                with contextlib.suppress(Exception):
-                    await executor.ensure_plot_deps()
-                result = await executor.run_plot()
+                # Plot preparation and execution retain durable identities through cancellation.
+                _deps, executor, waiting = await _run_managed_phase(
+                    ctx, session, executor, experiment, phase="dependency.plot",
+                    operation="plot-dependencies", command="install plotting dependencies",
+                    launch_method="launch_managed_plot_deps",
+                )
+                if waiting is not None:
+                    return waiting
+                result, executor, waiting = await _run_managed_phase(
+                    ctx, session, executor, experiment, phase="application.plot",
+                    operation="experiment-plot", command="python plot_figures.py",
+                    launch_method="launch_managed_plot",
+                )
+                if waiting is not None:
+                    return waiting
                 if result.exit_status != 0:
                     entries = []
                     problem = (
                         f"脚本执行失败（exit={result.exit_status}）："
-                        f"{(result.stderr or result.stdout)[-_STDERR_CHARS:]}"
+                        f"{(result.stderr_tail or result.stdout_tail)[-_STDERR_CHARS:]}"
                     )
                 else:
                     names = await executor.list_dir("figures")
@@ -3426,8 +3928,12 @@ async def experiment_figures(ctx: ActionContext, params: dict[str, Any]) -> dict
         finally:
             await executor.close()
 
-        experiment.figures = entries
-        await session.commit()
+        experiment.figures = [{**entry, "bundle_id": bundle["bundle_id"]} for entry in entries]
+        state = _iteration_state(experiment)
+        state["figures_bundle_id"] = bundle["bundle_id"]
+        experiment.iteration_state = state
+        if not await _commit_action(session, ctx, publication=True):
+            return {"cancelled": True}
 
     return {
         "figures": len(entries),
@@ -3458,7 +3964,15 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
             .scalars()
             .all()
         )
-        last_run = runs[-1] if runs else None
+        state = _iteration_state(experiment)
+        executor = await _open_executor(session, ctx, experiment)
+        try:
+            bundle = await _restore_selected_source(ctx, experiment, executor)
+            await _commit_action(session, ctx)
+        finally:
+            await executor.close()
+        selected_ids = {e["run_id"] for e in bundle["selected_evaluations"]}
+        last_run = next((r for r in reversed(runs) if str(r.id) in selected_ids), None)
         log_lines, _ = experiments_service.read_local_log_tail(
             last_run.log_path if last_run else None, _LOG_TAIL_FOR_REPORT
         )
@@ -3472,19 +3986,31 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
             }
             for r in runs
         ]
-        cond_delta = _conditions_delta(experiment)
+        cond_delta = evidence_service.condition_summary(
+            last_run.metrics or {}, state["research_contract"]
+        ) if last_run else None
         cond_line = (
             f"对照汇总（baseline vs treatment，平台确定性计算）："
             f"{json.dumps(cond_delta, ensure_ascii=False)}\n"
             if cond_delta
             else ""
         )
+        bundle_prompt = {**bundle, "selected_candidate": {
+            key: value for key, value in (bundle.get("selected_candidate") or {}).items()
+            if key != "files"
+        }}
+        bundle_prompt["candidate_history"] = [
+            {key: value for key, value in candidate.items() if key != "files"}
+            for candidate in bundle.get("candidate_history", [])
+        ]
         user_prompt = (
+            f"权威证据包（只能据此写事实，失败数据仅作诊断）："
+            f"{json.dumps(bundle_prompt, ensure_ascii=False)}\n"
             f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:4000]}\n"
             f"{_memory_prompt(ctx)}"
             f"{_guidance_line(params)}"
             f"迭代各轮：{json.dumps(runs_brief, ensure_ascii=False)}\n"
-            f"迭代状态：{json.dumps(experiment.iteration_state or {}, ensure_ascii=False)}\n"
+            f"停止原因：{state.get('stopped_reason')}\n"
             f"指标数据：{json.dumps(experiment.metrics or {}, ensure_ascii=False)[:4000]}\n"
             f"{cond_line}"
             f"日志尾部：\n" + "\n".join(log_lines)
@@ -3503,6 +4029,9 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
             voyage_id=ctx.run.id,
         )
         experiment.report = result.content.strip()
+        state = _iteration_state(experiment)
+        state["report_bundle_id"] = bundle["bundle_id"]
+        experiment.iteration_state = state
         _remember(ctx, "报告", f"实验报告已生成（约 {len(experiment.report)} 字）")
         run_ok = last_run is not None and last_run.status == "succeeded"
         # 报告步**完全不写终态**（#367 去掉了提前 failed；线上随后实测提前 done 同样
@@ -3521,7 +4050,8 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 payload={"experiment_id": str(experiment.id), "last_run_ok": run_ok},
             )
         )
-        await session.commit()
+        if not await _commit_action(session, ctx, publication=True):
+            return {"cancelled": True}
 
     # voyage 级完成标准（done_criteria）断言该标记：防"过早宣告完成"
     ctx.checkpoint["report_done"] = True

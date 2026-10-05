@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d3f9a1c7e2b4"  # 删掉偏好的旧 system_settings 行 (#821 E2)
+HEAD_REVISION = "d173f4b10b21"  # Cross-process Voyage execution ownership
+OWNER_PREFERENCE_CLEANUP_REVISION = "d3f9a1c7e2b4"  # 删掉偏好的旧 system_settings 行 (#821 E2)
 DAILY_FEED_SOURCES_REVISION = "b5e2c8d41f7a"  # 每日池条目记来源 (#821)
 INPUT_BUDGETS_REVISION = "a8d3e5f71c42"  # 路由的输入预算 (#811)
 RERANK_PATH_REVISION = "e3a7c91f20b6"  # provider 的 rerank 路径 (#810)
@@ -643,6 +644,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "input_budgets" in columns["model_routes"]
     # 每日池条目记来源（#821）：增量同步按库的来源筛池
     assert "sources" in columns["daily_feed_entries"]
+
+    # 最新租约迁移只增加执行权字段；回退保留原有航程与所有科研数据。
+    assert {"execution_token", "execution_expires_at"} <= columns["voyage_runs"]
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == OWNER_PREFERENCE_CLEANUP_REVISION
+    assert not {"execution_token", "execution_expires_at"} & columns["voyage_runs"]
 
     # 先退掉「删偏好旧行」（只动数据，不动表结构）。
     command.downgrade(cfg, "-1")
@@ -1636,3 +1644,42 @@ def test_legacy_preference_rows_move_to_the_owner_then_go(tmp_path):
     assert settings["tts.admin"] == {"model": "legacy-voice"}
     assert "daily.categories" not in settings
     assert keys == {"literature_search"}
+
+
+
+def test_voyage_lease_migration_preserves_existing_runs_and_has_single_head(tmp_path):
+    from alembic.script import ScriptDirectory
+
+    db_path = tmp_path / "voyage-lease.db"
+    cfg = _make_config(db_path)
+    assert ScriptDirectory.from_config(cfg).get_heads() == [HEAD_REVISION]
+    command.upgrade(cfg, OWNER_PREFERENCE_CLEANUP_REVISION)
+    engine = create_engine(f"sqlite:///{db_path}")
+    run_id = "00000000000000000000000000000001"
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO voyage_runs "
+            "(id, kind, mode, goal, status, cursor, plan_iteration, created_at, updated_at) "
+            "VALUES (:id, 'experiment', 'loop', 'original goal', 'executing', 2, 1, "
+            "'2026-10-04 00:00:00', '2026-10-04 00:00:00')"
+        ), {"id": run_id})
+    command.upgrade(cfg, HEAD_REVISION)
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            "SELECT goal, cursor, execution_token, execution_expires_at "
+            "FROM voyage_runs WHERE id = :id"
+        ), {"id": run_id}).one()
+        assert tuple(row) == ("original goal", 2, None, None)
+        conn.execute(text(
+            "UPDATE voyage_runs SET execution_token = :token, "
+            "execution_expires_at = '2026-10-04 00:02:00' WHERE id = :id"
+        ), {"id": run_id, "token": "00000000000000000000000000000002"})
+    command.downgrade(cfg, OWNER_PREFERENCE_CLEANUP_REVISION)
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT goal, cursor FROM voyage_runs WHERE id = :id"),
+                            {"id": run_id}).one() == ("original goal", 2)
+    command.upgrade(cfg, HEAD_REVISION)
+    version, columns = _inspect_db(db_path)
+    assert version == HEAD_REVISION
+    assert {"execution_token", "execution_expires_at"} <= columns["voyage_runs"]
+    engine.dispose()

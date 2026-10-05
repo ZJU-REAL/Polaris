@@ -97,6 +97,8 @@ class VoyageRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     mode: Mapped[str] = mapped_column(String(16), default="loop", nullable=False)
     goal: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="planning", index=True, nullable=False)
+    execution_token: Mapped[uuid.UUID | None]
+    execution_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # 当前计划快照（由步骤行单向派生，兼容 API/前端展示；真源是 voyage_steps）
     plan: Mapped[list[Any] | None] = mapped_column(JSONVariant)
     cursor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

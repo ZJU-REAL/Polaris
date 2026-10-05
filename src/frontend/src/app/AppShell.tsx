@@ -581,7 +581,10 @@ export function AppShell() {
       void queryClient.invalidateQueries({ queryKey: ['voyage'] });
     },
     onError: (err) => {
-      toast(`${tr('审批失败', 'Approval failed')}：${err instanceof Error ? err.message : String(err)}`, 'error');
+      const detail = err instanceof Error ? err.message : String(err);
+      toast(detail.includes('SUBMISSION_VERSION_CHANGED')
+        ? tr('稿件或证据版本已变化，请先驳回旧审批，再重新发起投稿', 'The manuscript or evidence changed. Reject this old approval and submit the current version again.')
+        : `${tr('审批失败', 'Approval failed')}：${detail}`, 'error');
     },
   });
 

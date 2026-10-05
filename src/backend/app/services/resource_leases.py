@@ -25,6 +25,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
+from app.models.experiment import Experiment, ExperimentRun
 from app.models.resource import Resource, ResourceLease
 from app.models.voyage import VoyageRun
 
@@ -163,13 +164,45 @@ async def release(session: AsyncSession, lease: ResourceLease) -> None:
     await session.commit()
 
 
-async def release_for_run(session: AsyncSession, run_id: uuid.UUID) -> int:
-    """run 终态兜底：一次释放该 run 的全部活租约，返回释放数（幂等）。
+async def remote_work_pending(session: AsyncSession, run_id: uuid.UUID) -> bool:
+    """A terminal controller state is not proof that external work has stopped."""
+    experiments = (
+        await session.execute(
+            select(Experiment).where(Experiment.voyage_id == run_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalars().all()
+    for experiment in experiments:
+        cleanup = (experiment.iteration_state or {}).get("remote_cleanup")
+        if cleanup is not None and (
+            not isinstance(cleanup, dict) or cleanup.get("status") != "confirmed"
+        ):
+            return True
+        running = await session.scalar(
+            select(ExperimentRun.id)
+            .where(
+                ExperimentRun.experiment_id == experiment.id,
+                ExperimentRun.status == "running",
+            )
+            .limit(1)
+        )
+        if running is not None:
+            return True
+    voyage = await session.get(VoyageRun, run_id, populate_existing=True)
+    # Older paused commands only saved the durable handle in the checkpoint.
+    # Keep their slot until monitoring or cancellation confirms completion.
+    return bool(voyage and (voyage.checkpoint or {}).get("managed_command_waiting"))
 
-    正常路径应由 runner 的 cleanup 显式释放；这里是「不管怎么死的都不占着资源」
-    的最后防线，挂在 voyage run 的终态写入点（engine._set_status / cancel_voyage /
-    gates.fail_voyage）。
+
+async def release_for_run(session: AsyncSession, run_id: uuid.UUID) -> int:
+    """Release only when no external attempt is running or awaiting reconciliation.
+
+    Engine terminal states, cancellation and gate rejection all use this guard.
+    Confirmed runner cleanup clears its durable pending state before calling it;
+    unavailable SSH or a stale attempt identity must keep the resource occupied.
     """
+    if await remote_work_pending(session, run_id):
+        return 0
     stmt = (
         update(ResourceLease)
         .where(ResourceLease.run_id == run_id, ResourceLease.released_at.is_(None))

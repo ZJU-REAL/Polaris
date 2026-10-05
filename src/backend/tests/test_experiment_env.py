@@ -174,12 +174,16 @@ async def test_command_templates_source_env(client, queue_stub, fake_ssh, bus_re
     assert f"cd {workdir} && {{ {ENV_PREFIX} bash run.sh --smoke; }}" in smoke_launcher
     run_launcher = next(c for c in fake_ssh.commands if "stdbuf -oL -eL bash run.sh" in c)
     # 前缀先 export PYTHONUNBUFFERED=1、再 source env.sh、stdbuf 行缓冲跑 run.sh（日志实时刷新）
-    assert (
-        f"cd {workdir} && {{ export PYTHONUNBUFFERED=1; {ENV_PREFIX} stdbuf -oL -eL bash run.sh; }}"
-    ) in run_launcher
-    # plot 仍是前台白名单模板，没有 managed 化
+    # Source/environment still apply, now in a unique run workspace with the
+    # remaining hard deadline enforced remotely rather than a shared root.
+    assert f"cd {workdir}/.polaris/runs/" in run_launcher
+    assert f"export PYTHONUNBUFFERED=1; {ENV_PREFIX}" in run_launcher
+    assert "stdbuf -oL -eL bash run.sh" in run_launcher
+    # Plot uses the same durable envelope in its isolated output workspace.
     plot = next(c for c in fake_ssh.commands if "plot_figures.py" in c and ".venv" in c)
-    assert plot == f"cd {workdir} && {{ {ENV_PREFIX} .venv/bin/python plot_figures.py; }}"
+    assert "/operations/experiment-plot/" in plot
+    assert f"cd {workdir}/.polaris/runs/" in plot
+    assert f" && {{ {ENV_PREFIX} .venv/bin/python plot_figures.py; }}" in plot
 
 
 async def test_prompt_context_sections(client, queue_stub, fake_ssh, bus_recorder):

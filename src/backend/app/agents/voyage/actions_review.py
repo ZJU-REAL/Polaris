@@ -25,16 +25,20 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
 from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
+from app.core.voyage_lease import VoyageLeaseLost, fence_execution
 from app.models.activity import Activity
 from app.models.manuscript import Manuscript
 from app.models.paper import Paper
 from app.models.review import ReviewMessage, ReviewSession
+from app.models.voyage import VoyageRun
 from app.services import latex_compile
+from app.services import manuscripts as manuscripts_service
 from app.services import paper_review as pr
 from app.services.figure_annotate import prepare_image_for_llm
 from app.services.literature import get_openalex_client, get_s2_client
@@ -111,7 +115,7 @@ def _manuscript_id(ctx: ActionContext) -> uuid.UUID:
 
 async def _get_manuscript(session: AsyncSession, ctx: ActionContext) -> Manuscript:
     manuscript = await session.get(Manuscript, _manuscript_id(ctx))
-    if manuscript is None:
+    if manuscript is None or manuscript.project_id != ctx.run.project_id:
         raise ValueError(f"manuscript not found: {_manuscript_id(ctx)}")
     return manuscript
 
@@ -164,29 +168,53 @@ async def _complete_json(
     raise ValueError(f"LLM 连续输出非法 JSON：{last_error}")
 
 
+async def _commit_review(session: AsyncSession, ctx: ActionContext) -> None:
+    # Lock current ownership before autoflush can publish any paper/session data.
+    # Cleanup may use a cancelled owner; scientific review publication may not.
+    with session.no_autoflush:
+        await fence_execution(session, ctx.run.id)
+        status = await session.scalar(select(VoyageRun.status).where(VoyageRun.id == ctx.run.id))
+        if status in {"cancelled", "failed"}:
+            await session.rollback()
+            raise VoyageLeaseLost("review publication rejected after Voyage termination")
+    await session.commit()
+
+
 async def _get_review_session(session: AsyncSession, ctx: ActionContext) -> ReviewSession:
     raw = ctx.checkpoint.get("review_session_id")
     if raw:
         found = await session.get(ReviewSession, uuid.UUID(str(raw)))
-        if found is not None:
+        if (
+            found is not None
+            and found.target_type == "manuscript"
+            and found.target_id == _manuscript_id(ctx)
+        ):
             return found
     review_session = ReviewSession(
         target_type="manuscript",
         target_id=_manuscript_id(ctx),
-        payload={"manuscript_id": str(_manuscript_id(ctx)), "voyage_id": str(ctx.run.id)},
+        payload={
+            "manuscript_id": str(_manuscript_id(ctx)),
+            "voyage_id": str(ctx.run.id),
+            "review_binding": ctx.checkpoint.get("review_binding"),
+        },
     )
     session.add(review_session)
-    await session.commit()
+    await _commit_review(session, ctx)
     await session.refresh(review_session)
     ctx.checkpoint["review_session_id"] = str(review_session.id)
     return review_session
 
 
 async def _merge_payload(
-    session: AsyncSession, review_session: ReviewSession, updates: dict[str, Any]
+    session: AsyncSession,
+    review_session: ReviewSession,
+    updates: dict[str, Any],
+    *,
+    ctx: ActionContext,
 ) -> None:
     review_session.payload = dict(review_session.payload or {}) | updates
-    await session.commit()
+    await _commit_review(session, ctx)
 
 
 async def _publish_message(
@@ -206,7 +234,7 @@ async def _publish_message(
         round=round_no,
     )
     session.add(message)
-    await session.commit()
+    await _commit_review(session, ctx)
     await session.refresh(message)
     await ctx.notify(
         {
@@ -296,7 +324,7 @@ async def review_citation_check(ctx: ActionContext, params: dict[str, Any]) -> d
 
         citation_check = {"total": len(items), "items": items}
         ctx.checkpoint["citation_check"] = citation_check
-        await _merge_payload(session, review_session, {"citation_check": citation_check})
+        await _merge_payload(session, review_session, {"citation_check": citation_check}, ctx=ctx)
     # 单例客户端是全进程共用的连接池，不在这里 aclose（裸构造时代的收尾已退役）
 
     counts: dict[str, int] = {}
@@ -368,7 +396,7 @@ async def review_fact_check(ctx: ActionContext, params: dict[str, Any]) -> dict[
     ctx.checkpoint["fact_check"] = fact_check
     async with get_sessionmaker()() as session:
         review_session = await _get_review_session(session, ctx)
-        await _merge_payload(session, review_session, {"fact_check": fact_check})
+        await _merge_payload(session, review_session, {"fact_check": fact_check}, ctx=ctx)
     return {"items": len(items), "deterministic": deterministic, "claims": len(claim_items)}
 
 
@@ -574,7 +602,7 @@ async def review_referees(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             reviews.append(review)
             ctx.checkpoint["reviews"] = reviews
 
-        await _merge_payload(session, review_session, {"reviews": reviews})
+        await _merge_payload(session, review_session, {"reviews": reviews}, ctx=ctx)
 
     return {
         "reviewers": len(reviews),
@@ -662,7 +690,7 @@ async def review_meta_review(ctx: ActionContext, params: dict[str, Any]) -> dict
             ),
             round_no=len(reviews) + 1,
         )
-        await _merge_payload(session, review_session, {"meta": meta})
+        await _merge_payload(session, review_session, {"meta": meta}, ctx=ctx)
     return {"rating": meta["rating"], "decision_hint": hint, "fabricated": has_fabricated}
 
 
@@ -671,8 +699,15 @@ async def review_meta_review(ctx: ActionContext, params: dict[str, Any]) -> dict
 
 @register("review.guardrail")
 async def review_guardrail(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
-    if ctx.checkpoint.get("review_finalized"):  # 断点幂等
-        return {"passed": ctx.checkpoint.get("review_result"), "skipped": True}
+    if ctx.checkpoint.get("review_finalized"):  # 幂等也必须重新核验版本
+        async with get_sessionmaker()() as session:
+            manuscript = await _get_manuscript(session, ctx)
+            current = bool(
+                manuscript.review_passed
+            ) and await manuscripts_service.review_binding_matches(
+                session, manuscript, ctx.checkpoint.get("review_binding")
+            )
+        return {"passed": bool(ctx.checkpoint.get("review_result")) and current, "skipped": True}
 
     reviews: list[dict[str, Any]] = list(ctx.checkpoint.get("reviews") or [])
     meta: dict[str, Any] = dict(ctx.checkpoint.get("meta") or {})
@@ -689,7 +724,17 @@ async def review_guardrail(ctx: ActionContext, params: dict[str, Any]) -> dict[s
     async with get_sessionmaker()() as session:
         manuscript = await _get_manuscript(session, ctx)
         review_session = await _get_review_session(session, ctx)
+        binding = ctx.checkpoint.get("review_binding")
+        current = await manuscripts_service.review_binding_matches(session, manuscript, binding)
+        passed = passed and current
         manuscript.review_passed = passed
+        new_pack = dict(manuscript.fact_pack or {})
+        if passed:
+            new_pack["review_binding"] = binding
+            new_pack.pop("review_invalidated_reason", None)
+        elif not current:
+            new_pack["review_invalidated_reason"] = "review_source_or_evidence_changed"
+        manuscript.fact_pack = new_pack
         status_changed = False
         if not passed:
             # 修订说明写 fact_pack.revision_notes（下次 AI 起草/修订可引用）
@@ -705,6 +750,8 @@ async def review_guardrail(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         review_session.payload = dict(review_session.payload or {}) | {
             "guardrail": guardrail,
             "passed": passed,
+            "review_binding": binding,
+            "binding_current": current,
         }
         session.add(
             Activity(
@@ -723,7 +770,7 @@ async def review_guardrail(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 },
             )
         )
-        await session.commit()
+        await _commit_review(session, ctx)
         if status_changed:
             await ctx.notify(
                 {
