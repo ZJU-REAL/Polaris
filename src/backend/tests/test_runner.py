@@ -13,6 +13,10 @@ from app.services import ssh_exec
 # Runner 接口应覆盖的 kind 无关原语（实验循环只依赖这些）。
 _PRIMITIVES = (
     "workdir",
+    "experiment_workdir",
+    "run_workspace_id",
+    "bind_run_workspace",
+    "prepare_run_workspace",
     "mkdir_workdir",
     "write_files",
     "read_file",
@@ -24,6 +28,8 @@ _PRIMITIVES = (
     "read_setup_log",
     "run_smoke",
     "run_plot",
+    "launch_managed_plot",
+    "launch_managed_plot_deps",
     "ensure_plot_deps",
     "launch_run",
     "check_pid",
@@ -147,3 +153,33 @@ def test_dexec_rejects_single_quote_to_avoid_injection():
     r = _container_runner()
     with pytest.raises(ssh_exec.SSHExecError):
         r._dexec("echo 'oops'")
+
+
+# ---- run-specific output identity ----
+
+
+def test_container_run_binding_keeps_stable_root_mount():
+    r = _container_runner()
+    run_id = str(uuid.uuid4())
+    r.bind_run_workspace(run_id)
+    assert r._dexec_workdir("bash run.sh") == (
+        f"docker exec polaris_{r.exp_id} bash -lc "
+        f"'cd /work/.polaris/runs/{run_id} && bash run.sh'"
+    )
+    assert f"-v {r.experiment_workdir}:/work" in r._docker_run_cmd()
+    assert f"-v {r.workdir}:/work" not in r._docker_run_cmd()
+    assert r._container_name == f"polaris_{r.exp_id}"
+    r.bind_run_workspace(None)
+    assert r._dexec_workdir("bash run.sh").endswith("'cd /work && bash run.sh'")
+
+
+def test_container_wrapper_preserves_existing_run_binding():
+    base = ssh_exec.SSHExecutor(
+        object(), exp_id=str(uuid.uuid4()), host="gpu.example", project_id=uuid.uuid4()
+    )
+    run_id = str(uuid.uuid4())
+    base.bind_run_workspace(run_id)
+    r = runner.ContainerRunner.from_executor(base, spec=runner.ContainerSpec(image="image:1"))
+    assert r.workdir == base.workdir
+    assert r.run_workspace_id == run_id
+    assert r._container_workdir.endswith(run_id)

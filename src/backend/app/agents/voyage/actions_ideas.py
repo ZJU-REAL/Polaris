@@ -751,6 +751,10 @@ async def forge_dedup(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
             ctx.checkpoint["forge_dedup_done"] = True
             return {"candidates": len(candidates), "dropped": 0, "skipped_reason": "no embedding"}
 
+        # First use may initialize the active embedding space. End that write
+        # transaction before another model call records usage in a separate session.
+        await session.commit()
+
         # 库内既有 idea：激活空间下无向量的现场补嵌并落库。
         # 回收站里的不参与：用户把一个想法扔掉，正是不想再看到它，结果它却留在去重基准里
         # 把新生成的近似想法判成重复——扔得越多，越生不出东西，而且没有任何提示。

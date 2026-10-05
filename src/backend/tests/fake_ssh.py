@@ -9,6 +9,7 @@
 
 import base64
 import re
+import shlex
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -68,14 +69,32 @@ class FakeSSHSession:
 
     @staticmethod
     def _sftp_dir(command: str) -> str | None:
-        m = re.search(r"polaris_runs/([0-9a-f-]{36})", command)
-        return f"polaris_runs/{m.group(1)}" if m else None
+        match = re.search(
+            r"polaris_runs/[0-9a-f-]{36}(?:/\.polaris/runs/[0-9a-f-]{36})?", command
+        )
+        if match:
+            return match.group(0)
+        # Container commands use /work, with the experiment identity in the
+        # validated docker name; the same bind-mount workspace must be used.
+        container = re.search(r"docker exec polaris_([0-9a-f-]{36})", command)
+        workdir = re.search(r"cd /work(?:/\.polaris/runs/([0-9a-f-]{36}))?", command)
+        if container and workdir:
+            root = f"polaris_runs/{container.group(1)}"
+            return f"{root}/.polaris/runs/{workdir.group(1)}" if workdir.group(1) else root
+        return None
 
     async def run(self, command: str, timeout: float | None = None) -> SSHResult:
         server = self._server
         server.commands.append(command)
         if server.on_command is not None:
             await server.on_command(command)
+
+        if " && rm -f -- " in command:
+            root = self._sftp_dir(command)
+            for rel in shlex.split(command.split(" && rm -f -- ", 1)[1]):
+                if root:
+                    server.files.pop(f"{root}/{rel}", None)
+            return SSHResult(0, "", "")
 
         # Generic managed-command envelope.  Tests vary the resulting output/exit
         # through the existing setup/smoke/run fields; lifecycle handling itself
@@ -98,6 +117,17 @@ class FakeSSHSession:
             if operation == "dependency-install":
                 exit_status = server.setup_exits.pop(0) if server.setup_exits else server.setup_exit
                 stderr = server.setup_log if exit_status else ""
+            elif operation == "plot-dependencies":
+                exit_status = server.venv_exits.pop(0) if server.venv_exits else server.venv_exit
+                stderr = "pip failed" if exit_status else ""
+            elif operation == "experiment-plot":
+                exit_status = server.plot_exits.pop(0) if server.plot_exits else 0
+                stderr = server.plot_stderr if exit_status else ""
+                if exit_status == 0:
+                    sftp_dir = self._sftp_dir(launcher or command)
+                    if sftp_dir:
+                        for rel, content in server.plot_outputs.items():
+                            server.files[f"{sftp_dir}/{rel}"] = content
             elif operation == "application-smoke":
                 exit_status = server.smoke_exits.pop(0) if server.smoke_exits else 0
                 stdout = "smoke ok\n" if exit_status == 0 else ""
@@ -215,7 +245,9 @@ class FakeSSHSession:
             if exit_code == 0:
                 return SSHResult(0, "smoke ok\n", "")
             return SSHResult(exit_code, "", server.smoke_stderr)
-        if "plot_figures.py" in command and ".venv/bin/python" in command:  # run_plot
+        if "plot_figures.py" in command and (
+            ".venv/bin/python" in command or "docker exec" in command
+        ):  # run_plot
             exit_code = server.plot_exits.pop(0) if server.plot_exits else 0
             if exit_code != 0:
                 return SSHResult(exit_code, "", server.plot_stderr)

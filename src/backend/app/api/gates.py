@@ -71,10 +71,14 @@ async def _decide(
         manuscript = await manuscripts_service.gate_manuscript(session, gate)
         if (
             manuscript is not None
-            and not manuscript.review_passed
+            and not await manuscripts_service.review_is_current(session, manuscript)
             and not (data is not None and data.override)
         ):
             raise HTTPException(status.HTTP_409_CONFLICT, detail="REVIEW_REQUIRED")
+        if (manuscript is not None and not (data is not None and data.override)
+                and (gate.payload or {}).get("review_binding")
+                != (manuscript.fact_pack or {}).get("review_binding")):
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="SUBMISSION_VERSION_CHANGED")
 
     try:
         gate = await gates_service.decide_gate(

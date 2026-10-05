@@ -6,6 +6,9 @@ auditable agent run. The UI calls these "任务 / Tasks". In the code they are c
 (`VoyageRun`, `VoyageStep`, `run_voyage`, `/voyages/...`); this document uses "task" and "run" in
 prose and keeps the code names when naming actual identifiers.
 
+The experiment evidence, selection, delivery, and review invariants are described in
+[Evidence-bound automatic research](auto-research.md).
+
 This is the implementation-level document. For the one-page conceptual view (Navigator / Helm /
 Sextant), see [Core Concepts](concepts.md#the-voyage-long-running-agent).
 
@@ -35,6 +38,7 @@ One row per task.
 | `mode` | `pipeline` \| `template` \| `loop`. Not chosen by the user or the LLM: the engine recomputes it from `kind` via `mode_for_kind()` on the first drive and overwrites whatever is stored (this is also how runs created before the field existed get fixed up). |
 | `goal` | Human-readable one-liner shown in the list ("文献调研增量更新：`<library>`"). Also fed to the LLM as `{goal}` in prompt templates. |
 | `status` | Run state, see [§1.2](#12-the-run-state-machine). Indexed — the worker's startup reconcile scans it. |
+| `execution_token`, `execution_expires_at` | Database execution ownership. Claim/renew/release and result publication check the owner token and expiry; API reconciliation skips valid owners. |
 | `plan` | JSON snapshot of the current step list. **Derived, not authoritative**: the real plan is the `voyage_steps` rows, and `_regen_plan_snapshot()` rebuilds this from them after every plan change. It exists so the API and the progress bar have something cheap to read. |
 | `cursor` | Index of the current step within the active (non-obsolete) step list. Rewritten on every loop iteration; used for the "step 3 of 7" display. |
 | `plan_iteration` | Incremented every time the plan is edited (replanning, signal-driven edit, budget cut). Each step records which iteration created it. |

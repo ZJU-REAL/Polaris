@@ -199,7 +199,7 @@ async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_record
     ]
     last_analyze = voyage["steps"][8]
     assert last_analyze["observation"]["rounds"] == 3
-    assert last_analyze["observation"]["stopped_reason"] == "假设已全部有结论（fake）"
+    assert last_analyze["observation"]["stopped_reason"] == "decision_stop"
     assert last_analyze["observation"]["plan_signal"]["decision"] == "finish"
 
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
@@ -219,13 +219,15 @@ async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_record
     assert detail["runs"][0]["reflection"]["planned_change"]
     # 假设回写：末轮 verified / falsified + evidence
     hyps = detail["plan"]["hypotheses"]
-    assert [h["status"] for h in hyps] == ["verified", "falsified"]
+    assert [h["status"] for h in hyps] == ["testing", "testing"]
+    assert [h["proposed_status"] for h in hyps] == ["verified", "falsified"]
     assert all(h["evidence"] for h in hyps)
     # iteration_state 落库
-    assert detail["iteration_state"] == {
+    assert {key: detail["iteration_state"][key] for key in
+            ("no_improve_streak", "debug_count", "stopped_reason")} == {
         "no_improve_streak": 0,
         "debug_count": 0,
-        "stopped_reason": "假设已全部有结论（fake）",
+        "stopped_reason": "decision_stop",
     }
     # POLARIS_METRIC 解析进 run 与 experiment
     assert run["metrics"]["accuracy"] == [
@@ -249,7 +251,7 @@ async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_record
 
     # 远端产物：代码文件经 SFTP 写入 workdir（含必需文件），venv/smoke/launch/plot 命令有序发生
     sftp_root = f"polaris_runs/{exp_id}"
-    for name in ("requirements.txt", "run.sh", "train.py", "metrics_all.json", "plot_figures.py"):
+    for name in ("requirements.txt", "run.sh", "train.py", "metrics_all.json"):
         assert f"{sftp_root}/{name}" in fake_ssh.files
     assert "--smoke" in fake_ssh.files[f"{sftp_root}/run.sh"]
     assert "POLARIS_METRIC" in fake_ssh.files[f"{sftp_root}/train.py"]
@@ -257,7 +259,12 @@ async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_record
     metrics_all = json.loads(fake_ssh.files[f"{sftp_root}/metrics_all.json"])
     assert [r["seq"] for r in metrics_all["runs"]] == [1, 2, 3]
     assert metrics_all["primary_metric"] == {"name": "accuracy", "direction": "maximize"}
-    assert "metrics_all.json" in fake_ssh.files[f"{sftp_root}/plot_figures.py"]
+    async with get_sessionmaker()() as session:
+        v = await session.get(VoyageRun, uuid.UUID(voyage_id))
+        plot_id = v.checkpoint["plot_attempts"][-1]["workspace_id"]
+    assert "metrics_all.json" in fake_ssh.files[
+        f"{sftp_root}/.polaris/runs/{plot_id}/plot_figures.py"
+    ]
     joined = "\n".join(fake_ssh.commands)
     assert f"mkdir -p ~/polaris_runs/{exp_id}" in joined
     assert "pip install -r requirements.txt" in joined
@@ -1080,14 +1087,24 @@ async def test_probe_resources_records_facts_and_missing(client, fake_ssh, bus_r
     assert not any("多模态" in w for w in warnings)
 
 
-async def test_budget_timeout_keeps_run_and_asks(client, queue_stub, fake_ssh, bus_recorder):
-    """硬时限只触发用户决策；证据不足时保留远端进程，不把超时等同失败。"""
-    fake_ssh.run_exit = None  # 进程一直不结束
+async def test_stalled_command_keeps_run_and_asks(
+    client, queue_stub, fake_ssh, bus_recorder, monkeypatch
+):
+    """A soft stall with insufficient evidence preserves the command for user review."""
+    from app.services.managed_commands import CommandState, ModelAssessment
+
+    async def unknown_assessment(ctx, snapshot):
+        return ModelAssessment(CommandState.UNKNOWN, 0.2, "insufficient evidence")
+
+    monkeypatch.setattr(ax, "_assess_managed_command", unknown_assessment)
+    monkeypatch.setattr(ax, "MANAGED_COMMAND_POLL_SECONDS", 0)
+    fake_ssh.run_exit = None
+    fake_ssh.managed_output_age_seconds = 1000
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
     resp = await _create_experiment(
-        client, headers, project_id, idea_id, cred_id, budget={"max_hours": 1e-9, "max_runs": 3}
+        client, headers, project_id, idea_id, cred_id, budget={"max_hours": 2, "max_runs": 3}
     )
     exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
 
@@ -1683,15 +1700,14 @@ async def test_smoke_fix_reinstalls_deps_when_requirements_change(
 
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     assert resp.json()["status"] == "done", resp.json()["status"]
-    # 前台依赖重装（setup_venv：含 -r requirements.txt 且非后台 setup.log 版）出现两次：
-    # ①冒烟修复改了 requirements.txt 后；②第 1 轮 improve 的新文件把 requirements 又改回
-    # 默认内容后（analyze 路径同样受保护）。第 2 轮 improve 文件不变 → 不再重装。
-    reinstalls = [
-        c
-        for c in fake_ssh.commands
-        if "-r requirements.txt" in c and "/operations/dependency-install/" not in c
+    # Initial setup plus two repairs use durable dependency attempts: smoke
+    # changes requirements, then the first improve restores the default file.
+    # The second improve keeps it unchanged and must not install again.
+    installs = [
+        c for c in fake_ssh.commands
+        if "-r requirements.txt" in c and "/operations/dependency-install/" in c
     ]
-    assert len(reinstalls) == 2, fake_ssh.commands
+    assert len(installs) == 3, fake_ssh.commands
 
 
 async def test_trash_running_experiment_cancels_voyage(client, queue_stub, fake_ssh, bus_recorder):
@@ -1722,7 +1738,7 @@ async def test_trash_running_experiment_cancels_voyage(client, queue_stub, fake_
     assert resp.status_code == 204
 
 
-def test_extract_primary_value_normalizes_names():
+def test_extract_primary_value_requires_exact_selector():
     """主指标匹配归一化（#20 线上实测）：代码打的指标带条件/切片后缀
     （gsm8k_accuracy/baseline/val），计划主指标叫 accuracy，精确匹配计 0。"""
     metrics = {
@@ -1731,13 +1747,15 @@ def test_extract_primary_value_normalizes_names():
         "gsm8k_accuracy/treatment/val": [{"step": 0, "value": 0.92}],
     }
     # 基名包含匹配：多键命中取键名最短（baseline 先于 treatment）
-    assert ax.extract_primary_value(metrics, "accuracy") == 0.9
+    assert ax.extract_primary_value(metrics, "accuracy") is None
+    assert ax.extract_primary_value(metrics, "gsm8k_accuracy/treatment/val") == 0.92
     # 精确匹配优先
     exact = {"accuracy": [{"step": 0, "value": 0.5}]} | metrics
     assert ax.extract_primary_value(exact, "accuracy") == 0.5
     # 基名相等优先于包含
     base_eq = {"accuracy/val": [{"step": 0, "value": 0.7}]} | metrics
-    assert ax.extract_primary_value(base_eq, "accuracy") == 0.7
+    assert ax.extract_primary_value(base_eq, "accuracy") is None
+    assert ax.extract_primary_value(base_eq, "accuracy/val") == 0.7
     # 无关指标不误匹配
     assert ax.extract_primary_value({"loss": [{"step": 0, "value": 1.0}]}, "accuracy") is None
 

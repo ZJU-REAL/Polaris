@@ -1,5 +1,6 @@
 """FastAPI 应用工厂。"""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -28,28 +29,77 @@ logger = logging.getLogger(__name__)
 DESKTOP_ORIGIN = "app://polaris"
 
 
+_DESKTOP_RECONCILE_SECONDS = 60.0
+
+
+async def _desktop_voyage_recovery(stop: asyncio.Event) -> None:
+    """Use the same cleanup/reconciliation workers without a Desktop ARQ process."""
+    from app.core.queue import _InlineArqRedis, get_task_queue
+    from worker.tasks import reconcile_stale_voyages
+
+    queue = await get_task_queue()
+    context = {"redis": _InlineArqRedis(queue)}
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=_DESKTOP_RECONCILE_SECONDS)
+        except TimeoutError:
+            try:
+                await reconcile_stale_voyages(context)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a cleanup outage must not stop the HTTP service
+                logger.warning("desktop Voyage recovery failed", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    # 仅 sqlite（无 docker 的本地 dev）在启动时建表；postgres 走 alembic migration
-    if settings.is_sqlite:
-        await create_all()
-    # 跨学科工作流的指引文档种子（按 slug 幂等）；失败不阻断启动（如 migration 未跑）
+    recovery_stop: asyncio.Event | None = None
+    recovery_task: asyncio.Task[None] | None = None
     try:
-        async with get_sessionmaker()() as session:
-            await ensure_guidance_documents(session)
-    except Exception:  # noqa: BLE001
-        logger.warning("guidance document seeding failed (migrations pending?)", exc_info=True)
-    # 学科包：把抽取 schema 的注册缝接到磁盘（内置包 + <data_dir>/disciplines）。
-    # 纯文件读取、不碰数据库，所以不跟着上面的 DB 种子一起 try
-    load_disciplines()
-    # AI 起草流式镜像订阅（worker 发布 → 写活跃 CRDT 房间；连不上 redis 自动放弃）
-    get_crdt_stream_subscriber().start()
-    yield
-    await stop_crdt_stream_subscriber()
-    await reset_crdt_rooms()  # 关停 CRDT 房间服务器（先冲刷不了的防抖任务直接取消）
-    await dispose_engine()
-    await close_redis()
+        # 仅 sqlite（无 docker 的本地 dev）在启动时建表；postgres 走 alembic migration
+        if settings.is_sqlite:
+            await create_all()
+        if settings.is_desktop:
+            from app.core.voyage_lease import reset_desktop_execution_leases
+
+            # Fence the previous process before any recovered inline job or HTTP request starts.
+            # Server API startup must never reclaim another worker's still-valid lease.
+            await reset_desktop_execution_leases()
+        try:
+            async with get_sessionmaker()() as session:
+                await ensure_guidance_documents(session)
+        except Exception:  # noqa: BLE001
+            logger.warning("guidance document seeding failed (migrations pending?)", exc_info=True)
+        load_disciplines()
+        get_crdt_stream_subscriber().start()
+        if settings.is_desktop:
+            from app.core.queue import _InlineArqRedis, get_task_queue
+            from worker.tasks import reconcile_stuck_voyages
+
+            queue = await get_task_queue()
+            await reconcile_stuck_voyages({"redis": _InlineArqRedis(queue)})
+            recovery_stop = asyncio.Event()
+            recovery_task = asyncio.create_task(
+                _desktop_voyage_recovery(recovery_stop), name="desktop-voyage-recovery"
+            )
+        yield
+    finally:
+        if recovery_stop is not None:
+            recovery_stop.set()
+        if recovery_task is not None:
+            recovery_task.cancel()
+            await asyncio.gather(recovery_task, return_exceptions=True)
+        if settings.is_desktop:
+            from app.core.queue import InlineTaskQueue, get_task_queue
+
+            queue = await get_task_queue()
+            if isinstance(queue, InlineTaskQueue):
+                await queue.cancel_and_drain()
+        await stop_crdt_stream_subscriber()
+        await reset_crdt_rooms()
+        await dispose_engine()
+        await close_redis()
 
 
 def create_app() -> FastAPI:

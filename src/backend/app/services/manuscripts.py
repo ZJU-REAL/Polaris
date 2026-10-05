@@ -11,8 +11,10 @@
 """
 
 import contextlib
+import hashlib
 import json
 import logging
+import math
 import re
 import uuid
 from collections.abc import Sequence
@@ -20,9 +22,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import event, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings
 from app.models.activity import Activity
@@ -184,65 +186,252 @@ def read_binary_asset(manuscript_id: uuid.UUID | str, path: str) -> bytes | None
 # ---- fact-pack 组装（docs/task-system.md §7（原 api-m5-b.md §3）） ----
 
 
+def _digest(value: Any) -> str:
+    # Invalid/non-finite observations may be retained for diagnosis in experiment
+    # state. Hash them as stored; only finite numbers below enter scientific facts.
+    raw = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
 def _last_value(series: Any) -> float | None:
     if not isinstance(series, list) or not series:
         return None
     last = series[-1]
     value = last.get("value") if isinstance(last, dict) else None
-    return float(value) if isinstance(value, int | float) else None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def _result_bundle(experiment: Experiment) -> dict[str, Any] | None:
+    state = experiment.iteration_state or {}
+    raw = state.get("result_bundle")
+    if raw is None:
+        return (
+            {}
+            if any(key in state for key in ("research_contract", "candidates", "evaluations"))
+            else None
+        )
+    # A malformed versioned bundle must never fall back to unversioned raw runs.
+    if not isinstance(raw, dict) or raw.get("experiment_id") != str(experiment.id):
+        return {}
+    contract = raw.get("research_contract") or {}
+    if (
+        not raw.get("bundle_id")
+        or raw.get("contract_id") != contract.get("contract_id")
+        or raw.get("protocol_id") != contract.get("protocol_id")
+    ):
+        return {}
+    return raw
+
+
+def _valid_evaluations(bundle: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        e
+        for e in bundle.get("valid_evaluations") or []
+        if isinstance(e, dict)
+        and e.get("valid") is True
+        and e.get("status") == "succeeded"
+        and e.get("exit_code") == 0
+        and e.get("contract_id") == bundle.get("contract_id")
+        and e.get("protocol_id") == bundle.get("protocol_id")
+        and isinstance(e.get("primary_value"), int | float)
+        and not isinstance(e.get("primary_value"), bool)
+        and math.isfinite(e["primary_value"])
+        and e.get("evaluation_id")
+        and e.get("candidate_id")
+        and isinstance(e.get("metrics"), dict)
+        and all(_last_value(series) is not None for series in e["metrics"].values())
+    ]
+
+
+def _experiment_evidence_digest(experiment: Experiment) -> str:
+    state = experiment.iteration_state or {}
+    return _digest(
+        {
+            "experiment_id": str(experiment.id),
+            "code_files": state.get("code_files"),
+            "plan": experiment.plan,
+            "figures": experiment.figures,
+            "result_bundle": state.get("result_bundle"),
+            "research_contract": state.get("research_contract"),
+            "incumbent": state.get("incumbent"),
+            "runs": [
+                {
+                    "id": str(r.id),
+                    "seq": r.seq,
+                    "status": r.status,
+                    "exit_code": r.exit_code,
+                    "metrics": r.metrics,
+                    "primary_value": r.primary_value,
+                }
+                for r in sorted(experiment.runs, key=lambda r: r.seq)
+            ],
+        }
+    )
+
+
+def _bundle_metadata(experiment: Experiment) -> dict[str, Any]:
+    bundle = _result_bundle(experiment)
+    if bundle is None:
+        return {
+            "provenance": "legacy_unversioned",
+            "experiment_id": str(experiment.id),
+            "state_digest": _experiment_evidence_digest(experiment),
+            "scientific_verification": "unverified",
+        }
+    valid = _valid_evaluations(bundle)
+    selected = bundle.get("selected_candidate") or {}
+    selected_id = selected.get("candidate_id")
+    return {
+        "provenance": "versioned_result_bundle",
+        "experiment_id": str(experiment.id),
+        "bundle_id": bundle.get("bundle_id"),
+        "contract_id": bundle.get("contract_id"),
+        "protocol_id": bundle.get("protocol_id"),
+        "selected_candidate_id": selected_id,
+        "source_digest": selected.get("source_digest"),
+        "environment_digest": selected.get("environment_digest"),
+        "protocol": (bundle.get("research_contract") or {}).get("protocol"),
+        "evaluation_ids": [e["evaluation_id"] for e in valid],
+        "selected_evaluation_ids": [
+            e["evaluation_id"] for e in valid if e["candidate_id"] == selected_id
+        ],
+        "invalid_evaluation_ids": [
+            e.get("evaluation_id")
+            for e in bundle.get("invalid_evaluations") or []
+            if isinstance(e, dict)
+        ],
+        "state_digest": _experiment_evidence_digest(experiment),
+        "execution_outcome": bundle.get("execution_outcome"),
+        "optimization_outcome": bundle.get("optimization_outcome"),
+        "stopped_reason": bundle.get("stopped_reason"),
+    }
 
 
 def _metrics_pack(experiment: Experiment) -> list[dict[str, Any]]:
-    """全 run 指标：[{name, runs: [{seq, value}], best}]；best 对主指标 direction 感知。"""
+    """Finite successful legacy observations, or valid same-protocol bundle evaluations."""
+    bundle = _result_bundle(experiment)
     plan = experiment.plan or {}
+    if bundle is not None:
+        plan = (bundle.get("research_contract") or {}).get("protocol") or {}
     pm = plan.get("primary_metric") or {}
-    pm_name = str(pm.get("name") or "")
-    pm_direction = str(pm.get("direction") or "maximize")
-
-    names: list[str] = []
+    selected = (bundle or {}).get("selected_candidate") or {}
     per_metric: dict[str, list[dict[str, Any]]] = {}
-    for run in experiment.runs:
-        for name, series in (run.metrics or {}).items():
+    records = (
+        _valid_evaluations(bundle)
+        if bundle is not None
+        else [
+            {"seq": r.seq, "metrics": r.metrics or {}, "run_id": str(r.id)}
+            for r in experiment.runs
+            if r.status == "succeeded" and r.exit_code == 0
+        ]
+    )
+    for record in sorted(records, key=lambda r: r["seq"]):
+        for name, series in record["metrics"].items():
             value = _last_value(series)
             if value is None:
                 continue
-            if name not in per_metric:
-                per_metric[name] = []
-                names.append(name)
-            per_metric[name].append({"seq": run.seq, "value": value})
-
-    metrics: list[dict[str, Any]] = []
-    for name in names:
-        values = [entry["value"] for entry in per_metric[name]]
-        minimize = name == pm_name and pm_direction == "minimize"
-        best = min(values) if minimize else max(values)
-        metrics.append({"name": name, "runs": per_metric[name], "best": best})
-    return metrics
+            entry = {"seq": record["seq"], "value": value}
+            if bundle is not None:
+                entry |= {
+                    "evaluation_id": record["evaluation_id"],
+                    "run_id": record["run_id"],
+                    "candidate_id": record["candidate_id"],
+                    "selected": record["candidate_id"] == selected.get("candidate_id"),
+                }
+            per_metric.setdefault(name, []).append(entry)
+    return [
+        {
+            "name": name,
+            "runs": entries,
+            "best": (
+                min
+                if name == pm.get("selector", pm.get("name")) and pm.get("direction") == "minimize"
+                else max
+            )(e["value"] for e in entries),
+            "provenance": {
+                "kind": "result_bundle" if bundle is not None else "legacy_unversioned",
+                "bundle_id": (bundle or {}).get("bundle_id"),
+                "protocol_id": (bundle or {}).get("protocol_id"),
+            },
+        }
+        for name, entries in per_metric.items()
+    ]
 
 
 def _hypotheses_pack(experiment: Experiment) -> list[dict[str, Any]]:
-    hyps = (experiment.plan or {}).get("hypotheses") or []
-    return [
-        {
-            "text": str(h.get("text", "")),
-            "status": str(h.get("status", "testing")),
-            "evidence": h.get("evidence"),
-        }
-        for h in hyps
-        if isinstance(h, dict)
-    ]
+    bundle = _result_bundle(experiment)
+    if bundle is None:
+        return [
+            {
+                "text": str(h.get("text", "")),
+                "status": "testing",
+                "proposed_status": str(h.get("status", "testing")),
+                "evidence": h.get("evidence"),
+                "scientific_verdict": "inconclusive",
+                "verdict_reason": "legacy_unversioned_evidence",
+                "evidence_refs": [],
+            }
+            for h in (experiment.plan or {}).get("hypotheses") or []
+            if isinstance(h, dict)
+        ]
+    valid_ids = {e["evaluation_id"] for e in _valid_evaluations(bundle)}
+    verdicts = {
+        v.get("claim_id"): v for v in bundle.get("scientific_verdicts") or [] if isinstance(v, dict)
+    }
+    hypotheses = []
+    for claim in (bundle.get("research_contract") or {}).get("claims") or []:
+        verdict = verdicts.get(claim.get("claim_id")) or {}
+        refs = verdict.get("evidence_refs") or []
+        verified = bool(refs) and all(ref in valid_ids for ref in refs)
+        verified = verified and verdict.get("contract_id") == bundle.get("contract_id")
+        verified = verified and verdict.get("protocol_id") == bundle.get("protocol_id")
+        outcome = verdict.get("verdict") if verified else "inconclusive"
+        hypotheses.append(
+            {
+                "text": claim.get("text"),
+                "claim_id": claim.get("claim_id"),
+                "status": {"supported": "verified", "refuted": "falsified"}.get(outcome, "testing"),
+                "scientific_verdict": outcome,
+                "criterion": claim.get("criterion"),
+                "evidence_refs": refs if verified else [],
+                "scope": verdict.get("scope"),
+                "bundle_id": bundle.get("bundle_id"),
+                "verdict_reason": verdict.get("reason") if verified else "missing_valid_evidence",
+            }
+        )
+    return hypotheses
 
 
 def _figures_pack(experiment: Experiment) -> list[dict[str, Any]]:
-    return [
-        {
-            "fig_id": f"exp_fig_{int(f['index'])}",
-            "caption": f.get("caption"),
+    bundle = _result_bundle(experiment)
+    figures = []
+    for fig in experiment.figures or []:
+        if not isinstance(fig, dict) or fig.get("index") is None:
+            continue
+        if bundle is not None and (
+            not bundle.get("bundle_id") or fig.get("bundle_id") != bundle["bundle_id"]
+        ):
+            continue
+        entry = {
+            "fig_id": f"exp_fig_{int(fig['index'])}",
+            "caption": fig.get("caption"),
             "source": "experiment",
         }
-        for f in experiment.figures or []
-        if isinstance(f, dict) and f.get("index") is not None
-    ]
+        if bundle is not None:
+            entry |= {
+                "bundle_id": bundle["bundle_id"],
+                "protocol_id": bundle.get("protocol_id"),
+                "candidate_id": (bundle.get("selected_candidate") or {}).get("candidate_id"),
+                "evidence_refs": [e["evaluation_id"] for e in _valid_evaluations(bundle)],
+            }
+        else:
+            entry["provenance"] = "legacy_unversioned"
+        figures.append(entry)
+    return figures
 
 
 async def _citations_pack(session: AsyncSession, *, project_id: uuid.UUID) -> list[dict[str, Any]]:
@@ -302,10 +491,14 @@ async def build_fact_pack(session: AsyncSession, manuscript: Manuscript) -> dict
     hypotheses: list[dict[str, Any]] = []
     metrics: list[dict[str, Any]] = []
     figures: list[dict[str, Any]] = []
+    evidence_bundle: dict[str, Any] | None = None
     if manuscript.experiment_id is not None:
         stmt = (
             select(Experiment)
-            .where(Experiment.id == manuscript.experiment_id)
+            .where(
+                Experiment.id == manuscript.experiment_id,
+                Experiment.project_id == manuscript.project_id,
+            )
             .options(selectinload(Experiment.runs))
         )
         experiment = (await session.execute(stmt)).scalar_one_or_none()
@@ -313,6 +506,14 @@ async def build_fact_pack(session: AsyncSession, manuscript: Manuscript) -> dict
             hypotheses = _hypotheses_pack(experiment)
             metrics = _metrics_pack(experiment)
             figures = _figures_pack(experiment)
+            evidence_bundle = _bundle_metadata(experiment)
+            frozen_idea = ((_result_bundle(experiment) or {}).get("research_contract") or {}).get(
+                "objective_details"
+            ) or {}
+            if str(manuscript.idea_id) == frozen_idea.get("idea_id"):
+                idea_pack = {"title": frozen_idea.get("title"),
+                             "summary": frozen_idea.get("summary"),
+                             "goal": frozen_idea.get("goal"), "provenance": "research_contract"}
 
     return {
         "idea": idea_pack,
@@ -320,6 +521,7 @@ async def build_fact_pack(session: AsyncSession, manuscript: Manuscript) -> dict
         "metrics": metrics,
         "figures": figures,
         "citations": await _citations_pack(session, project_id=manuscript.project_id),
+        "evidence_bundle": evidence_bundle,
         "generated_at": datetime.now(UTC).isoformat(),
     }
 
@@ -330,10 +532,119 @@ async def refresh_fact_pack(session: AsyncSession, manuscript: Manuscript) -> di
     old = manuscript.fact_pack or {}
     if old.get("revision_notes"):
         fresh["revision_notes"] = old["revision_notes"]
+    if _fact_pack_digest(old) == _fact_pack_digest(fresh):
+        if old.get("review_binding"):
+            fresh["review_binding"] = old["review_binding"]
+    else:
+        invalidate_review(manuscript, "evidence_refreshed")
     manuscript.fact_pack = fresh
     await session.commit()
     await session.refresh(manuscript)
     return manuscript.fact_pack
+
+
+_REVIEW_METADATA = {"generated_at", "revision_notes", "review_binding", "review_invalidated_reason"}
+
+
+def _fact_pack_digest(pack: dict[str, Any]) -> str:
+    return _digest({k: v for k, v in pack.items() if k not in _REVIEW_METADATA})
+
+
+def invalidate_review(manuscript: Manuscript, reason: str) -> None:
+    manuscript.review_passed = False
+    if manuscript.fact_pack:
+        manuscript.fact_pack = dict(manuscript.fact_pack) | {"review_invalidated_reason": reason}
+
+
+@event.listens_for(Session, "before_flush")
+def _invalidate_changed_manuscripts(session: Session, _context, _instances) -> None:
+    """All ORM edit paths (CRDT, AI, restore and file CRUD) invalidate old passes."""
+    affected: set[uuid.UUID] = set()
+    for obj in session.new | session.dirty | session.deleted:
+        if isinstance(obj, ManuscriptFile):
+            changed = (
+                obj in session.new
+                or obj in session.deleted
+                or any(
+                    inspect(obj).attrs[name].history.has_changes()
+                    for name in ("content", "path", "is_binary", "is_folder")
+                )
+            )
+            if changed and obj.manuscript_id:
+                affected.add(obj.manuscript_id)
+        elif isinstance(obj, Manuscript) and obj not in session.new:
+            if any(
+                inspect(obj).attrs[name].history.has_changes()
+                for name in ("title", "main_tex", "engine", "experiment_id", "idea_id")
+            ):
+                invalidate_review(obj, "manuscript_changed")
+    for manuscript_id in affected:
+        manuscript = session.get(Manuscript, manuscript_id)
+        if manuscript is not None and manuscript.review_passed:
+            invalidate_review(manuscript, "source_changed")
+
+
+async def build_review_binding(session: AsyncSession, manuscript: Manuscript) -> dict[str, Any]:
+    from app.services import latex_compile
+
+    evidence_digest = None
+    if manuscript.experiment_id is not None:
+        experiment = (
+            await session.execute(
+                select(Experiment)
+                .where(
+                    Experiment.id == manuscript.experiment_id,
+                    Experiment.project_id == manuscript.project_id,
+                )
+                .options(selectinload(Experiment.runs))
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        evidence_digest = _experiment_evidence_digest(experiment) if experiment else "unavailable"
+    binding = {
+        "schema_version": 1,
+        "manuscript_id": str(manuscript.id),
+        "source_digest": await latex_compile.build_source_digest(session, manuscript),
+        "title": manuscript.title,
+        "main_tex": manuscript.main_tex,
+        "engine": manuscript.engine,
+        "compile_version": (manuscript.latest_compile or {}).get("version"),
+        "fact_pack_digest": _fact_pack_digest(manuscript.fact_pack or {}),
+        "evidence_state_digest": evidence_digest,
+        "bundle_id": ((manuscript.fact_pack or {}).get("evidence_bundle") or {}).get("bundle_id"),
+    }
+    binding["binding_id"] = "review:" + _digest(binding)
+    return binding
+
+
+async def review_binding_matches(
+    session: AsyncSession,
+    manuscript: Manuscript,
+    binding: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(binding, dict) or not binding.get("binding_id"):
+        return False
+    if (manuscript.latest_compile or {}).get("status") != "ok":
+        return False
+    current = await build_review_binding(session, manuscript)
+    expected = ((manuscript.fact_pack or {}).get("evidence_bundle") or {}).get("state_digest")
+    if manuscript.experiment_id is not None and expected != current["evidence_state_digest"]:
+        return False
+    compiled_source = (manuscript.latest_compile or {}).get("source_digest")
+    if compiled_source != current["source_digest"]:
+        return False
+    return binding == current
+
+
+async def review_is_current(session: AsyncSession, manuscript: Manuscript) -> bool:
+    if not manuscript.review_passed:
+        return False
+    binding = (manuscript.fact_pack or {}).get("review_binding")
+    if await review_binding_matches(session, manuscript, binding):
+        return True
+    invalidate_review(manuscript, "stale_review_binding")
+    await session.commit()
+    return False
 
 
 # ---- 创建 / 读取 / 更新 ----
@@ -958,7 +1269,7 @@ async def submit_manuscript(
     if latest.get("status") != "ok":
         raise CompileRequiredError(str(manuscript.id))
     # M5-C：前置从 compile-ok 升级为 review_passed（管理员可在 gate 审批时 override）
-    if not manuscript.review_passed:
+    if not await review_is_current(session, manuscript):
         raise ReviewRequiredError(str(manuscript.id))
     gate = Gate(
         project_id=manuscript.project_id,
@@ -968,6 +1279,7 @@ async def submit_manuscript(
             "title": manuscript.title,
             "compile_version": latest.get("version"),
             "review_passed": manuscript.review_passed,
+            "review_binding": (manuscript.fact_pack or {}).get("review_binding"),
         },
         requested_by=f"user:{user_id}",
     )

@@ -204,13 +204,6 @@ def adjudicate_command(
     if assessment is not None:
         delay = max(5.0, min(float(assessment.next_check_seconds), 600.0))
 
-    if snapshot.process_alive and snapshot.output_changed:
-        return CommandVerdict(
-            CommandAction.CONTINUE_MONITORING,
-            "remote process is alive and output changed",
-            delay,
-        )
-
     stalled = bool(
         snapshot.context.stall_timeout_seconds
         and snapshot.seconds_since_output >= snapshot.context.stall_timeout_seconds
@@ -221,8 +214,15 @@ def adjudicate_command(
     )
     if hard_expired:
         return CommandVerdict(
-            CommandAction.ASK_USER_WHILE_RUNNING,
-            "explicit hard deadline reached while the process is still alive",
+            CommandAction.STOP_AND_REPAIR,
+            "explicit hard deadline reached; stop the managed attempt",
+            delay,
+        )
+
+    if snapshot.process_alive and snapshot.output_changed:
+        return CommandVerdict(
+            CommandAction.CONTINUE_MONITORING,
+            "remote process is alive and output changed",
             delay,
         )
 

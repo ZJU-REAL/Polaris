@@ -34,6 +34,7 @@ from app.services.literature.semantic_scholar import SemanticScholarClient
 from tests.conftest import RecordingBus, register_and_login
 from tests.test_manuscripts import (
     _create_manuscript,
+    _mark_review_passed,
     _seed_experiment,
     _seed_idea,
     _seed_paper,
@@ -532,7 +533,7 @@ async def test_submit_review_required_and_gate_override(client, bus_recorder, qu
 
     async with get_sessionmaker()() as session:
         ms = await session.get(Manuscript, uuid.UUID(ms_id))
-        ms.review_passed = True
+        await _mark_review_passed(session, ms)
         await session.commit()
     resp = await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)
     assert resp.status_code == 201, resp.text

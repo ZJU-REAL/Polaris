@@ -88,10 +88,12 @@ async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
     （实测：远端 run.sh 已 exit=0，平台侧 50 分钟无人收尾）。启动时把在途
     状态的 voyage 重新入队 resume——引擎幂等（setup/run 都会重挂在跑的远端进程，
     checkpoint 断点恢复）。"""
+    await reconcile_experiment_cleanup(ctx)
     import time
 
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
+    from app.models.base import utcnow
     from app.models.voyage import IN_FLIGHT_STATUSES, VoyageRun
 
     async with get_sessionmaker()() as session:
@@ -99,7 +101,10 @@ async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
             (
                 await session.execute(
                     select(VoyageRun.id).where(
-                        VoyageRun.status.in_(tuple(IN_FLIGHT_STATUSES))
+                        VoyageRun.status.in_(tuple(IN_FLIGHT_STATUSES)),
+                        or_(VoyageRun.execution_token.is_(None),
+                            VoyageRun.execution_expires_at.is_(None),
+                            VoyageRun.execution_expires_at <= utcnow()),
                     )
                 )
             )
@@ -123,6 +128,7 @@ async def reconcile_stale_voyages(
     （无日志则取创建时间）超过 ``stale_minutes`` 才认领——活着的长步骤会持续产生
     日志/轮询输出，短暂静默不会被误抢；引擎本身幂等，偶发的并发 resume 可容忍
     （arq 中断重试与启动对账本就可能重叠，线上已验证无碍）。"""
+    await reconcile_experiment_cleanup(ctx)
     import time
     from datetime import timedelta
 
@@ -149,6 +155,9 @@ async def reconcile_stale_voyages(
                     .outerjoin(last_log, last_log.c.run_id == VoyageRun.id)
                     .where(
                         VoyageRun.status.in_(tuple(IN_FLIGHT_STATUSES)),
+                        or_(VoyageRun.execution_token.is_(None),
+                            VoyageRun.execution_expires_at.is_(None),
+                            VoyageRun.execution_expires_at <= utcnow()),
                         or_(
                             last_log.c.last_at < cutoff,
                             (last_log.c.last_at.is_(None)) & (VoyageRun.created_at < cutoff),
@@ -167,6 +176,29 @@ async def reconcile_stale_voyages(
         await ctx["redis"].enqueue_job(
             "resume_voyage", str(vid), _job_id=_reconcile_job_id(vid, now)
         )
+
+
+async def reconcile_experiment_cleanup(ctx: dict[str, Any]) -> int:
+    """Retry external cleanup even after a cancelled/failed Voyage becomes terminal."""
+    from sqlalchemy import select
+
+    from app.models.experiment import EXPERIMENT_TERMINAL_STATUSES, Experiment
+    from app.services.experiments import reconcile_remote_cleanup
+    from app.services.resource_leases import remote_work_pending
+
+    confirmed = 0
+    async with get_sessionmaker()() as session:
+        experiments = (await session.execute(select(Experiment).where(
+            Experiment.status.in_(tuple(EXPERIMENT_TERMINAL_STATUSES))
+        ))).scalars().all()
+        for experiment in experiments:
+            if (not (experiment.iteration_state or {}).get("remote_cleanup")
+                    and (not experiment.voyage_id
+                         or not await remote_work_pending(session, experiment.voyage_id))):
+                continue
+            if await reconcile_remote_cleanup(session, experiment):
+                confirmed += 1
+    return confirmed
 
 
 async def watch_unanswered_managed_commands(ctx: dict[str, Any]) -> int:

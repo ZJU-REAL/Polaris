@@ -12,6 +12,7 @@ from app.core.db import get_sessionmaker
 from app.models.experiment import Experiment, ExperimentRun
 from app.models.idea import Idea
 from app.models.manuscript import Manuscript
+from app.services import manuscripts as manuscripts_service
 from tests.conftest import add_paper, register_and_login
 
 
@@ -29,6 +30,15 @@ async def _setup_project(client, email="alice@example.com"):
     resp = await client.post("/api/projects", json={"name": "writer-proj"}, headers=headers)
     assert resp.status_code == 201
     return resp.json()["id"], headers
+
+
+async def _mark_review_passed(session, manuscript):
+    # Simulate the final reviewer publication, including its exact source binding.
+    binding = await manuscripts_service.build_review_binding(session, manuscript)
+    manuscript.latest_compile = dict(manuscript.latest_compile) | {
+        "source_digest": binding["source_digest"]}
+    manuscript.fact_pack = dict(manuscript.fact_pack or {}) | {"review_binding": binding}
+    manuscript.review_passed = True
 
 
 async def _seed_idea(project_id: str) -> str:
@@ -166,12 +176,15 @@ async def test_create_manuscript_expands_template_and_fact_pack(client):
     # fact-pack：idea / 假设 / 全 run 指标 / 图表 fig_id / citations bibkey
     pack = detail["fact_pack"]
     assert pack["idea"]["title"] == "共引图增强检索（test idea）"
-    assert [h["status"] for h in pack["hypotheses"]] == ["verified", "testing"]
+    assert [h["status"] for h in pack["hypotheses"]] == ["testing", "testing"]
+    assert pack["hypotheses"][0]["proposed_status"] == "verified"
+    assert pack["evidence_bundle"]["provenance"] == "legacy_unversioned"
     accuracy = next(m for m in pack["metrics"] if m["name"] == "accuracy")
     assert accuracy["runs"] == [{"seq": 1, "value": 0.7}, {"seq": 2, "value": 0.8}]
     assert accuracy["best"] == 0.8
     assert pack["figures"] == [
-        {"fig_id": "exp_fig_0", "caption": "主指标曲线", "source": "experiment"}
+        {"fig_id": "exp_fig_0", "caption": "主指标曲线", "source": "experiment",
+         "provenance": "legacy_unversioned"}
     ]
     bibkeys = {c["bibkey"] for c in pack["citations"]}
     assert bibkeys == {"smith2017attention", "smith2023retrieval"}  # excluded 论文不入
@@ -359,7 +372,7 @@ async def test_submit_requires_ok_compile_then_gate_flow(client, bus_recorder, q
     assert resp.status_code == 409 and resp.json()["detail"] == "REVIEW_REQUIRED"
     async with get_sessionmaker()() as session:
         ms = await session.get(Manuscript, uuid.UUID(ms_id))
-        ms.review_passed = True
+        await _mark_review_passed(session, ms)
         await session.commit()
 
     resp = await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)
@@ -391,7 +404,6 @@ async def test_submit_reject_rolls_back_to_compiled(client, bus_recorder, queue_
     async with get_sessionmaker()() as session:
         ms = await session.get(Manuscript, uuid.UUID(ms_id))
         ms.status = "compiled"
-        ms.review_passed = True  # M5-C submit 前置
         ms.latest_compile = {
             "version": 1,
             "status": "ok",
@@ -400,6 +412,7 @@ async def test_submit_reject_rolls_back_to_compiled(client, bus_recorder, queue_
             "compiled_at": "2026-07-14T00:00:00+00:00",
             "duration_ms": 900,
         }
+        await _mark_review_passed(session, ms)
         await session.commit()
     gate = (await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)).json()
     resp = await client.post(f"/api/gates/{gate['id']}/reject", json={}, headers=headers)

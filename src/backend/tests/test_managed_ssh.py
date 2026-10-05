@@ -330,3 +330,198 @@ async def test_gpu_usage_does_not_claim_an_unrelated_machine_process():
 
     assert usage.status == "idle"
     assert usage.used_memory_mib == 0
+
+
+
+async def test_snapshot_preserves_alive_when_only_a_child_remains():
+    server = FakeSSHServer(run_exit=0)
+    session = FakeSSHSession(server)
+
+    async def run(command, timeout=None):
+        if command.startswith("ps -eo pgid=,stat="):
+            return SSHResult(0, f"{server.pid} S\n", "")
+        return await session.run(command, timeout)
+
+    manager = SSHManagedCommands(
+        session=session, run=run,
+        shell_workdir="~/polaris_runs/test", sftp_workdir="polaris_runs/test",
+    )
+    handle = await manager.start(_context(), "bash run.sh")
+    snapshot = await manager.snapshot(handle)
+    assert snapshot.exit_status == 0
+    assert snapshot.process_alive is True
+
+
+async def test_snapshot_preserves_unknown_group_state_after_leader_exits():
+    server = FakeSSHServer(run_exit=0)
+    session = FakeSSHSession(server)
+
+    async def run(command, timeout=None):
+        if command.startswith("ps -eo pgid=,stat="):
+            return SSHResult(1, "", "probe unavailable")
+        return await session.run(command, timeout)
+
+    manager = SSHManagedCommands(
+        session=session, run=run,
+        shell_workdir="~/polaris_runs/test", sftp_workdir="polaris_runs/test",
+    )
+    handle = await manager.start(_context(), "bash run.sh")
+    snapshot = await manager.snapshot(handle)
+    assert snapshot.process_alive is True
+    assert snapshot.process_state == "group_probe_unavailable"
+
+
+async def _stop_script_with_simulated_processes(tmp_path, *, refuses_signal=False,
+                                               unavailable_probe=False):
+    """Execute the actual stop script with fake ps/kill, without touching real processes."""
+    import asyncio
+    import uuid
+    from types import SimpleNamespace
+
+    from app.services.managed_ssh import ManagedCommandHandle
+
+    handle = ManagedCommandHandle(
+        operation_id="experiment-run", attempt_id=str(uuid.uuid4()), context=_context(),
+        process_id=4242, process_group_id=4242,
+    )
+    directory = tmp_path / ".polaris/operations/experiment-run"
+    prefix = directory / "attempts" / handle.attempt_id
+    prefix.parent.mkdir(parents=True)
+    (directory / "current").write_text(handle.attempt_id)
+    prefix.with_suffix(".pid").write_text(str(handle.process_id))
+    prefix.with_suffix(".pgid").write_text(str(handle.process_group_id))
+    prefix.with_suffix(".exit").write_text("0")
+    signals = tmp_path / "signals"
+    preamble = (
+        "group_running=1\n"
+        "sleep() { :; }\n"
+        "ps() { "
+        + ("return 1;" if unavailable_probe else
+           "if [ $group_running -eq 1 ]; then printf '4242 S\\n'; fi;")
+        + " }\n"
+        "kill() {\n"
+        '  [ "$1" != "-0" ] || return 1\n'
+        f'  printf "%s\\n" "$*" >> "{signals}"\n'
+        + ("  return 1\n" if refuses_signal else "  group_running=0\n  return 0\n")
+        + "}\n"
+    )
+
+    async def run(script, timeout=None):
+        process = await asyncio.create_subprocess_exec(
+            "bash", "-c", preamble + script,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5)
+        return SSHResult(process.returncode, stdout.decode(), stderr.decode())
+
+    manager = SSHManagedCommands(
+        session=SimpleNamespace(), run=run,
+        shell_workdir=str(tmp_path), sftp_workdir=str(tmp_path),
+    )
+    outcome = await manager.stop(handle)
+    return outcome, signals.read_text() if signals.exists() else ""
+
+
+async def test_stop_actual_script_kills_surviving_group_after_leader_exit(tmp_path):
+    outcome, signals = await _stop_script_with_simulated_processes(tmp_path)
+    assert outcome.confirmed is True
+    assert outcome.status == "stopped"
+    assert "-TERM -- -4242" in signals
+
+
+async def test_stop_actual_script_rejects_a_surviving_unsignalable_child(tmp_path):
+    outcome, signals = await _stop_script_with_simulated_processes(tmp_path, refuses_signal=True)
+    assert outcome.confirmed is False
+    assert outcome.status == "stop_unconfirmed"
+    assert "-TERM -- -4242" in signals
+    assert "-KILL -- -4242" in signals
+
+
+async def test_stop_actual_script_preserves_unknown_group_state(tmp_path):
+    outcome, signals = await _stop_script_with_simulated_processes(tmp_path, unavailable_probe=True)
+    assert outcome.confirmed is False
+    assert outcome.status == "group_probe_unavailable"
+    assert signals == ""
+
+
+
+async def test_start_attaches_surviving_child_group_after_leader_exit():
+    server = FakeSSHServer(run_exit=0)
+    session = FakeSSHSession(server)
+
+    async def run(command, timeout=None):
+        if command.startswith("ps -eo pgid=,stat="):
+            return SSHResult(0, f"{server.pid} S\n", "")
+        return await session.run(command, timeout)
+
+    manager = SSHManagedCommands(
+        session=session, run=run,
+        shell_workdir="~/polaris_runs/test", sftp_workdir="polaris_runs/test",
+    )
+    first = await manager.start(_context(), "bash run.sh")
+    second = await manager.start(_context(), "bash run.sh")
+    assert second == first
+    assert sum("nohup setsid bash" in command for command in server.commands) == 1
+
+
+
+async def test_unicode_metric_crossing_byte_cap_is_parsed_once_without_final_newline():
+    from app.agents.voyage.actions_experiment import parse_metric_lines
+    from app.services.experiment_metric_stream import MetricLineFramer
+    from app.services.managed_ssh import _MAX_OUTPUT_CHUNK_BYTES
+
+    server = FakeSSHServer(run_exit=0)
+    manager = _manager(server)
+    handle = await manager.start(_context(), "bash run.sh")
+    prefix = server.managed_prefix_by_pid[handle.process_id]
+    metric_prefix = 'POLARIS_METRIC {"name": "'
+    padding = "x" * (_MAX_OUTPUT_CHUNK_BYTES - 2 - 1 - len(metric_prefix.encode()))
+    text = padding + "\n" + metric_prefix + '准确率", "step": 1, "value": 0.91}'
+    server.managed_files[f"{prefix}.stdout"] = text
+    framer = MetricLineFramer()
+    points = []
+    first, offset, _ = await manager.read_output(handle)
+    assert offset == _MAX_OUTPUT_CHUNK_BYTES - 2
+    for chunk in first:
+        points.extend(parse_metric_lines(framer.feed(chunk.stream, chunk.text)))
+    # Recovery uses only the persisted byte offset; no decoder object is shared.
+    recovered_reader = _manager(server)
+    second, offset, _ = await recovered_reader.read_output(handle, stdout_offset=offset)
+    for chunk in second:
+        points.extend(parse_metric_lines(framer.feed(chunk.stream, chunk.text)))
+    assert offset == len(text.encode())
+    assert points == []
+    points.extend(parse_metric_lines(framer.finish()))
+    assert points == [{"name": "准确率", "step": 1, "value": 0.91}]
+    assert framer.finish() == ""
+    repeated, final_offset, _ = await recovered_reader.read_output(handle, stdout_offset=offset)
+    assert repeated == [] and final_offset == offset
+
+
+async def test_invalid_terminal_utf8_suffix_advances_and_cannot_loop_forever():
+    import base64
+    import re
+    import uuid
+    from types import SimpleNamespace
+
+    from app.services.managed_ssh import _MAX_OUTPUT_CHUNK_BYTES, ManagedCommandHandle
+
+    raw = b"x" * (_MAX_OUTPUT_CHUNK_BYTES - 2) + b"\xe5\x87"
+
+    async def run(command, timeout=None):
+        if ".stdout" not in command:
+            return SSHResult(0, "", "")
+        offset = int(re.search(r"tail -c \+(\d+)", command).group(1)) - 1
+        chunk = raw[offset:offset + _MAX_OUTPUT_CHUNK_BYTES]
+        return SSHResult(0, base64.b64encode(chunk).decode(), "")
+
+    manager = SSHManagedCommands(session=SimpleNamespace(), run=run,
+                                 shell_workdir="~/polaris_runs/test", sftp_workdir="test")
+    handle = ManagedCommandHandle("experiment-run", str(uuid.uuid4()), _context(), 4242, 4242)
+    first, offset, _ = await manager.read_output(handle)
+    assert offset == len(raw) - 2
+    second, offset, _ = await manager.read_output(handle, stdout_offset=offset)
+    assert offset == len(raw)
+    assert "".join(chunk.text for chunk in first + second) == raw.decode(errors="replace")
+    repeated, same_offset, _ = await manager.read_output(handle, stdout_offset=offset)
+    assert repeated == [] and same_offset == offset
