@@ -84,8 +84,9 @@ describe('routes keep their window and budgets on save', () => {
   it('sends context_window and input_budgets with every route', () => {
     // PUT 是整表覆盖：保存时漏带哪个字段，那个字段就会被清空——context_window 以前就是这么丢的
     const page = readFileSync(join(__dirname, '..', 'SettingsPage.tsx'), 'utf8');
-    expect(page).toContain('context_window: window');
-    expect(page).toContain('input_budgets: budgets');
+    // 行 → 路由的拼装在 llmRoutingModel.buildRoute（单测见 llmRouting.test.ts），这里钉住保存时把两样都传进去
+    expect(page).toContain('contextWindow: parsePositiveInt(r.context_window)');
+    expect(page).toContain('budgets: budgetsPayload(r.budgets');
     expect(page).toContain("context_window: r.context_window ? String(r.context_window) : ''");
   });
 });

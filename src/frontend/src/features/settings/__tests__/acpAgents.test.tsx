@@ -116,13 +116,18 @@ describe('agent backends settings tab', () => {
     expect(html).toContain('自定义智能体');
   });
 
-  it('is reachable from the settings page as ?tab=agents in the workspace group', () => {
+  it('lives first inside the Models & agents tab, with no tab of its own (#840)', () => {
     const page = readFileSync(join(__dirname, '..', 'SettingsPage.tsx'), 'utf8');
-    expect(page).toMatch(/\| 'agents'/);
-    expect(page).toMatch(/ALL_TABS: Tab\[\] = \[[^\]]*'agents'/);
+    expect(page).not.toMatch(/\| 'agents'/);
+    expect(page).not.toMatch(/ALL_TABS: Tab\[\] = \[[^\]]*'agents'/);
     const workspace = page.slice(page.indexOf('const workspaceItems'));
-    expect(workspace.slice(0, 800)).toContain("v: 'agents'");
-    expect(page).toContain("effectiveTab === 'agents' && <AcpAgentsSettings />");
+    expect(workspace.slice(0, 800)).not.toContain("v: 'agents'");
+    expect(workspace.slice(0, 800)).toContain("tr('模型与智能体', 'Models & agents')");
+    const llmTab = page.slice(page.indexOf('export function LlmTab('));
+    const agents = llmTab.indexOf('<AcpAgentsSettings />');
+    expect(agents).toBeGreaterThan(-1);
+    expect(agents).toBeLessThan(llmTab.indexOf('<ProvidersSection />'));
+    expect(llmTab.indexOf('<AnswerStatusHeader />')).toBeLessThan(agents);
   });
 
   it('never calls tr() at module level', () => {

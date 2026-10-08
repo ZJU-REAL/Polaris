@@ -1,9 +1,19 @@
 # Agent backends: bring your own Claude Code, Codex or Gemini CLI
 
-Polaris can hand a conversation to a coding agent you already use. The assistant
-panel keeps working the same way — streamed text, thinking, plans and tool
-cards — but the answer comes from the agent you picked instead of Polaris's own
-model loop.
+Polaris can run on a coding agent you already use. Add the agent once and it
+can answer every model call Polaris makes — library scoring, wiki compiles,
+idea generation, experiment planning, writing, review — as well as assistant
+conversations. You don't need a model API key at all: the agent uses your own
+sign-in or subscription.
+
+Two ways to use an agent:
+
+- **As the model.** With no model API configured, the agent answers every model
+  call automatically. You can also point individual stages at an agent in the
+  routing table, or make an agent the default model.
+- **As the assistant.** In the assistant panel the agent takes over the whole
+  conversation: streamed text, thinking, plans and tool cards, with Polaris's
+  own tools available to it.
 
 This works through the [Agent Client Protocol](https://agentclientprotocol.com)
 (ACP): Polaris starts the agent as a local process and talks to it over
@@ -47,6 +57,47 @@ with its own command, arguments and environment variables.
 Only the platform owner can register agents, because registering one lets the
 server run that command. Other accounts on the same server can use an agent
 only if the owner marks it **shared** — it spends the owner's subscription.
+
+## The agent as Polaris's model
+
+Settings → **Models & agents** shows, at the top, who answers model calls right
+now. The rules:
+
+1. A stage with its own route uses that route. A route can point at a model API
+   or at an agent.
+2. Otherwise it follows the `default` route, which can also point at an agent.
+   Use **Use as default model** on an agent to set it.
+3. With no `default` route at all, the first enabled agent answers. For other
+   accounts on the same server, only agents marked **shared** count.
+
+Every model call runs in a fresh agent session, so earlier calls never colour
+later ones. The session:
+
+- runs in an empty scratch folder;
+- refuses every permission request and gets no Polaris tools;
+- is told to answer directly in the requested format.
+
+Prompts that carry figures send them as images when the agent can see images
+(Claude Code can); otherwise the text is used alone.
+
+Differences from a model API:
+
+- **Embeddings and rerank** can't come from an agent. Without a model API for
+  them, search falls back to keyword matching and reranking to plain scores.
+  Everything else works.
+- **Speed.** Each call takes several seconds — the agent thinks before it
+  answers — so large batch jobs such as scoring a whole library take longer.
+  Up to four calls per agent run at once (`POLARIS_ACP_LLM_CONCURRENCY`).
+- **Temperature, token limits and reasoning effort** have no equivalent over
+  ACP and are ignored. A route's model name is passed to the agent when it
+  offers model selection.
+- **Token usage** is estimated from the text length.
+- An experiment's `eval_model` option, which gives experiment code on another
+  machine its own model access, needs a model API.
+
+The API server and the background worker each keep their own small pool of
+agent processes, so on a server deployment the agent must be installed and
+signed in for the user that runs both.
 
 ## What the agent may do
 

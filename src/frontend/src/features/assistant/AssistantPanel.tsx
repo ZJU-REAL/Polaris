@@ -15,6 +15,7 @@ import {
   type PlanStep,
 } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
+import { MODEL_SETTINGS_HREF, isLlmNotConfigured, llmNotConfiguredText } from '../../lib/llmNotConfigured';
 import { copyText } from '../../lib/clipboard';
 import { BuddyHome } from './BuddyHome';
 import { followUps } from './followups';
@@ -143,8 +144,9 @@ function errorText(detail: string): string {
   if (detail === 'CHAT_AGENT_DISABLED') {
     return tr('助手在这个部署上没开启，找管理员开一下。', 'The assistant is switched off on this deployment — ask an admin to enable it.');
   }
-  if (detail === 'LLM_NOT_CONFIGURED') {
-    return tr('还没配可用的模型，去设置里配一个。', 'No usable model is configured yet — set one up in settings.');
+  if (isLlmNotConfigured(detail)) {
+    // 正文按 Markdown 渲染，直接给一个能点的落点
+    return `${llmNotConfiguredText()} [${tr('去设置', 'Open settings')}](${MODEL_SETTINGS_HREF})`;
   }
   // 传输层报错带着前缀（"Error: ACP_AGENT_NOT_AVAILABLE"），按包含判断
   if (detail.includes('ACP_AGENT_NOT_AVAILABLE')) {

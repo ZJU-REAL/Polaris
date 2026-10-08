@@ -29,7 +29,6 @@ import {
   type LlmCallLogRow,
   type LlmProviderInput,
   type LlmProviderKind,
-  type LlmEffort,
   type LlmProviderRead,
   type LlmRoute,
   type LlmTestCapability,
@@ -49,7 +48,20 @@ import {
   specsByStage,
 } from './inputBudgets';
 import { ExtensionApiKeySettings } from './ExtensionApiKeySettings';
-import { AcpAgentsSettings } from './AcpAgentsSettings';
+import { AGENTS_KEY, AcpAgentsSettings } from './AcpAgentsSettings';
+import {
+  CAPABILITY_STAGES,
+  agentAllowedFor,
+  agentName,
+  answerStatus,
+  buildRoute,
+  draftComplete,
+  parseTargetValue,
+  resolveTabParam,
+  takeoverAgent,
+  targetValueOf,
+  type RouteDraft,
+} from './llmRoutingModel';
 import { FullExportSettings } from './FullExportSettings';
 import { PluginsSettings } from './PluginsSettings';
 import {
@@ -1056,6 +1068,14 @@ type TestState =
 const testKeyOf = (providerId: string, model: string, capability: LlmTestCapability) =>
   `${providerId}|${model}|${capability}`;
 
+/** 智能体的测试结果按 agent+model 共享。 */
+const agentTestKeyOf = (agentId: string, model: string) => `agent:${agentId}|${model}`;
+
+const testKeyOfInput = (input: LlmTestModelInput) =>
+  'acp_agent_id' in input
+    ? agentTestKeyOf(input.acp_agent_id, input.model ?? '')
+    : testKeyOf(input.provider_id, input.model, input.capability);
+
 /**
  * 供应商表里「模型状态」该按什么能力测（#819）。
  *
@@ -1066,7 +1086,7 @@ const testKeyOf = (providerId: string, model: string, capability: LlmTestCapabil
 export function providerTestCapability(
   providerId: string,
   model: string,
-  routes: readonly { stage: string; provider_id: string; model: string }[],
+  routes: readonly { stage: string; provider_id: string | null; model: string }[],
 ): LlmTestCapability {
   const uses = routes.filter((r) => r.provider_id === providerId && r.model.trim() === model);
   if (uses.some((r) => r.stage === 'embedding')) return 'embedding';
@@ -1086,7 +1106,7 @@ function useModelTests(testModel: (input: LlmTestModelInput) => Promise<LlmTestR
   const run = async (inputs: LlmTestModelInput[]): Promise<boolean> => {
     const combos = new Map<string, LlmTestModelInput>();
     for (const input of inputs) {
-      const key = testKeyOf(input.provider_id, input.model, input.capability);
+      const key = testKeyOfInput(input);
       if (!combos.has(key)) combos.set(key, input);
     }
     if (combos.size === 0) return false;
@@ -1096,22 +1116,29 @@ function useModelTests(testModel: (input: LlmTestModelInput) => Promise<LlmTestR
       for (const key of combos.keys()) next[key] = { status: 'testing' };
       return next;
     });
+    const one = async ([key, input]: [string, LlmTestModelInput]) => {
+      try {
+        const r = await testModel(input);
+        setOne(
+          key,
+          r.ok
+            ? { status: 'ok', latencyMs: r.latency_ms }
+            : { status: 'error', error: r.error || tr('测试失败', 'Test failed') },
+        );
+      } catch (e) {
+        setOne(key, { status: 'error', error: e instanceof Error ? e.message : String(e) });
+      }
+    };
+    const entries = [...combos.entries()];
+    // 模型 API 并发测；智能体是真跑一个本机进程，一次一个
+    const agentEntries = entries.filter(([, input]) => 'acp_agent_id' in input);
     try {
-      await Promise.all(
-        [...combos.entries()].map(async ([key, input]) => {
-          try {
-            const r = await testModel(input);
-            setOne(
-              key,
-              r.ok
-                ? { status: 'ok', latencyMs: r.latency_ms }
-                : { status: 'error', error: r.error || tr('测试失败', 'Test failed') },
-            );
-          } catch (e) {
-            setOne(key, { status: 'error', error: e instanceof Error ? e.message : String(e) });
-          }
-        }),
-      );
+      await Promise.all([
+        ...entries.filter(([, input]) => !('acp_agent_id' in input)).map(one),
+        (async () => {
+          for (const e of agentEntries) await one(e);
+        })(),
+      ]);
     } finally {
       setTesting(false);
     }
@@ -1121,19 +1148,22 @@ function useModelTests(testModel: (input: LlmTestModelInput) => Promise<LlmTestR
   return { results, testing, run };
 }
 
-function ModelStatusBadge({ state, onTest, idleHint }: {
+function ModelStatusBadge({ state, onTest, idleHint, slow }: {
   state: TestState;
   onTest?: () => void;
   /** 不可测试（onTest 未提供）时 idle 徽标的提示文案 */
   idleHint?: string;
+  /** 智能体：测试是真跑一次，可能要一分钟 */
+  slow?: boolean;
 }) {
   const clickable = onTest !== undefined && state.status !== 'testing';
   const base: CSSProperties = clickable ? { cursor: 'pointer' } : {};
   if (state.status === 'testing') {
     return (
-      <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
+      <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}
+        title={slow ? tr('智能体要真跑一次，最长可能要一分钟', 'The agent really runs once; this can take up to a minute') : undefined}>
         <Icon name="refresh" size={11} style={{ animation: 'spin 1s linear infinite' }} />
-        {tr('测试中…', 'Testing…')}
+        {slow ? tr('测试中，最长约 1 分钟…', 'Testing, up to 1 min…') : tr('测试中…', 'Testing…')}
       </span>
     );
   }
@@ -1162,6 +1192,11 @@ function ModelStatusBadge({ state, onTest, idleHint }: {
     </span>
   );
 }
+
+/** 窄列里的长徽标：单行省略号截断（全文放 title）。 */
+const ellipsisPill: CSSProperties = {
+  display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: '19px',
+};
 
 /** 「可用模型」列收起时最多展示的 chips 数。 */
 const MODELS_COLLAPSED = 3;
@@ -1250,17 +1285,22 @@ function ProvidersSection() {
 
   return (
     <div className="card card-pad" style={{ marginBottom: 20 }}>
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
-        <span className="section-h">
-          <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('LLM 供应商', 'Providers')}{' '}
-          <span className="en-label" style={{ fontSize: 11 }}>
-            {tr(
-              '测试各 provider 的第一个可用模型，按它在路由表里的用途（对话 / 向量嵌入 / 重排序）测',
-              "tests each provider's first model as the routing table uses it (chat, embedding or rerank)",
-            )}
+      <div className="row gap12" style={{ justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14, flexWrap: 'wrap' }}>
+        <div style={{ minWidth: 0 }}>
+          <span className="section-h">
+            <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
+            {tr('可选：模型 API', 'Optional: model APIs')}
           </span>
-        </span>
+          <div
+            style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6, marginTop: 4 }}
+            title={tr('批量测试按各 API 第一个模型在路由表里的用途测', "Test all uses each API's first model as the routing table uses it")}
+          >
+            {tr(
+              '向量嵌入与重排序只能用模型 API；对话类环节有智能体就够了。',
+              'Embeddings and rerank need a model API; an agent is enough for everything else.',
+            )}
+          </div>
+        </div>
         <div className="row gap8">
           <button className="btn btn-soft sm" disabled={tests.testing || providers.length === 0}
             onClick={() => void runProviderTests(providers)}>
@@ -1269,7 +1309,7 @@ function ProvidersSection() {
           </button>
           <button className="btn btn-primary sm" onClick={() => { setDraft(emptyDraft()); setModal('create'); }}>
             <Icon name="plus" size={13} />
-            {tr('新增 Provider', 'Add provider')}
+            {tr('添加模型 API', 'Add model API')}
           </button>
         </div>
       </div>
@@ -1284,18 +1324,19 @@ function ProvidersSection() {
           </div>
         </div>
       ) : providers.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('还没有 provider，先添加一个；配置好前 AI 功能不可用', 'No providers yet — add one; AI features stay unavailable until configured')}</div>
+        <div className="empty" style={{ padding: 24 }}>{tr('还没有模型 API。对话可以交给上面的智能体；向量嵌入和重排序要在这里加一个。', 'No model APIs yet. Chat can go to an agent above; embeddings and reranking need one added here.')}</div>
       ) : (
         <div className="table-wrap">
-          <table className="table">
+          {/* 定宽列 + 最小宽度：主区窄时整表横滚，而不是把模型列压到几十像素、chips 叠在一起 */}
+          <table className="table" style={{ tableLayout: 'fixed', minWidth: 900 }}>
             <thead>
               <tr>
-                <th style={{ width: 230 }}>{tr('名称', 'Name')}</th>
-                <th style={{ width: 130 }}>api_key</th>
-                <th>{tr('可用模型', 'Models')}</th>
+                <th style={{ width: 190 }}>{tr('名称', 'Name')}</th>
+                <th style={{ width: 120 }}>api_key</th>
+                <th style={{ width: 280 }}>{tr('可用模型', 'Models')}</th>
                 <th style={{ width: 80 }}>{tr('状态', 'Status')}</th>
-                <th style={{ width: 130 }}>{tr('模型状态', 'Model status')}</th>
-                <th style={{ width: 70 }} />
+                <th style={{ width: 150 }}>{tr('模型状态', 'Model status')}</th>
+                <th style={{ width: 80 }} />
               </tr>
             </thead>
             <tbody>
@@ -1312,14 +1353,15 @@ function ProvidersSection() {
                 return (
                   <tr key={p.id}>
                     <td>
-                      <div className="row gap6" style={{ alignItems: 'center' }}>
-                        <span style={{ fontSize: 12, fontWeight: 650 }}>{p.name}</span>
+                      {/* 名称优先占满一行，协议徽标放不下就换到下一行 */}
+                      <div className="row gap6" style={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 3 }}>
+                        <span title={p.name} style={{ fontSize: 12, fontWeight: 650, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
                         <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
                           {KIND_LABELS[p.kind] ?? p.kind}
                         </span>
                       </div>
                       <div className="mono" title={p.base_url ?? undefined}
-                        style={{ fontSize: 10.5, color: 'var(--text-3)', maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        style={{ fontSize: 10.5, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {p.base_url ?? '—'}
                       </div>
                     </td>
@@ -1330,7 +1372,10 @@ function ProvidersSection() {
                       ) : (
                         <div className="row gap6" style={{ flexWrap: 'wrap' }}>
                           {shownModels.map((m) => (
-                            <span key={m} className="tag mono" style={{ fontSize: 10.5 }}>{m}</span>
+                            <span key={m} className="tag mono" title={m}
+                              style={{ fontSize: 10.5, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block', lineHeight: '19px' }}>
+                              {m}
+                            </span>
                           ))}
                           {hiddenCount > 0 && (
                             <span className="tag mono" role="button" title={models.join(', ')}
@@ -1423,8 +1468,8 @@ function ProvidersSection() {
 /** 常驻顶层的行：默认 + 两个能力型环节；其余环节收进展开区。 */
 const PRIMARY_STAGES: string[] = ['default', 'embedding', 'rerank'];
 
-/** 能力型环节：不跟随「默认」（对话模型没有嵌入/重排能力），未设置即为「未设置」。 */
-const CAPABILITY_STAGES = new Set(['embedding', 'rerank']);
+// 能力型环节（CAPABILITY_STAGES，见 llmRoutingModel）：不跟随「默认」（对话模型没有
+// 嵌入/重排能力），也不能交给智能体，未设置即为「未设置」。
 
 /**
  * 只能由管理员统一设置的环节。向量嵌入在此：论文向量是全平台共享的一份数据，
@@ -1437,18 +1482,6 @@ function capabilityOf(stage: string): LlmTestCapability {
   if (stage === 'embedding') return 'embedding';
   if (stage === 'rerank') return 'rerank';
   return 'chat';
-}
-
-interface RouteDraft {
-  provider_id: string;
-  model: string;
-  temperature: string;
-  /** '' = 不发送该参数，用模型默认档位 */
-  effort: string;
-  /** 模型的上下文窗口（token）；'' = 没填 */
-  context_window: string;
-  /** 输入预算覆盖（键 → 输入框里的字符串）；缺键或 '' = 用默认值（#811） */
-  budgets: Record<string, string>;
 }
 
 // ---- 模型组合框：自由输入 + 候选下拉（面板视觉复用 components/ui/SelectMenu） ----
@@ -1546,6 +1579,9 @@ function RoutesSection() {
   const providersQuery = useQuery({ queryKey: ['llm', 'providers'], queryFn: () => api.listLlmProviders(), retry: false });
   const routesQuery = useQuery({ queryKey: ['llm', 'routes'], queryFn: () => api.getLlmRoutes(), retry: false });
   const providers = providersQuery.data ?? [];
+  // 智能体也能当路由目标（#840）；非主人取不到时就只列模型 API
+  const agentsQuery = useQuery({ queryKey: AGENTS_KEY, queryFn: () => api.listAcpAgents(), retry: false });
+  const agents = agentsQuery.data ?? [];
   // 可调输入预算的登记表来自后端；老后端没有这个接口时为空，界面就不画预算输入框
   const budgetSpecsQuery = useQuery({
     queryKey: ['llm', 'input-budgets'],
@@ -1565,7 +1601,8 @@ function RoutesSection() {
     const next: Record<string, RouteDraft> = {};
     for (const r of routesQuery.data) {
       next[r.stage] = {
-        provider_id: r.provider_id,
+        provider_id: r.provider_id ?? '',
+        acp_agent_id: r.acp_agent_id ?? '',
         model: r.model,
         temperature: r.temperature === null || r.temperature === undefined ? '' : String(r.temperature),
         effort: r.effort ?? '',
@@ -1584,20 +1621,13 @@ function RoutesSection() {
       // PUT 是整表覆盖：插件环节的行也要一并提交，否则每次保存都会把它们静默删光
       for (const stage of [...LLM_STAGES, ...pluginStages]) {
         const r = rows[stage];
-        if (!r || !r.provider_id || !r.model.trim()) continue;
-        const t = r.temperature.trim();
+        if (!r) continue;
         // 窗口与预算也得每次都带上：PUT 是整表覆盖，漏了就等于把它们清空
-        const window = parsePositiveInt(r.context_window);
-        const budgets = budgetsPayload(r.budgets, budgetSpecs[stage] ?? []);
-        routes.push({
-          stage,
-          provider_id: r.provider_id,
-          model: r.model.trim(),
-          ...(t !== '' && Number.isFinite(Number(t)) ? { temperature: Number(t) } : {}),
-          ...(r.effort ? { effort: r.effort as LlmEffort } : {}),
-          ...(window !== null ? { context_window: window } : {}),
-          ...(budgets ? { input_budgets: budgets } : {}),
+        const route = buildRoute(stage, r, {
+          contextWindow: parsePositiveInt(r.context_window),
+          budgets: budgetsPayload(r.budgets, budgetSpecs[stage] ?? []),
         });
+        if (route) routes.push(route);
       }
       return api.putLlmRoutes(routes);
     },
@@ -1622,6 +1652,7 @@ function RoutesSection() {
   const defaultRow = rows['default'];
   const emptyDraftRow: RouteDraft = {
     provider_id: '',
+    acp_agent_id: '',
     model: '',
     temperature: '',
     effort: '',
@@ -1655,8 +1686,21 @@ function RoutesSection() {
   const effectiveOf = (stage: string): RouteDraft | null => {
     const r = rows[stage]
       ?? (stage !== 'default' && !CAPABILITY_STAGES.has(stage) ? defaultRow : undefined);
-    if (r && r.provider_id && r.model.trim()) return r;
+    if (r && draftComplete(r) && !(r.acp_agent_id && !agentAllowedFor(stage))) return r;
     return null;
+  };
+
+  // 草稿里没有完整的「默认」时，保存后对话类环节由第一个启用的智能体接管
+  const takeover = takeoverAgent(!!defaultRow && draftComplete(defaultRow), agents);
+  /** 一行目标的显示名：智能体名或模型 API 名 + 模型。 */
+  const targetLabel = (d: RouteDraft): string => {
+    if (d.acp_agent_id) {
+      const a = agents.find((x) => x.id === d.acp_agent_id);
+      const name = a ? agentName(a) : '?';
+      return d.model.trim() ? `${name} · ${d.model.trim()}` : name;
+    }
+    const p = providers.find((x) => x.id === d.provider_id);
+    return `${p?.name ?? '?'} · ${d.model.trim()}`;
   };
 
   /** 测试一组 stage；去重与结果共享由 useModelTests 处理。 */
@@ -1664,11 +1708,17 @@ function RoutesSection() {
     const inputs: LlmTestModelInput[] = [];
     for (const stage of stages) {
       const eff = effectiveOf(stage);
-      if (!eff) continue;
-      inputs.push({ provider_id: eff.provider_id, model: eff.model.trim(), capability: capabilityOf(stage) });
+      if (eff?.acp_agent_id) {
+        inputs.push({ acp_agent_id: eff.acp_agent_id, model: eff.model.trim() });
+      } else if (eff) {
+        inputs.push({ provider_id: eff.provider_id, model: eff.model.trim(), capability: capabilityOf(stage) });
+      } else if (takeover && agentAllowedFor(stage)) {
+        // 跟随默认、默认又空着：实际回答的是接管的智能体，就测它
+        inputs.push({ acp_agent_id: takeover.id, model: '' });
+      }
     }
     if (!(await tests.run(inputs))) {
-      toast(tr('没有可测试的行，先配置 provider 和模型', 'Nothing to test — set a provider and model first'), 'error');
+      toast(tr('没有可测试的行，先选一个智能体或模型 API', 'Nothing to test — pick an agent or a model API first'), 'error');
     }
   };
 
@@ -1682,14 +1732,19 @@ function RoutesSection() {
 
   return (
     <div className="card card-pad">
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
-        <span className="section-h">
-          <Icon name="git" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('模型路由表', 'Model routing')}{' '}
-          <span className="en-label" style={{ fontSize: 11 }}>
-            {tr('未单独设置的环节自动跟随默认；向量嵌入/重排序需单独配置', 'stages without their own row follow "Default"; embeddings/reranking need their own config')}
+      <div className="row gap12" style={{ justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14, flexWrap: 'wrap' }}>
+        <div style={{ minWidth: 0 }}>
+          <span className="section-h">
+            <Icon name="git" size={15} style={{ color: 'var(--accent)' }} />
+            {tr('模型路由表', 'Model routing')}
           </span>
-        </span>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6, marginTop: 4 }}>
+            {tr(
+              '没单独设置的环节跟随「默认」；向量嵌入与重排序要单独配一个模型 API。',
+              'Stages without their own row follow Default; embeddings and rerank need a model API of their own.',
+            )}
+          </div>
+        </div>
         <div className="row gap8">
           <button className="btn btn-soft sm" disabled={tests.testing} onClick={() => void runTests(visibleStages)}>
             <Icon name="play" size={12} />
@@ -1707,12 +1762,13 @@ function RoutesSection() {
         </div>
       )}
       <div className="table-wrap">
-        <table className="table">
+        {/* 定宽列 + 最小宽度：主区窄时整表横滚；model 列至少 ~200px 才看得清 */}
+        <table className="table" style={{ tableLayout: 'fixed', minWidth: 1010 }}>
           <thead>
             <tr>
-              <th style={{ width: 150 }}>{tr('环节', 'Stage')}</th>
-              <th style={{ width: 170 }}>provider</th>
-              <th>model</th>
+              <th style={{ width: 190 }}>{tr('环节', 'Stage')}</th>
+              <th style={{ width: 170 }}>{tr('由谁回答', 'Answered by')}</th>
+              <th style={{ width: 210 }}>model</th>
               <th style={{ width: 90 }}>temperature</th>
               <th
                 style={{ width: 110 }}
@@ -1724,15 +1780,15 @@ function RoutesSection() {
                 effort
               </th>
               <th
-                style={{ width: 100 }}
+                style={{ width: 100, whiteSpace: 'nowrap' }}
                 title={tr(
                   '模型的上下文窗口，单位 token，如 128000。留空表示不知道；填了之后，各环节的输入预算不会超过窗口能收下的量，对话历史的裁剪也按它来。',
                   'The model\'s context window in tokens, e.g. 128000. Leave empty if unknown; when set, no stage\'s input budget exceeds what the window can take, and chat history is trimmed to fit it.',
                 )}
               >
-                {tr('上下文窗口', 'Context window')}
+                {tr('上下文窗口', 'Context')}
               </th>
-              <th style={{ width: 130 }}>{tr('模型状态', 'Model status')}</th>
+              <th style={{ width: 140 }}>{tr('模型状态', 'Model status')}</th>
             </tr>
           </thead>
           <tbody>
@@ -1746,10 +1802,22 @@ function RoutesSection() {
               const plugin = isPluginStage(stage);
               const label = stageLabel(stage);
               const eff = effectiveOf(stage);
-              const state: TestState = eff
-                ? tests.results[testKeyOf(eff.provider_id, eff.model.trim(), capabilityOf(stage))] ?? { status: 'idle' }
-                : { status: 'idle' };
-              const providerModels = providers.find((p) => p.id === shown.provider_id)?.models ?? [];
+              // 跟随默认、默认空着：由接管的智能体回答
+              const viaTakeover = !eff && takeover && agentAllowedFor(stage) && (stage === 'default' || follows)
+                ? takeover
+                : null;
+              const testKey = eff
+                ? eff.acp_agent_id
+                  ? agentTestKeyOf(eff.acp_agent_id, eff.model.trim())
+                  : testKeyOf(eff.provider_id, eff.model.trim(), capabilityOf(stage))
+                : viaTakeover
+                  ? agentTestKeyOf(viaTakeover.id, '')
+                  : null;
+              const state: TestState = (testKey && tests.results[testKey]) || { status: 'idle' };
+              const isAgent = !!shown.acp_agent_id;
+              const agentOk = agentAllowedFor(stage);
+              const providerModels = isAgent ? [] : providers.find((p) => p.id === shown.provider_id)?.models ?? [];
+              const agentHint = tr('智能体不用这项设置', 'Agents ignore this setting');
               const stageBudgets = budgetSpecs[stage] ?? [];
               // 预算只认这个环节自己的行；窗口看实际会被调用的那一行（跟随默认时是 default 的）
               const ownBudgets = rows[stage]?.budgets ?? {};
@@ -1758,8 +1826,9 @@ function RoutesSection() {
                 <Fragment key={stage}>
                 <tr>
                   <td>
-                    <div className="row gap6" style={{ alignItems: 'center' }}>
-                      <span style={{ fontSize: 12, fontWeight: 650, ...(plugin ? { fontFamily: 'var(--mono, monospace)' } : {}) }}>{tr(label.zh, label.en)}</span>
+                    {/* 标签不折行；徽标放不下就整块换到下一行，长徽标省略号截断 */}
+                    <div className="row gap6" style={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 4, minWidth: 0 }}>
+                      <span style={{ fontSize: 12, fontWeight: 650, whiteSpace: 'nowrap', ...(plugin ? { fontFamily: 'var(--mono, monospace)', whiteSpace: 'normal', overflowWrap: 'anywhere' } : {}) }}>{tr(label.zh, label.en)}</span>
                       {plugin && (
                         <span
                           className="pill sm"
@@ -1769,9 +1838,25 @@ function RoutesSection() {
                           {tr('插件', 'Plugin')}
                         </span>
                       )}
-                      {follows && (
-                        <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-                          {tr('跟随默认', 'Follows default')}
+                      {follows && (() => {
+                        const text = defaultRow && draftComplete(defaultRow)
+                          ? tr(`跟随默认 → ${targetLabel(defaultRow)}`, `Follows default → ${targetLabel(defaultRow)}`)
+                          : takeover
+                            ? tr(`跟随默认 → ${agentName(takeover)}（接管）`, `Follows default → ${agentName(takeover)} (answering all)`)
+                            : tr('跟随默认', 'Follows default');
+                        return (
+                          <span className="pill sm" title={text} style={{ ...ellipsisPill, background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                            {text}
+                          </span>
+                        );
+                      })()}
+                      {stage === 'default' && viaTakeover && (
+                        <span
+                          className="pill sm"
+                          style={{ ...ellipsisPill, background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
+                          title={tr('没有设置默认模型，第一个启用的智能体回答所有对话类环节', 'No default is set, so the first enabled agent answers every chat stage')}
+                        >
+                          {tr(`未设置 → ${agentName(viaTakeover)} 接管`, `Not set → ${agentName(viaTakeover)} answers`)}
                         </span>
                       )}
                       {unset && (
@@ -1807,12 +1892,21 @@ function RoutesSection() {
                     <SelectMenu
                       style={{ height: 32 }}
                       muted={follows}
-                      value={shown.provider_id}
+                      value={targetValueOf(shown)}
                       options={[
                         { value: '', label: tr('（未配置）', '(not set)') },
+                        // 智能体在前：推荐用法；向量嵌入/重排序这类能力型环节不列
+                        ...(agentOk
+                          ? agents
+                              .filter((a) => a.enabled || a.id === shown.acp_agent_id)
+                              .map((a) => ({
+                                value: targetValueOf({ provider_id: '', acp_agent_id: a.id }),
+                                label: `${tr('智能体', 'Agent')} · ${agentName(a)}`,
+                              }))
+                          : []),
                         ...providers.map((p) => ({ value: p.id, label: p.name })),
                       ]}
-                      onChange={(v) => setRow(stage, { provider_id: v, model: '' })}
+                      onChange={(v) => setRow(stage, { ...parseTargetValue(v), model: '' })}
                     />
                   </td>
                   <td>
@@ -1820,28 +1914,31 @@ function RoutesSection() {
                       value={shown.model}
                       options={providerModels}
                       muted={follows}
-                      placeholder={unset
-                        ? tr('未配置，相关功能将降级', 'Not set — related features degrade')
-                        : tr('如 deepseek-chat', 'e.g. deepseek-chat')}
+                      placeholder={isAgent
+                        ? tr('agent 默认', 'agent default')
+                        : unset
+                          ? tr('未配置，相关功能将降级', 'Not set — related features degrade')
+                          : tr('如 deepseek-chat', 'e.g. deepseek-chat')}
                       onChange={(v) => setRow(stage, { model: v })}
                     />
                   </td>
-                  <td>
+                  <td title={isAgent ? agentHint : undefined}>
                     <input
                       className="input mono"
                       style={{ height: 32, width: '100%', fontSize: 12, ...(follows ? { color: 'var(--text-3)' } : {}) }}
-                      value={shown.temperature}
-                      placeholder={tr('默认', 'default')}
+                      value={isAgent ? '' : shown.temperature}
+                      disabled={isAgent}
+                      placeholder={isAgent ? '—' : tr('默认', 'default')}
                       inputMode="decimal"
                       onChange={(e) => setRow(stage, { temperature: e.target.value })}
                     />
                   </td>
-                  <td>
+                  <td title={isAgent ? agentHint : undefined}>
                     <SelectMenu
                       style={{ height: 32 }}
                       muted={follows}
-                      disabled={capability}
-                      value={capability ? '' : shown.effort}
+                      disabled={capability || isAgent}
+                      value={capability || isAgent ? '' : shown.effort}
                       options={[
                         { value: '', label: tr('模型默认', 'Model default') },
                         ...LLM_EFFORT_LEVELS.map((e) => ({ value: e, label: e })),
@@ -1863,7 +1960,8 @@ function RoutesSection() {
                   <td>
                     <ModelStatusBadge
                       state={state}
-                      onTest={eff ? () => void runTests([stage]) : undefined}
+                      slow={!!eff?.acp_agent_id || !!viaTakeover}
+                      onTest={eff || viaTakeover ? () => void runTests([stage]) : undefined}
                       idleHint={unset ? tr('未配置，批量测试将跳过该环节', 'Not set; batch tests skip this stage') : undefined}
                     />
                   </td>
@@ -2319,9 +2417,48 @@ function EmbeddingSpaceSection() {
   );
 }
 
-export function LlmTab() {
+/** 页首一句话：此刻谁在回答模型调用（默认路由 → 接管的智能体 → 没有）。 */
+function AnswerStatusHeader() {
+  const routesQuery = useQuery({ queryKey: ['llm', 'routes'], queryFn: () => api.getLlmRoutes(), retry: false });
+  const providersQuery = useQuery({ queryKey: ['llm', 'providers'], queryFn: () => api.listLlmProviders(), retry: false });
+  const agentsQuery = useQuery({ queryKey: AGENTS_KEY, queryFn: () => api.listAcpAgents(), retry: false });
+  // 三样都到了才下结论，免得先闪一句「没有可用的模型」
+  if (!routesQuery.data || !providersQuery.data || (!agentsQuery.data && !agentsQuery.isError)) return null;
+  const line = answerStatus(routesQuery.data, agentsQuery.data ?? [], providersQuery.data);
+  const warn = line.tone === 'warn';
+  return (
+    <div
+      className="card card-pad row gap8"
+      role="status"
+      style={{
+        marginBottom: 16,
+        alignItems: 'flex-start',
+        fontSize: 13,
+        lineHeight: 1.6,
+        ...(warn ? { background: 'var(--warn-bg)', color: 'var(--warn-tx)' } : {}),
+      }}
+    >
+      <Icon name={warn ? 'bell' : 'check'} size={15} style={{ marginTop: 3, flexShrink: 0, color: warn ? undefined : 'var(--ok-tx)' }} />
+      <span>{tr(line.zh, line.en)}</span>
+    </div>
+  );
+}
+
+/**
+ * 模型与智能体（#840）：智能体是首选——有一个就能对话；模型 API 变成可选，
+ * 只有向量嵌入、重排序非它不可。focus='agents' 来自旧深链 ?tab=agents。
+ */
+export function LlmTab({ focus }: { focus?: 'agents' | null }) {
+  const agentsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focus === 'agents') agentsRef.current?.scrollIntoView({ block: 'start' });
+  }, [focus]);
   return (
     <>
+      <AnswerStatusHeader />
+      <div ref={agentsRef} id="agents" style={{ marginBottom: 20, scrollMarginTop: 12 }}>
+        <AcpAgentsSettings />
+      </div>
       <ProvidersSection />
       <RoutesSection />
       <EmbeddingSpaceSection />
@@ -2541,9 +2678,8 @@ type Tab =
   | 'extension' | 'mcp' | 'export' | 'plugins' | 'about'
   // 原 /admin 的六项（#755）：平台只剩一个使用者，另开一个「管理」入口只是
   // 实验室时代的残留——同一个人要在两个页面之间找同一类配置
-  | 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | 'usage'
-  // 外部智能体后端（#836）
-  | 'agents';
+  // 'llm' 即「模型与智能体」：原「智能体后端」（#836）并进来了（#840），旧 ?tab=agents 落到这里
+  | 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | 'usage';
 
 /** 给最近 7 天缺向量的每日论文补建向量（新论文同步时已自动建，这里只补历史）。 */
 function DailyEmbedSection() {
@@ -2848,16 +2984,22 @@ export function DailyCategoriesTab() {
  */
 export const ALL_TABS: Tab[] = [
   'personal', 'prefs', 'buddy', 'speech', 'bots', 'ssh', 'myusage', 'extension', 'mcp', 'export', 'plugins',
-  'llm', 'literature', 'processing', 'experiment', 'daily', 'usage', 'agents', 'about',
+  'llm', 'literature', 'processing', 'experiment', 'daily', 'usage', 'about',
 ];
+
+/** 深链 ?tab= → 初始标签页；认不出的落「个人信息」，旧的 agents 落「模型与智能体」。 */
+export function initialTabOf(param: string | null): Tab {
+  const { tab } = resolveTabParam(param);
+  return tab !== null && ALL_TABS.includes(tab as Tab) ? (tab as Tab) : 'personal';
+}
 
 export function SettingsPage() {
   // 支持 /settings?tab=mcp 这类深链（如旧 /mcp-tools 路由的重定向）
   const [searchParams, setSearchParams] = useSearchParams();
   const param = searchParams.get('tab');
-  const [tab, setTabState] = useState<Tab>(() =>
-    param !== null && ALL_TABS.includes(param as Tab) ? (param as Tab) : 'personal',
-  );
+  const [tab, setTabState] = useState<Tab>(() => initialTabOf(param));
+  // 只在落地那一次定位到智能体区；切走再切回来不再跳
+  const [focusAgents] = useState(() => resolveTabParam(param).focus === 'agents');
   // 切换时同步到地址栏（replace，不堆历史）：刷新、复制链接都停在同一节
   const setTab = (next: Tab) => {
     setTabState(next);
@@ -2915,13 +3057,12 @@ export function SettingsPage() {
   ];
   // 原「管理」页的六项，并入同一个入口；「关于」也放这组
   const workspaceItems: { v: Tab; label: string }[] = [
-    { v: 'llm', label: tr('模型与路由', 'Models & routing') },
+    { v: 'llm', label: tr('模型与智能体', 'Models & agents') },
     { v: 'literature', label: tr('文献检索', 'Literature search') },
     { v: 'processing', label: tr('文档处理', 'Document processing') },
     { v: 'experiment', label: tr('实验设置', 'Experiments') },
     { v: 'daily', label: tr('每日论文', 'Daily papers') },
     { v: 'usage', label: tr('用量总览', 'Usage overview') },
-    { v: 'agents', label: tr('智能体后端', 'Agent backends') },
     ...(desktop ? [{ v: 'about' as Tab, label: tr('关于', 'About') }] : []),
   ];
 
@@ -2952,13 +3093,12 @@ export function SettingsPage() {
       {effectiveTab === 'export' && <FullExportSettings />}
       {effectiveTab === 'plugins' && <PluginsSettings />}
       {effectiveTab === 'about' && <AboutSettings />}
-      {effectiveTab === 'llm' && <LlmTab />}
+      {effectiveTab === 'llm' && <LlmTab focus={focusAgents ? 'agents' : null} />}
       {effectiveTab === 'literature' && <LiteratureSearchSettingsPanel />}
       {effectiveTab === 'processing' && <DocumentProcessingSettingsPanel />}
       {effectiveTab === 'experiment' && <ExperimentSettings />}
       {effectiveTab === 'daily' && <DailyCategoriesTab />}
       {effectiveTab === 'usage' && <UsageTab />}
-      {effectiveTab === 'agents' && <AcpAgentsSettings />}
       </SettingsLayout>
     </div>
   );
