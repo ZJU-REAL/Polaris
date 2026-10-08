@@ -3462,6 +3462,85 @@ export interface DownloadClientIdentity {
   email: string;
 }
 
+// —— 外部 agent 后端（ACP，#836）——
+
+export type AcpPermissionPolicy = 'deny' | 'read_only' | 'auto';
+
+/** 内置模板 + 这台机器上装没装（只查 PATH）。 */
+export interface AcpAgentTemplate {
+  id: string;
+  name: string;
+  description: string;
+  command: string;
+  args: string[];
+  detect: string[];
+  install: string;
+  login: string;
+  homepage: string;
+  installed: boolean;
+  found: Record<string, string | null>;
+}
+
+/** 上一次握手探到的 agent 信息。 */
+export interface AcpProbeInfo {
+  protocol_version: number | null;
+  name: string;
+  title: string;
+  version: string;
+  load_session: boolean;
+  mcp_http: boolean;
+  mcp_sse: boolean;
+  prompt_image: boolean;
+  auth_methods: unknown[];
+}
+
+export interface AcpAgentRead {
+  id: string;
+  slug: string;
+  name: string;
+  template: string;
+  command: string;
+  args: string[] | null;
+  permission_policy: AcpPermissionPolicy;
+  enabled: boolean;
+  shared: boolean;
+  last_probe: AcpProbeInfo | null;
+  last_error: string | null;
+  last_probed_at: string | null;
+  /** 只回变量名，值永远读不回来 */
+  env_keys: string[];
+  command_found: boolean;
+}
+
+export interface AcpAgentCreate {
+  slug: string;
+  name?: string;
+  /** 'custom' 或一个模板 id */
+  template: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  permission_policy?: AcpPermissionPolicy;
+  enabled?: boolean;
+  shared?: boolean;
+}
+
+export interface AcpAgentUpdate {
+  name?: string;
+  command?: string;
+  args?: string[];
+  /** 不传 = 不动；{} = 清空；只能整体替换 */
+  env?: Record<string, string>;
+  permission_policy?: AcpPermissionPolicy;
+  enabled?: boolean;
+  shared?: boolean;
+}
+
+/** 助手能用的「谁来答」：Polaris 自己，或一个外部 agent。 */
+export type ChatBackend =
+  | { id: 'polaris'; name: string; kind: 'polaris' }
+  | { id: string; name: string; kind: 'acp'; template?: string; permission_policy?: AcpPermissionPolicy };
+
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
   async login(email: string, password: string): Promise<string> {
@@ -5634,5 +5713,28 @@ export const api = {
     return requestJson<{ items: ResolvedPaperBatchItem[] }>('/papers/resolve-batch', 'POST', {
       arxiv_ids: arxivIds,
     });
+  },
+  // —— 外部 agent 后端（ACP，#836；除 /chat/backends 外仅主人可用）——
+  listAcpTemplates(): Promise<AcpAgentTemplate[]> {
+    return request<AcpAgentTemplate[]>('/acp-agents/templates');
+  },
+  listAcpAgents(): Promise<AcpAgentRead[]> {
+    return request<AcpAgentRead[]>('/acp-agents');
+  },
+  createAcpAgent(input: AcpAgentCreate): Promise<AcpAgentRead> {
+    return requestJson<AcpAgentRead>('/acp-agents', 'POST', input);
+  },
+  updateAcpAgent(id: string, input: AcpAgentUpdate): Promise<AcpAgentRead> {
+    return requestJson<AcpAgentRead>(`/acp-agents/${id}`, 'PATCH', input);
+  },
+  /** 真拉起一次做握手；失败写在返回行的 last_error 里，不抛。 */
+  probeAcpAgent(id: string): Promise<AcpAgentRead> {
+    return request<AcpAgentRead>(`/acp-agents/${id}/probe`, { method: 'POST' });
+  },
+  deleteAcpAgent(id: string): Promise<void> {
+    return request<void>(`/acp-agents/${id}`, { method: 'DELETE' });
+  },
+  listChatBackends(): Promise<ChatBackend[]> {
+    return request<ChatBackend[]>('/chat/backends');
   },
 };

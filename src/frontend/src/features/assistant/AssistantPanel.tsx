@@ -23,6 +23,8 @@ import { ToolImages } from './ToolImages';
 import { pageContextFrom } from './buddyContext';
 import { useProject } from '../../app/project';
 import { TurnStatus } from './TurnStatus';
+import { agentToolIcon, agentToolKind, agentToolLabel, toolDisplayName } from './agentTools';
+import { POLARIS_BACKEND, readBackendChoice, resolveBackend, writeBackendChoice } from './backendChoice';
 
 /* ============================================================
    PolarisBuddy：全局抽屉。⌘J 开关，或点右下角的悬浮球。
@@ -76,6 +78,11 @@ export function restoreBlocks(
         // 结果还没读到之前先当成功：历史里的调用都已经结束了，画成 running 会骗人
         state: 'ok',
       };
+      // 外部 agent 的工具：标题存在参数里（#836）
+      const input = b.input && typeof b.input === 'object' ? (b.input as Record<string, unknown>) : {};
+      if (card.name.startsWith('agent_') && typeof input.title === 'string' && input.title) {
+        card.title = input.title;
+      }
       cardById.set(card.id, card);
       out.push(card);
     } else if (b.kind === 'tool_result') {
@@ -137,6 +144,13 @@ function errorText(detail: string): string {
   if (detail === 'LLM_NOT_CONFIGURED') {
     return tr('还没配可用的模型，去设置里配一个。', 'No usable model is configured yet — set one up in settings.');
   }
+  // 传输层报错带着前缀（"Error: ACP_AGENT_NOT_AVAILABLE"），按包含判断
+  if (detail.includes('ACP_AGENT_NOT_AVAILABLE')) {
+    return tr(
+      '这场对话选的智能体已经不能用了（被删掉、停用或不再共享）。换一个再问。',
+      'The agent picked for this conversation is no longer available (removed, turned off or no longer shared). Pick another one and ask again.',
+    );
+  }
   return detail;
 }
 
@@ -144,6 +158,8 @@ function ToolCard({ block }: { block: Extract<AssistantBlock, { kind: 'tool' }> 
   const [open, setOpen] = useState(false);
   const color =
     block.state === 'error' ? 'var(--danger)' : block.state === 'ok' ? 'var(--ok-tx)' : 'var(--text-4)';
+  // 外部 agent 的工具：显示「类别 · 标题」，不显示 agent_read 这种内部名
+  const agentKind = agentToolKind(block.name);
   return (
     <div
       style={{
@@ -168,10 +184,28 @@ function ToolCard({ block }: { block: Extract<AssistantBlock, { kind: 'tool' }> 
             animation: block.state === 'running' ? 'spin 1s linear infinite' : undefined,
           }}
         />
-        <span className="mono" style={{ color: 'var(--text-2)' }}>{block.name}</span>
-        <span style={{ color: 'var(--text-3)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {block.summary ?? tr('调用中…', 'running…')}
-        </span>
+        {agentKind ? (
+          <>
+            <span className="row gap4" style={{ color: 'var(--text-2)', alignItems: 'center', flexShrink: 0 }}>
+              <Icon name={agentToolIcon(agentKind)} size={12} />
+              {agentToolLabel(agentKind)}
+            </span>
+            <span
+              className="mono"
+              title={toolDisplayName(block)}
+              style={{ color: 'var(--text-3)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {block.state === 'running' && !block.title ? tr('调用中…', 'running…') : toolDisplayName(block)}
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="mono" style={{ color: 'var(--text-2)' }}>{block.name}</span>
+            <span style={{ color: 'var(--text-3)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {block.summary ?? tr('调用中…', 'running…')}
+            </span>
+          </>
+        )}
         {block.durationMs !== undefined && (
           <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
             {block.durationMs}ms
@@ -554,6 +588,30 @@ export function AssistantPanel({
   >(null);
   const [model, setModel] = useState<string>('');
   const [title, setTitle] = useState<string>('');
+  // 谁来答（#836）：Polaris 自己，或用户登记的外部 agent。只有 Polaris 时整个选择器不出现。
+  const { data: backends } = useQuery({
+    queryKey: ['chat-backends'],
+    queryFn: () => api.listChatBackends(),
+    enabled: open,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const [backendChoice, setBackendChoice] = useState<string>(() => readBackendChoice(convId));
+  const [backendOpen, setBackendOpen] = useState(false);
+  useEffect(() => {
+    setBackendChoice(readBackendChoice(convId));
+  }, [convId]);
+  // 列表还没回来时不替用户做决定：不带 backend，后端沿用会话上存着的
+  const backend = backends ? resolveBackend(backendChoice, backends) : undefined;
+  const backendItem = backends?.find((b) => b.id === backend);
+  const showBackendPicker = !!backends && backends.length > 1;
+  const pickBackend = useCallback(
+    (id: string) => {
+      setBackendChoice(id);
+      writeBackendChoice(convId, id);
+    },
+    [convId],
+  );
   // 页面上下文照常发给模型，但不在输入框上占一行——它是背景信息，不是待办事项。
   const contextOn = true;
   //: 会话 id → 掐掉它那条 SSE 的函数。停止只停这一条，不动别人。
@@ -739,6 +797,8 @@ export function AssistantPanel({
     try {
       if (!id) {
         id = (await api.createAssistantConversation({})).id;
+        // 新会话：把这次选的后端记到它名下，切走再回来还是同一个
+        if (backend) writeBackendChoice(id, backend);
         setConvId(id);
         // 占位换成真 id：否则这场跑起来了，列表里那条却不亮
         setRunning((prev) => {
@@ -784,6 +844,7 @@ export function AssistantPanel({
         // 第一句话立为目标，之后每轮都带同一个——不然第二轮会把新问题当成新目标，
         // 「一直朝一个目标推进」就变成了「每轮换一个目标」。
         goal: mode === 'goal' ? activeGoal : undefined,
+        backend,
         onMeta: (meta) => setModel(meta.model),
         onBlocks: patch,
         onDone: () => {
@@ -807,7 +868,7 @@ export function AssistantPanel({
     );
     abortById.current.set(turnId, abort);
     },
-    [busy, convId, contextOn, pageContext, topicId, mode, goal],
+    [busy, convId, contextOn, pageContext, topicId, mode, goal, backend],
   );
 
   const send = useCallback(() => {
@@ -1221,10 +1282,61 @@ export function AssistantPanel({
           )}
 
           <span style={{ flex: 1 }} />
-          {model && (
+          {model && model !== backendItem?.name && (
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }} title={model}>
               {model}
             </span>
+          )}
+
+          {/* 谁来答：只有登记了外部 agent 才出现（#836） */}
+          {showBackendPicker && (
+            <button
+              className="buddy-scope"
+              onClick={() => setBackendOpen((o) => !o)}
+              aria-haspopup="listbox"
+              aria-expanded={backendOpen}
+              title={tr('这场对话由谁来回答', 'Who answers in this conversation')}
+              data-picked={backend && backend !== POLARIS_BACKEND ? '1' : undefined}
+            >
+              <Icon name="cpu" size={12} />
+              <span className="buddy-scope-label">{backendItem?.name ?? 'Polaris'}</span>
+              <Icon name="chevDown" size={11} />
+            </button>
+          )}
+
+          {backendOpen && showBackendPicker && (
+            <>
+              <div onClick={() => setBackendOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 49 }} />
+              <div className="buddy-scope-menu" role="listbox" style={{ left: 'auto', right: 6 }}>
+                <div className="buddy-scope-list">
+                  {backends.map((b) => (
+                    <button
+                      key={b.id}
+                      className="buddy-scope-item"
+                      role="option"
+                      aria-selected={b.id === backend}
+                      title={b.name}
+                      onClick={() => {
+                        pickBackend(b.id);
+                        setBackendOpen(false);
+                      }}
+                    >
+                      <Icon name={b.kind === 'polaris' ? 'sparkle' : 'cpu'} size={13} />
+                      <span className="buddy-scope-item-label">
+                        {b.kind === 'polaris' ? tr('Polaris（默认）', 'Polaris (default)') : b.name}
+                      </span>
+                      {b.id === backend && <Icon name="check" size={12} />}
+                    </button>
+                  ))}
+                </div>
+                <div className="buddy-scope-empty" style={{ lineHeight: 1.5 }}>
+                  {tr(
+                    '外部智能体在这台机器上用你自己的账号运行；在「设置 → 智能体后端」里管理。',
+                    'Outside agents run on this machine with your own sign-in. Manage them in Settings → Agent backends.',
+                  )}
+                </div>
+              </div>
+            </>
           )}
 
           {topicOpen && (

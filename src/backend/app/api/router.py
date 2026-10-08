@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api import (
+    acp_agents,
     admin_llm,
     admin_settings,
     auth,
@@ -94,6 +95,7 @@ api_router.include_router(manuscripts.router)
 api_router.include_router(export.router)
 api_router.include_router(plugins.router)
 api_router.include_router(mcp_servers.router)
+api_router.include_router(acp_agents.router)
 api_router.include_router(experiment_backends.router)
 api_router.include_router(disciplines.router)
 api_router.include_router(literature_sources.router)
