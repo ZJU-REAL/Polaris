@@ -162,6 +162,16 @@ async def test_model(
     scope: uuid.UUID | None = Depends(config_scope),
 ) -> TestModelResult:
     """最小化探测 provider+model 连通性（不经过路由表，不记账、不写调用日志）。"""
+    if data.acp_agent_id is not None:
+        # 外部 agent（#840）：真拉起来答一句。与路由同一条可见性规则
+        from app.models.acp_agent import AcpAgent
+
+        agent = await session.get(AcpAgent, data.acp_agent_id)
+        if agent is None or (scope is not None and not agent.shared):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ACP_AGENT_NOT_FOUND")
+        ok, latency_ms, error = await llm_admin_service.test_agent(agent, data.model)
+        return TestModelResult(ok=ok, latency_ms=latency_ms, error=error)
+    assert data.provider_id is not None
     provider = await _get_provider_or_404(session, data.provider_id, scope)
     ok, latency_ms, error = await llm_admin_service.test_model(
         provider, data.model, data.capability

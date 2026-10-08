@@ -211,10 +211,15 @@ class AcpConnection:
                     continue
                 if isinstance(message, dict):
                     self._dispatch(message)
-        finally:
-            with contextlib.suppress(Exception):
-                await self._proc.wait()
-            self._fail_pending(AcpError("not-running", self._exit_reason()))
+        except asyncio.CancelledError:
+            # 被取消（关连接、事件循环收尾）时不能再等进程退出：进程可能还活着，
+            # 在 finally 里 await 它会让取消永远完不成——事件循环关闭时就卡死在这里
+            self._fail_pending(AcpError("closed", "connection closed"))
+            raise
+        # stdout 关了 = 进程在退出；等它真退出好拿到退出码，但别无限等
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(self._proc.wait(), timeout=5.0)
+        self._fail_pending(AcpError("not-running", self._exit_reason()))
 
     async def _read_stderr(self) -> None:
         assert self._proc is not None and self._proc.stderr is not None

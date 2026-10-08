@@ -220,6 +220,8 @@ class AcpClient:
         self.spec = spec
         self.root = root
         self.info = AgentInfo()
+        #: 最近一次 session/new 的回应（里面可能有 models / modes 等可选能力）
+        self.last_session: dict[str, Any] = {}
         self._sinks: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         #: ask 策略下等用户回答的请求：request_id → (会话号, future, 允许的选项 id)
         self._asks: dict[str, tuple[str, asyncio.Future[dict[str, Any]], set[str]]] = {}
@@ -273,7 +275,27 @@ class AcpClient:
         session_id = (result or {}).get("sessionId")
         if not session_id:
             raise AcpError("bad-response", "session/new returned no sessionId")
+        self.last_session = dict(result or {})
         return str(session_id)
+
+    def available_models(self) -> list[str]:
+        """最近一次开会话时 agent 报的可选模型 id（不支持选模型的 agent 返回空）。"""
+        models = (self.last_session.get("models") or {}).get("availableModels") or []
+        return [str(m.get("modelId")) for m in models if isinstance(m, dict) and m.get("modelId")]
+
+    async def set_model(self, session_id: str, model_id: str) -> bool:
+        """选模型（ACP 的 session/set_model，尚属可选能力）。不支持或失败返回 False。"""
+        if model_id not in self.available_models():
+            return False
+        try:
+            await self._conn.request(
+                "session/set_model",
+                {"sessionId": session_id, "modelId": model_id},
+                timeout=SESSION_TIMEOUT,
+            )
+        except AcpError:
+            return False
+        return True
 
     async def load_session(
         self, session_id: str, cwd: str, mcp_servers: list[dict[str, Any]] | None = None
@@ -286,14 +308,31 @@ class AcpClient:
             timeout=SESSION_TIMEOUT,
         )
 
-    async def prompt(self, session_id: str, text: str) -> AsyncIterator[dict[str, Any]]:
-        """发一轮提示，边跑边吐归一化事件；最后一条一定是 ``done``。"""
+    async def prompt(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        images: list[tuple[bytes, str]] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """发一轮提示，边跑边吐归一化事件；最后一条一定是 ``done``。
+
+        ``images``：(字节, mime) 列表，作为 ACP image 块附在文字之后。agent 没声明
+        能看图时由调用方决定怎么办（这里照发，agent 会自己报错）。
+        """
+        import base64
+
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._sinks[session_id] = queue
+        blocks: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        for data, mime in images or []:
+            blocks.append(
+                {"type": "image", "mimeType": mime, "data": base64.b64encode(data).decode()}
+            )
         request = asyncio.create_task(
             self._conn.request(
                 "session/prompt",
-                {"sessionId": session_id, "prompt": [{"type": "text", "text": text}]},
+                {"sessionId": session_id, "prompt": blocks},
                 timeout=None,
             )
         )

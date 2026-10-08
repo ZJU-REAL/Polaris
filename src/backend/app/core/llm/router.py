@@ -21,6 +21,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.llm import call_log
+from app.core.llm.acp import AcpLLMProvider, AcpTarget
 from app.core.llm.anthropic import AnthropicProvider
 from app.core.llm.base import (
     CompletionResult,
@@ -214,7 +215,7 @@ _CAPABILITY_STAGES = frozenset({"embedding", "rerank"})
 
 @dataclass(slots=True, frozen=True)
 class ResolvedRoute:
-    provider_kind: str  # openai_compat | openai_responses | anthropic | fake
+    provider_kind: str  # openai_compat | openai_responses | anthropic | acp | fake
     base_url: str | None
     api_key: str
     model: str
@@ -230,6 +231,33 @@ class ResolvedRoute:
     #: 该环节的输入预算覆盖（键 → 字符数），见 core/llm/budgets.py。元组而不是 dict：
     #: 这个类是 frozen 的，里面放可变对象等于留了个能被悄悄改掉的口子。
     input_budgets: tuple[tuple[str, int], ...] = ()
+    #: provider_kind == "acp" 时：交给哪个外部 agent（#840）
+    acp: AcpTarget | None = None
+
+
+def _acp_target(agent: Any) -> AcpTarget:
+    from app.services.mcp_hub.registry import decrypt_env
+
+    return AcpTarget(
+        agent_id=str(agent.id),
+        name=agent.name or agent.slug,
+        command=agent.command,
+        args=tuple(str(a) for a in (agent.args or [])),
+        env=tuple(sorted(decrypt_env(agent.env_encrypted).items())),
+        version=str(agent.updated_at),
+    )
+
+
+def _acp_route(agent: Any, *, model: str = "", temperature: float | None = None) -> ResolvedRoute:
+    return ResolvedRoute(
+        provider_kind="acp",
+        base_url=None,
+        api_key="",
+        model=model,
+        temperature=temperature,
+        provider_name=agent.name or agent.slug,
+        acp=_acp_target(agent),
+    )
 
 
 # 无 DB 路由时的兜底：确定性 fake provider
@@ -377,6 +405,8 @@ class LLMRouter:
         # 所以这里恢复按 owner 取表，而部署级那份的行为一字不变。
         self._routes: dict[uuid.UUID | None, dict[str, ResolvedRoute]] = {}
         self._routes_loaded_at: dict[uuid.UUID | None, float] = {}
+        #: 外部 agent 接管的缓存：user → (加载时刻, 路由或 None)
+        self._fallback_agents: dict[uuid.UUID | None, tuple[float, ResolvedRoute | None]] = {}
         # 键含耐心档位（见 call_profile）：长/短两档各持一个客户端。键是实现细节，
         # 要在测试里替换 provider 请用 override_provider()，别直接往这个字典里塞。
         #
@@ -403,6 +433,7 @@ class LLMRouter:
         每个靠回退用到它的用户手上那份合并结果也就跟着过期了。
         """
         self._routes_loaded_at.clear()
+        self._fallback_agents.clear()
 
     async def _load_routes(self, owner_id: uuid.UUID | None = None) -> dict[str, ResolvedRoute]:
         from app.models.llm_config import LLMProviderConfig, ModelRoute
@@ -424,6 +455,21 @@ class LLMRouter:
                     owner_clause,
                 )
             )
+            # 指向外部 agent 的路由（#840）。别人自己的路由只能指向共享的 agent——
+            # agent 跑的是部署主人本机登录的订阅，没共享就不该被别人的任务花掉。
+            from app.models.acp_agent import AcpAgent
+
+            agent_stmt = (
+                select(ModelRoute, AcpAgent)
+                .join(AcpAgent, ModelRoute.acp_agent_id == AcpAgent.id)
+                .where(AcpAgent.enabled.is_(True), owner_clause)
+            )
+            if owner_id is not None:
+                agent_stmt = agent_stmt.where(AcpAgent.shared.is_(True))
+            for route, agent in (await session.execute(agent_stmt)).all():
+                routes[route.stage] = _acp_route(
+                    agent, model=route.model, temperature=route.temperature
+                )
             for route, provider in (await session.execute(stmt)).all():
                 api_key = (
                     decrypt_secret(provider.api_key_encrypted) if provider.api_key_encrypted else ""
@@ -474,6 +520,36 @@ class LLMRouter:
             return platform
         return {**platform, **own}
 
+    async def fallback_agent_route(self, user_id: uuid.UUID | None = None) -> ResolvedRoute | None:
+        """没配 default 时接管对话环节的外部 agent（#840）；没有可用的返回 None。
+
+        取最早登记、启用中的那个；不是主人的用户只能用标了共享的。缓存与路由表同一个
+        节奏（60s，设置页改动时清空）。
+        """
+        now = time.monotonic()
+        cached = self._fallback_agents.get(user_id)
+        if cached is not None and now - cached[0] <= _ROUTE_CACHE_TTL:
+            return cached[1]
+        from app.models.acp_agent import AcpAgent
+
+        owner = user_id is None or await self._is_owner(user_id)
+        async with get_sessionmaker()() as session:
+            stmt = select(AcpAgent).where(AcpAgent.enabled.is_(True))
+            if not owner:
+                stmt = stmt.where(AcpAgent.shared.is_(True))
+            agent = (
+                await session.execute(stmt.order_by(AcpAgent.created_at, AcpAgent.id).limit(1))
+            ).scalar_one_or_none()
+        route = _acp_route(agent) if agent is not None else None
+        self._fallback_agents[user_id] = (now, route)
+        return route
+
+    async def has_chat_model(self, user_id: uuid.UUID | None = None) -> bool:
+        """这个用户能不能打到一个对话模型：配了 default，或者有外部 agent 可以接管。"""
+        if "default" in await self.configured_stages(user_id):
+            return True
+        return await self.fallback_agent_route(user_id) is not None
+
     async def configured_stages(self, user_id: uuid.UUID | None = None) -> set[str]:
         """这个用户实际配了路由的环节。
 
@@ -506,6 +582,8 @@ class LLMRouter:
             # 两份只有这一项不同的配置会共用同一个客户端，后配的那份静默用着
             # 前一份的路径——正是这行上面那段注释警告过的事。
             route.rerank_path,
+            # 外部 agent：换了 agent 或改了它的配置就是另一个 provider
+            route.acp,
         )
         if key not in self._providers:
             if route.provider_kind == "openai_compat":
@@ -535,6 +613,8 @@ class LLMRouter:
                     timeout=timeout,
                     max_attempts=attempts,
                 )
+            elif route.provider_kind == "acp" and route.acp is not None:
+                self._providers[key] = AcpLLMProvider(route.acp, timeout=timeout)
             elif route.provider_kind == "fake":
                 self._providers[key] = FakeProvider()
             else:
@@ -579,9 +659,14 @@ class LLMRouter:
             else:
                 route = routes.get("default")
                 if route is None:
+                    # 没配 default：有外部 agent 就由它接管（#840）。能力型环节不在此列
+                    # ——agent 产不出向量，那两个环节走上面的降级。
+                    route = await self.fallback_agent_route(user_id)
+                if route is None:
                     if not get_settings().llm_fake_fallback:
                         raise LLMNotConfiguredError(
-                            "no LLM provider configured — add a provider and routes in settings"
+                            "no model configured — add an agent backend or a model API in "
+                            "Settings → Models & agents"
                         )
                     route = _FALLBACK_ROUTE
         return self._provider_for(route, stage), route

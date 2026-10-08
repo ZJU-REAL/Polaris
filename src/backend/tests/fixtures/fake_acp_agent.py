@@ -11,7 +11,12 @@
 - ``crash``：直接退出进程。
 - ``mcp``：把 session/new 收到的 mcpServers 说出来。
 
-环境变量 FAKE_ACP_NO_LOAD=1 时不声明 loadSession；FAKE_ACP_NO_MCP=1 时不声明 HTTP MCP。
+环境变量 FAKE_ACP_NO_LOAD=1 时不声明 loadSession；FAKE_ACP_NO_MCP=1 时不声明 HTTP MCP；
+FAKE_ACP_IMAGE=1 时声明能看图。
+
+当模型用（#840）：提示词里有「plain language model」那句时，吐一段思考，再回答
+``llm[<模型>]: <请求正文>``（请求正文 = 最后一个分隔段之前那段），带图时追加
+`` [images=N]``。会话开出来时报两个可选模型 fast / smart。
 """
 
 import json
@@ -59,6 +64,20 @@ def handle_prompt(rid: int, params: dict) -> None:
     sid = params["sessionId"]
     prompt = "".join(b.get("text", "") for b in params.get("prompt", []))
     cwd = _sessions.get(sid, {}).get("cwd", os.getcwd())
+
+    if "plain language model" in prompt:
+        sections = prompt.split("\n\n---\n\n")
+        body = sections[-2] if len(sections) >= 2 else prompt
+        images = sum(1 for b in params.get("prompt", []) if b.get("type") == "image")
+        model = _sessions.get(sid, {}).get("model", "default")
+        update(sid, {"sessionUpdate": "agent_thought_chunk", "content": text("considering")})
+        answer = f"llm[{model}]: {body}" + (f" [images={images}]" if images else "")
+        for i in range(0, len(answer), 7):
+            update(
+                sid, {"sessionUpdate": "agent_message_chunk", "content": text(answer[i : i + 7])}
+            )
+        send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "end_turn"}})
+        return
 
     if "crash" in prompt:
         os._exit(3)
@@ -205,7 +224,9 @@ def main() -> None:
                         "protocolVersion": 1,
                         "agentCapabilities": {
                             "loadSession": os.environ.get("FAKE_ACP_NO_LOAD") != "1",
-                            "promptCapabilities": {"image": False},
+                            "promptCapabilities": {
+                                "image": os.environ.get("FAKE_ACP_IMAGE") == "1"
+                            },
                             "mcpCapabilities": {
                                 "http": os.environ.get("FAKE_ACP_NO_MCP") != "1",
                                 "sse": False,
@@ -224,7 +245,14 @@ def main() -> None:
             counter[0] += 1
             sid = f"sess-{os.getpid()}-{counter[0]}"
             _sessions[sid] = {"cwd": params.get("cwd"), "mcpServers": params.get("mcpServers", [])}
-            send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": sid}})
+            models = {
+                "currentModelId": "default",
+                "availableModels": [
+                    {"modelId": "fast", "name": "Fast"},
+                    {"modelId": "smart", "name": "Smart"},
+                ],
+            }
+            send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": sid, "models": models}})
         elif method == "session/load":
             sid = params["sessionId"]
             _sessions[sid] = {"cwd": params.get("cwd"), "mcpServers": params.get("mcpServers", [])}
@@ -233,6 +261,9 @@ def main() -> None:
                 sid, {"sessionUpdate": "agent_message_chunk", "content": text("REPLAYED HISTORY")}
             )
             send({"jsonrpc": "2.0", "id": rid, "result": None})
+        elif method == "session/set_model":
+            _sessions.setdefault(params.get("sessionId", ""), {})["model"] = params.get("modelId")
+            send({"jsonrpc": "2.0", "id": rid, "result": {}})
         elif method == "session/prompt":
             threading.Thread(target=handle_prompt, args=(rid, params), daemon=True).start()
         elif method == "session/cancel":

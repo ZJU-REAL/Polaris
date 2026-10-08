@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "f6b2d8e04a17"  # 外部 agent（ACP 后端）登记表 (#836)
+HEAD_REVISION = "a9c4e7d2f1b8"  # 路由可以指向外部 agent (#840)
+ACP_AGENTS_REVISION = "f6b2d8e04a17"  # 外部 agent（ACP 后端）登记表 (#836)
 LEGACY_PREFS_REVISION = "d3f9a1c7e2b4"  # 删掉偏好的旧 system_settings 行 (#821 E2)
 DAILY_FEED_SOURCES_REVISION = "b5e2c8d41f7a"  # 每日池条目记来源 (#821)
 INPUT_BUDGETS_REVISION = "a8d3e5f71c42"  # 路由的输入预算 (#811)
@@ -650,7 +651,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 每日池条目记来源（#821）：增量同步按库的来源筛池
     assert "sources" in columns["daily_feed_entries"]
 
-    # 先退掉外部 agent 登记表（#836）。
+    # 先退掉「路由指向 agent」（#840）：provider_id 回到非空，acp_agent_id 列去掉。
+    assert "acp_agent_id" in columns["model_routes"]
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == ACP_AGENTS_REVISION
+    assert "acp_agent_id" not in columns["model_routes"]
+
+    # 再退掉外部 agent 登记表（#836）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == LEGACY_PREFS_REVISION

@@ -384,10 +384,17 @@ async def run_turn(
 
     # 这个对话交给了外部 agent（#836）：换一个大脑，事件、落库、渲染都不变
     backend = str(settings.get("backend") or "polaris")
+    agent = None
     if backend != "polaris":
         agent = await acp_chat.resolve_agent(session, user, backend)
         if agent is None:
             raise HTTPException(status.HTTP_409_CONFLICT, detail="ACP_AGENT_NOT_AVAILABLE")
+    else:
+        # 「Polaris」这个大脑本身也可能落在外部 agent 上：助手环节路由到了 agent，或者
+        # 没配模型 API、由 agent 接管（#840）。那就直接走 agent 会话——它带着 Polaris 的
+        # MCP 工具，工具照样能用；硬塞进原生工具循环只会得到一个不能调工具的回答。
+        agent = await acp_chat.agent_for_polaris_turn(session, user)
+    if agent is not None:
         acp_history = await store.replay(session, conversation_id=conv.id, limit=40)
         await store.append_message(session, conversation=conv, role="user", text=payload.question)
         await session.commit()

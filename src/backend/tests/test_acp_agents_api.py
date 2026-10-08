@@ -27,9 +27,12 @@ def agent_on(monkeypatch, tmp_path):
 @pytest.fixture(autouse=True)
 async def _clean_pool():
     yield
+    from app.core.llm.acp import shutdown_pools
     from app.services.acp.pool import shutdown_pool
 
     await shutdown_pool()
+    # 助手起标题等模型调用现在也会落到登记的 agent 上（#840），那组进程一并收掉
+    await shutdown_pools()
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict]]:

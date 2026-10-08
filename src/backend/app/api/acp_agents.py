@@ -98,6 +98,15 @@ def _check_env(env: dict[str, str] | None) -> None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"BAD_ENV_KEY: {key}")
 
 
+async def _agents_changed(agent_id: uuid.UUID) -> None:
+    """agent 增删改之后：路由缓存（含「没配模型时谁来接管」）作废，模型调用用的进程池换新。"""
+    from app.core.llm.acp import forget_agent
+    from app.core.llm.router import get_llm_router
+
+    get_llm_router().invalidate_cache()
+    await forget_agent(str(agent_id))
+
+
 @router.get("/templates")
 async def list_templates(_owner: User = Depends(require_owner)) -> list[dict[str, Any]]:
     """内置模板 + 这台机器上装没装（只查 PATH，不拉起进程）。"""
@@ -146,6 +155,7 @@ async def create_agent(
     session.add(row)
     await session.commit()
     await session.refresh(row)
+    await _agents_changed(row.id)
     return _read(row)
 
 
@@ -187,6 +197,7 @@ async def update_agent(
 
     # 配置变了：已经开着的会话用的是旧命令/旧策略，必须关掉
     await get_pool().forget_agent(row.id)
+    await _agents_changed(row.id)
     return _read(row)
 
 
@@ -214,5 +225,7 @@ async def delete_agent(
     from app.services.acp.pool import get_pool
 
     await get_pool().forget_agent(row.id)
+    agent_id = row.id
     await session.delete(row)
     await session.commit()
+    await _agents_changed(agent_id)

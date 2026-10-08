@@ -62,6 +62,23 @@ async def resolve_agent(session: AsyncSession, user: User, backend: str) -> AcpA
     return None
 
 
+async def agent_for_polaris_turn(session: AsyncSession, user: User) -> AcpAgent | None:
+    """「Polaris」大脑这一轮实际会落在哪个外部 agent 上（没有就 None，走原生循环）。
+
+    看的是助手环节（agent）的路由：显式指向 agent，或没配模型 API、由 agent 接管。
+    """
+    from app.core.llm.router import LLMNotConfiguredError, get_llm_router
+
+    try:
+        _provider, route = await get_llm_router().resolve("agent", user.id)
+    except (LLMNotConfiguredError, NotImplementedError):
+        return None
+    if route.acp is None:
+        return None
+    row = await session.get(AcpAgent, uuid.UUID(route.acp.agent_id))
+    return row if row is not None and row.enabled else None
+
+
 def live_session(conversation_id: uuid.UUID):  # noqa: ANN201 — LiveSession | None
     """这个对话此刻挂着的 agent 会话（没有就 None）。"""
     return get_pool().get(str(conversation_id))

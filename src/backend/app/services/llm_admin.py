@@ -187,11 +187,20 @@ async def replace_routes(
         if item.stage in seen:
             raise InvalidRouteError(f"duplicate stage: {item.stage}")
         seen.add(item.stage)
-        # provider 必须与路由同属一人：否则可以把别人的 provider id 写进
-        # 自己的路由表，拿别人的 key 跑自己的任务。
-        provider = await session.get(LLMProviderConfig, item.provider_id)
-        if provider is None or provider.owner_id != owner_id:
-            raise InvalidRouteError(f"provider not found: {item.provider_id}")
+        if item.acp_agent_id is not None:
+            # 外部 agent（#840）：主人的部署级路由可指向任何 agent；别人自己的路由
+            # 只能指向共享的——agent 用的是主人本机登录的订阅。
+            from app.models.acp_agent import AcpAgent
+
+            agent = await session.get(AcpAgent, item.acp_agent_id)
+            if agent is None or (owner_id is not None and not agent.shared):
+                raise InvalidRouteError(f"agent not found: {item.acp_agent_id}")
+        else:
+            # provider 必须与路由同属一人：否则可以把别人的 provider id 写进
+            # 自己的路由表，拿别人的 key 跑自己的任务。
+            provider = await session.get(LLMProviderConfig, item.provider_id)
+            if provider is None or provider.owner_id != owner_id:
+                raise InvalidRouteError(f"provider not found: {item.provider_id}")
         try:
             validate_budgets(item.stage, item.input_budgets, item.context_window)
         except ValueError as e:
@@ -203,7 +212,8 @@ async def replace_routes(
                 owner_id=owner_id,
                 stage=item.stage,
                 provider_id=item.provider_id,
-                model=item.model,
+                acp_agent_id=item.acp_agent_id,
+                model=item.model.strip(),
                 temperature=item.temperature,
                 effort=item.effort,
                 context_window=item.context_window,
@@ -295,6 +305,27 @@ async def test_model(
         if aclose is not None:
             with contextlib.suppress(Exception):  # 清理失败不影响探测结果
                 await aclose()
+
+
+async def test_agent(agent: Any, model: str = "") -> tuple[bool, int, str | None]:
+    """让外部 agent 当模型答一句（#840）。走的就是路由会用的那个 provider。"""
+    from app.core.llm.acp import AcpLLMProvider
+    from app.core.llm.base import Message
+    from app.core.llm.router import _acp_target
+    from app.services.acp.registry import explain_failure
+
+    provider = AcpLLMProvider(_acp_target(agent), timeout=120.0)
+    t0 = time.monotonic()
+    try:
+        result = await provider.complete(
+            [Message(role="user", content="Reply with exactly the word OK.")], model=model
+        )
+    except Exception as exc:  # noqa: BLE001 — 外部进程什么都可能抛，原因要回给界面
+        return False, int((time.monotonic() - t0) * 1000), explain_failure(agent, exc)[:500]
+    latency = int((time.monotonic() - t0) * 1000)
+    if not result.content.strip():
+        return False, latency, "the agent returned an empty answer"
+    return True, latency, None
 
 
 # ---- usage ----
