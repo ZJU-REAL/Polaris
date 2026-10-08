@@ -59,7 +59,8 @@ class AcpAgentCreate(BaseModel):
     command: str | None = Field(default=None, max_length=512)
     args: list[str] | None = None
     env: dict[str, str] | None = None
-    permission_policy: str = "deny"
+    #: 新登记默认 ask（#838）：每次要改东西都问用户；没人回答时与 deny 一样拒绝
+    permission_policy: str = "ask"
     enabled: bool = True
     shared: bool = False
 

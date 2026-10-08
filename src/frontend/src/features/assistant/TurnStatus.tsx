@@ -10,18 +10,24 @@ import { toolDisplayName } from './agentTools';
    状态**只从已收到的块推**，不另立一套状态机——界面说的和流里发生的是同一件事，
    不会出现"显示正在检索、其实早就在写答案了"（#249 的老毛病就是两套状态各说各话）。
 
-   四态：
+   五态：
+     approval  外部 agent 在等你批准（有没定下来的授权卡），它就停在这儿
      thinking  收到过 thinking、还没工具也没正文
      tool      最后一个块是 running 的工具
      writing   正文正在流
      idle      本轮结束
    ============================================================ */
 
-export type TurnPhase = 'thinking' | 'tool' | 'writing' | 'idle';
+export type TurnPhase = 'approval' | 'thinking' | 'tool' | 'writing' | 'idle';
 
 export function phaseOf(blocks: AssistantBlock[], busy: boolean): TurnPhase {
   if (!busy) return 'idle';
-  const last = blocks[blocks.length - 1];
+  // 等批准压过一切：工具卡此刻也显示 running，但真正卡住它的是你
+  if (blocks.some((b) => b.kind === 'permission' && (b.state === 'pending' || b.state === 'answering'))) {
+    return 'approval';
+  }
+  // 定下来的授权卡不算「在干什么」：批准之后它接着跑的是卡片前面那个工具
+  const last = blocks.filter((b) => b.kind !== 'permission').at(-1);
   if (last?.kind === 'tool' && last.state === 'running') return 'tool';
   if (last?.kind === 'text') return 'writing';
   if (last?.kind === 'thinking') return 'thinking';
@@ -73,14 +79,16 @@ export function TurnStatus({
         )
       : '';
   const label =
-    phase === 'tool'
-      ? tr(
-          `正在查：${running.map((b) => (b.kind === 'tool' ? toolDisplayName(b) : '')).join('、')}`,
-          `Searching: ${running.map((b) => (b.kind === 'tool' ? toolDisplayName(b) : '')).join(', ')}`,
-        )
-      : phase === 'writing'
-        ? tr('正在写答案', 'Writing')
-        : tr('正在思考', 'Thinking');
+    phase === 'approval'
+      ? tr('等你批准', 'Waiting for your approval')
+      : phase === 'tool'
+        ? tr(
+            `正在查：${running.map((b) => (b.kind === 'tool' ? toolDisplayName(b) : '')).join('、')}`,
+            `Searching: ${running.map((b) => (b.kind === 'tool' ? toolDisplayName(b) : '')).join(', ')}`,
+          )
+        : phase === 'writing'
+          ? tr('正在写答案', 'Writing')
+          : tr('正在思考', 'Thinking');
 
   return (
     <div
@@ -99,7 +107,7 @@ export function TurnStatus({
       <span
         style={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
       >
-        {stepLabel || label}
+        {phase === 'approval' ? label : stepLabel || label}
       </span>
       {secs >= 3 && (
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>

@@ -55,15 +55,21 @@ Every agent has a permission policy. When the agent asks for permission
 
 | Policy | Answer |
 |---|---|
-| **Refuse anything that needs permission** (default) | Refuses everything that needs permission. The agent can read and talk. |
+| **Refuse anything that needs permission** | Refuses everything that needs permission. The agent can read and talk. |
+| **Ask me each time** (default for new agents) | Shows the request in the assistant panel — what the agent wants to do and its options (allow once, always allow, reject). Nobody answers within five minutes, the conversation is closed or the turn is stopped → refused. |
 | **Allow reading and searching only** | Allows reading, searching, fetching and thinking; refuses edits and commands. |
 | **Allow automatically** | Allows each request once. The agent may edit files and run commands. |
+
+With **Ask me each time**, a request is answered only by the person who owns the
+conversation, and only while the agent is still waiting for it. Unattended, the
+policy behaves exactly like **Refuse anything that needs permission**.
 
 Each conversation gets its own working directory under the data directory
 (`<data_dir>/acp-workspaces/<user>/<conversation>`). When the agent reads or
 writes files through Polaris, the path must stay inside that directory —
 `..` and symbolic links cannot escape it — and writes additionally require the
-**Allow automatically** policy. Commands the agent runs with its own tools are governed by
+**Allow automatically** policy, or an edit you approved under **Ask me each time**
+(one approval allows one write; "always allow" covers the rest of the session). Commands the agent runs with its own tools are governed by
 the agent's own sandbox, so keep **Allow automatically** for agents you trust.
 
 The agent process does not inherit the server's environment. It gets the
@@ -88,6 +94,5 @@ includes a short summary of the earlier conversation in the next prompt.
 
 ## Not yet supported
 
-- Answering permission requests interactively in the UI (policies decide for now).
 - Using agents inside experiment code generation and repair.
 - Running agents on remote hosts over SSH.

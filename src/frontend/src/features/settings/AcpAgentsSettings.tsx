@@ -18,6 +18,7 @@ import {
   type AcpPermissionPolicy,
 } from '../../lib/api';
 import {
+  DEFAULT_POLICY,
   POLICY_OPTIONS,
   SLUG_RE,
   TEMPLATE_DESCRIPTIONS,
@@ -52,6 +53,14 @@ function errText(e: unknown): string {
 
 function policyOptions() {
   return POLICY_OPTIONS.map((o) => ({ value: o.value, label: tr(o.label.zh, o.label.en) }));
+}
+
+/** 选中的策略自带的一句说明（目前只有「每次都问我」有） */
+function PolicyHint({ policy }: { policy?: (typeof POLICY_OPTIONS)[number] }) {
+  if (!policy?.hint) return null;
+  return (
+    <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>{tr(policy.hint.zh, policy.hint.en)}</div>
+  );
 }
 
 /** 撞了 slug 就换 -2、-3 再试；别的错误原样抛。 */
@@ -297,6 +306,7 @@ function AgentRow({ agent }: { agent: AcpAgentRead }) {
               {tr('它会不经确认就改文件、跑命令。只在你信得过的环境里用。', 'It will edit files and run commands without asking. Only use this where you trust it.')}
             </div>
           )}
+          <PolicyHint policy={policy} />
         </FormField>
         <div className="col" style={{ gap: 10 }}>
           <label className="row gap8" style={{ alignItems: 'center', fontSize: 13 }}>
@@ -432,7 +442,7 @@ function CustomAgentForm({ taken, onDone }: { taken: string[]; onDone: () => voi
   const [command, setCommand] = useState('');
   const [args, setArgs] = useState('');
   const [envRows, setEnvRows] = useState<EnvRow[]>([]);
-  const [policy, setPolicy] = useState<AcpPermissionPolicy>('deny');
+  const [policy, setPolicy] = useState<AcpPermissionPolicy>(DEFAULT_POLICY);
 
   const effectiveSlug = slugTouched ? slug.trim() : slugify(name);
   const slugBad = !SLUG_RE.test(effectiveSlug);
@@ -506,6 +516,7 @@ function CustomAgentForm({ taken, onDone }: { taken: string[]; onDone: () => voi
         </FormField>
         <FormField label={tr('权限', 'Permissions')}>
           <SelectMenu value={policy} options={policyOptions()} onChange={(v) => setPolicy(v as AcpPermissionPolicy)} />
+          <PolicyHint policy={POLICY_OPTIONS.find((o) => o.value === policy)} />
         </FormField>
       </div>
       <div className="field">

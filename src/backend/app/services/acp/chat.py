@@ -62,6 +62,11 @@ async def resolve_agent(session: AsyncSession, user: User, backend: str) -> AcpA
     return None
 
 
+def live_session(conversation_id: uuid.UUID):  # noqa: ANN201 — LiveSession | None
+    """这个对话此刻挂着的 agent 会话（没有就 None）。"""
+    return get_pool().get(str(conversation_id))
+
+
 def workdir_for(user_id: uuid.UUID, conversation_id: uuid.UUID) -> str:
     """每个对话一个工作目录：agent 的读写都被钉在这里面（见 client.contained_path）。"""
     return str(

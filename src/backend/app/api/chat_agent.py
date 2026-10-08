@@ -14,6 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.chat.events import (
@@ -23,6 +24,8 @@ from app.agents.chat.events import (
     DoneEvent,
     ErrorEvent,
     MetaEvent,
+    PermissionRequestEvent,
+    PermissionResolvedEvent,
     PlanEvent,
     SourcesEvent,
     ThinkingEvent,
@@ -71,6 +74,8 @@ _EVENT_NAMES: dict[type, str] = {
     VerifyEvent: "verify",
     ToolCallEvent: "tool_call",
     ToolResultEvent: "tool_result",
+    PermissionRequestEvent: "permission_request",
+    PermissionResolvedEvent: "permission_resolved",
     UsageEvent: "usage",
     CompactionEvent: "compaction",
     DoneEvent: "done",
@@ -456,6 +461,34 @@ async def run_turn(
     return _stream_turn(
         loop.run(req), conv_id=conv.id, user_id=user.id, first_question=payload.question
     )
+
+
+class PermissionAnswer(BaseModel):
+    option_id: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/conversations/{conversation_id}/permissions/{request_id}", status_code=204)
+async def answer_permission(
+    conversation_id: uuid.UUID,
+    request_id: str,
+    payload: PermissionAnswer,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    """回答外部 agent 的一次权限请求（ask 策略，#838）。
+
+    只认这个对话的主人；请求号必须属于这个对话里**此刻还在等**的那个 agent 会话。
+    别的对话的请求号、答过的、超时的，一律 404——不区分原因，免得拿它探别人的对话。
+    """
+    _require_enabled()
+    conv = await store.get_owned(session, conversation_id=conversation_id, user_id=user.id)
+    if conv is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONVERSATION_NOT_FOUND")
+    live = acp_chat.live_session(conversation_id)
+    if live is None or request_id not in live.client.pending_asks(live.session_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PERMISSION_REQUEST_NOT_FOUND")
+    if not live.client.answer_permission(request_id, payload.option_id):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="BAD_PERMISSION_OPTION")
 
 
 def _server_port(request: Request) -> int | None:

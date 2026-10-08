@@ -3464,7 +3464,7 @@ export interface DownloadClientIdentity {
 
 // —— 外部 agent 后端（ACP，#836）——
 
-export type AcpPermissionPolicy = 'deny' | 'read_only' | 'auto';
+export type AcpPermissionPolicy = 'deny' | 'ask' | 'read_only' | 'auto';
 
 /** 内置模板 + 这台机器上装没装（只查 PATH）。 */
 export interface AcpAgentTemplate {
@@ -5733,6 +5733,14 @@ export const api = {
   },
   deleteAcpAgent(id: string): Promise<void> {
     return request<void>(`/acp-agents/${id}`, { method: 'DELETE' });
+  },
+  /** 回答外部 agent 的一次授权请求（#838）。404 = 已过期/已答过；400 = 选项不认识。 */
+  answerAgentPermission(conversationId: string, requestId: string, optionId: string): Promise<void> {
+    return requestJson<void>(
+      `/chat/conversations/${conversationId}/permissions/${encodeURIComponent(requestId)}`,
+      'POST',
+      { option_id: optionId },
+    );
   },
   listChatBackends(): Promise<ChatBackend[]> {
     return request<ChatBackend[]>('/chat/backends');

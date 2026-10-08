@@ -92,6 +92,31 @@ class ToolResultEvent:
 
 
 @dataclass(slots=True, frozen=True)
+class PermissionRequestEvent:
+    """外部 agent 想做一件需要授权的事，等用户点头（ask 策略，#838）。
+
+    不落库：它是一次性的交互，回答之后由 PermissionResolvedEvent 收尾；重新打开对话时
+    请求早已过期，再画出来只会让人去点一个不再有人等的按钮。
+    """
+
+    request_id: str
+    tool_id: str
+    title: str
+    kind: str
+    input: str = ""
+    options: tuple[dict[str, str], ...] = ()
+    timeout_s: int = 300
+
+
+@dataclass(slots=True, frozen=True)
+class PermissionResolvedEvent:
+    """一次权限请求有了结论（用户点了、超时、或这一轮被取消）。"""
+
+    request_id: str
+    outcome: str  # allowed / denied
+
+
+@dataclass(slots=True, frozen=True)
 class UsageEvent:
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -129,6 +154,8 @@ ChatEvent = (
     | VerifyEvent
     | ToolCallEvent
     | ToolResultEvent
+    | PermissionRequestEvent
+    | PermissionResolvedEvent
     | UsageEvent
     | CompactionEvent
     | DoneEvent

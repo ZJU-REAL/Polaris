@@ -76,7 +76,7 @@ async def test_templates_list_known_agents(client):
 async def test_crud_probe_and_env_never_returned(client):
     headers = await _owner(client)
     row = await _register_fake(client, headers, env={"FAKE_AGENT_TOKEN": "secret-value"})
-    assert row["permission_policy"] == "deny"  # 默认最保守
+    assert row["permission_policy"] == "ask"  # 新登记默认 ask（#838）
     assert row["env_keys"] == ["FAKE_AGENT_TOKEN"] and "secret-value" not in json.dumps(row)
     assert row["command_found"] is True
 

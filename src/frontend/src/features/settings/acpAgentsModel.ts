@@ -14,11 +14,20 @@ export interface ZhEn {
 export const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/;
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** 权限策略：从严到宽。auto 会改文件、跑命令，界面上用警示色。 */
-export const POLICY_OPTIONS: { value: AcpPermissionPolicy; label: ZhEn; warn?: boolean }[] = [
+/** 权限策略：从严到宽。auto 会改文件、跑命令，界面上用警示色。
+    ask 是新建智能体的默认值（后端不传 permission_policy 时也是它）。 */
+export const POLICY_OPTIONS: { value: AcpPermissionPolicy; label: ZhEn; hint?: ZhEn; warn?: boolean }[] = [
   {
     value: 'deny',
     label: { zh: '拒绝所有需要授权的操作', en: 'Refuse anything that needs permission' },
+  },
+  {
+    value: 'ask',
+    label: { zh: '每次都问我', en: 'Ask me each time' },
+    hint: {
+      zh: '要改文件或跑命令时在助手里问你；没人回答就拒绝。',
+      en: 'Asks you in the assistant before it edits files or runs commands; refuses if nobody answers.',
+    },
   },
   {
     value: 'read_only',
@@ -30,6 +39,9 @@ export const POLICY_OPTIONS: { value: AcpPermissionPolicy; label: ZhEn; warn?: b
     warn: true,
   },
 ];
+
+/** 新建自定义智能体时预选的策略 */
+export const DEFAULT_POLICY: AcpPermissionPolicy = 'ask';
 
 /** 模板说明的中文版；后端只给英文。没收录的模板就用后端那句。 */
 export const TEMPLATE_DESCRIPTIONS: Record<string, ZhEn> = {

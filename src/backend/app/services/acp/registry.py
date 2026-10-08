@@ -13,7 +13,7 @@ from typing import Any
 
 from app.models.acp_agent import AcpAgent
 from app.models.base import utcnow
-from app.services.acp.client import AcpClient, AgentSpec
+from app.services.acp.client import PERMISSION_POLICIES, AcpClient, AgentSpec
 from app.services.acp.connection import AcpError
 from app.services.acp.templates import get_template, which
 from app.services.mcp_hub.registry import decrypt_env
@@ -22,9 +22,8 @@ logger = logging.getLogger("polaris.acp")
 
 
 def spec_from_row(row: AcpAgent) -> AgentSpec:
-    policy = (
-        row.permission_policy if row.permission_policy in ("deny", "read_only", "auto") else "deny"
-    )
+    # 认不出的策略按最保守的 deny 处理（与 client 的同一份清单，加了新策略不会漏）
+    policy = row.permission_policy if row.permission_policy in PERMISSION_POLICIES else "deny"
     return AgentSpec(
         name=row.name or row.slug,
         command=row.command,

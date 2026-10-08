@@ -26,8 +26,39 @@ export interface PlanStep {
   status: 'pending' | 'running' | 'done';
 }
 
+/** 外部 agent 请求授权时给的选项（#838）；kind 决定按钮的样子 */
+export type PermissionOptionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always';
+
+export interface PermissionOption {
+  id: string;
+  name: string;
+  kind: PermissionOptionKind;
+}
+
+/** pending 等人点；answering 已点、等后端确认；allowed / denied 定了 */
+export type PermissionState = 'pending' | 'answering' | 'allowed' | 'denied';
+
+export type PermissionBlock = {
+  kind: 'permission';
+  requestId: string;
+  toolId: string;
+  title: string;
+  /** agent 工具的类别（edit / execute …），认不出的归到 other */
+  toolKind: string;
+  /** 它要做的具体内容（命令、diff、参数），可能是空串 */
+  input: string;
+  options: PermissionOption[];
+  timeoutS: number;
+  state: PermissionState;
+  /** 收到的时刻（ms），倒计时从这儿算 */
+  receivedAt: number;
+  /** 点了才发现请求已经过期（404） */
+  expired?: boolean;
+};
+
 export type AssistantBlock =
   | { kind: 'text'; text: string }
+  | PermissionBlock
   | { kind: 'plan'; steps: PlanStep[]; awaitingApproval?: boolean }
   | { kind: 'sources'; papers: PaperSource[] }
   | { kind: 'verify'; notes: string[] }
@@ -219,8 +250,73 @@ export function applyAssistantEvent(
     );
   }
 
+  if (event === 'permission_request') {
+    // 外部 agent 想改文件、跑命令，等人点头（#838）。这一帧不落库：重载历史时它就不在了。
+    const requestId = str(data.request_id);
+    if (!requestId || blocks.some((b) => b.kind === 'permission' && b.requestId === requestId)) {
+      return blocks;
+    }
+    const options: PermissionOption[] = Array.isArray(data.options)
+      ? (data.options as unknown[]).flatMap((item) => {
+          if (!item || typeof item !== 'object') return [];
+          const opt = item as Record<string, unknown>;
+          const id = str(opt.id);
+          const kind = str(opt.kind) as PermissionOptionKind;
+          if (!id || !PERMISSION_OPTION_KINDS.includes(kind)) return [];
+          return [{ id, name: str(opt.name), kind }];
+        })
+      : [];
+    // 一个能点的选项都没有，画出来也只是一张点不动的卡
+    if (!options.length) return blocks;
+    const timeoutS = num(data.timeout_s);
+    return [
+      ...blocks,
+      {
+        kind: 'permission',
+        requestId,
+        toolId: str(data.tool_id),
+        title: str(data.title),
+        toolKind: str(data.kind, 'other') || 'other',
+        input: str(data.input),
+        options,
+        timeoutS: timeoutS !== undefined && timeoutS > 0 ? timeoutS : 300,
+        state: 'pending',
+        receivedAt: Date.now(),
+      },
+    ];
+  }
+
+  if (event === 'permission_resolved') {
+    const outcome = str(data.outcome);
+    if (outcome !== 'allowed' && outcome !== 'denied') return blocks;
+    return setPermissionState(blocks, str(data.request_id), outcome);
+  }
+
   // 其余事件（meta / usage / compaction / 将来新增的）一律忽略
   return blocks;
+}
+
+const PERMISSION_OPTION_KINDS: PermissionOptionKind[] = ['allow_once', 'allow_always', 'reject_once', 'reject_always'];
+
+/** 改一张授权卡的状态；找不到这张卡就原样返回（同一个数组，React 不会白渲染）。
+
+    from：只在卡片还处于这个状态时才改。点按钮和流里的 permission_resolved 谁先到
+    都有可能，先到的定了就别让后到的本地回调把它改回去。 */
+export function setPermissionState(
+  blocks: AssistantBlock[],
+  requestId: string,
+  state: PermissionState,
+  opts: { expired?: boolean; from?: PermissionState } = {},
+): AssistantBlock[] {
+  if (!requestId) return blocks;
+  let changed = false;
+  const next = blocks.map((b) => {
+    if (b.kind !== 'permission' || b.requestId !== requestId) return b;
+    if (opts.from && b.state !== opts.from) return b;
+    changed = true;
+    return opts.expired ? { ...b, state, expired: true } : { ...b, state };
+  });
+  return changed ? next : blocks;
 }
 
 export function assistantTurnSse(
