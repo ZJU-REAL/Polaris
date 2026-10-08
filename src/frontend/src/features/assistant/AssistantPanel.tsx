@@ -8,6 +8,7 @@ import { Markdown } from '../../lib/markdown';
 import { api } from '../../lib/api';
 import {
   assistantTurnSse,
+  setPermissionState,
   type AssistantBlock,
   type ImageRef,
   type PaperSource,
@@ -24,6 +25,7 @@ import { pageContextFrom } from './buddyContext';
 import { useProject } from '../../app/project';
 import { TurnStatus } from './TurnStatus';
 import { agentToolIcon, agentToolKind, agentToolLabel, toolDisplayName } from './agentTools';
+import { PermissionCard, type PermissionStateChange } from './PermissionCard';
 import { POLARIS_BACKEND, readBackendChoice, resolveBackend, writeBackendChoice } from './backendChoice';
 
 /* ============================================================
@@ -457,15 +459,22 @@ function VerifyCard({ notes }: { notes: string[] }) {
 function BlockView({
   block,
   live,
+  turnLive,
   sources,
+  conversationId,
   onApprovePlan,
   onRevisePlan,
+  onPermissionState,
 }: {
   block: AssistantBlock;
   live: boolean;
+  /** 这一轮还在跑（live 只说「这是最后一块」） */
+  turnLive: boolean;
   sources: PaperSource[];
+  conversationId: string | null;
   onApprovePlan?: () => void;
   onRevisePlan?: () => void;
+  onPermissionState: PermissionStateChange;
 }) {
   if (block.kind === 'text') {
     // 模型会在正文里直接写 ![图注](paper_id/图号) 和 [1] 这类引用。Markdown 组件本来
@@ -514,6 +523,15 @@ function BlockView({
   if (block.kind === 'verify') return <VerifyCard notes={block.notes} />;
   if (block.kind === 'thinking') return <ThinkingView text={block.text} live={live} />;
   if (block.kind === 'tool') return <ToolCard block={block} />;
+  if (block.kind === 'permission')
+    return (
+      <PermissionCard
+        block={block}
+        conversationId={conversationId}
+        turnLive={turnLive}
+        onStateChange={onPermissionState}
+      />
+    );
   return null; // 未知块：画不出来就不画，绝不抛
 }
 
@@ -720,6 +738,20 @@ export function AssistantPanel({
       const next = new Set(prev);
       next.delete(key);
       return next;
+    });
+  }, []);
+
+  /** 授权卡的状态改在它所在的那一轮上（卡片自己调接口，这里只管落状态）。 */
+  const updatePermission = useCallback<PermissionStateChange>((requestId, state, opts) => {
+    setTurns((t) => {
+      let changed = false;
+      const next = t.map((turn) => {
+        const blocks = setPermissionState(turn.blocks, requestId, state, opts);
+        if (blocks === turn.blocks) return turn;
+        changed = true;
+        return { ...turn, blocks };
+      });
+      return changed ? next : t;
     });
   }, []);
 
@@ -1136,6 +1168,9 @@ export function AssistantPanel({
                       key={j}
                       block={b}
                       live={busy && isLast && j === turn.blocks.length - 1}
+                      turnLive={busy && isLast}
+                      conversationId={convId}
+                      onPermissionState={updatePermission}
                       sources={
                         (turn.blocks.find((x) => x.kind === 'sources') as
                           | { kind: 'sources'; papers: PaperSource[] }

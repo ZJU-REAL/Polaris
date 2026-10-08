@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { AcpAgentsSettings } from '../AcpAgentsSettings';
 import {
+  DEFAULT_POLICY,
   POLICY_OPTIONS,
   acpErrorText,
   envRowIssue,
@@ -80,8 +81,19 @@ describe('agent backends model', () => {
   });
 
   it('only the automatic policy carries a warning', () => {
-    expect(POLICY_OPTIONS.map((o) => o.value)).toEqual(['deny', 'read_only', 'auto']);
+    expect(POLICY_OPTIONS.map((o) => o.value)).toEqual(['deny', 'ask', 'read_only', 'auto']);
     expect(POLICY_OPTIONS.filter((o) => o.warn).map((o) => o.value)).toEqual(['auto']);
+  });
+
+  it('offers "ask me each time" and makes it the default for custom agents', () => {
+    const ask = POLICY_OPTIONS.find((o) => o.value === 'ask');
+    expect(ask?.label).toEqual({ zh: '每次都问我', en: 'Ask me each time' });
+    expect(ask?.hint?.en).toMatch(/refuses if nobody answers/);
+    expect(DEFAULT_POLICY).toBe('ask');
+    const src = readFileSync(join(__dirname, '..', 'AcpAgentsSettings.tsx'), 'utf8');
+    expect(src).toContain('useState<AcpPermissionPolicy>(DEFAULT_POLICY)');
+    // 模板一键添加不带策略，由后端给默认值（ask）
+    expect(src).toContain('createDeduped({ slug: t.id, template: t.id }, taken)');
   });
 
   it('maps backend error codes and leaves unknown ones alone', () => {

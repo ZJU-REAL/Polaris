@@ -34,6 +34,8 @@ from app.agents.chat.events import (
     DoneEvent,
     ErrorEvent,
     MetaEvent,
+    PermissionRequestEvent,
+    PermissionResolvedEvent,
     PlanEvent,
     ThinkingEvent,
     ToolCallEvent,
@@ -185,17 +187,34 @@ class AcpChatLoop:
                             )
                             if res is not None:
                                 yield res
-                    elif kind == "permission" and upd["outcome"] == "denied":
-                        # 拒绝本身就是结果：不补一条，界面上这张工具卡会一直转圈
-                        res = _result(
-                            upd["id"],
-                            started,
-                            "failed",
-                            upd["title"],
-                            "Blocked by this agent's permission policy.",
+                    elif kind == "permission_request":
+                        yield PermissionRequestEvent(
+                            request_id=upd["request_id"],
+                            tool_id=upd["id"],
+                            title=upd["title"],
+                            kind=upd["kind"],
+                            input=upd["input"],
+                            options=tuple(upd["options"]),
+                            timeout_s=upd["timeout_s"],
                         )
-                        if res is not None:
-                            yield res
+                    elif kind == "permission":
+                        if upd.get("request_id"):
+                            yield PermissionResolvedEvent(
+                                request_id=upd["request_id"], outcome=upd["outcome"]
+                            )
+                        if upd["outcome"] == "denied":
+                            # 拒绝本身就是结果：不补一条，界面上这张工具卡会一直转圈
+                            res = _result(
+                                upd["id"],
+                                started,
+                                "failed",
+                                upd["title"],
+                                "Not approved."
+                                if upd.get("request_id")
+                                else "Blocked by this agent's permission policy.",
+                            )
+                            if res is not None:
+                                yield res
                     elif kind == "done":
                         stop_reason = _STOP_REASONS.get(upd["stop_reason"], upd["stop_reason"])
                 # agent 没给收尾的工具（被取消、它自己忘了报）：补成失败，别让卡片一直转圈
