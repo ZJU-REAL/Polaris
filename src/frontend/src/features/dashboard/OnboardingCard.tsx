@@ -18,10 +18,10 @@ function copyFor(id: string): { title: string; hint: string; href: string; cta: 
   switch (id) {
     case 'model':
       return {
-        title: tr('配置大模型', 'Set up a model'),
+        title: tr('接一个智能体或模型', 'Connect an agent or a model'),
         hint: tr(
-          '没有可用的模型路由时，AI 功能会直接报 LLM_NOT_CONFIGURED。',
-          'Without a usable model route, AI features fail with LLM_NOT_CONFIGURED.',
+          '添加一个智能体（如 Claude Code）或一个模型 API，AI 功能才能用。智能体用你自己的登录，最省事。',
+          'Add an agent backend (such as Claude Code) or a model API before AI features can work. An agent uses your own sign-in and is the quickest.',
         ),
         href: '/settings?tab=llm',
         cta: tr('去配置', 'Configure'),

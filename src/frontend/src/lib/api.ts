@@ -753,7 +753,10 @@ export const LLM_EFFORT_LEVELS: LlmEffort[] = [
 
 export interface LlmRoute {
   stage: string;
-  provider_id: string;
+  /** 二选一：模型 API（provider_id）或智能体（acp_agent_id，#840） */
+  provider_id: string | null;
+  acp_agent_id?: string | null;
+  /** 模型 API 必填；智能体可空（= 用它自己的默认模型） */
   model: string;
   temperature?: number | null;
   /** null / 缺省 = 不发送该参数，用模型默认档位 */
@@ -777,11 +780,10 @@ export interface LlmInputBudgetSpec {
 
 export type LlmTestCapability = 'chat' | 'embedding' | 'rerank';
 
-export interface LlmTestModelInput {
-  provider_id: string;
-  model: string;
-  capability: LlmTestCapability;
-}
+/** 连通性测试：测模型 API 的某个模型，或真跑一次智能体（#840，可能要 10–60 秒）。 */
+export type LlmTestModelInput =
+  | { provider_id: string; model: string; capability: LlmTestCapability }
+  | { acp_agent_id: string; model?: string };
 
 export interface LlmTestResult {
   ok: boolean;

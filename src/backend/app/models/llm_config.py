@@ -85,8 +85,12 @@ class ModelRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     # 科研环节，见 core/llm/router.py STAGES
     stage: Mapped[str] = mapped_column(String(32), nullable=False)
-    provider_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("llm_providers.id", ondelete="CASCADE"), nullable=False
+    # 二选一：模型 API（provider）或外部 agent（#840）。服务层保证恰好填一个。
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("llm_providers.id", ondelete="CASCADE"), nullable=True
+    )
+    acp_agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("acp_agents.id", ondelete="CASCADE"), nullable=True, index=True
     )
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)  # None=不传该参数
@@ -99,7 +103,7 @@ class ModelRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: None / 缺键 = 用登记的默认值，也就是引入这一列之前写死的那个常量（#811）。
     input_budgets: Mapped[dict[str, int] | None] = mapped_column(JSON, nullable=True)
 
-    provider: Mapped[LLMProviderConfig] = relationship(back_populates="routes")
+    provider: Mapped[LLMProviderConfig | None] = relationship(back_populates="routes")
 
 
 class LLMUsage(UUIDPrimaryKeyMixin, TimestampMixin, Base):

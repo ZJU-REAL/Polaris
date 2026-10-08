@@ -33,16 +33,18 @@ import {
   splitArgs,
   type EnvRow,
 } from './acpAgentsModel';
+import { takeoverAgent, withDefaultAgent } from './llmRoutingModel';
 
 /* ============================================================
-   设置 → 智能体后端（#836）
+   设置 → 模型与智能体 → 智能体（#836，#840 起并入模型页且排第一）
 
-   让助手把一场对话交给用户已经在用的智能体（Claude Code、Codex、Gemini CLI……），
-   走 Agent Client Protocol。智能体在这台机器上、用它自己的登录跑，Polaris 碰不到它的
-   密钥。这里只做三件事：从模板一键登记、登记自定义的、管理已登记的。
+   用户已经在用的智能体（Claude Code、Codex、Gemini CLI……）走 Agent Client Protocol
+   接进来。它在这台机器上、用它自己的登录跑，Polaris 碰不到它的密钥。除了在助手里
+   直接选它，它也能当模型用：设为默认模型，或没有默认模型时自动接管对话类环节。
+   这里做：从模板一键登记、登记自定义的、管理已登记的、设为默认模型。
    ============================================================ */
 
-const AGENTS_KEY = ['acp-agents'] as const;
+export const AGENTS_KEY = ['acp-agents'] as const;
 const TEMPLATES_KEY = ['acp-templates'] as const;
 
 function errText(e: unknown): string {
@@ -169,8 +171,20 @@ function EnvRowsEditor({ rows, onChange }: { rows: EnvRow[]; onChange: (rows: En
   );
 }
 
-/** 一个已登记的智能体：命令、开关、权限、环境变量、检查连接、删除。 */
-function AgentRow({ agent }: { agent: AcpAgentRead }) {
+/** 一个已登记的智能体：命令、开关、权限、环境变量、检查连接、删除、设为默认模型。 */
+function AgentRow({
+  agent,
+  modelRole,
+  onMakeDefault,
+  makingDefault,
+}: {
+  agent: AcpAgentRead;
+  /** 它在模型路由里的位置：默认模型 / 没有默认时接管 / 都不是 */
+  modelRole: 'default' | 'takeover' | null;
+  /** 取不到路由表（非主人）时不给这个按钮 */
+  onMakeDefault?: () => void;
+  makingDefault?: boolean;
+}) {
   const queryClient = useQueryClient();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [envEditing, setEnvEditing] = useState(false);
@@ -221,7 +235,32 @@ function AgentRow({ agent }: { agent: AcpAgentRead }) {
         <span className="pill sm">{agent.template === 'custom' ? tr('自定义', 'Custom') : agent.template}</span>
         {!agent.enabled && <span className="pill sm">{tr('已停用', 'Off')}</span>}
         {agent.shared && <span className="pill sm">{tr('已共享', 'Shared')}</span>}
+        {modelRole === 'default' && (
+          <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
+            {tr('默认模型', 'Default model')}
+          </span>
+        )}
+        {modelRole === 'takeover' && (
+          <span
+            className="pill sm"
+            style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
+            title={tr('没有设置默认模型，所有对话类环节都由它回答', 'No default model is set, so it answers every chat stage')}
+          >
+            {tr('正在接管所有模型调用', 'Answering all model calls')}
+          </span>
+        )}
         <span style={{ flex: 1 }} />
+        {onMakeDefault && agent.enabled && modelRole !== 'default' && (
+          <button
+            className="btn btn-soft sm"
+            disabled={makingDefault}
+            title={tr('让没单独设置的对话类环节都交给它回答', 'Every chat stage without its own row will be answered by it')}
+            onClick={onMakeDefault}
+          >
+            <Icon name="star" size={12} />
+            {tr('设为默认模型', 'Use as default model')}
+          </button>
+        )}
         <button className="btn btn-soft sm" disabled={probe.isPending} onClick={() => probe.mutate()}>
           <Icon name="refresh" size={12} style={probe.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
           {probe.isPending ? tr('检查中…', 'Checking…') : tr('检查连接', 'Check connection')}
@@ -546,6 +585,23 @@ export function AcpAgentsSettings() {
   const [customOpen, setCustomOpen] = useState(false);
   const agents = agentsQ.data ?? [];
   const taken = agents.map((a) => a.slug);
+  // 路由表：标出谁是默认模型 / 谁在接管；非主人取不到就不标、不给按钮
+  const routesQ = useQuery({ queryKey: ['llm', 'routes'], queryFn: () => api.getLlmRoutes(), retry: false });
+  const routes = routesQ.data;
+  const defaultRoute = routes?.find((r) => r.stage === 'default');
+  const takeover = routes ? takeoverAgent(!!defaultRoute, agents) : null;
+  const roleOf = (a: AcpAgentRead): 'default' | 'takeover' | null =>
+    defaultRoute?.acp_agent_id === a.id ? 'default' : takeover?.id === a.id ? 'takeover' : null;
+
+  const makeDefault = useMutation({
+    // PUT 是整表覆盖：拿当前整表，只换掉「默认」那一行
+    mutationFn: (a: AcpAgentRead) => api.putLlmRoutes(withDefaultAgent(routes ?? [], a.id)),
+    onSuccess: (_, a) => {
+      void queryClient.invalidateQueries({ queryKey: ['llm', 'routes'] });
+      toast(tr(`默认模型已改为「${a.name || a.slug}」`, `Default model is now "${a.name || a.slug}"`), 'ok');
+    },
+    onError: (e) => toast(`${tr('设置失败', 'Could not set it')}：${errText(e)}`, 'error'),
+  });
 
   const addTemplate = useMutation({
     mutationFn: (t: AcpAgentTemplate) => createDeduped({ slug: t.id, template: t.id }, taken),
@@ -562,19 +618,14 @@ export function AcpAgentsSettings() {
       <div className="card card-pad">
         <div className="section-h" style={{ marginBottom: 4 }}>
           <Icon name="cpu" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('智能体后端', 'Agent backends')}
+          {tr('智能体后端', 'Agent backends')}{' '}
+          <span className="en-label" style={{ fontSize: 11 }}>{tr('推荐', 'recommended')}</span>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6, marginBottom: 4 }}>
           {tr(
-            '助手可以把一场对话交给你已经在用的智能体（Claude Code、Codex、Gemini CLI……），通过 Agent Client Protocol 连接。它在这台机器上用你自己的登录运行，Polaris 拿不到它的密钥。添加后，在助手输入框上方选择由谁来回答。',
-            'The assistant can hand a conversation to an agent you already use (Claude Code, Codex, Gemini CLI…) through the Agent Client Protocol. It runs on this machine with your own sign-in; Polaris never sees its keys. Once added, pick who answers just above the assistant’s input box.',
+            '用你已经在用的智能体（Claude Code、Codex、Gemini CLI……）回答模型调用，通过 Agent Client Protocol 连接。它在这台机器上用你自己的登录运行，Polaris 拿不到它的密钥。有一个启用的智能体就够了：没设置默认模型时，它会回答所有对话类环节；在助手输入框上方也能直接选它。',
+            'Use an agent you already have (Claude Code, Codex, Gemini CLI…) to answer model calls, connected through the Agent Client Protocol. It runs on this machine with your own sign-in; Polaris never sees its keys. One enabled agent is enough: with no default model set, it answers every chat stage, and you can also pick it just above the assistant’s input box.',
           )}
-        </div>
-      </div>
-
-      <div className="card card-pad" style={{ marginTop: 16 }}>
-        <div className="section-h" style={{ marginBottom: 4 }}>
-          {tr('已添加的智能体', 'Your agents')}
         </div>
         {agentsQ.isLoading ? (
           <div className="empty">{tr('加载中…', 'Loading…')}</div>
@@ -592,7 +643,15 @@ export function AcpAgentsSettings() {
             {tr('还没有。从下面挑一个添加。', 'None yet. Add one from below.')}
           </div>
         ) : (
-          agents.map((a) => <AgentRow key={a.id} agent={a} />)
+          agents.map((a) => (
+            <AgentRow
+              key={a.id}
+              agent={a}
+              modelRole={roleOf(a)}
+              onMakeDefault={routes ? () => makeDefault.mutate(a) : undefined}
+              makingDefault={makeDefault.isPending}
+            />
+          ))
         )}
       </div>
 

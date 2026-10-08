@@ -47,9 +47,11 @@ async def lifespan(app: FastAPI):
     get_crdt_stream_subscriber().start()
     yield
     # 外部 agent 子进程（#836）：随服务一起收掉，别留孤儿进程继续烧额度
+    from app.core.llm.acp import shutdown_pools
     from app.services.acp.pool import shutdown_pool
 
     await shutdown_pool()
+    await shutdown_pools()
     await stop_crdt_stream_subscriber()
     await reset_crdt_rooms()  # 关停 CRDT 房间服务器（先冲刷不了的防抖任务直接取消）
     await dispose_engine()

@@ -698,6 +698,14 @@ async def _eval_model_config_file(ctx: ActionContext) -> dict[str, str]:
     if not eval_model:
         return {}
     _provider, route = await ctx.llm.resolve("default")
+    if route.provider_kind == "acp":
+        # 外部 agent（#840）没有可以交给实验机的地址和 key：实验代码要自己调模型，
+        # 只能靠一个模型 API。空着发过去只会让实验跑到一半才因为连不上而失败。
+        raise RuntimeError(
+            "eval_model needs a model API: the default model is an agent backend, which "
+            "experiment code on another machine cannot call. Configure a model API for the "
+            "default stage, or leave eval_model empty."
+        )
     config = {
         "base_url": route.base_url or "",
         "api_key": route.api_key,

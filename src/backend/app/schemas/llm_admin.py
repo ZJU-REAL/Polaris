@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.llm.base import EffortLevel
 
@@ -54,8 +54,11 @@ class ProviderRead(BaseModel):
 
 class RouteItem(BaseModel):
     stage: str
-    provider_id: uuid.UUID
-    model: str = Field(min_length=1, max_length=255)
+    #: 二选一：模型 API（provider_id）或外部 agent（acp_agent_id，#840）
+    provider_id: uuid.UUID | None = None
+    acp_agent_id: uuid.UUID | None = None
+    #: 模型 API 必填；外部 agent 可空（= 用 agent 自己的默认模型）
+    model: str = Field(default="", max_length=255)
     temperature: float | None = None  # None = 用 provider 默认
     # 推理档位；None = 不发送该参数（用模型默认）。某个模型具体支持哪几档由服务端校验，
     # 这里只挡明显非法的取值。
@@ -65,6 +68,14 @@ class RouteItem(BaseModel):
     context_window: int | None = Field(default=None, ge=1024, le=10_000_000)
     # 输入预算覆盖（键 → 字符数）；键与上下限见 core/llm/budgets.py，服务端校验
     input_budgets: dict[str, int] | None = None
+
+    @model_validator(mode="after")
+    def one_target(self) -> "RouteItem":
+        if (self.provider_id is None) == (self.acp_agent_id is None):
+            raise ValueError("a route targets exactly one of provider_id or acp_agent_id")
+        if self.provider_id is not None and not self.model.strip():
+            raise ValueError("model is required for a model API route")
+        return self
 
 
 class InputBudgetSpec(BaseModel):
@@ -85,9 +96,19 @@ TestCapability = Literal["chat", "embedding", "rerank"]
 class TestModelRequest(BaseModel):
     """模型连通性测试：按 provider 直连探测（不经过路由表，不记账、不写调用日志）。"""
 
-    provider_id: uuid.UUID
-    model: str = Field(min_length=1, max_length=255)
+    #: 二选一：测一个模型 API 的某个模型，或测一个外部 agent（#840）
+    provider_id: uuid.UUID | None = None
+    acp_agent_id: uuid.UUID | None = None
+    model: str = Field(default="", max_length=255)
     capability: TestCapability = "chat"
+
+    @model_validator(mode="after")
+    def one_target(self) -> "TestModelRequest":
+        if (self.provider_id is None) == (self.acp_agent_id is None):
+            raise ValueError("test exactly one of provider_id or acp_agent_id")
+        if self.provider_id is not None and not self.model.strip():
+            raise ValueError("model is required")
+        return self
 
 
 class TestModelResult(BaseModel):

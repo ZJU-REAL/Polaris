@@ -8,7 +8,7 @@ const settingsSource = readFileSync(
 );
 
 const llmTab = settingsSource.slice(
-  settingsSource.indexOf('export function LlmTab()'),
+  settingsSource.indexOf('export function LlmTab('),
   settingsSource.indexOf('// ---------------- 我的模型'),
 );
 

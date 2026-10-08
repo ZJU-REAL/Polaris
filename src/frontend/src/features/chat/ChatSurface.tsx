@@ -5,6 +5,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { ApiError, api, type ChatTurn } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { isLlmNotConfigured, llmNotConfiguredText } from '../../lib/llmNotConfigured';
 import { useIsMobile } from '../../lib/useBreakpoint';
 import { useChatHistory } from './useChatHistory';
 import {
@@ -235,12 +236,12 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
       convId,
       (handlers) =>
         cfg.stream({ question, history: history10, context: payload.context }, handlers),
-      // LLM_NOT_CONFIGURED 是无 key 用户最常撞到的错误码，裸露代码太生硬，
-      // 翻译成一句能行动的大白话；其余错误原样透出，别把排错线索吃掉。
+      // LLM_NOT_CONFIGURED 是还没配模型的用户最常撞到的错误，裸露代码太生硬，翻译成一句
+      // 能行动的大白话（流里也可能只透出异常名或后端原话）；其余错误原样透出，别把排错线索吃掉。
       (detail) =>
         toast(
-          detail === 'LLM_NOT_CONFIGURED'
-            ? tr('还没配可用的模型，去设置里配一个。', 'No usable model is configured yet — set one up in settings.')
+          isLlmNotConfigured(detail)
+            ? llmNotConfiguredText()
             : `${tr('对话出错：', 'Chat error: ')}${detail}`,
           'error',
         ),

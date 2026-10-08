@@ -31,7 +31,8 @@ async def _has_model(user: User) -> bool:
     """
     from app.core.llm.router import get_llm_router
 
-    return "default" in await get_llm_router().configured_stages(user.id)
+    # 没配 default 也行：有外部 agent 时它会接管所有对话环节（#840）
+    return await get_llm_router().has_chat_model(user.id)
 
 
 async def _library_counts(session: AsyncSession, user: User) -> tuple[int, int]:
