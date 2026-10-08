@@ -36,6 +36,8 @@ export type AssistantBlock =
       kind: 'tool';
       id: string;
       name: string;
+      /** 外部 agent 的工具（agent_<kind>）自带一句人话标题；Polaris 自己的工具没有 */
+      title?: string;
       state: 'running' | 'ok' | 'error';
       summary?: string;
       preview?: string;
@@ -54,6 +56,8 @@ export interface AssistantHandlers {
   /** chat（默认）/ plan（只出方案）/ goal（带着一个持续目标） */
   mode?: 'chat' | 'plan' | 'goal';
   goal?: string;
+  /** 谁来答：'polaris' 或一个外部 agent 的 id（#836）。不传就沿用会话上存着的 */
+  backend?: string;
   /** 用「上一份块列表 → 新块列表」的形式增量更新（React 状态直接套用）。 */
   onBlocks: (fn: (blocks: AssistantBlock[]) => AssistantBlock[]) => void;
   onDone: (stopReason: string) => void;
@@ -187,7 +191,16 @@ export function applyAssistantEvent(
   }
 
   if (event === 'tool_call') {
-    return [...blocks, { kind: 'tool', id: str(data.id), name: str(data.name, '?'), state: 'running' }];
+    const name = str(data.name, '?');
+    const args = data.args && typeof data.args === 'object' ? (data.args as Record<string, unknown>) : {};
+    // 只给外部 agent 的工具取标题：Polaris 工具的参数是给模型的，不是给人看的
+    const title = name.startsWith('agent_') ? str(args.title) : '';
+    return [
+      ...blocks,
+      title
+        ? { kind: 'tool', id: str(data.id), name, title, state: 'running' }
+        : { kind: 'tool', id: str(data.id), name, state: 'running' },
+    ];
   }
 
   if (event === 'tool_result') {
@@ -223,6 +236,7 @@ export function assistantTurnSse(
       ...(handlers.projectId ? { project_id: handlers.projectId } : {}),
       ...(handlers.mode && handlers.mode !== 'chat' ? { mode: handlers.mode } : {}),
       ...(handlers.goal ? { goal: handlers.goal } : {}),
+      ...(handlers.backend ? { backend: handlers.backend } : {}),
     },
     {
       onEvent: (event, raw) => {

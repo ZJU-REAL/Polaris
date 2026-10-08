@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { PolarisMark } from '../../components/ui/PolarisLogo';
 import type { AssistantBlock } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
+import { toolDisplayName } from './agentTools';
 
 /* ============================================================
    一轮对话的「现在在干什么」。
@@ -74,8 +75,8 @@ export function TurnStatus({
   const label =
     phase === 'tool'
       ? tr(
-          `正在查：${running.map((b) => (b.kind === 'tool' ? b.name : '')).join('、')}`,
-          `Searching: ${running.map((b) => (b.kind === 'tool' ? b.name : '')).join(', ')}`,
+          `正在查：${running.map((b) => (b.kind === 'tool' ? toolDisplayName(b) : '')).join('、')}`,
+          `Searching: ${running.map((b) => (b.kind === 'tool' ? toolDisplayName(b) : '')).join(', ')}`,
         )
       : phase === 'writing'
         ? tr('正在写答案', 'Writing')

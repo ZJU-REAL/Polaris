@@ -49,6 +49,7 @@ import {
   specsByStage,
 } from './inputBudgets';
 import { ExtensionApiKeySettings } from './ExtensionApiKeySettings';
+import { AcpAgentsSettings } from './AcpAgentsSettings';
 import { FullExportSettings } from './FullExportSettings';
 import { PluginsSettings } from './PluginsSettings';
 import {
@@ -2540,7 +2541,9 @@ type Tab =
   | 'extension' | 'mcp' | 'export' | 'plugins' | 'about'
   // 原 /admin 的六项（#755）：平台只剩一个使用者，另开一个「管理」入口只是
   // 实验室时代的残留——同一个人要在两个页面之间找同一类配置
-  | 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | 'usage';
+  | 'llm' | 'literature' | 'processing' | 'experiment' | 'daily' | 'usage'
+  // 外部智能体后端（#836）
+  | 'agents';
 
 /** 给最近 7 天缺向量的每日论文补建向量（新论文同步时已自动建，这里只补历史）。 */
 function DailyEmbedSection() {
@@ -2845,7 +2848,7 @@ export function DailyCategoriesTab() {
  */
 export const ALL_TABS: Tab[] = [
   'personal', 'prefs', 'buddy', 'speech', 'bots', 'ssh', 'myusage', 'extension', 'mcp', 'export', 'plugins',
-  'llm', 'literature', 'processing', 'experiment', 'daily', 'usage', 'about',
+  'llm', 'literature', 'processing', 'experiment', 'daily', 'usage', 'agents', 'about',
 ];
 
 export function SettingsPage() {
@@ -2918,6 +2921,7 @@ export function SettingsPage() {
     { v: 'experiment', label: tr('实验设置', 'Experiments') },
     { v: 'daily', label: tr('每日论文', 'Daily papers') },
     { v: 'usage', label: tr('用量总览', 'Usage overview') },
+    { v: 'agents', label: tr('智能体后端', 'Agent backends') },
     ...(desktop ? [{ v: 'about' as Tab, label: tr('关于', 'About') }] : []),
   ];
 
@@ -2954,6 +2958,7 @@ export function SettingsPage() {
       {effectiveTab === 'experiment' && <ExperimentSettings />}
       {effectiveTab === 'daily' && <DailyCategoriesTab />}
       {effectiveTab === 'usage' && <UsageTab />}
+      {effectiveTab === 'agents' && <AcpAgentsSettings />}
       </SettingsLayout>
     </div>
   );
