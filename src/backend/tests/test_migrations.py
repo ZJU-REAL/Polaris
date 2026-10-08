@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d3f9a1c7e2b4"  # 删掉偏好的旧 system_settings 行 (#821 E2)
+HEAD_REVISION = "f6b2d8e04a17"  # 外部 agent（ACP 后端）登记表 (#836)
+LEGACY_PREFS_REVISION = "d3f9a1c7e2b4"  # 删掉偏好的旧 system_settings 行 (#821 E2)
 DAILY_FEED_SOURCES_REVISION = "b5e2c8d41f7a"  # 每日池条目记来源 (#821)
 INPUT_BUDGETS_REVISION = "a8d3e5f71c42"  # 路由的输入预算 (#811)
 RERANK_PATH_REVISION = "e3a7c91f20b6"  # provider 的 rerank 路径 (#810)
@@ -154,6 +155,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "conversation_messages",
                     "guidance_documents",
                     "mcp_servers",
+                    "acp_agents",
                     "buddy_memories",
                     "view_events",
                     "integration_tokens",
@@ -205,6 +207,10 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert version == HEAD_REVISION
     # 外部 MCP 服务器登记（#754）：env 整体加密，命令可审计
     assert {"slug", "transport", "env_encrypted", "enabled"} <= columns["mcp_servers"]
+    # 外部 agent 登记（#836）：与 MCP 服务器同一套 env 加密约定，外加权限策略
+    assert {"slug", "command", "env_encrypted", "permission_policy", "shared"} <= columns[
+        "acp_agents"
+    ]
     # 学科包：文献库声明学科，决定本库论文按哪套 schema 抽
     assert "discipline" in columns["direction_libraries"]
     # 协同文档 CRDT 状态（#347）：房间重建靠它，不能只留纯文本投影
@@ -644,7 +650,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 每日池条目记来源（#821）：增量同步按库的来源筛池
     assert "sources" in columns["daily_feed_entries"]
 
-    # 先退掉「删偏好旧行」（只动数据，不动表结构）。
+    # 先退掉外部 agent 登记表（#836）。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == LEGACY_PREFS_REVISION
+    assert "acp_agents" not in columns["_tables"]
+
+    # 再退掉「删偏好旧行」（只动数据，不动表结构）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == DAILY_FEED_SOURCES_REVISION
@@ -1636,3 +1648,18 @@ def test_legacy_preference_rows_move_to_the_owner_then_go(tmp_path):
     assert settings["tts.admin"] == {"model": "legacy-voice"}
     assert "daily.categories" not in settings
     assert keys == {"literature_search"}
+
+
+def test_acp_agents_table_roundtrip(tmp_path):
+    """#836：外部 agent 登记表能建能退，退掉不影响上一档。"""
+    db_path = tmp_path / "acp.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, LEGACY_PREFS_REVISION)
+    version, columns = _inspect_db(db_path)
+    assert version == LEGACY_PREFS_REVISION
+    assert "acp_agents" not in columns["_tables"]
+    command.upgrade(cfg, "head")
+    version, columns = _inspect_db(db_path)
+    assert version == HEAD_REVISION
+    assert "permission_policy" in columns["acp_agents"]

@@ -46,6 +46,10 @@ async def lifespan(app: FastAPI):
     # AI 起草流式镜像订阅（worker 发布 → 写活跃 CRDT 房间；连不上 redis 自动放弃）
     get_crdt_stream_subscriber().start()
     yield
+    # 外部 agent 子进程（#836）：随服务一起收掉，别留孤儿进程继续烧额度
+    from app.services.acp.pool import shutdown_pool
+
+    await shutdown_pool()
     await stop_crdt_stream_subscriber()
     await reset_crdt_rooms()  # 关停 CRDT 房间服务器（先冲刷不了的防抖任务直接取消）
     await dispose_engine()

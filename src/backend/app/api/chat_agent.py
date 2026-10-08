@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,6 +51,7 @@ from app.schemas.chat_agent import (
 from app.services import buddy
 from app.services import conversations as store
 from app.services import projects as projects_service
+from app.services.acp import chat as acp_chat
 from app.tools.context import ToolContext
 from app.tools.memory import MEMORY_TOOL_NAMES
 from app.tools.scope import visible_library_ids
@@ -313,10 +314,32 @@ async def buddy_greeting(
     }
 
 
+@router.get("/backends")
+async def list_backends(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[dict[str, object]]:
+    """助手能用的「大脑」：Polaris 自己的模型循环，加上这个人能用的外部 agent（#836）。"""
+    _require_enabled()
+    out: list[dict[str, object]] = [{"id": "polaris", "name": "Polaris", "kind": "polaris"}]
+    for row in await acp_chat.usable_agents(session, user):
+        out.append(
+            {
+                "id": str(row.id),
+                "name": row.name or row.slug,
+                "kind": "acp",
+                "template": row.template,
+                "permission_policy": row.permission_policy,
+            }
+        )
+    return out
+
+
 @router.post("/conversations/{conversation_id}/turn")
 async def run_turn(
     conversation_id: uuid.UUID,
     payload: ConversationTurnRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> StreamingResponse:
@@ -348,9 +371,38 @@ async def run_turn(
     goal = str(settings.get("goal") or "")
     if payload.mode != settings.get("mode"):
         settings["mode"] = payload.mode
+    if payload.backend is not None and payload.backend != settings.get("backend"):
+        settings["backend"] = payload.backend
     if settings != (conv.settings or {}):
         conv.settings = settings
         await session.commit()
+
+    # 这个对话交给了外部 agent（#836）：换一个大脑，事件、落库、渲染都不变
+    backend = str(settings.get("backend") or "polaris")
+    if backend != "polaris":
+        agent = await acp_chat.resolve_agent(session, user, backend)
+        if agent is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="ACP_AGENT_NOT_AVAILABLE")
+        acp_history = await store.replay(session, conversation_id=conv.id, limit=40)
+        await store.append_message(session, conversation=conv, role="user", text=payload.question)
+        await session.commit()
+        return _stream_turn(
+            acp_chat.run_turn(
+                agent=agent,
+                user=user,
+                conversation_id=conv.id,
+                question=payload.question,
+                history=acp_history,
+                page_context=buddy.render_page_context(payload.page_kind, payload.page_id),
+                resume_session_id=settings.get("acp_session_id")
+                if settings.get("acp_agent_id") == str(agent.id)
+                else None,
+                server_port=_server_port(request),
+            ),
+            conv_id=conv.id,
+            user_id=user.id,
+            first_question=payload.question,
+        )
     mode_note = mode_instructions(payload.mode, goal=goal)
     await store.append_message(session, conversation=conv, role="user", text=payload.question)
     await session.commit()
@@ -401,9 +453,29 @@ async def run_turn(
         extra_system="\n\n".join(x for x in (memories, mode_note) if x),
         page_context=buddy.render_page_context(payload.page_kind, payload.page_id),
     )
-    conv_id, user_id = conv.id, user.id
-    first_question = payload.question
+    return _stream_turn(
+        loop.run(req), conv_id=conv.id, user_id=user.id, first_question=payload.question
+    )
 
+
+def _server_port(request: Request) -> int | None:
+    """本进程实际监听的端口：外部 agent 跑在同一台机器上，经 127.0.0.1 回连 /mcp。
+
+    不用 request.base_url——那是浏览器看到的地址（可能是 nginx 后面的公网域名），
+    从容器里未必连得通。"""
+    server = request.scope.get("server")
+    if isinstance(server, tuple | list) and len(server) >= 2 and isinstance(server[1], int):
+        return server[1]
+    return None
+
+
+def _stream_turn(
+    events: AsyncIterator[ChatEvent],
+    *,
+    conv_id: uuid.UUID,
+    user_id: uuid.UUID,
+    first_question: str,
+) -> StreamingResponse:
     async def event_stream() -> AsyncIterator[str]:
         # 落库的是**整条时间线**，不只是最终文本。只存文本的后果用户一眼就能看见：
         # 切到别的对话再切回来，思考过程和工具调用全没了，只剩一段结论——而那段结论
@@ -411,7 +483,7 @@ async def run_turn(
         timeline = _TurnTimeline()
         stop_reason, usage = "stop", {}
         try:
-            async for ev in loop.run(req):
+            async for ev in events:
                 timeline.feed(ev)
                 if isinstance(ev, DoneEvent):
                     stop_reason, usage = ev.stop_reason, ev.usage

@@ -1,5 +1,6 @@
 """SQLAlchemy 模型包。import 本包即可把全部表注册进 Base.metadata（create_all / alembic 用）。"""
 
+from app.models.acp_agent import AcpAgent
 from app.models.activity import Activity
 from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.buddy_memory import BuddyMemory
@@ -88,6 +89,7 @@ __all__ = [
     "Gate",
     "GuidanceDocument",
     "McpServer",
+    "AcpAgent",
     "HypothesisNode",
     "Idea",
     "InterdisciplinaryResearchProfile",
