@@ -103,7 +103,7 @@ class InlineTaskQueue:
     - 只接受 ``WORKER_FUNCTIONS`` 注册过的任务名（同一事实来源、同样当场炸掉）；
     - ``_job_id`` 保持「同 id 在途去重」语义（arq 用它防重复入队）；其余 arq 专属
       下划线参数（``_defer_by`` 等）忽略——desktop 单用户场景没有延迟投递需求；
-    - cron 任务不在这里调度（桌面内核接管定时触发）。
+    - 定时任务不在这里：由引擎进程里的 core/scheduler.py 按间隔触发（#842）。
     """
 
     def __init__(self) -> None:
