@@ -54,6 +54,20 @@ http_headers = { Authorization = "Bearer <YOUR_TOKEN>" }
 
 If it does not, use the stdio transport below.
 
+Things to know about the local engine's protections (#850):
+
+- Use `127.0.0.1` or `localhost` in the URL. The engine rejects any other `Host` name with `400`
+  (this blocks DNS-rebinding attacks from web pages); `POLARIS_ALLOWED_HOSTS` adds names if you
+  really need one.
+- Clients that are ordinary programs (Claude Code, Cursor, Codex) are not affected by CORS. A
+  client that runs inside a browser page, such as the MCP Inspector, is: add its page origin to
+  `POLARIS_CORS_ORIGINS` (for example `http://localhost:6274`), otherwise the browser cannot read
+  the engine's responses.
+- The session token is signed with a key generated for your installation. The first launch of a
+  version with per-install keys signs every earlier token out, so copy a fresh token from
+  **Settings → MCP** into your client configs once. Tokens also expire after
+  `POLARIS_SESSION_LIFETIME_SECONDS` (30 days by default).
+
 ### stdio
 
 `python -m app.mcp` speaks JSON-RPC over stdin/stdout. It talks to the database directly, so it has

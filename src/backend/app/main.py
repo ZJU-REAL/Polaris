@@ -11,8 +11,9 @@ from fastapi.responses import JSONResponse
 from app import __version__
 from app.api.router import api_router
 from app.api.ws import router as ws_router
-from app.core.config import get_settings
+from app.core.config import DESKTOP_ORIGIN, get_settings
 from app.core.db import create_all, dispose_engine, drain_side_writes, get_sessionmaker
+from app.core.hosts import AllowedHostMiddleware
 from app.core.llm.router import LLMNotConfiguredError
 from app.core.redis import close_redis
 from app.mcp import mcp_router
@@ -24,10 +25,8 @@ from app.services.local_user import ensure_local_user
 
 logger = logging.getLogger(__name__)
 
-# Electron 桌面客户端的固定 origin：页面由自定义 app:// scheme 加载（见 src/desktop）。
-# 恒在 prod 白名单内且无需配置——网页无法伪造自定义 scheme 的 Origin 头，且这里
-# allow_credentials=False + Bearer 鉴权没有 ambient authority，故对 web 攻击面零增量。
-DESKTOP_ORIGIN = "app://polaris"
+# DESKTOP_ORIGIN（app://polaris）定义在 core/config.py，这里再导出给测试与旧调用方。
+__all__ = ["DESKTOP_ORIGIN", "app", "create_app"]
 
 
 @asynccontextmanager
@@ -36,6 +35,15 @@ async def lifespan(app: FastAPI):
     # 仅 sqlite（无 docker 的本地 dev）在启动时建表；postgres 走 alembic migration
     if settings.is_sqlite:
         await create_all()
+    # 换上每份安装独立的加密密钥后，把仍用旧（公开默认值派生）密钥加密的凭据重新加密
+    # （#850）。幂等、逐表提交；失败不阻断启动——旧密文照样解得开，下次启动再换。
+    try:
+        from app.core.security import rotate_encrypted_secrets
+
+        async with get_sessionmaker()() as session:
+            await rotate_encrypted_secrets(session)
+    except Exception:  # noqa: BLE001
+        logger.warning("re-encrypting stored secrets failed; will retry next start", exc_info=True)
     # 跨学科工作流的指引文档种子（按 slug 幂等）；失败不阻断启动（如 migration 未跑）
     try:
         async with get_sessionmaker()() as session:
@@ -97,11 +105,10 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(
         CORSMiddleware,
-        # dev 全放开；prod 只放行桌面客户端 + POLARIS_CORS_ORIGINS 里显式配置的前端域名。
-        # web 生产是 nginx 同源反代，不经过这里。
-        allow_origins=(
-            ["*"] if settings.env == "dev" else [DESKTOP_ORIGIN, *settings.cors_origin_list]
-        ),
+        # 只放行桌面客户端 + POLARIS_CORS_ORIGINS 里显式配置的来源，任何 env 都不放 "*"
+        # （#850）：引擎在本机 127.0.0.1 上，"*" 等于允许任何网页读它的响应。vite 开发
+        # 服务器经代理同源访问，不需要这里放行。
+        allow_origins=settings.allowed_origin_list,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -110,6 +117,9 @@ def create_app() -> FastAPI:
         # （app://polaris 是跨源）的 PDF 阅读会因此又变回「等整份下完」。
         expose_headers=["Accept-Ranges", "Content-Range", "Content-Length", "Content-Disposition"],
     )
+
+    # 最后添加 = 最外层：Host 不对的请求连 CORS 都不进（#850，防 DNS rebinding）
+    app.add_middleware(AllowedHostMiddleware, allowed=settings.allowed_host_list)
 
     @app.exception_handler(LLMNotConfiguredError)
     async def _llm_not_configured(_request: Request, _exc: LLMNotConfiguredError) -> JSONResponse:

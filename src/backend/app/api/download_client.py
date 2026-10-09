@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user, current_user_optional
-from app.core.config import get_settings
+from app.core.config import LEGACY_DEFAULT_SECRET_KEY, get_settings
 from app.core.db import get_session
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.download_client import DownloadApiKey, DownloadBatch, DownloadBatchItem
@@ -43,10 +43,19 @@ TERMINAL_ITEM_STATUSES = {"uploaded", "skipped", "failed", "blocked", "cancelled
 DOWNLOADABLE_LIBRARY_STATUSES = ("scored", "fetched", "compiled", "included")
 
 
-def _hash_key(value: str) -> str:
-    return hmac.new(
-        get_settings().secret_key.encode("utf-8"), value.encode("utf-8"), hashlib.sha256
-    ).hexdigest()
+def _hash_key(value: str, secret: str | None = None) -> str:
+    key = secret if secret is not None else get_settings().secret_key
+    return hmac.new(key.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _matches_legacy_hash(stored: str, value: str) -> bool:
+    """换成每份安装独立的 secret_key（#850）之前签发的 key，摘要是用公开默认值算的。
+
+    认它一次、随即改存新摘要——用户不必重新配置浏览器扩展。
+    """
+    if get_settings().secret_key == LEGACY_DEFAULT_SECRET_KEY:
+        return False
+    return hmac.compare_digest(stored, _hash_key(value, LEGACY_DEFAULT_SECRET_KEY))
 
 
 def _expected_identity(paper: Paper) -> dict[str, str]:
@@ -129,9 +138,13 @@ async def download_client_user(
             .where(DownloadApiKey.key_prefix == prefix, DownloadApiKey.status == "active")
         )
     ).first()
-    if row is None or not hmac.compare_digest(row[0].secret_hash, _hash_key(x_polaris_api_key)):
+    if row is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="DOWNLOAD_API_KEY_INVALID")
     key, user = row
+    if not hmac.compare_digest(key.secret_hash, _hash_key(x_polaris_api_key)):
+        if not _matches_legacy_hash(key.secret_hash, x_polaris_api_key):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="DOWNLOAD_API_KEY_INVALID")
+        key.secret_hash = _hash_key(x_polaris_api_key)
     now = datetime.now(UTC)
     if not user.is_active or (key.expires_at is not None and key.expires_at <= now):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="DOWNLOAD_API_KEY_EXPIRED")

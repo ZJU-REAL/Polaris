@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Icon } from '../../components/ui/Icon';
 import { LangToggle } from '../../components/ui/LangToggle';
 import { PolarisMark, PolarisWordmark } from '../../components/ui/PolarisLogo';
+import type { LocalEngineProblem } from '../../lib/endpoint';
 import { hasHost, relaunchApp } from '../../lib/host';
 import { tr, useLang } from '../../lib/i18n';
 
@@ -27,10 +28,13 @@ export async function runRelaunch(
  */
 export function EngineUnavailablePage({
   setupFailed = false,
+  problem = null,
   canRelaunch = hasHost(),
   initialRestarting = false,
 }: {
   setupFailed?: boolean;
+  /** 已知原因（#850）：端口被别的程序或残留的旧引擎占着。 */
+  problem?: LocalEngineProblem | null;
   /** 有桌面宿主才能「重新打开」；没有宿主时这个按钮点了什么也不会发生，干脆不给 */
   canRelaunch?: boolean;
   /** 仅测试用：直接画「正在重新打开」的样子 */
@@ -39,6 +43,34 @@ export function EngineUnavailablePage({
   useLang();
   const [restarting, setRestarting] = useState(initialRestarting);
   const restart = () => runRelaunch(relaunchApp, setRestarting);
+
+  let title: string;
+  let detail: string;
+  if (setupFailed) {
+    title = tr('本机环境没有准备好', 'Local setup did not finish');
+    detail = tr(
+      '准备本机运行环境时出了问题。重新打开 Polaris 会再试一次；如果反复失败，请检查网络后再试。',
+      'Something went wrong while preparing the local environment. Restarting Polaris will try again; if it keeps failing, check your network connection.',
+    );
+  } else if (problem === 'stale-engine') {
+    title = tr('还有一个旧的 Polaris 引擎在运行', 'An older Polaris engine is still running');
+    detail = tr(
+      '端口 18080 被另一个 Polaris 引擎占着（可能是上次没有正常退出，或者同时开着另一份 Polaris）。请关掉其他 Polaris 窗口；仍然不行的话，在活动监视器/任务管理器里结束名为 python 的 Polaris 引擎进程，或重启电脑，然后重新打开 Polaris。',
+      'Port 18080 is held by another Polaris engine (it may not have shut down last time, or another copy of Polaris is open). Close other Polaris windows; if that does not help, end the Polaris engine (a python process) in Activity Monitor / Task Manager, or restart your computer, then reopen Polaris.',
+    );
+  } else if (problem === 'port-in-use') {
+    title = tr('端口 18080 被别的程序占用', 'Port 18080 is in use by another program');
+    detail = tr(
+      'Polaris 的本机引擎需要用 18080 端口，但它现在被另一个程序占着。请退出那个程序后重新打开 Polaris。',
+      'The Polaris engine needs port 18080 on this computer, but another program is using it. Quit that program, then restart Polaris.',
+    );
+  } else {
+    title = tr('本机引擎没有启动', 'The local engine is not running');
+    detail = tr(
+      'Polaris 的数据和功能都由这台电脑上的引擎提供，它现在没有运行。重新打开 Polaris 会再启动一次。',
+      'Polaris keeps your data and runs its features on an engine on this computer, and that engine is not running. Restarting Polaris will start it again.',
+    );
+  }
 
   return (
     <div className="auth-page">
@@ -52,22 +84,8 @@ export function EngineUnavailablePage({
       </div>
 
       <div className="auth-card fadeup">
-        <div className="auth-card-title">
-          {setupFailed
-            ? tr('本机环境没有准备好', 'Local setup did not finish')
-            : tr('本机引擎没有启动', 'The local engine is not running')}
-        </div>
-        <div className="auth-card-sub">
-          {setupFailed
-            ? tr(
-                '准备本机运行环境时出了问题。重新打开 Polaris 会再试一次；如果反复失败，请检查网络后再试。',
-                'Something went wrong while preparing the local environment. Restarting Polaris will try again; if it keeps failing, check your network connection.',
-              )
-            : tr(
-                'Polaris 的数据和功能都由这台电脑上的引擎提供，它现在没有运行。重新打开 Polaris 会再启动一次。',
-                'Polaris keeps your data and runs its features on an engine on this computer, and that engine is not running. Restarting Polaris will start it again.',
-              )}
-        </div>
+        <div className="auth-card-title">{title}</div>
+        <div className="auth-card-sub">{detail}</div>
         <div className="row" style={{ gap: 10, marginTop: 6 }}>
           {/* 「再检查一次」任何时候都能点：重开卡住了也还有这条路 */}
           <button

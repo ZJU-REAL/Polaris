@@ -7,6 +7,7 @@ import {
   kernelLocalBackend,
   type EngineBootstrapStatus,
 } from '../../lib/host';
+import type { LocalEngineProblem } from '../../lib/endpoint';
 import { tr, useLang } from '../../lib/i18n';
 import { BOOTSTRAP_STEPS, bootstrapGate, bootstrapStepIndex } from './engineBootstrap';
 import { EngineUnavailablePage } from './EngineUnavailablePage';
@@ -62,9 +63,29 @@ export function EngineBootstrapPage({
     });
   }, [gate, onProceed]);
 
+  // 失败时问一次内核有没有已知原因（#850：端口被别的程序/旧引擎占着）。
+  // undefined = 还在问，先不渲染，免得「环境没准备好」一闪而过再换成端口提示。
+  const [problem, setProblem] = useState<LocalEngineProblem | null | undefined>(undefined);
+  useEffect(() => {
+    if (gate !== 'failed') return;
+    let cancelled = false;
+    void kernelLocalBackend()
+      .then((info) => info?.problem ?? null)
+      .catch(() => null)
+      .then((p) => {
+        if (!cancelled) setProblem(p);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [gate]);
+
   const active = bootstrapStepIndex(status.phase);
 
-  if (gate === 'failed') return <EngineUnavailablePage setupFailed />;
+  if (gate === 'failed') {
+    if (problem === undefined) return null;
+    return problem ? <EngineUnavailablePage problem={problem} /> : <EngineUnavailablePage setupFailed />;
+  }
 
   return (
     <div className="auth-page">

@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, type Plugin, type ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react';
 import { cpSync } from 'node:fs';
 
@@ -22,6 +22,22 @@ function copyPdfAssets(): Plugin {
   }
   return { name: 'copy-pdf-assets' };
 }
+
+/**
+ * 开发服务器把 /api 同源转给引擎。浏览器对同源 POST 也会带 Origin（如
+ * http://localhost:5173），而引擎（#850）在没有桌面会话口令时只给「不带 Origin 或
+ * Origin 在白名单里」的请求发本地会话。对引擎而言这本来就是同源请求：只去掉
+ * 「Origin 恰好是开发服务器自己」的这一种；别的网站发来的 Origin 原样转发、照样被拒。
+ * 这样 make frontend-dev 不用配 POLARIS_CORS_ORIGINS 就能用。
+ */
+const dropSameOriginHeader: NonNullable<ProxyOptions['configure']> = (proxy) => {
+  proxy.on('proxyReq', (proxyReq, req) => {
+    const { origin, host } = req.headers;
+    if (origin && host && (origin === `http://${host}` || origin === `https://${host}`)) {
+      proxyReq.removeHeader('origin');
+    }
+  });
+};
 
 export default defineConfig({
   plugins: [react(), copyPdfAssets()],
@@ -47,9 +63,12 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        // 本地 dev 默认打宿主机后端；docker dev compose 里覆盖为 http://api:8000
+        // 本地 dev 默认打宿主机后端（make backend-dev）。changeOrigin 把 Host 改成目标地址，
+        // 引擎的 Host 白名单（#850）只认回环名字：目标若不是 localhost/127.0.0.1，
+        // 引擎那边要设 POLARIS_ALLOWED_HOSTS=<目标主机名>
         target: process.env.VITE_PROXY_TARGET ?? 'http://localhost:8000',
         changeOrigin: true,
+        configure: dropSameOriginHeader,
       },
       '/ws': {
         target: process.env.VITE_PROXY_TARGET ?? 'http://localhost:8000',
@@ -60,6 +79,7 @@ export default defineConfig({
         // MCP 协议端点（POST /mcp，JSON-RPC）——见 docs/mcp.md
         target: process.env.VITE_PROXY_TARGET ?? 'http://localhost:8000',
         changeOrigin: true,
+        configure: dropSameOriginHeader,
       },
     },
   },

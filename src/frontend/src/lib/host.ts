@@ -82,6 +82,10 @@ export function setBadgeCount(count: number): void {
 /** 本地引擎信息（contract.ts 的 LocalBackendInfo 镜像）。 */
 export interface LocalBackendInfo {
   baseUrl: string | null;
+  /** 本次启动的本地会话口令（#850）；老外壳没有。 */
+  sessionSecret?: string | null;
+  /** 引擎没起来的已知原因（#850）。 */
+  problem?: 'port-in-use' | 'stale-engine' | null;
 }
 
 /**

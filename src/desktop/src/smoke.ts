@@ -17,7 +17,7 @@
 import { BrowserWindow, app } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { gzipSync } from 'node:zlib';
@@ -832,11 +832,31 @@ void app.whenReady().then(async () => {
       // 上面主流程已 stopKernel（单例清空），这里起的是全新实例；
       // startKernel 会等到引擎健康或失败才返回（首启跑全部迁移，最长 120s）。
       await startKernel();
-      const { baseUrl } = localBackend();
+      const { baseUrl, sessionSecret } = localBackend();
       check('kernel.localBackend 返回本地地址', baseUrl != null, `baseUrl=${baseUrl}`);
       if (baseUrl) {
         const health = await fetch(`${baseUrl}/api/health`).catch(() => null);
         check('本地引擎 /api/health 可达', health?.ok === true, `status=${health?.status}`);
+        // #850：本地会话只发给带着本次启动口令的请求
+        check('kernel.localBackend 带本次会话口令', typeof sessionSecret === 'string' && sessionSecret.length > 0);
+        const denied = await fetch(`${baseUrl}/api/auth/local-session`, { method: 'POST' }).catch(() => null);
+        check('不带口令拿不到本地会话', denied?.status === 403, `status=${denied?.status}`);
+        const granted = await fetch(`${baseUrl}/api/auth/local-session`, {
+          method: 'POST',
+          headers: { 'X-Polaris-Session-Secret': sessionSecret ?? '' },
+        }).catch(() => null);
+        check('带口令拿到本地会话', granted?.ok === true, `status=${granted?.status}`);
+        check(
+          '每份安装的引擎密钥落在 userData（0600）',
+          (() => {
+            try {
+              const st = statSync(join(app.getPath('userData'), 'engine-secrets.json'));
+              return process.platform === 'win32' || (st.mode & 0o777) === 0o600;
+            } catch {
+              return false;
+            }
+          })(),
+        );
       }
     } finally {
       await stopKernel();

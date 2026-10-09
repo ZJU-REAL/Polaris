@@ -5,10 +5,11 @@ Polaris 是单人、只在本机运行的产品（#842）：没有注册、密�
 ``POST /auth/local-session`` 取会话；其余路由照旧用 ``current_active_user`` 认 JWT。
 """
 
+import hmac
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import AuthenticationBackend, BearerTransport, JWTStrategy
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
@@ -76,7 +77,38 @@ router = APIRouter()
 # （stdio MCP 也按它找人，见 app/mcp/__main__.py）。
 
 
-@router.post("/auth/local-session", tags=["auth"])
+#: 桌面外壳把本次启动的会话口令放在这个请求头里（见 local_session_caller）。
+LOCAL_SESSION_SECRET_HEADER = "X-Polaris-Session-Secret"
+
+
+async def local_session_caller(
+    request: Request,
+    x_polaris_session_secret: str | None = Header(default=None),
+) -> None:
+    """只有本机这位用户自己的界面才能换到会话（#850）。
+
+    「能连上 127.0.0.1 的就是主人」并不成立：任何网页都能向本机端口发简单 POST，
+    本机的其他账号也能连。所以：
+
+    - 桌面外壳每次启动生成随机口令（POLARIS_LOCAL_SESSION_SECRET），只交给引擎和
+      自己的渲染进程——配置了它，就必须带着同一口令来；
+    - 没配置（从源码跑、测试）时退一步按 Origin 判断：不带 Origin（命令行、脚本、
+      同源代理）或来自白名单（app://polaris、POLARIS_CORS_ORIGINS）的才放行，
+      别的网站的页面一律拒绝。
+    """
+    settings = get_settings()
+    expected = settings.local_session_secret
+    if expected:
+        supplied = x_polaris_session_secret or ""
+        if not hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8")):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LOCAL_SESSION_SECRET_INVALID")
+        return
+    origin = request.headers.get("origin")
+    if origin is not None and origin not in settings.allowed_origin_list:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LOCAL_SESSION_ORIGIN_FORBIDDEN")
+
+
+@router.post("/auth/local-session", tags=["auth"], dependencies=[Depends(local_session_caller)])
 async def local_session(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:

@@ -206,16 +206,14 @@ async def test_mcp_get_figure_returns_download_link(client):
                 "arguments": {"project_id": project_id, "paper_id": paper_id, "index": 0},
             },
         },
-        headers={**headers, "Host": "mcp.polaris.test:9443"},
+        headers={**headers, "Host": "localhost:9443"},
     )
     assert resp.status_code == 200, resp.text
     content = resp.json()["result"]["content"]
     images = [c for c in content if c["type"] == "image"]
     assert images == []
     payload = json.loads(next(c["text"] for c in content if c["type"] == "text"))
-    assert payload["download_url"].startswith(
-        "http://mcp.polaris.test:9443/api/paper-figure-download/"
-    )
+    assert payload["download_url"].startswith("http://localhost:9443/api/paper-figure-download/")
     assert payload["download_url_expires_at"]
     assert "data" not in payload
     assert len(resp.content) < 4_000
@@ -256,7 +254,7 @@ async def test_mcp_list_figures_returns_downloadable_links(client):
                 "arguments": {"project_id": project_id, "paper_id": paper_id},
             },
         },
-        headers={**headers, "Host": "mcp.polaris.test:9443"},
+        headers={**headers, "Host": "localhost:9443"},
     )
 
     assert resp.status_code == 200, resp.text
@@ -264,9 +262,7 @@ async def test_mcp_list_figures_returns_downloadable_links(client):
     payload = json.loads(next(c["text"] for c in content if c["type"] == "text"))
     figures = payload["figures"]
     assert len(figures) == 3
-    assert figures[0]["download_url"].startswith(
-        "http://mcp.polaris.test:9443/api/paper-figure-download/"
-    )
+    assert figures[0]["download_url"].startswith("http://localhost:9443/api/paper-figure-download/")
     assert figures[0]["download_url_expires_at"]
     assert figures[2]["download_url"] is None
     assert figures[2]["download_url_expires_at"] is None
