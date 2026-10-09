@@ -38,7 +38,7 @@ export function matchFilter(v: VoyageRead, f: Filter): boolean {
     case 'active':
       return RUNNING_STATUSES.has(v.status);
     case 'paused':
-      return v.status === 'paused_gate' || v.status === 'paused_error';
+      return v.status === 'paused_gate' || v.status === 'paused_ask' || v.status === 'paused_error';
     case 'done':
       return v.status === 'done';
     case 'failed':

@@ -63,9 +63,9 @@ const NAV_PERSONAL: NavEntry[] = [
 ];
 
 const NAV_PIPE: NavEntry[] = [
-  { sub: 'forge', no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge' },
+  { sub: 'forge', no: '01', icon: 'bulb', zh: '想法生成', en: 'Ideas' },
   { sub: 'review', no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review' },
-  { sub: 'experiment', no: '03', icon: 'flask', zh: '实验搭建', en: 'Experiment Lab' },
+  { sub: 'experiment', no: '03', icon: 'flask', zh: '实验搭建', en: 'Experiments' },
   { sub: 'writer', no: '04', icon: 'pen', zh: '论文撰写', en: 'Paper Writer' },
   { sub: 'paper-review', no: '05', icon: 'shield', zh: '论文评审', en: 'Paper Review' },
 ];
