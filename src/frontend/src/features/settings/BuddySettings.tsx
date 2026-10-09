@@ -4,13 +4,14 @@ import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
 import { api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { Switch } from '../../components/ui/Switch';
+import { SettingsGroup, SettingsRow, SettingsSection, SettingsStack } from './settingsUi';
 
 /* ============================================================
-   设置里的 PolarisBuddy：技能、记忆、MCP。
+   设置里的助手（PolarisBuddy）：长期记忆。
 
-   为什么这三样放一起：它们回答的是同一个问题——「Buddy 知道什么、能做什么」。
-   技能是按需加载的用法说明，记忆是关于你的长期事实，MCP 是工具面对外的样子。
-   分散在三处的话，用户要调整 Buddy 的行为就得先猜去哪儿找。
+   曾经还有一张 MCP 卡片，列出端点路径与工具数——那是「MCP」标签页的内容，
+   在这里只是重复，而且把接口路径摆给了用户。
    ============================================================ */
 
 
@@ -44,117 +45,64 @@ function MemoryCard() {
   const memories = data ?? [];
 
   return (
-    <div className="card card-pad">
-      <div className="section-h row gap8" style={{ marginBottom: 10, alignItems: 'center' }}>
-        <Icon name="bulb" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('长期记忆', 'Memory')}
-        <span style={{ flex: 1 }} />
+    <SettingsSection title={tr('长期记忆', 'Memory')} desc={tr('助手回答时会参考这些关于你的事实。', 'The assistant keeps these facts about you in mind.')}>
+      <SettingsGroup>
         {/* 开着时 Buddy 才有 remember / recall 两个动作。默认关：一个会自己记东西的
             助手，得先由用户说「可以」。 */}
-        <label className="row gap6" style={{ alignItems: 'center', cursor: 'pointer', fontSize: 12 }}>
-          <input
-            type="checkbox"
+        <SettingsRow labelId="buddy-memory-auto" label={tr('允许助手自动记住和查找', 'Let the assistant remember and look things up')}>
+          <Switch
             checked={caps.data?.memory?.enabled ?? false}
-            onChange={(e) => toggle.mutate(e.target.checked)}
-            style={{ width: 13, height: 13, margin: 0, accentColor: 'var(--accent)' }}
+            onChange={(enabled) => toggle.mutate(enabled)}
+            aria-labelledby="buddy-memory-auto"
           />
-          <span style={{ color: 'var(--text-3)' }}>
-            {tr('让 Buddy 自己记与查', 'Let Buddy write and search it')}
-          </span>
-        </label>
-      </div>
-      <div className="row gap8" style={{ marginBottom: 10 }}>
-        <input
-          className="input"
-          value={draft}
-          maxLength={300}
-          placeholder={tr('例如：我做具身智能，不用给我推纯 NLP 的工作', 'e.g. I work on embodied AI — skip pure NLP')}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && draft.trim()) add.mutate(draft.trim());
-          }}
-          style={{ flex: 1, minWidth: 0 }}
-        />
-        <button
-          className="btn btn-soft sm"
-          disabled={!draft.trim() || add.isPending}
-          onClick={() => add.mutate(draft.trim())}
-        >
-          {tr('记住', 'Remember')}
-        </button>
-      </div>
-      {isLoading && <div className="empty">{tr('加载中…', 'Loading…')}</div>}
-      {isError && (
-        <div className="empty">
-          {tr('无法加载记忆（助手未启用或后端不可用）', 'Cannot load memories (assistant off or backend down)')}
-        </div>
-      )}
-      {!isLoading && !isError && memories.length === 0 && (
-        <div className="empty">{tr('还没有记忆', 'Nothing remembered yet')}</div>
-      )}
-      <div className="col gap6">
-        {memories.map((memory) => (
-          <div
-            key={memory.id}
-            className="row gap8"
-            style={{
-              alignItems: 'flex-start',
-              padding: '7px 10px',
-              border: '0.5px solid var(--border-2)',
-              borderRadius: 8,
-              fontSize: 12.5,
-              lineHeight: 1.6,
+        </SettingsRow>
+        <div className="st-row">
+          <input
+            className="input"
+            value={draft}
+            maxLength={300}
+            placeholder={tr('例如：我研究具身智能，不用推荐纯 NLP 的论文', 'e.g. I work on embodied AI. Skip pure NLP papers.')}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && draft.trim()) add.mutate(draft.trim());
             }}
+            style={{ flex: 1, minWidth: 0 }}
+          />
+          <button
+            className="btn btn-primary sm"
+            disabled={!draft.trim() || add.isPending}
+            onClick={() => add.mutate(draft.trim())}
           >
-            <span style={{ flex: 1, minWidth: 0 }}>{memory.text}</span>
+            {tr('记住', 'Remember')}
+          </button>
+        </div>
+        {isLoading && <div className="st-row"><span className="st-row-hint">{tr('加载中…', 'Loading…')}</span></div>}
+        {isError && <div className="st-row"><span className="st-row-hint">{tr('无法加载记忆', 'Couldn’t load memories')}</span></div>}
+        {!isLoading && !isError && memories.length === 0 && (
+          <div className="st-row"><span className="st-row-hint">{tr('还没有记忆', 'Nothing remembered yet')}</span></div>
+        )}
+        {memories.map((memory) => (
+          <div key={memory.id} className="st-row">
+            <span style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 1.55 }}>{memory.text}</span>
             <button
-              className="icon-btn"
-              title={tr('忘掉这条', 'Forget this')}
+              className="icon-btn st-quiet-danger"
+              title={tr('删除', 'Delete')}
+              aria-label={tr('删除', 'Delete')}
               onClick={() => remove.mutate(memory.id)}
             >
               <Icon name="trash" size={12} />
             </button>
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-function McpCard() {
-  const { data } = useQuery({
-    queryKey: ['buddy-capabilities'],
-    queryFn: () => api.getBuddyCapabilities(),
-    retry: false,
-  });
-
-  return (
-    <div className="card card-pad">
-      <div className="section-h" style={{ marginBottom: 6 }}>
-        <Icon name="git" size={15} style={{ color: 'var(--accent)' }} />
-        MCP
-      </div>
-      {data && (
-        <div className="row gap8" style={{ marginTop: 10, alignItems: 'center', fontSize: 12 }}>
-          <span className="pill sm mono">{data.mcp.endpoint}</span>
-          <span style={{ color: 'var(--text-3)' }}>
-            {tr(`对外暴露 ${data.mcp.exposed_tools} 个只读工具`, `${data.mcp.exposed_tools} read-only tools exposed`)}
-          </span>
-          <span style={{ color: 'var(--text-4)' }}>·</span>
-          <span style={{ color: 'var(--text-3)' }}>
-            {tr(`Buddy 本轮可用 ${data.tools.length} 个`, `${data.tools.length} available to Buddy`)}
-          </span>
-        </div>
-      )}
-    </div>
+      </SettingsGroup>
+    </SettingsSection>
   );
 }
 
 export function BuddySettings() {
   return (
-    <div className="col gap14">
+    <SettingsStack>
       <MemoryCard />
-      <McpCard />
-    </div>
+    </SettingsStack>
   );
 }

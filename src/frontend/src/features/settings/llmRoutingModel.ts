@@ -174,22 +174,22 @@ export function answerStatus(
   const noEmbedding = whoAnswers('embedding', routes, agents, providers).kind === 'none';
   const embedNote = noEmbedding
     ? {
-        zh: '向量嵌入和重排序需要模型 API，目前没有配置，检索退回关键词匹配。',
-        en: 'Embeddings and reranking need a model API; none is set, so search falls back to keywords.',
+        zh: '未设置向量嵌入，搜索只按关键词匹配。',
+        en: 'No embedding model, so search falls back to keywords.',
       }
     : { zh: '', en: '' };
   if (who.kind === 'none') {
     return {
       tone: 'warn',
-      zh: '还没有可用的模型：添加一个智能体或模型 API，AI 功能才能用。',
-      en: 'No model is available yet: add an agent or a model API to use AI features.',
+      zh: '还没有可用的模型，请添加智能体或模型服务。',
+      en: 'No model is available yet. Add an agent or a model provider.',
     };
   }
   if (who.kind === 'agent' && who.takeover) {
     return {
       tone: 'ok',
-      zh: `没有设置默认模型：所有对话类环节由「${who.name}」回答。${embedNote.zh}`,
-      en: `No default model is set: every chat stage is answered by "${who.name}". ${embedNote.en}`.trim(),
+      zh: `由「${who.name}」回答。${embedNote.zh}`,
+      en: `“${who.name}” answers. ${embedNote.en}`.trim(),
     };
   }
   if (who.kind === 'agent') {
@@ -198,20 +198,20 @@ export function answerStatus(
     if (who.unavailable) {
       return {
         tone: 'warn',
-        zh: `默认模型是智能体「${who.name}」${model}，但它已被删除或停用——对话类环节会失败，换一个默认模型。`,
-        en: `The default model is the agent "${who.name}"${modelEn}, but it was removed or turned off — chat stages will fail. Pick another default.`,
+        zh: `默认的智能体「${who.name}」${model}已删除或停用，请换一个默认模型。`,
+        en: `The default agent “${who.name}”${modelEn} was removed or turned off. Choose another default.`,
       };
     }
     return {
       tone: 'ok',
-      zh: `默认由智能体「${who.name}」${model}回答；没单独设置的环节都跟随它。${embedNote.zh}`,
-      en: `The agent "${who.name}"${modelEn} answers by default; stages without their own row follow it. ${embedNote.en}`.trim(),
+      zh: `默认由「${who.name}」${model}回答。${embedNote.zh}`,
+      en: `“${who.name}”${modelEn} answers by default. ${embedNote.en}`.trim(),
     };
   }
   return {
     tone: 'ok',
-    zh: `默认由 ${who.name} · ${who.model} 回答；没单独设置的环节都跟随它。${embedNote.zh}`,
-    en: `${who.name} · ${who.model} answers by default; stages without their own row follow it. ${embedNote.en}`.trim(),
+    zh: `默认由 ${who.name} · ${who.model} 回答。${embedNote.zh}`,
+    en: `${who.name} · ${who.model} answers by default. ${embedNote.en}`.trim(),
   };
 }
 

@@ -19,7 +19,7 @@ describe('envVarIssue', () => {
 
   it('rejects bad names, names the platform owns, duplicates and line breaks', () => {
     expect(envVarIssue({ name: '1X', value: '' }, [])).toMatch(/digit/);
-    expect(envVarIssue({ name: 'path', value: '' }, [])).toMatch(/platform/);
+    expect(envVarIssue({ name: 'path', value: '' }, [])).toMatch(/Polaris uses/);
     const a1 = { name: 'A', value: '1' };
     expect(envVarIssue(a1, [a1, { name: 'A', value: '2' }])).toMatch(/Duplicate/);
     expect(envVarIssue({ name: 'A', value: 'x\ny' }, [])).toMatch(/line breaks/);

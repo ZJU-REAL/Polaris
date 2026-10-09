@@ -74,8 +74,8 @@ describe('agent backends model', () => {
   it('describes probe results in plain words', () => {
     expect(probeTitle(probe)).toBe('Claude Code 1.2.0');
     expect(probeCapabilities(probe).map((c) => c.en)).toEqual([
-      'Can resume earlier sessions',
-      'Can use Polaris tools (MCP)',
+      'Can resume earlier chats',
+      'Can use Polaris tools',
     ]);
     expect(probeCapabilities({ ...probe, load_session: false, mcp_http: false })).toEqual([]);
   });
@@ -110,8 +110,8 @@ describe('agent backends settings tab', () => {
         <AcpAgentsSettings />
       </QueryClientProvider>,
     );
-    expect(html).toContain('智能体后端');
-    expect(html).toContain('Agent Client Protocol');
+    expect(html).toContain('智能体');
+    expect(html).toContain('Claude Code、Codex');
     expect(html).toContain('添加智能体');
     expect(html).toContain('自定义智能体');
   });
@@ -120,7 +120,7 @@ describe('agent backends settings tab', () => {
     const page = readFileSync(join(__dirname, '..', 'SettingsPage.tsx'), 'utf8');
     expect(page).not.toMatch(/\| 'agents'/);
     expect(page).not.toMatch(/ALL_TABS: Tab\[\] = \[[^\]]*'agents'/);
-    const workspace = page.slice(page.indexOf('const workspaceItems'));
+    const workspace = page.slice(page.indexOf('const researchItems'));
     expect(workspace.slice(0, 800)).not.toContain("v: 'agents'");
     expect(workspace.slice(0, 800)).toContain("tr('模型与智能体', 'Models & agents')");
     const llmTab = page.slice(page.indexOf('export function LlmTab('));

@@ -32,8 +32,15 @@ describe('one settings entrance', () => {
 
   it('renders the former admin tabs inside the settings page', () => {
     const settings = read('features/settings/SettingsPage.tsx');
-    for (const tab of ['llm', 'literature', 'processing', 'experiment', 'daily', 'usage']) {
+    for (const tab of ['llm', 'literature', 'processing', 'experiment', 'daily']) {
       expect(settings).toContain(`effectiveTab === '${tab}'`);
     }
+  });
+
+  it('sends the old usage-overview link to the usage tab', () => {
+    // 只有一个使用者：「用量总览」和「用量」是同一份数据，旧深链落到「用量」
+    const settings = read('features/settings/SettingsPage.tsx');
+    expect(settings).toContain("tab === 'usage'");
+    expect(settings).toContain("effectiveTab === 'myusage'");
   });
 });

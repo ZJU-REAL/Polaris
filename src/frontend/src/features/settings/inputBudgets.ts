@@ -17,9 +17,9 @@ export function budgetLabel(key: string): string {
     case 'fulltext_chars':
       return tr('论文正文', 'Paper full text');
     case 'context_chars':
-      return tr('知识库上下文总长', 'Total knowledge context');
+      return tr('参考资料总长', 'Total reference material');
     case 'excerpt_chars':
-      return tr('单篇 wiki 摘录', 'Per-paper wiki excerpt');
+      return tr('每篇解读摘录', 'Summary excerpt per paper');
     default:
       return key;
   }

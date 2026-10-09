@@ -18,18 +18,18 @@ export interface SourceDefinition {
 }
 
 export const LITERATURE_SOURCES: SourceDefinition[] = [
-  { id: 'openalex', zh: 'OpenAlex', en: 'OpenAlex', descriptionZh: '覆盖广、引用关系完整，支持多密钥轮询。', descriptionEn: 'Broad coverage and citation graph; supports rotating multiple keys.', credentialMode: 'optional', testQuery: 'structural engineering' },
-  { id: 'semantic', zh: 'Semantic Scholar', en: 'Semantic Scholar', descriptionZh: '补充摘要、引用量和跨来源标识。', descriptionEn: 'Adds abstracts, citation counts, and cross-source identifiers.', credentialMode: 'optional', testQuery: 'structural engineering' },
-  { id: 'arxiv', zh: 'arXiv', en: 'arXiv', descriptionZh: '预印本实时检索，无需 API Key。', descriptionEn: 'Live preprint search with no API key required.', credentialMode: 'none', testQuery: 'machine learning' },
-  { id: 'pubmed', zh: 'PubMed', en: 'PubMed', descriptionZh: '生命科学与医学 E-utilities 检索，可配置密钥池。', descriptionEn: 'Life-science and medical E-utilities search with an optional key pool.', credentialMode: 'optional', testQuery: 'cancer immunotherapy' },
-  { id: 'crossref', zh: 'Crossref', en: 'Crossref', descriptionZh: 'DOI 元数据与出版信息，无需 API Key。', descriptionEn: 'DOI and publication metadata with no API key required.', credentialMode: 'none', testQuery: 'structural engineering' },
-  { id: 'europepmc', zh: 'Europe PMC', en: 'Europe PMC', descriptionZh: '生物医学论文与开放全文线索，无需 API Key。', descriptionEn: 'Biomedical papers and open-full-text signals with no API key required.', credentialMode: 'none', testQuery: 'protein structure' },
-  { id: 'hal', zh: 'HAL', en: 'HAL', descriptionZh: '欧洲开放学术仓储，无需 API Key。', descriptionEn: 'European open research repository with no API key required.', credentialMode: 'none', testQuery: 'finite element analysis' },
-  { id: 'core', zh: 'CORE', en: 'CORE', descriptionZh: '聚合开放获取仓储，需要 API Key。', descriptionEn: 'Aggregated open-access repositories; requires an API key.', credentialMode: 'required', testQuery: 'structural engineering' },
-  { id: 'base', zh: 'BASE', en: 'BASE', descriptionZh: '学术搜索聚合源，无需 API Key。', descriptionEn: 'Academic search aggregator with no API key required.', credentialMode: 'none', testQuery: 'structural engineering' },
-  { id: 'sciverse', zh: 'Sciverse', en: 'Sciverse', descriptionZh: '补充出版商聚合检索，需要令牌并支持轮询。', descriptionEn: 'Publisher-aggregated retrieval; requires rotating tokens.', credentialMode: 'required', testQuery: 'structural engineering' },
-  { id: 'unpaywall', zh: 'Unpaywall', en: 'Unpaywall', descriptionZh: '按 DOI 补充开放获取地址，用于候选 PDF 缓存；联系邮箱由服务器环境变量配置。', descriptionEn: 'Resolves open-access locations by DOI for candidate PDF caching; the contact email is configured on the server.', credentialMode: 'none', resolverOnly: true, testQuery: '10.1038/s41586-020-2649-2' },
-  { id: 'easyscholar', zh: 'EasyScholar', en: 'EasyScholar', descriptionZh: '期刊等级与评价指标，只参与指标增强。', descriptionEn: 'Journal rankings and metrics; used only for venue enrichment.', credentialMode: 'required', metricOnly: true, testQuery: 'Nature' },
+  { id: 'openalex', zh: 'OpenAlex', en: 'OpenAlex', descriptionZh: '覆盖广，引用关系完整', descriptionEn: 'Broad coverage with full citation links', credentialMode: 'optional', testQuery: 'structural engineering' },
+  { id: 'semantic', zh: 'Semantic Scholar', en: 'Semantic Scholar', descriptionZh: '补充摘要和引用量', descriptionEn: 'Adds abstracts and citation counts', credentialMode: 'optional', testQuery: 'structural engineering' },
+  { id: 'arxiv', zh: 'arXiv', en: 'arXiv', descriptionZh: '预印本，无需 API Key', descriptionEn: 'Preprints. No API key needed', credentialMode: 'none', testQuery: 'machine learning' },
+  { id: 'pubmed', zh: 'PubMed', en: 'PubMed', descriptionZh: '生命科学与医学文献', descriptionEn: 'Life sciences and medicine', credentialMode: 'optional', testQuery: 'cancer immunotherapy' },
+  { id: 'crossref', zh: 'Crossref', en: 'Crossref', descriptionZh: 'DOI 与出版信息，无需 API Key', descriptionEn: 'DOI and publication details. No API key needed', credentialMode: 'none', testQuery: 'structural engineering' },
+  { id: 'europepmc', zh: 'Europe PMC', en: 'Europe PMC', descriptionZh: '生物医学论文与开放全文，无需 API Key', descriptionEn: 'Biomedical papers and open full text. No API key needed', credentialMode: 'none', testQuery: 'protein structure' },
+  { id: 'hal', zh: 'HAL', en: 'HAL', descriptionZh: '欧洲开放学术仓储，无需 API Key', descriptionEn: 'European open repository. No API key needed', credentialMode: 'none', testQuery: 'finite element analysis' },
+  { id: 'core', zh: 'CORE', en: 'CORE', descriptionZh: '开放获取论文聚合，需要 API Key', descriptionEn: 'Open-access aggregator. Needs an API key', credentialMode: 'required', testQuery: 'structural engineering' },
+  { id: 'base', zh: 'BASE', en: 'BASE', descriptionZh: '学术搜索聚合，无需 API Key', descriptionEn: 'Academic search aggregator. No API key needed', credentialMode: 'none', testQuery: 'structural engineering' },
+  { id: 'sciverse', zh: 'Sciverse', en: 'Sciverse', descriptionZh: '出版商论文聚合，需要令牌', descriptionEn: 'Publisher aggregator. Needs a token', credentialMode: 'required', testQuery: 'structural engineering' },
+  { id: 'unpaywall', zh: 'Unpaywall', en: 'Unpaywall', descriptionZh: '按 DOI 查找免费 PDF', descriptionEn: 'Finds free PDFs by DOI', credentialMode: 'none', resolverOnly: true, testQuery: '10.1038/s41586-020-2649-2' },
+  { id: 'easyscholar', zh: 'EasyScholar', en: 'EasyScholar', descriptionZh: '期刊等级与评价指标', descriptionEn: 'Journal rankings and metrics', credentialMode: 'required', metricOnly: true, testQuery: 'Nature' },
 ];
 
 export const SEARCH_SOURCES = LITERATURE_SOURCES.filter(
@@ -104,8 +104,8 @@ export function sourceById(id: string): SourceDefinition {
     id,
     zh: id,
     en: id,
-    descriptionZh: '自定义检索来源。',
-    descriptionEn: 'Custom literature provider.',
+    descriptionZh: '自定义检索来源',
+    descriptionEn: 'Custom literature provider',
     credentialMode: 'optional',
     testQuery: 'research',
   };

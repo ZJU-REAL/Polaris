@@ -48,7 +48,7 @@ describe('who answers model calls', () => {
     const routes = [route('default', { acp_agent_id: 'a2' })];
     const who = whoAnswers('default', routes, [claude, codex], providers);
     expect(who).toMatchObject({ kind: 'agent', agentId: 'a2', name: 'codex', takeover: false, unavailable: false });
-    expect(answerStatus(routes, [claude, codex], providers).en).toContain('The agent "codex" answers by default');
+    expect(answerStatus(routes, [claude, codex], providers).en).toContain('“codex” answers by default');
   });
 
   it('warns when the default agent is gone or turned off', () => {
@@ -61,7 +61,7 @@ describe('who answers model calls', () => {
     const who = whoAnswers('review', [], [off, claude, codex], providers);
     expect(who).toMatchObject({ kind: 'agent', agentId: 'a1', takeover: true });
     const line = answerStatus([], [off, claude, codex], providers);
-    expect(line.zh).toContain('所有对话类环节由「Claude Code」回答');
+    expect(line.zh).toContain('由「Claude Code」回答');
     // 没有模型 API 的嵌入：说清楚检索退回关键词
     expect(line.en).toContain('falls back to keywords');
     expect(takeoverAgent(true, [claude])).toBeNull();
@@ -71,7 +71,7 @@ describe('who answers model calls', () => {
     expect(whoAnswers('default', [], [off], providers)).toEqual({ kind: 'none' });
     const line = answerStatus([], [off], providers);
     expect(line.tone).toBe('warn');
-    expect(line.en).toContain('add an agent or a model API');
+    expect(line.en).toContain('Add an agent or a model provider');
   });
 
   it('never hands embedding or rerank to an agent', () => {

@@ -81,10 +81,10 @@ describe('徽章与文案映射', () => {
 
   it('权限如实映射：声明什么列什么，什么都没声明也要明说', () => {
     expect(marketPermissionLabels({ network: true, filesystem: true }).map((p) => p.zh)).toEqual([
-      '声明需要联网',
-      '声明需要读写文件',
+      '联网',
+      '读写文件',
     ]);
-    expect(marketPermissionLabels({}).map((p) => p.zh)).toEqual(['未声明任何权限']);
+    expect(marketPermissionLabels({}).map((p) => p.zh)).toEqual(['无']);
   });
 
   it('安装四阶段各有其文案，未知阶段原样展示', () => {
@@ -92,7 +92,7 @@ describe('徽章与文案映射', () => {
       '下载中',
       '校验中',
       '解压中',
-      '登记中',
+      '安装中',
     ]);
     expect(installPhaseText('warmup').zh).toBe('warmup');
   });

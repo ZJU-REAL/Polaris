@@ -108,7 +108,7 @@ function ToolListItem({
           className="pill sm"
           style={{ marginLeft: 'auto', background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}
         >
-          {tr('联网', 'Net')}
+          {tr('联网', 'Online')}
         </span>
       )}
     </button>
@@ -173,8 +173,8 @@ export function McpPlayground({
   const run = useMutation({
     mutationFn: async () => {
       if (!tool || args === null) {
-        setJsonError(tr('入参必须是合法的 JSON 对象', 'Arguments must be a valid JSON object'));
-        throw new Error(tr('入参有误', 'Invalid arguments'));
+        setJsonError(tr('参数须为 JSON 对象', 'Arguments must be a JSON object'));
+        throw new Error(tr('参数有误', 'Invalid arguments'));
       }
       setJsonError(null);
       const raw = await api.invokeMcpTool(tool.name, {
@@ -210,11 +210,11 @@ export function McpPlayground({
 
   const copyRpc = () => {
     if (!tool || args === null) {
-      setJsonError(tr('入参必须是合法的 JSON 对象', 'Arguments must be a valid JSON object'));
+      setJsonError(tr('参数须为 JSON 对象', 'Arguments must be a JSON object'));
       return;
     }
     void copyText(rpcRequest(tool.name, projectId, args)).then((ok) =>
-      toast(ok ? tr('已复制请求', 'Request copied') : tr('复制失败', 'Copy failed'), ok ? 'ok' : 'error'),
+      toast(ok ? tr('已复制', 'Copied') : tr('无法复制', 'Couldn’t copy'), ok ? 'ok' : 'error'),
     );
   };
 
@@ -272,16 +272,16 @@ export function McpPlayground({
                   : { background: 'var(--info-bg)', color: 'var(--info-tx)' }
               }
             >
-              {tool.network ? tr('联网', 'Network') : tr('库内', 'Library')}
+              {tool.network ? tr('联网', 'Online') : tr('本地', 'Local')}
             </span>
             {check?.status === 'ok' && (
               <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-                {tr('自检正常', 'Self-check OK')}
+                {tr('测试通过', 'Passed')}
               </span>
             )}
             {check?.status === 'error' && (
               <span className="pill sm" style={{ background: 'var(--danger-bg)', color: 'var(--danger-tx)' }}>
-                {tr('自检失效', 'Self-check broken')}
+                {tr('测试失败', 'Failed')}
               </span>
             )}
             <div style={{ marginLeft: 'auto' }}>
@@ -322,13 +322,13 @@ export function McpPlayground({
               </div>
             ) : (
               <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                {tr('这个工具不需要参数。', 'This tool takes no arguments.')}
+                {tr('这个工具不需要参数', 'This tool takes no arguments')}
               </div>
             )
           ) : (
             <div style={{ minWidth: 0 }}>
               <div style={LABEL}>
-                {tr('入参 JSON（project_id 由服务端注入，不用写）', 'Arguments JSON (project_id is injected server-side)')}
+                {tr('参数（JSON）', 'Arguments (JSON)')}
               </div>
               <textarea
                 className="textarea mono"
@@ -355,32 +355,29 @@ export function McpPlayground({
               <Icon name="play" /> {run.isPending ? tr('运行中…', 'Running…') : tr('运行', 'Run')}
             </button>
             <button className="btn btn-soft sm" onClick={copyRpc}>
-              <Icon name="file" /> {tr('复制 JSON-RPC 请求', 'Copy JSON-RPC request')}
+              <Icon name="file" /> {tr('复制请求', 'Copy request')}
             </button>
             {tool.network && (
               <span style={{ fontSize: 11.5, color: 'var(--warn-tx)', alignSelf: 'center' }}>
-                {tr('会真的请求外部文献接口', 'Really calls the external literature API')}
+                {tr('会联网查询外部文献库', 'Queries external literature sources online')}
               </span>
             )}
             {!projectId && (
               <span style={{ fontSize: 11.5, color: 'var(--text-3)', alignSelf: 'center' }}>
-                {tr('先在上方选一个课题', 'Pick a topic above first')}
+                {tr('请先在上方选择课题', 'Pick a topic above first')}
               </span>
             )}
           </div>
           {run.isError && (
             <div style={{ fontSize: 12, color: 'var(--danger-tx)' }}>
-              {tr('请求失败：', 'Request failed: ')}
+              {tr('运行失败：', 'Run failed: ')}
               {(run.error as Error).message}
             </div>
           )}
 
           <div style={{ minWidth: 0 }}>
             <div style={LABEL}>
-              {tr(
-                '外部 MCP 客户端要发的就是这条请求',
-                'This is the request an external MCP client would send',
-              )}
+              {tr('客户端发送的请求', 'Request a client sends')}
             </div>
             <pre style={{ ...RESULT_BOX, maxHeight: 180 }}>
               {rpcRequest(tool.name, projectId, args ?? {})}
@@ -393,7 +390,7 @@ export function McpPlayground({
             <div className="row gap8" style={{ alignItems: 'center' }}>
               <strong style={{ fontSize: 13 }}>{tr('返回内容', 'Response')}</strong>
               <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-                {tr('外部客户端收到的就是这些', 'This is exactly what a client receives')}
+                {tr('客户端收到的内容', 'What the client receives')}
               </span>
             </div>
             <ResultView result={result} />
@@ -405,7 +402,7 @@ export function McpPlayground({
             <div className="row gap8" style={{ alignItems: 'center' }}>
               <strong style={{ fontSize: 13 }}>{tr('调用记录', 'Call history')}</strong>
               <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-                {tr('点一条可回放入参与结果', 'Click one to replay its arguments and result')}
+                {tr('点击一条可重新查看', 'Click one to view it again')}
               </span>
               <button
                 className="btn btn-ghost sm"

@@ -9,7 +9,7 @@
      门控照抄冒烟——设 POLARIS_E2E_ENGINE=1 且镜像存在才跑，否则
      打明确日志后 skip（CI 无镜像时仍然全绿）。
    - B「无引擎兜底」：不依赖 docker，任何机器必跑。不设引擎 env 起壳，
-     应停在「本机引擎没有启动」页而不是白屏或崩溃。
+     应停在「本机引擎没有运行」页而不是白屏或崩溃。
    - C「插件市场闭环」（#712）：不依赖 docker，任何机器必跑。本进程起
      一个 127.0.0.1 的 http 替身充当索引源与 npm registry，经渲染进程的
      window.polaris（生产 IPC 路径）驱动种子插件走完「换源 → 拉索引 →
@@ -268,10 +268,10 @@ async function groupNoEngine(): Promise<void> {
     app = r.app;
     const { page } = r;
 
-    // 没有本地引擎：应停在「本机引擎没有启动」页（带重新打开的出路），而不是白屏/崩溃
+    // 没有本地引擎：应停在「本机引擎没有运行」页（带重新打开的出路），而不是白屏/崩溃
     await page.waitForSelector('.auth-card-title', { timeout: 30_000 });
     const title = (await page.locator('.auth-card-title').textContent()) ?? '';
-    check('停在本机引擎兜底页', /本机引擎没有启动|The local engine is not running/.test(title), `title=${title}`);
+    check('停在本机引擎兜底页', /本机引擎没有运行|The local engine isn’t running/.test(title), `title=${title}`);
     const restart = await page.getByRole('button', { name: /重新打开 Polaris|Restart Polaris/ }).count();
     check('兜底页给出「重新打开」按钮', restart === 1, `count=${restart}`);
     check('窗口仍然存活（未崩溃）', !page.isClosed());

@@ -155,11 +155,11 @@ void app.whenReady().then(async () => {
   )) as number;
   check('React 应用已挂载（#root 有子节点）', mounted > 0);
 
-  // 冒烟没有拉起本机引擎：必须落在「本机引擎没有启动」兜底页，而不是白屏或登录页
+  // 冒烟没有拉起本机引擎：必须落在「本机引擎没有运行」兜底页，而不是白屏或登录页
   const title = (await win.webContents.executeJavaScript(
     'document.querySelector(".auth-card-title")?.textContent ?? ""',
   )) as string;
-  check('无本机引擎时进入兜底页', /本机引擎没有启动|The local engine is not running/.test(title), `title=${title}`);
+  check('无本机引擎时进入兜底页', /本机引擎没有运行|The local engine isn’t running/.test(title), `title=${title}`);
 
   // macOS 的交通灯占据窗口左上角约 y=14..26（见 window.ts 的 trafficLightPosition），
   // 页面左上角的品牌标必须落在这条带子下面，否则会被压住。

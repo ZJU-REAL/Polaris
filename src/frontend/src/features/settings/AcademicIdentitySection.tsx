@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Icon } from '../../components/ui/Icon';
-import { FormField } from '../../components/ui/FormField';
 import { Switch } from '../../components/ui/Switch';
 import { toast } from '../../components/ui/Toast';
 import { api } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { errText, MultiValueInput } from '../library/AuthorBindWizard';
+import { SettingsActions, SettingsGroup, SettingsRow, SettingsSection } from './settingsUi';
 
 /* ============================================================
    设置页学术身份分区：纯表单管理署名信息
@@ -50,9 +49,9 @@ export function AcademicIdentitySection() {
       queryClient.setQueryData(['author-profile'], saved);
       void queryClient.invalidateQueries({ queryKey: ['author-profile'] });
       void queryClient.invalidateQueries({ queryKey: ['publications'] });
-      toast(tr('学术身份已保存', 'Academic identity saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
     },
-    onError: (e) => toast(`${tr('保存失败：', 'Save failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败：', 'Couldn’t save: ')}${errText(e)}`, 'error'),
   });
 
   const dirty =
@@ -63,73 +62,49 @@ export function AcademicIdentitySection() {
         autoSync !== profile.auto_sync;
 
   return (
-    <div className="card card-pad">
-      <div className="section-h" style={{ marginBottom: 14 }}>
-        <Icon name="users" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('学术身份', 'Academic identity')}
-      </div>
-
+    <SettingsSection title={tr('学术身份', 'Academic identity')} desc={tr('用来找出你发表的论文。', 'Used to find papers you’ve published.')}>
       {profileQuery.isLoading ? (
-        <div className="empty" style={{ padding: 20 }}>{tr('加载中…', 'Loading…')}</div>
+        <SettingsGroup pad>
+          <div className="st-row-hint">{tr('加载中…', 'Loading…')}</div>
+        </SettingsGroup>
       ) : profileQuery.isError ? (
-        <div className="empty" style={{ padding: 20 }}>
-          {tr('署名信息暂时加载不出来（后端不可用）', 'Failed to load your author info (backend unavailable)')}
-          <div style={{ marginTop: 10 }}>
-            <button className="btn btn-soft sm" onClick={() => void profileQuery.refetch()}>
+        <SettingsGroup>
+          <SettingsRow label={tr('无法加载学术身份', 'Couldn’t load your academic identity')}>
+            <button className="btn btn-ghost sm" onClick={() => void profileQuery.refetch()}>
               {tr('重试', 'Retry')}
             </button>
-          </div>
-        </div>
+          </SettingsRow>
+        </SettingsGroup>
       ) : (
         <>
-          <FormField
-            label="姓名写法"
-            en="Name variants"
-            hint={tr('论文署名可能用到的所有写法，回车添加', 'All spellings you publish under — Enter to add')}
-          >
-            <MultiValueInput values={names} onChange={setNames} placeholder="e.g. San Zhang" />
-          </FormField>
-          <FormField
-            label="机构"
-            en="Affiliations"
-            hint={tr('回车添加，可以填多个', 'Enter to add; multiple allowed')}
-            style={{ marginTop: 12 }}
-          >
-            <MultiValueInput values={affiliations} onChange={setAffiliations} placeholder="e.g. Zhejiang University" />
-          </FormField>
-
-          {profile?.last_synced_at && (
-            <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 10 }}>
-              {tr(`上次匹配：${fmtRelative(profile.last_synced_at)}`, `Last matched: ${fmtRelative(profile.last_synced_at)}`)}
-            </div>
-          )}
-
-          {/* —— 每日自动匹配 + 保存 —— */}
-          <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 14 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div id="academic-auto-sync" style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4 }}>
-                {tr('每天自动从文献库匹配', 'Match from the library daily')}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
-                {tr(
-                  '命中的论文会进我发表的待确认列表，由你确认是不是你的。',
-                  'Matched papers land in the to-confirm list under My publications for you to review.',
-                )}
-              </div>
-            </div>
-            <Switch checked={autoSync} onChange={setAutoSync} aria-labelledby="academic-auto-sync" />
-          </div>
-          <div className="row" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
+          <SettingsGroup>
+            <SettingsRow stack label={tr('姓名写法', 'Name variants')} hint={tr('论文署名用过的写法，按回车添加', 'Spellings you publish under. Press Enter to add.')}>
+              <MultiValueInput values={names} onChange={setNames} placeholder={tr('例如 San Zhang', 'e.g. Jane Smith')} />
+            </SettingsRow>
+            <SettingsRow stack label={tr('机构', 'Affiliations')} hint={tr('按回车添加', 'Press Enter to add')}>
+              <MultiValueInput values={affiliations} onChange={setAffiliations} placeholder={tr('例如 浙江大学', 'e.g. Zhejiang University')} />
+            </SettingsRow>
+            <SettingsRow
+              labelId="academic-auto-sync"
+              label={tr('每天查找我发表的论文', 'Find my papers daily')}
+              hint={profile?.last_synced_at
+                ? tr(`找到的论文放进「我发表的」，上次查找 ${fmtRelative(profile.last_synced_at)}`, `Matches go to My publications. Last run ${fmtRelative(profile.last_synced_at)}.`)
+                : tr('找到的论文放进「我发表的」，由你确认', 'Matches go to My publications for you to confirm')}
+            >
+              <Switch checked={autoSync} onChange={setAutoSync} aria-labelledby="academic-auto-sync" />
+            </SettingsRow>
+          </SettingsGroup>
+          <SettingsActions>
             <button
-              className="btn btn-primary"
+              className="btn btn-primary sm"
               disabled={saveMutation.isPending || !dirty || names.length === 0}
               onClick={() => saveMutation.mutate()}
             >
               {saveMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
             </button>
-          </div>
+          </SettingsActions>
         </>
       )}
-    </div>
+    </SettingsSection>
   );
 }

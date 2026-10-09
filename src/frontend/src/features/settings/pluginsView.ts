@@ -60,8 +60,8 @@ export function parseConfigDraft(text: string): ConfigParse {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return {
       ok: false,
-      errorZh: '配置必须是一个 JSON 对象（{ … }）',
-      errorEn: 'Config must be a JSON object ({ … })',
+      errorZh: '配置必须是 JSON 对象，例如 { … }',
+      errorEn: 'Config must be a JSON object, e.g. { … }',
     };
   }
   return { ok: true, config: parsed as Record<string, unknown> };
@@ -85,16 +85,16 @@ export function parseTreeFile(text: string): TreeFileParse {
   } catch {
     return {
       ok: false,
-      errorZh: '这个文件不是 JSON，确认选的是之前导出的配置文件',
-      errorEn: 'This file is not JSON — make sure it is a previously exported config file',
+      errorZh: '这个文件不是 JSON，请选择导出的配置文件',
+      errorEn: 'This file isn’t JSON. Choose an exported config file.',
     };
   }
   const tree = parsed as { version?: unknown; entries?: unknown };
   if (tree === null || typeof tree !== 'object' || tree.version !== 1 || !Array.isArray(tree.entries)) {
     return {
       ok: false,
-      errorZh: '文件格式不对：应当是「导出全部配置」生成的文件',
-      errorEn: 'Unexpected file format — expected a file produced by “Export all config”',
+      errorZh: '文件格式不对，请选择「导出配置」生成的文件',
+      errorEn: 'Wrong file format. Choose a file made by “Export config”.',
     };
   }
   return { ok: true, tree: parsed as PluginTreeExport };
