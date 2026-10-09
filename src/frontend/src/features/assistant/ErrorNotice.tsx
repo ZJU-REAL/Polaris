@@ -16,7 +16,10 @@ type NoticeBlock = Extract<AssistantBlock, { kind: 'notice' }>;
 /** 后端错误码 → 用户看得懂的一句话。认不出的原样透出，别把线索吃掉。 */
 export function errorText(detail: string): string {
   if (detail === 'CHAT_AGENT_DISABLED') {
-    return tr('助手在这个部署上没开启，找管理员开一下。', 'The assistant is switched off on this deployment — ask an admin to enable it.');
+    return tr(
+      '助手已关闭。去掉环境变量 POLARIS_CHAT_AGENT_ENABLED=0 后重新打开 Polaris。',
+      'The assistant is turned off. Remove POLARIS_CHAT_AGENT_ENABLED=0 from the environment and restart Polaris.',
+    );
   }
   if (isLlmNotConfigured(detail)) return llmNotConfiguredText();
   // 传输层报错带着前缀（"Error: ACP_AGENT_NOT_AVAILABLE"），按包含判断

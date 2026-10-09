@@ -157,7 +157,7 @@ Enable it in **Settings → PolarisBuddy → Memory**. Once on:
 
 | Setting | Where | What it does |
 | --- | --- | --- |
-| Assistant tool loop | environment variable `POLARIS_CHAT_AGENT_ENABLED=1` | Off by default. When off, the panel says the assistant is switched off. The engine inherits the app's environment, so start the app with the variable set (see [Getting started](getting-started.md#4-next-steps-in-the-app)). |
+| Assistant tool loop | environment variable `POLARIS_CHAT_AGENT_ENABLED` | On by default. Set `0` to turn it off; the panel then says the assistant is turned off. The engine inherits the app's environment. |
 | Memory | Settings → PolarisBuddy | Opt-in long-term memory; list and delete individual memories. |
 | Skills | Settings → PolarisBuddy | The on-demand skill playbooks Buddy can load; built-ins plus your own. See [Skills](skills.md). |
 | MCP | Settings → PolarisBuddy | The same tool registry exposed to external clients. See [MCP](mcp.md). |
