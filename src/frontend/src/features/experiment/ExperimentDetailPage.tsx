@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { TaskStatus } from '../voyages/shared/StatusDot';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { StatusPill } from '../../components/ui/StatusPill';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
@@ -41,7 +41,7 @@ type TabKey = 'console' | 'plan' | 'run' | 'memory' | 'code' | 'report';
 const TABS: { k: TabKey; zh: string; en: string }[] = [
   { k: 'console', zh: '运行台', en: 'Console' },
   { k: 'plan', zh: '计划', en: 'Plan' },
-  { k: 'run', zh: '指标与轮次', en: 'Metrics & runs' },
+  { k: 'run', zh: '指标与轮次', en: 'Metrics' },
   { k: 'memory', zh: '记忆', en: 'Memory' },
   { k: 'code', zh: '代码', en: 'Code' },
   { k: 'report', zh: '报告', en: 'Report' },
@@ -58,14 +58,14 @@ function planStepText(s: NonNullable<ExperimentPlan['steps']>[number]): string {
 const EXP_KIND_INFO: Record<string, { zh: string; en: string }> = {
   eval: { zh: '评测', en: 'Evaluation' },
   training: { zh: '训练', en: 'Training' },
-  agent: { zh: 'Agent', en: 'Agent' },
+  agent: { zh: '智能体', en: 'Agent' },
   analysis: { zh: '分析', en: 'Analysis' },
   other: { zh: '其他', en: 'Other' },
 };
 
 const CONDITION_ROLE: Record<string, { zh: string; en: string }> = {
   baseline: { zh: '对照组', en: 'Baseline' },
-  treatment: { zh: '处理组', en: 'Treatment' },
+  treatment: { zh: '实验组', en: 'Treatment' },
 };
 
 /** 归一化 container：有镜像名 → 容器运行，返回镜像/GPU/共享内存；无 → null（本机运行）。 */
@@ -101,21 +101,18 @@ function KindBadge({ kind }: { kind: string | undefined }) {
   );
 }
 
-/** 运行环境徽标（页头用，紧凑）：容器运行 / 本机环境。 */
-function EnvBadge({ container }: { container: ExperimentContainer | null | undefined }) {
+/** 运行环境（页头元信息行用，纯文本）：容器 / 主机环境。 */
+function EnvText({ container }: { container: ExperimentContainer | null | undefined }) {
   const info = containerInfo(container);
   return (
     <span
-      className="pill sm"
-      style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}
       title={
         info
-          ? tr(`在预置容器镜像里运行：${info.image}`, `Runs inside a preset container image: ${info.image}`)
-          : tr('直接在本机环境运行（裸机）', 'Runs directly on the host environment (bare metal)')
+          ? tr(`在容器镜像 ${info.image} 中运行`, `Runs in the container image ${info.image}`)
+          : tr('直接在实验机器上运行，不使用容器', 'Runs directly on the machine, without a container')
       }
     >
-      <Icon name="cpu" size={11} />
-      {info ? tr('容器运行', 'Container') : tr('本机环境', 'Host env')}
+      {info ? tr('容器', 'Container') : tr('主机环境', 'Host environment')}
     </span>
   );
 }
@@ -125,12 +122,12 @@ function RunEnvironmentRow({ container }: { container: ExperimentContainer | nul
   const info = containerInfo(container);
   return (
     <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
-      <span style={{ fontSize: 11.5, color: 'var(--text-3)', flexShrink: 0 }}>{tr('运行环境', 'Environment')}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>{tr('运行环境', 'Environment')}</span>
       {info ? (
         <>
           <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)', flexShrink: 0 }}>
             <Icon name="cpu" size={11} />
-            {tr('预置容器', 'Container')}
+            {tr('容器', 'Container')}
           </span>
           <span className="tag mono" style={{ fontSize: 11, minWidth: 0, wordBreak: 'break-all' }}>{info.image}</span>
           {info.gpus && (
@@ -139,13 +136,13 @@ function RunEnvironmentRow({ container }: { container: ExperimentContainer | nul
             </span>
           )}
           {info.shm && (
-            <span className="mono muted" style={{ fontSize: 10.5, flexShrink: 0 }}>shm {info.shm}</span>
+            <span className="mono muted" style={{ fontSize: 11, flexShrink: 0 }}>shm {info.shm}</span>
           )}
         </>
       ) : (
         <span className="pill sm" style={{ background: 'var(--surface-2)', color: 'var(--text-2)', flexShrink: 0 }}>
           <Icon name="server" size={11} />
-          {tr('本机环境（裸机运行）', 'Host environment (bare metal)')}
+          {tr('主机环境，不使用容器', 'Host environment, no container')}
         </span>
       )}
     </div>
@@ -167,11 +164,11 @@ function PlanOverview({ exp }: { exp: ExperimentDetail }) {
     <div className="card card-pad" style={{ marginBottom: 22 }}>
       <div className="col gap10">
         <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 11.5, color: 'var(--text-3)', flexShrink: 0 }}>{tr('实验类型', 'Type')}</span>
+          <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>{tr('实验类型', 'Type')}</span>
           <KindBadge kind={plan.kind} />
           {pm?.name && (
             <>
-              <span style={{ fontSize: 11.5, color: 'var(--text-3)', flexShrink: 0, marginLeft: 6 }}>{tr('主指标', 'Primary metric')}</span>
+              <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0, marginLeft: 6 }}>{tr('主指标', 'Primary metric')}</span>
               <span className="pill sm mono" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
                 <Icon name="chart" size={11} />
                 {pm.name}
@@ -209,7 +206,7 @@ function ConditionsBlock({ conditions }: { conditions: ExperimentCondition[] }) 
               >
                 {tr(roleInfo.zh, roleInfo.en)}
               </span>
-              <span style={{ fontSize: 13, fontWeight: 650, minWidth: 0 }}>{c.name}</span>
+              <span style={{ fontSize: 13, fontWeight: 600, minWidth: 0 }}>{c.name}</span>
             </div>
             {c.description && c.description.trim() !== '' && (
               <div style={{ marginTop: 7, fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
@@ -229,7 +226,7 @@ function EvalProtocolBlock({ protocol }: { protocol: EvalProtocol }) {
   if (typeof protocol.dataset === 'string' && protocol.dataset.trim())
     rows.push({ label: tr('数据集', 'Dataset'), value: protocol.dataset.trim() });
   if (typeof protocol.split === 'string' && protocol.split.trim())
-    rows.push({ label: tr('评测划分', 'Split'), value: protocol.split.trim() });
+    rows.push({ label: tr('数据划分', 'Split'), value: protocol.split.trim() });
   if (typeof protocol.metric === 'string' && protocol.metric.trim())
     rows.push({ label: tr('评测指标', 'Metric'), value: protocol.metric.trim() });
   if (typeof protocol.n_examples === 'number' && Number.isFinite(protocol.n_examples))
@@ -245,7 +242,7 @@ function EvalProtocolBlock({ protocol }: { protocol: EvalProtocol }) {
       {rows.map((r) => (
         <div key={r.label} style={{ minWidth: 0 }}>
           <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>{r.label}</div>
-          <div className="mono" style={{ fontSize: 12.5, color: 'var(--text)', fontWeight: 600, wordBreak: 'break-word' }}>{r.value}</div>
+          <div className="mono" style={{ fontSize: 13, color: 'var(--text)', fontWeight: 600, wordBreak: 'break-word' }}>{r.value}</div>
         </div>
       ))}
     </div>
@@ -268,9 +265,9 @@ function DatasetsBlock({ datasets }: { datasets: ExperimentDataset[] }) {
         >
           <Icon name="grid" size={14} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 2 }} />
           <div style={{ minWidth: 0 }}>
-            <span className="mono" style={{ fontSize: 12.5, fontWeight: 650 }}>{d.name}</span>
+            <span className="mono" style={{ fontSize: 13, fontWeight: 600 }}>{d.name}</span>
             {d.size_hint && d.size_hint.trim() !== '' && (
-              <span className="mono muted" style={{ fontSize: 10.5, marginLeft: 8 }}>{d.size_hint}</span>
+              <span className="mono muted" style={{ fontSize: 11, marginLeft: 8 }}>{d.size_hint}</span>
             )}
             {d.purpose && d.purpose.trim() !== '' && (
               <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, marginTop: 3 }}>{d.purpose}</div>
@@ -315,7 +312,7 @@ function HypRow({
   return (
     <div className="card" style={{ padding: '12px 16px' }}>
       <div className="row gap12">
-        <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', flexShrink: 0 }}>H{index + 1}</span>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>H{index + 1}</span>
         <span style={{ fontSize: 13, flex: 1, lineHeight: 1.5 }}>{hyp.text}</span>
         {evidence && (
           <button
@@ -347,7 +344,7 @@ function HypRow({
             whiteSpace: 'pre-wrap',
           }}
         >
-          {tr('判定依据：', 'Evidence: ')}{evidence}
+          {tr('依据：', 'Evidence: ')}{evidence}
         </div>
       )}
     </div>
@@ -369,17 +366,14 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
             background: 'var(--warn-bg)',
             color: 'var(--warn-tx)',
             borderRadius: 10,
-            fontSize: 12.5,
+            fontSize: 13,
             fontWeight: 600,
           }}
         >
           <Icon name="gate" size={15} />
-          {tr(
-            '实验已暂停，等待算力预算审批。',
-            'Experiment paused for compute budget approval.',
-          )}
+          {tr('预算批准后开始运行。', 'Runs once you approve the budget.')}
           <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={onOpenGates}>
-            {tr('前往审批', 'Open approvals')}
+            {tr('查看审批', 'Review')}
           </button>
         </div>
       )}
@@ -389,7 +383,7 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
           <EmptyState
             compact
             icon="sparkle"
-            title={exp.status === 'planning' ? tr('计划生成中…', 'Generating the plan…') : tr('计划尚未生成', 'Plan not generated yet')}
+            title={exp.status === 'planning' ? tr('正在生成计划…', 'Generating the plan…') : tr('还没有计划', 'No plan yet')}
           />
         </div>
       ) : (
@@ -399,11 +393,10 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
 
           {/* 假设清单 */}
           <span className="section-h" style={{ marginBottom: 12 }}>
-            <Icon name="sparkle" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('假设清单', 'Hypotheses')}
+            {tr('假设', 'Hypotheses')}
           </span>
           {(plan.hypotheses ?? []).length === 0 ? (
-            <div className="card empty" style={{ padding: 24, marginBottom: 22 }}>{tr('计划中未包含假设清单', 'The plan has no hypotheses')}</div>
+            <div className="card empty" style={{ padding: 24, marginBottom: 22 }}>{tr('计划中没有假设', 'The plan has no hypotheses')}</div>
           ) : (
             <div className="col gap8" style={{ marginBottom: 22 }}>
               {(plan.hypotheses ?? []).map((h, i) => (
@@ -416,7 +409,6 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
           {(plan.conditions ?? []).length > 0 && (
             <>
               <span className="section-h" style={{ marginBottom: 12 }}>
-                <Icon name="scale" size={15} style={{ color: 'var(--accent)' }} />
                 {tr('对照设置', 'Conditions')}
               </span>
               <ConditionsBlock conditions={plan.conditions ?? []} />
@@ -427,8 +419,7 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
           {plan.eval_protocol && (
             <>
               <span className="section-h" style={{ marginBottom: 12 }}>
-                <Icon name="sliders" size={15} style={{ color: 'var(--accent)' }} />
-                {tr('评测协议', 'Eval protocol')}
+                {tr('评测设置', 'Evaluation')}
               </span>
               <EvalProtocolBlock protocol={plan.eval_protocol} />
             </>
@@ -438,7 +429,6 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
           {(plan.datasets ?? []).length > 0 && (
             <>
               <span className="section-h" style={{ marginBottom: 12 }}>
-                <Icon name="grid" size={15} style={{ color: 'var(--accent)' }} />
                 {tr('数据集', 'Datasets')}
               </span>
               <DatasetsBlock datasets={plan.datasets ?? []} />
@@ -447,22 +437,20 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
 
           {/* 复现策略 */}
           <span className="section-h" style={{ marginBottom: 12 }}>
-            <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('复现策略', 'Repro strategy')}
+            {tr('复现策略', 'Reproduction plan')}
           </span>
           <div className="card card-pad" style={{ marginBottom: 22, background: 'var(--surface-2)' }}>
             <p style={{ fontSize: 13, lineHeight: 1.65, margin: 0, color: 'var(--text-2)', whiteSpace: 'pre-wrap' }}>
-              {plan.repro_strategy || tr('（计划中未包含复现策略）', '(the plan has no repro strategy)')}
+              {plan.repro_strategy || tr('计划中没有复现策略', 'The plan has no reproduction plan')}
             </p>
           </div>
 
           {/* 实验步骤 */}
           <span className="section-h" style={{ marginBottom: 12 }}>
-            <Icon name="compass" size={15} style={{ color: 'var(--accent)' }} />
             {tr('实验步骤', 'Steps')}
           </span>
           {(plan.steps ?? []).length === 0 ? (
-            <div className="card empty" style={{ padding: 24, marginBottom: 22 }}>{tr('计划中未包含步骤列表', 'The plan has no step list')}</div>
+            <div className="card empty" style={{ padding: 24, marginBottom: 22 }}>{tr('计划中没有步骤', 'The plan has no steps')}</div>
           ) : (
             <div className="card" style={{ overflow: 'hidden', marginBottom: 22 }}>
               {(plan.steps ?? []).map((s, i, arr) => (
@@ -474,7 +462,7 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
                   <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', flexShrink: 0, marginTop: 2 }}>
                     {i + 1}
                   </span>
-                  <span style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.5 }}>{planStepText(s)}</span>
+                  <span style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.5 }}>{planStepText(s)}</span>
                 </div>
               ))}
             </div>
@@ -482,17 +470,16 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
 
           {/* 预算 */}
           <span className="section-h" style={{ marginBottom: 12 }}>
-            <Icon name="clock" size={15} style={{ color: 'var(--accent)' }} />
             {tr('预算', 'Budget')}
           </span>
           <div className="row gap12" style={{ alignItems: 'stretch' }}>
             <div className="card card-pad" style={{ flex: 1 }}>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>{tr('硬上限（超限自动 kill）', 'Hard limits (auto-killed when exceeded)')}</div>
-              <div className="mono" style={{ fontSize: 18, fontWeight: 700 }}>{budgetText(exp.budget)}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>{tr('上限，超出后自动停止', 'Limit; stops automatically when reached')}</div>
+              <div className="mono" style={{ fontSize: 18, fontWeight: 600 }}>{budgetText(exp.budget)}</div>
             </div>
             <div className="card card-pad" style={{ flex: 1.6, background: 'var(--surface-2)' }}>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>{tr('计划估计', 'Planned estimate')}</div>
-              <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>{tr('预估', 'Estimate')}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
                 {plan.budget_estimate
                   ? typeof plan.budget_estimate === 'string'
                     ? plan.budget_estimate
@@ -517,7 +504,6 @@ function ReportTab({ exp }: { exp: ExperimentDetail }) {
       {figures.length > 0 && (
         <>
           <span className="section-h" style={{ marginBottom: 12 }}>
-            <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
             {tr('实验图表', 'Figures')} <span className="en-label" style={{ fontSize: 11 }}>{figures.length}</span>
           </span>
           <div className="card card-pad" style={{ marginBottom: 22 }}>
@@ -531,11 +517,11 @@ function ReportTab({ exp }: { exp: ExperimentDetail }) {
           <EmptyState
             compact
             icon="pen"
-            title={tr('报告尚未生成', 'No report yet')}
+            title={tr('还没有报告', 'No report yet')}
             desc={
               EXPERIMENT_TERMINAL.has(exp.status)
-                ? tr('该实验未产出报告。', 'This experiment produced no report.')
-                : tr('自动迭代结束后会自动生成。', 'It is generated once the auto-iteration finishes.')
+                ? tr('这个实验没有生成报告。', 'This experiment produced no report.')
+                : tr('实验结束后自动生成。', 'Generated when the experiment finishes.')
             }
           />
         </div>
@@ -591,7 +577,7 @@ export function ExperimentDetailPage() {
   if (isLoading) {
     return (
       <div className="page fadeup">
-        <div className="empty" style={{ padding: 80 }}>{tr('加载实验详情…', 'Loading experiment…')}</div>
+        <div className="empty" style={{ padding: 80 }}>{tr('加载中…', 'Loading…')}</div>
       </div>
     );
   }
@@ -600,15 +586,17 @@ export function ExperimentDetailPage() {
     return (
       <div className="page fadeup">
         <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
-          <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 8 }}>
-            {notFound ? tr('实验不存在', 'Experiment not found') : tr('无法加载实验详情', 'Could not load the experiment')}
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>
+            {notFound ? tr('实验不存在', 'Experiment not found') : tr('无法加载实验', 'Couldn’t load this experiment')}
           </div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 18 }}>
-            {error instanceof Error ? error.message : tr('后端不可用，请稍后重试', 'Backend unavailable — try again later')}
+          <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 18 }}>
+            {notFound
+              ? tr('它可能已被删除。', 'It may have been deleted.')
+              : tr('请确认本机引擎在运行，然后重试。', 'Make sure the local engine is running, then retry.')}
           </div>
           <div className="row gap8" style={{ justifyContent: 'center' }}>
             <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-            <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'experiment'))}>{tr('返回列表', 'Back to list')}</button>
+            <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'experiment'))}>{tr('返回实验列表', 'Back to experiments')}</button>
           </div>
         </div>
       </div>
@@ -623,20 +611,23 @@ export function ExperimentDetailPage() {
       <div className="row" style={{ alignItems: 'flex-start', marginBottom: 4 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h1 className="h-title" style={{ fontSize: 20 }}>{exp.idea_title}</h1>
-          <div className="row gap8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
-            <StatusPill status={exp.status} sm />
+          <div className="row gap8" style={{ marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <TaskStatus status={exp.status} />
             {exp.plan && <KindBadge kind={exp.plan.kind} />}
-            {exp.plan && <EnvBadge container={exp.plan.container} />}
-            <span className="pill sm">
-              <Icon name="server" size={11} />
-              {exp.server_host ?? tr('未分配', 'Unassigned')}
-            </span>
-            <span className="pill sm mono" style={{ background: 'var(--surface-3)' }}>{budgetText(exp.budget)}</span>
-            {exp.workdir && (
-              <span className="mono muted" style={{ fontSize: 11 }}>{exp.workdir}</span>
-            )}
-            <span className="mono muted" style={{ fontSize: 11 }}>
-              {tr('创建', 'Created')} {fmtTime(exp.created_at)} · {tr('耗时', 'took')} {fmtDuration(exp.created_at, active ? null : exp.updated_at)}
+            <span className="muted" style={{ fontSize: 12, minWidth: 0, overflowWrap: 'anywhere' }}>
+              <span title={exp.workdir ?? undefined}>{exp.server_host ?? tr('未分配机器', 'No machine yet')}</span>
+              {exp.plan && (
+                <>
+                  {' · '}
+                  <EnvText container={exp.plan.container} />
+                </>
+              )}
+              {' · '}
+              <span>{budgetText(exp.budget)}</span>
+              {' · '}
+              {tr('创建于', 'Created')} {fmtTime(exp.created_at)}
+              {' · '}
+              {tr('耗时', 'Took')} {fmtDuration(exp.created_at, active ? null : exp.updated_at)}
             </span>
           </div>
         </div>
@@ -647,14 +638,14 @@ export function ExperimentDetailPage() {
             onClick={() => navigate(`/ideas/${exp.idea_id}`)}
           >
             <Icon name="bulb" size={13} />
-            {tr('查看 idea', 'View idea')}
+            {tr('查看想法', 'View idea')}
           </button>
           {active && (
             <button
               className="btn btn-ghost"
               disabled={cancelMutation.isPending}
               onClick={() => {
-                if (window.confirm(tr('确定取消该实验？将取消关联任务并尝试终止远端进程。', 'Cancel this experiment? The linked task will be cancelled and remote processes killed.'))) {
+                if (window.confirm(tr('取消这个实验？它的任务和远程进程都会停止。', 'Cancel this experiment? Its task and remote processes will stop.'))) {
                   cancelMutation.mutate();
                 }
               }}

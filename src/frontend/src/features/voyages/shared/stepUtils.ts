@@ -23,6 +23,11 @@ export function num(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
+/** 英文计数：1 paper / 2 papers。 */
+export function enCount(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
 export function stepMarker(step: VoyageStepRead): { bg: string; color: string } {
   if (step.status === 'obsolete') return { bg: 'var(--surface-3)', color: 'var(--text-4)' };
   if (step.verdict && !step.verdict.passed) return { bg: 'var(--danger-bg)', color: 'var(--danger-tx)' };
@@ -48,10 +53,10 @@ export function byListOrder(a: VoyageStepRead, b: VoyageStepRead): number {
 
 /** source → 大白话（模块级常量只存 zh/en，渲染处再 tr）。 */
 export const PLAN_SOURCE: Record<string, { zh: string; en: string }> = {
-  signal: { zh: '按执行结果自动调整', en: 'Auto-adjusted by results' },
-  navigator: { zh: 'AI 调整计划', en: 'AI adjusted the plan' },
-  template: { zh: '按预设分支调整', en: 'Preset branch adjustment' },
-  budget: { zh: '预算用尽，跳过剩余步骤收尾', en: 'Budget spent — skipped remaining steps to wrap up' },
+  signal: { zh: '按结果调整', en: 'Based on results' },
+  navigator: { zh: 'AI 调整', en: 'Adjusted by AI' },
+  template: { zh: '按模板调整', en: 'From the template' },
+  budget: { zh: '预算用完，跳过剩余步骤', en: 'Budget used up, remaining steps skipped' },
 };
 
 /** 作废步骤的原因：找作废它的那次计划调整（iteration 大于其创建轮次且最接近的一条）。 */
@@ -62,7 +67,7 @@ export function obsoleteReasonOf(step: VoyageStepRead, events: VoyagePlanEvent[]
     .sort((a, b) => a.iteration - b.iteration)[0];
   return ev?.reason
     ? tr(`已作废：${ev.reason}`, `Dropped: ${ev.reason}`)
-    : tr('已作废：计划调整时被替换', 'Dropped: replaced during a plan adjustment');
+    : tr('已作废：调整计划时被替换', 'Dropped: replaced when the plan changed');
 }
 
 // —— 时间线条目：步骤 + 计划调整分隔 ——

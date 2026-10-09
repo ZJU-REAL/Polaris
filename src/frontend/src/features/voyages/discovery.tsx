@@ -15,6 +15,11 @@ import {
   type VoyageRead,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { fmtTokens } from '../../lib/format';
+import { enCount } from './shared/stepUtils';
+import { StatusDot, type DotTone } from './shared/StatusDot';
+import { ConfigRow } from './shared/ConfigRow';
+import { Switch } from '../../components/ui/Switch';
 import {
   buildReport,
   flattenTree,
@@ -104,15 +109,15 @@ export function DiscoveryCreateButton({ projectId }: { projectId: string | null 
         onClick={() => setOpen(true)}
       >
         <Icon name="compass" size={13} />
-        {tr('新建假设探索', 'New hypothesis discovery')}
+        {tr('新建假设探索', 'New hypothesis search')}
       </button>
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title={tr('新建假设探索任务', 'New hypothesis discovery task')}
+        title={tr('新建假设探索', 'New hypothesis search')}
         sub={tr(
-          'AI 会围绕这个方向生成假设树：提出根假设，逐轮挑最有希望的分支展开，最后汇总整棵树。',
-          'The AI grows a hypothesis tree around this direction: seed a root hypothesis, expand the most promising branch each round, then summarize the whole tree.',
+          'AI 围绕这个方向提出假设，并逐轮展开最有希望的分支。',
+          'The AI proposes hypotheses on this direction and expands the most promising ones each round.',
         )}
         footer={
           <div className="row gap8" style={{ justifyContent: 'flex-end' }}>
@@ -120,29 +125,26 @@ export function DiscoveryCreateButton({ projectId }: { projectId: string | null 
               {tr('取消', 'Cancel')}
             </button>
             <button className="btn btn-primary" disabled={!canSubmit} onClick={() => createMutation.mutate()}>
-              {createMutation.isPending ? tr('创建中…', 'Creating…') : tr('开始探索', 'Start exploring')}
+              {createMutation.isPending ? tr('创建中…', 'Creating…') : tr('开始探索', 'Start')}
             </button>
           </div>
         }
       >
         <div style={{ padding: 20 }}>
           <FormField
-            label="研究方向"
-            en="Research direction"
-            hint={tr('一句话说清想探索什么，例如：LLM agent 的长期记忆机制', 'One sentence on what to explore, e.g. long-term memory for LLM agents')}
+            label={tr('研究方向', 'Research direction')}
           >
             <textarea
               className="textarea"
               rows={3}
               value={direction}
               onChange={(e) => setDirection(e.target.value)}
-              placeholder={tr('想探索的研究方向…', 'Direction to explore…')}
+              placeholder={tr('例如：LLM 智能体的长期记忆机制', 'e.g. long-term memory for LLM agents')}
             />
           </FormField>
           <FormField
-            label="文献库"
-            en="Library"
-            hint={tr('假设的文献接地与查新都在这个库里检索', 'Grounding and novelty checks retrieve from this library')}
+            label={tr('文献库', 'Library')}
+            hint={tr('在这个库里找证据和查新', 'Evidence and novelty checks use this library')}
             style={{ marginTop: 10 }}
           >
             <select
@@ -150,10 +152,10 @@ export function DiscoveryCreateButton({ projectId }: { projectId: string | null 
               value={libraryId}
               onChange={(e) => setLibraryId(e.target.value)}
             >
-              <option value="">{tr('选择文献库…', 'Pick a library…')}</option>
+              <option value="">{tr('选择文献库', 'Choose a library')}</option>
               {(libraries ?? []).map((lib) => (
                 <option key={lib.id} value={lib.id}>
-                  {lib.name}（{lib.paper_count} {tr('篇', 'papers')}）
+                  {tr(`${lib.name}（${lib.paper_count} 篇）`, `${lib.name} (${enCount(lib.paper_count, 'paper')})`)}
                 </option>
               ))}
             </select>
@@ -162,43 +164,29 @@ export function DiscoveryCreateButton({ projectId }: { projectId: string | null 
             <summary style={{ fontSize: 12, color: 'var(--text-3)', cursor: 'pointer', userSelect: 'none' }}>
               {tr('高级选项', 'Advanced')}
             </summary>
-            <FormField
-              label="扩展轮数"
-              en="Expansion rounds"
-              hint={tr(`每轮对最有希望的假设展开 2-3 个子假设（0-${MAX_EXPANSIONS_LIMIT}）`, `Each round expands the most promising hypothesis into 2-3 children (0-${MAX_EXPANSIONS_LIMIT})`)}
-              style={{ marginTop: 10 }}
-            >
-              <input
-                className="input"
-                type="number"
-                min={0}
-                max={MAX_EXPANSIONS_LIMIT}
-                value={maxExpansions}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  if (Number.isInteger(v)) setMaxExpansions(Math.max(0, Math.min(MAX_EXPANSIONS_LIMIT, v)));
-                }}
-                style={{ width: 120 }}
-              />
-            </FormField>
-            <FormField
-              label="深度对比排位"
-              en="Deep comparison ranking"
-              hint={tr(
-                '每轮扩展后让最有希望的假设两两对比，按胜率重新排位（更准，也更花 token）',
-                'After each round, pit the top hypotheses against each other pairwise and re-rank by win rate (more accurate, costs more tokens)',
-              )}
-              style={{ marginTop: 10 }}
-            >
-              <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer', userSelect: 'none' }}>
+            <div className="settings-list" style={{ marginTop: 6 }}>
+              <ConfigRow
+                label={tr('扩展轮数', 'Expansion rounds')}
+                hint={tr(`0–${MAX_EXPANSIONS_LIMIT}，每轮展开 2–3 个子假设`, `0–${MAX_EXPANSIONS_LIMIT}. Each round adds 2–3 sub-hypotheses`)}
+              >
                 <input
-                  type="checkbox"
-                  checked={tournament}
-                  onChange={(e) => setTournament(e.target.checked)}
+                  className="input"
+                  type="number"
+                  aria-label={tr('扩展轮数', 'Expansion rounds')}
+                  min={0}
+                  max={MAX_EXPANSIONS_LIMIT}
+                  value={maxExpansions}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (Number.isInteger(v)) setMaxExpansions(Math.max(0, Math.min(MAX_EXPANSIONS_LIMIT, v)));
+                  }}
+                  style={{ width: 90 }}
                 />
-                {tr('让假设两两比一比再排名', 'Pit hypotheses against each other before ranking')}
-              </label>
-            </FormField>
+              </ConfigRow>
+              <ConfigRow label={tr('两两对比排名', 'Pairwise ranking')} hint={tr('排名更准，用量更大', 'More accurate ranking, higher usage')}>
+                <Switch checked={tournament} onChange={setTournament} aria-label={tr('两两对比排名', 'Pairwise ranking')} />
+              </ConfigRow>
+            </div>
           </details>
         </div>
       </Modal>
@@ -208,19 +196,19 @@ export function DiscoveryCreateButton({ projectId }: { projectId: string | null 
 
 // —— 文案映射（模块级常量保留 {zh,en}，渲染处再 tr()，语言切换才生效） ——
 
-const OPEN_META = { zh: '待探索', en: 'Open', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' };
-const NODE_STATUS_META: Record<string, { zh: string; en: string; bg: string; tx: string }> = {
+const OPEN_META: { zh: string; en: string; tone: DotTone } = { zh: '待探索', en: 'Open', tone: 'idle' };
+const NODE_STATUS_META: Record<string, { zh: string; en: string; tone: DotTone }> = {
   open: OPEN_META,
-  expanded: { zh: '已扩展', en: 'Expanded', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
-  pruned: { zh: '已剪枝', en: 'Pruned', bg: 'var(--surface-3)', tx: 'var(--text-3)' },
-  validated: { zh: '已验证', en: 'Validated', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)' },
-  refuted: { zh: '已否证', en: 'Refuted', bg: 'var(--danger-bg)', tx: 'var(--danger-tx)' },
+  expanded: { zh: '已展开', en: 'Expanded', tone: 'active' },
+  pruned: { zh: '已放弃', en: 'Dropped', tone: 'idle' },
+  validated: { zh: '已验证', en: 'Validated', tone: 'ok' },
+  refuted: { zh: '已否证', en: 'Refuted', tone: 'err' },
 };
 
 const STANCE_META: Record<Stance, { zh: string; en: string; color: string }> = {
   support: { zh: '支持', en: 'Supports', color: 'var(--ok)' },
   refute: { zh: '反驳', en: 'Refutes', color: 'var(--danger)' },
-  speculation: { zh: '推测（库内没检到证据）', en: 'Speculation (no in-library evidence)', color: 'var(--text-3)' },
+  speculation: { zh: '推测（库内无证据）', en: 'Speculative (no evidence in the library)', color: 'var(--text-3)' },
 };
 
 const VERDICT_META: Record<NoveltyEntry['verdict'], { zh: string; en: string; bg: string; tx: string }> = {
@@ -232,10 +220,10 @@ const VERDICT_META: Record<NoveltyEntry['verdict'], { zh: string; en: string; bg
 /** 可行性信号的键名翻译（后端 hypothesis_pipeline.feasibility 的确定性信号；
     未知键按原名展示，后端加信号前端不至于瞎）。 */
 const SIGNAL_LABELS: Record<string, { zh: string; en: string }> = {
-  grounded_paper_count: { zh: '接地论文数', en: 'Grounded papers' },
-  venues: { zh: '来源分布', en: 'Venues' },
-  year_range: { zh: '年份范围', en: 'Year range' },
-  related_chunk_hits: { zh: '库内相关片段数', en: 'Related chunks in library' },
+  grounded_paper_count: { zh: '支持论文', en: 'Supporting papers' },
+  venues: { zh: '发表来源', en: 'Venues' },
+  year_range: { zh: '年份', en: 'Years' },
+  related_chunk_hits: { zh: '相关段落', en: 'Related passages' },
 };
 
 /** 剪枝原因的界面文案：披露产物里有决策留痕的原话（#655）就用原话——
@@ -253,12 +241,12 @@ function pruneReasonText(
   const kind = pruneReasonKind(node, parentStatus);
   if (kind === 'low_score') {
     return tr(
-      `评分 ${node.score!.toFixed(2)} 低于阈值 ${MIN_VIABLE_SCORE}，扩展时被自动放弃`,
-      `Score ${node.score!.toFixed(2)} fell below the ${MIN_VIABLE_SCORE} threshold — auto-pruned during expansion`,
+      `评分 ${node.score!.toFixed(2)}，低于 ${MIN_VIABLE_SCORE}`,
+      `Score ${node.score!.toFixed(2)} is below ${MIN_VIABLE_SCORE}`,
     );
   }
   if (kind === 'cascade') return tr('父分支被放弃后随之放弃', 'Dropped along with its parent branch');
-  return tr('AI 判定不值得继续（细节见运行日志）', 'The AI judged it not worth pursuing (see run logs)');
+  return tr('AI 判断不值得继续', 'The AI judged it not worth pursuing');
 }
 
 // —— 论文标题解析（证据卡里的引用要能点着标题跳论文） ——
@@ -311,7 +299,7 @@ function PaperChips({ ids, titles }: { ids: string[]; titles: Map<string, string
           }}
         >
           <Icon name="book" size={10} style={{ marginRight: 3, verticalAlign: -1 }} />
-          {titles.get(id) ?? `${id.slice(0, 8)}…`}
+          {titles.get(id) ?? tr('库内论文', 'Library paper')}
         </button>
       ))}
     </span>
@@ -324,7 +312,7 @@ function SupportBar({ ratio, style }: { ratio: number | null; style?: CSSPropert
   if (ratio === null) return null;
   const pct = Math.round(ratio * 100);
   return (
-    <div style={style} title={tr('支持度 = 有库内论文托底（非推测）的子命题占比', 'Support = share of subclaims backed by in-library papers (non-speculation)')}>
+    <div style={style} title={tr('有库内论文支持的子命题占比', 'Share of sub-claims backed by papers in the library')}>
       <div className="row" style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 3 }}>
         <span>{tr('文献支持度', 'Literature support')}</span>
         <span className="mono" style={{ marginLeft: 'auto' }}>{pct}%</span>
@@ -360,14 +348,14 @@ function EvidenceGroup({ stance, entries, titles }: { stance: Stance; entries: G
   const meta = STANCE_META[stance];
   return (
     <div style={{ marginTop: 10 }}>
-      <div className="row gap6" style={{ fontSize: 11.5, fontWeight: 650, color: meta.color, marginBottom: 4 }}>
+      <div className="row gap6" style={{ fontSize: 12, fontWeight: 600, color: meta.color, marginBottom: 4 }}>
         {tr(meta.zh, meta.en)}
-        <span className="mono" style={{ fontWeight: 400, color: 'var(--text-4)' }}>×{entries.length}</span>
+        <span className="mono" style={{ fontWeight: 400, color: 'var(--text-3)' }}>×{entries.length}</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {entries.map((e, i) => (
           <div key={i} style={{ borderLeft: `2px solid ${meta.color}`, paddingLeft: 10 }}>
-            <div style={{ fontSize: 12.5, color: 'var(--text-1)' }}>{e.subclaim}</div>
+            <div style={{ fontSize: 13, color: 'var(--text-1)' }}>{e.subclaim}</div>
             {e.paperIds.length > 0 && (
               <div style={{ marginTop: 4 }}>
                 <PaperChips ids={e.paperIds} titles={titles} />
@@ -380,7 +368,7 @@ function EvidenceGroup({ stance, entries, titles }: { stance: Stance; entries: G
                 style={{
                   ...CLAMP3,
                   marginTop: 4,
-                  fontSize: 11.5,
+                  fontSize: 12,
                   lineHeight: 1.55,
                   color: 'var(--text-3)',
                   background: 'var(--surface-2)',
@@ -434,16 +422,13 @@ function NodeDetailPanel({ node, pruneReason, style }: { node: HypothesisNodeRea
       {pruneReason && (
         <div className="row gap6" style={{ fontSize: 12, color: 'var(--danger-tx)', marginBottom: 8 }}>
           <Icon name="x" size={12} />
-          {tr('剪枝原因：', 'Pruned because: ')}
+          {tr('放弃原因：', 'Dropped because: ')}
           {pruneReason}
         </div>
       )}
       {empty ? (
         <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-          {tr(
-            '这个节点还没有证据数据（根假设与待扩展节点不跑接地管线）。',
-            'No evidence data on this node yet (root and unexpanded nodes skip the grounding pipeline).',
-          )}
+          {tr('这个假设还没有证据。', 'No evidence for this hypothesis yet.')}
         </div>
       ) : (
         <>
@@ -455,8 +440,8 @@ function NodeDetailPanel({ node, pruneReason, style }: { node: HypothesisNodeRea
           {/* 查新结论：逐子命题 verdict */}
           {novelty.length > 0 && (
             <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)', marginBottom: 4 }}>
-                {tr('查新结论', 'Novelty check')}
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 }}>
+                {tr('查新', 'Novelty')}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 {novelty.map((e, i) => {
@@ -466,11 +451,11 @@ function NodeDetailPanel({ node, pruneReason, style }: { node: HypothesisNodeRea
                       <span className="pill sm" style={{ background: m.bg, color: m.tx, flexShrink: 0 }}>
                         {tr(m.zh, m.en)}
                       </span>
-                      <span style={{ fontSize: 12.5, minWidth: 0 }}>
+                      <span style={{ fontSize: 13, minWidth: 0 }}>
                         {e.subclaim}
                         {!e.judged && (
-                          <span style={{ fontSize: 11, color: 'var(--text-4)', marginLeft: 6 }}>
-                            {tr('（未送查新判定）', '(not judged)')}
+                          <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 6 }}>
+                            {tr('（未判定）', '(not judged)')}
                           </span>
                         )}
                       </span>
@@ -488,7 +473,7 @@ function NodeDetailPanel({ node, pruneReason, style }: { node: HypothesisNodeRea
           {/* 可行性：确定性信号小表 + 风险论证 */}
           {feas && (
             <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)', marginBottom: 4 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 }}>
                 {tr('可行性', 'Feasibility')}
               </div>
               {Object.keys(feas.signals).length > 0 && (
@@ -505,7 +490,7 @@ function NodeDetailPanel({ node, pruneReason, style }: { node: HypothesisNodeRea
               )}
               {feas.riskNote && (
                 <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6, marginTop: 6 }}>
-                  <span style={{ color: 'var(--text-3)' }}>{tr('风险论证：', 'Risk note: ')}</span>
+                  <span style={{ color: 'var(--text-3)' }}>{tr('风险：', 'Risks: ')}</span>
                   {feas.riskNote}
                 </div>
               )}
@@ -565,7 +550,7 @@ function TreeView({
               className="row gap6"
               onClick={() => setSelectedId(selected ? null : node.id)}
               // 剪枝原因 hover 即见；点开证据卡里还有一份
-              title={reason ? `${node.statement}\n${tr('剪枝原因：', 'Pruned because: ')}${reason}` : node.statement}
+              title={reason ? `${node.statement}\n${tr('放弃原因：', 'Dropped because: ')}${reason}` : node.statement}
               style={{
                 alignItems: 'center',
                 cursor: 'pointer',
@@ -606,12 +591,10 @@ function TreeView({
               ) : (
                 <span style={{ width: 18, flexShrink: 0 }} />
               )}
-              <span className="pill sm" style={{ background: m.bg, color: m.tx, flexShrink: 0 }}>
-                {tr(m.zh, m.en)}
-              </span>
+              <StatusDot tone={m.tone} label={tr(m.zh, m.en)} />
               <span
                 style={{
-                  fontSize: 12.5,
+                  fontSize: 13,
                   flex: 1,
                   minWidth: 0,
                   whiteSpace: 'nowrap',
@@ -625,24 +608,24 @@ function TreeView({
               </span>
               <span className="row gap8" style={{ flexShrink: 0, alignItems: 'center' }}>
                 {ratio !== null && (
-                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-                    {tr('支持', 'sup')} {Math.round(ratio * 100)}%
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                    {tr('支持', 'support')} {Math.round(ratio * 100)}%
                   </span>
                 )}
                 {standings[node.id] && (
                   <span
                     className="pill sm"
                     title={tr(
-                      `深度对比：${standings[node.id]!.matches} 场两两对比的胜率（平局各记半场）`,
-                      `Deep comparison: win rate over ${standings[node.id]!.matches} pairwise matches (ties count as half)`,
+                      `${standings[node.id]!.matches} 次两两对比中的胜率`,
+                      `Win rate over ${enCount(standings[node.id]!.matches, 'comparison')}`,
                     )}
                     style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
                   >
-                    {tr('胜率', 'wins')} {Math.round(standings[node.id]!.win_rate * 100)}%
+                    {tr('胜率', 'win rate')} {Math.round(standings[node.id]!.win_rate * 100)}%
                   </span>
                 )}
                 {node.score != null && (
-                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
                     {node.score.toFixed(2)}
                   </span>
                 )}
@@ -684,12 +667,12 @@ function ReportView({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {active && (
         <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-          {tr('任务还在进行中：以下是当前假设树的即时排序，跑完后会稳定下来。', 'The run is still in progress — this is a live ranking of the current tree; it settles once the run finishes.')}
+          {tr('任务仍在进行，排名可能变化。', 'Still running; the ranking may change.')}
         </div>
       )}
       {alive.length === 0 && (
-        <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
-          {tr('没有存活的假设（全部被剪枝）。', 'No surviving hypotheses — every branch was pruned.')}
+        <div style={{ fontSize: 13, color: 'var(--text-3)' }}>
+          {tr('所有假设都已放弃。', 'Every hypothesis was dropped.')}
         </div>
       )}
       {alive.map((n, i) => {
@@ -698,14 +681,14 @@ function ReportView({
         const groups = stanceGroups(grounding);
         const ratio = supportRatio(grounding);
         return (
-          <div key={n.id} style={{ border: '0.5px solid var(--border-2)', borderRadius: 10, padding: '12px 14px' }}>
+          <div key={n.id} style={{ borderTop: i > 0 ? '0.5px solid var(--border)' : 'none', padding: i > 0 ? '12px 0 2px' : '2px 0' }}>
             <div className="row gap8" style={{ alignItems: 'flex-start' }}>
-              <span className="mono" style={{ fontSize: 12, color: 'var(--text-4)', flexShrink: 0, paddingTop: 1 }}>
+              <span className="mono" style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0, paddingTop: 1 }}>
                 #{i + 1}
               </span>
-              <span style={{ fontSize: 13.5, fontWeight: 620, flex: 1, minWidth: 0 }}>{n.statement}</span>
+              <span style={{ fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0 }}>{n.statement}</span>
               <span className="row gap6" style={{ flexShrink: 0, alignItems: 'center' }}>
-                <span className="pill sm" style={{ background: m.bg, color: m.tx }}>{tr(m.zh, m.en)}</span>
+                <StatusDot tone={m.tone} label={tr(m.zh, m.en)} />
                 {n.score != null && (
                   <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{n.score.toFixed(2)}</span>
                 )}
@@ -717,7 +700,7 @@ function ReportView({
               (k) =>
                 groups[k].length > 0 && (
                   <div key={k} style={{ marginTop: 8 }}>
-                    <div style={{ fontSize: 11, fontWeight: 650, color: STANCE_META[k].color, marginBottom: 2 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: STANCE_META[k].color, marginBottom: 2 }}>
                       {tr(STANCE_META[k].zh, STANCE_META[k].en)}（{groups[k].length}）
                     </div>
                     {groups[k].map((e, j) => (
@@ -731,7 +714,7 @@ function ReportView({
             {(grounding.length > 0 || n.novelty_report || n.feasibility) && (
               <details style={{ marginTop: 10 }}>
                 <summary style={{ fontSize: 12, color: 'var(--accent-text)', cursor: 'pointer', userSelect: 'none' }}>
-                  {tr('查看完整证据卡（引用论文、原文片段、查新、可行性）', 'Full evidence card (papers, snippets, novelty, feasibility)')}
+                  {tr('查看完整证据', 'Show full evidence')}
                 </summary>
                 <NodeDetailPanel node={n} pruneReason={null} style={{ marginTop: 8 }} />
               </details>
@@ -741,16 +724,16 @@ function ReportView({
       })}
       {/* 被剪分支附录：§8.2 防择优汇报——放弃的路径与原因也是方案的一部分 */}
       {pruned.length > 0 && (
-        <details style={{ border: '0.5px solid var(--border-2)', borderRadius: 10, padding: '10px 14px' }}>
-          <summary style={{ fontSize: 12.5, fontWeight: 650, cursor: 'pointer', userSelect: 'none', color: 'var(--text-2)' }}>
-            {tr(`被放弃的分支附录（${pruned.length}）`, `Pruned branches appendix (${pruned.length})`)}
+        <details style={{ borderTop: '0.5px solid var(--border)', padding: '12px 0 0' }}>
+          <summary style={{ fontSize: 13, fontWeight: 600, cursor: 'pointer', userSelect: 'none', color: 'var(--text-2)' }}>
+            {tr(`已放弃的分支（${pruned.length}）`, `Dropped branches (${pruned.length})`)}
           </summary>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
             {pruned.map((n) => (
               <div key={n.id}>
-                <div style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{n.statement}</div>
+                <div style={{ fontSize: 13, color: 'var(--text-2)' }}>{n.statement}</div>
                 <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>
-                  {n.score != null && <span className="mono">score {n.score.toFixed(2)} · </span>}
+                  {n.score != null && <span className="mono">{tr('评分', 'score')} {n.score.toFixed(2)} · </span>}
                   {pruneReasonText(
                     n,
                     n.parent_id ? statusById.get(n.parent_id) ?? null : null,
@@ -769,32 +752,32 @@ function ReportView({
 // —— 过程记录视图（#655 披露产物：检索了什么 / 读了什么 / 剪了什么） ——
 
 const PHASE_META: Record<DisclosurePhase, { zh: string; en: string }> = {
-  generate: { zh: '找灵感（生成假设前）', en: 'Finding inspiration (before generating)' },
-  ground: { zh: '找证据（逐子命题接地）', en: 'Finding evidence (grounding subclaims)' },
-  novelty: { zh: '查新（换措辞复检）', en: 'Novelty check (re-searched with new wording)' },
-  other: { zh: '其他检索', en: 'Other searches' },
+  generate: { zh: '找灵感', en: 'Inspiration' },
+  ground: { zh: '找证据', en: 'Evidence' },
+  novelty: { zh: '查新', en: 'Novelty' },
+  other: { zh: '其他', en: 'Other' },
 };
 
 /** 自检警告的大白话文案：产物 warnings 只有 code，细节留在产物 JSON 里。 */
 const WARNING_META: Record<string, { zh: string; en: string }> = {
   cited_not_retrieved: {
-    zh: '有引用对不上检索记录（引用只该来自检索结果）',
-    en: 'Some citations have no matching search record (citations should only come from searches)',
+    zh: '部分引用没有对应的检索记录',
+    en: 'Some citations have no matching search',
   },
   pruned_without_reason: {
-    zh: '有被放弃的分支查不到放弃原因',
+    zh: '有放弃的分支没有记录原因',
     en: 'A dropped branch has no recorded reason',
   },
   round_without_trace: {
-    zh: '有一轮扩展没有留下检索记录（可能是旧版本跑的或中途重启过）',
-    en: 'An expansion round left no search records (older version or mid-run restart)',
+    zh: '有一轮扩展没有检索记录',
+    en: 'One round has no search records',
   },
 };
 
 function DisclosureSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div style={{ border: '0.5px solid var(--border-2)', borderRadius: 10, padding: '10px 14px' }}>
-      <div style={{ fontSize: 12.5, fontWeight: 650, color: 'var(--text-2)', marginBottom: 8 }}>{title}</div>
+    <div style={{ borderTop: '0.5px solid var(--border)', paddingTop: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-3)', marginBottom: 8 }}>{title}</div>
       {children}
     </div>
   );
@@ -825,10 +808,10 @@ function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | n
 
   if (!disclosure) {
     return (
-      <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
+      <div style={{ fontSize: 13, color: 'var(--text-3)' }}>
         {active
-          ? tr('任务跑完后这里会有完整的过程记录：检索了什么、读了什么、剪掉了什么。', 'Once the run finishes, the full process log appears here: what was searched, what was read, what was dropped.')
-          : tr('这次任务没有留下过程记录（可能是旧版本跑的）。', 'This run left no process log (it may predate this feature).')}
+          ? tr('任务完成后，这里会列出检索、阅读和放弃的记录。', 'Searches, reading and dropped branches appear here when the task finishes.')
+          : tr('这次任务没有过程记录。', 'This task has no process log.')}
       </div>
     );
   }
@@ -863,28 +846,28 @@ function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | n
       {/* 参考了哪些线索（#670 燃料）：生成假设前喂进去的预计算线索。
           旧产物没有这一节（fuels 为 null）时小节整体不渲染。 */}
       {disclosure.fuels && (
-        <DisclosureSection title={tr('参考了哪些线索', 'What clues were consulted')}>
+        <DisclosureSection title={tr('参考线索', 'Clues used')}>
           {fuelClueCount(disclosure.fuels) === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
               {tr(
-                '这次没有额外线索可参考（库里还没有方法卡、概念或未解问题的数据），只靠检索。',
-                'No extra clues were available (the library has no method cards, concepts, or open-problem data yet), so only searches were used.',
+                '库里还没有可参考的方法、概念或未解问题，只用了检索。',
+                'The library had no methods, concepts or open problems to draw on, so only search was used.',
               )}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {disclosure.fuels.methods.length > 0 && (
                 <div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 4 }}>
-                    {tr('换个做法的论文（目的相近、路子不同）：', 'Papers that reach a similar goal a different way:')}
+                  <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 4 }}>
+                    {tr('目标相近、方法不同的论文', 'Papers with a similar goal and a different method')}
                   </div>
                   <PaperChips ids={disclosure.fuels.methods} titles={titles} />
                 </div>
               )}
               {disclosure.fuels.conceptPairs.length > 0 && (
                 <div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 4 }}>
-                    {tr('还没被放到一起研究的概念组合：', 'Concept pairs never studied together yet:')}
+                  <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 4 }}>
+                    {tr('尚未一起研究过的概念', 'Concepts not yet studied together')}
                   </div>
                   <span className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
                     {disclosure.fuels.conceptPairs.map((pair, i) => (
@@ -901,8 +884,8 @@ function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | n
               )}
               {disclosure.fuels.gaps.length > 0 && (
                 <div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 4 }}>
-                    {tr('文献自己指出的未解问题，出自：', 'Open problems the literature itself points out, from:')}
+                  <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 4 }}>
+                    {tr('论文中提到的未解问题', 'Open problems named in papers')}
                   </div>
                   <PaperChips ids={disclosure.fuels.gaps} titles={titles} />
                 </div>
@@ -913,17 +896,17 @@ function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | n
       )}
 
       {/* 检索了什么：查询全录，按阶段分组 */}
-      <DisclosureSection title={tr(`检索了什么（${disclosure.queries.length} 次）`, `What was searched (${disclosure.queries.length} queries)`)}>
+      <DisclosureSection title={tr(`检索（${disclosure.queries.length} 次）`, `Searches (${disclosure.queries.length})`)}>
         {groups.length === 0 ? (
           <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-            {tr('没有检索记录。', 'No search records.')}
+            {tr('没有检索记录', 'No searches')}
           </div>
         ) : (
           groups.map(({ phase, items }) => (
             <div key={phase} style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--accent-text)', marginBottom: 4 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent-text)', marginBottom: 4 }}>
                 {tr(PHASE_META[phase].zh, PHASE_META[phase].en)}
-                <span className="mono" style={{ fontWeight: 400, color: 'var(--text-4)', marginLeft: 6 }}>×{items.length}</span>
+                <span className="mono" style={{ fontWeight: 400, color: 'var(--text-3)', marginLeft: 6 }}>×{items.length}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {items.map((q, i) => (
@@ -934,8 +917,8 @@ function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | n
                       </span>
                     )}
                     <span style={{ fontSize: 12, color: 'var(--text-2)', minWidth: 0, overflowWrap: 'anywhere' }}>{q.query}</span>
-                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', flexShrink: 0, marginLeft: 'auto' }}>
-                      {tr(`${q.paperIds.length} 篇`, `${q.paperIds.length} papers`)}
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0, marginLeft: 'auto' }}>
+                      {tr(`${q.paperIds.length} 篇`, enCount(q.paperIds.length, 'paper'))}
                     </span>
                   </div>
                 ))}
@@ -948,28 +931,28 @@ function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | n
       {/* 读了什么：检索全集 vs 实际引用 + 差集 */}
       <DisclosureSection
         title={tr(
-          `读了什么（检索到 ${papers.retrieved.length} 篇，引用了 ${papers.cited.length} 篇）`,
-          `What was read (${papers.retrieved.length} retrieved, ${papers.cited.length} cited)`,
+          `阅读（检索到 ${papers.retrieved.length} 篇，引用 ${papers.cited.length} 篇）`,
+          `Reading (${papers.retrieved.length} found, ${papers.cited.length} cited)`,
         )}
       >
         {papers.retrievedNotCited.length > 0 && (
           <div style={{ marginBottom: 6 }}>
-            <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 4 }}>
-              {tr('检索到但最终没引用：', 'Retrieved but never cited:')}
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 4 }}>
+              {tr('检索到但未引用', 'Found but not cited')}
             </div>
             <PaperChips ids={papers.retrievedNotCited} titles={titles} />
           </div>
         )}
         {papers.retrievedNotCited.length === 0 && papers.retrieved.length > 0 && (
           <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-            {tr('检索到的论文全部被引用了。', 'Every retrieved paper ended up cited.')}
+            {tr('检索到的论文都已引用。', 'Every paper found was cited.')}
           </div>
         )}
         {/* 引了却没检索到：不该发生（引用只能来自检索结果），有就如实标红 */}
         {papers.citedNotRetrieved.length > 0 && (
           <div style={{ marginTop: 6 }}>
-            <div style={{ fontSize: 11.5, color: 'var(--danger-tx)', marginBottom: 4 }}>
-              {tr('引用了但检索记录里找不到（数据有伤，见上方警告）：', 'Cited but missing from search records (data gap, see warning above):')}
+            <div style={{ fontSize: 12, color: 'var(--danger-tx)', marginBottom: 4 }}>
+              {tr('已引用但不在检索记录中', 'Cited but not in the search records')}
             </div>
             <PaperChips ids={papers.citedNotRetrieved} titles={titles} />
           </div>
@@ -977,10 +960,10 @@ function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | n
       </DisclosureSection>
 
       {/* 剪了什么：被放弃分支的时间线与真实原因 */}
-      <DisclosureSection title={tr(`剪了什么（${pruned.length} 个分支）`, `What was dropped (${pruned.length} branches)`)}>
+      <DisclosureSection title={tr(`已放弃的分支（${pruned.length}）`, `Dropped branches (${pruned.length})`)}>
         {pruned.length === 0 ? (
           <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-            {tr('没有分支被放弃。', 'No branch was dropped.')}
+            {tr('没有放弃的分支', 'No dropped branches')}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -990,18 +973,18 @@ function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | n
               const prunedRound = prunedEvent?.round ?? null;
               return (
                 <div key={b.nodeId}>
-                  <div style={{ fontSize: 12.5, color: 'var(--text-2)', textDecoration: 'line-through' }}>{b.statement}</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-2)', textDecoration: 'line-through' }}>{b.statement}</div>
                   <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>
                     {createdRound !== null && (
-                      <span>{tr(`第 ${createdRound} 轮产生 · `, `Born round ${createdRound} · `)}</span>
+                      <span>{tr(`第 ${createdRound} 轮提出 · `, `Proposed in round ${createdRound} · `)}</span>
                     )}
                     {prunedRound !== null && (
-                      <span>{tr(`第 ${prunedRound} 轮放弃 · `, `Dropped round ${prunedRound} · `)}</span>
+                      <span>{tr(`第 ${prunedRound} 轮放弃 · `, `Dropped in round ${prunedRound} · `)}</span>
                     )}
-                    {b.score !== null && <span className="mono">score {b.score.toFixed(2)} · </span>}
+                    {b.score !== null && <span className="mono">{tr('评分', 'score')} {b.score.toFixed(2)} · </span>}
                     {prunedEvent?.cascadeFrom
                       ? tr('父分支被放弃后随之放弃', 'Dropped along with its parent branch')
-                      : prunedEvent?.reason ?? tr('原因未记录（见上方警告）', 'No reason recorded (see warning above)')}
+                      : prunedEvent?.reason ?? tr('未记录原因', 'No reason recorded')}
                   </div>
                 </div>
               );
@@ -1011,10 +994,10 @@ function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | n
       </DisclosureSection>
 
       {disclosure.totalTokens && (
-        <div className="mono" style={{ fontSize: 11, color: 'var(--text-4)' }}>
+        <div className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
           {tr(
-            `全程 token：输入 ${disclosure.totalTokens.prompt} · 输出 ${disclosure.totalTokens.completion}`,
-            `Run tokens: ${disclosure.totalTokens.prompt} in · ${disclosure.totalTokens.completion} out`,
+            `用量 ${fmtTokens(disclosure.totalTokens.prompt + disclosure.totalTokens.completion)} tokens（输入 ${fmtTokens(disclosure.totalTokens.prompt)} · 输出 ${fmtTokens(disclosure.totalTokens.completion)}）`,
+            `Usage: ${fmtTokens(disclosure.totalTokens.prompt + disclosure.totalTokens.completion)} tokens (${fmtTokens(disclosure.totalTokens.prompt)} in · ${fmtTokens(disclosure.totalTokens.completion)} out)`,
           )}
         </div>
       )}
@@ -1060,12 +1043,11 @@ export function DiscoveryPanel({ voyage }: { voyage: VoyageRead }) {
     <div className="card card-pad" style={{ marginBottom: 20 }}>
       <div className="row" style={{ marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
         <span className="section-h">
-          <Icon name="compass" size={15} style={{ color: 'var(--accent)' }} />
           {tr('假设树', 'Hypothesis tree')}
         </span>
         {nodes.length > 0 && (
           <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-            {nodes.length} {tr('个节点', 'nodes')}
+            {tr(`${nodes.length} 个假设`, enCount(nodes.length, 'hypothesis', 'hypotheses'))}
           </span>
         )}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, alignItems: 'center' }}>
@@ -1086,10 +1068,10 @@ export function DiscoveryPanel({ voyage }: { voyage: VoyageRead }) {
       {view === 'disclosure' ? (
         <DisclosureView disclosure={disclosure} active={active} />
       ) : nodes.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
+        <div style={{ fontSize: 13, color: 'var(--text-3)' }}>
           {active
-            ? tr('树还没长出来：AI 正在生成根假设…', 'No tree yet — the AI is seeding the root hypothesis…')
-            : tr('这次任务没有留下假设树。', 'This run left no hypothesis tree.')}
+            ? tr('正在生成第一个假设…', 'Generating the first hypothesis…')
+            : tr('这次任务没有生成假设。', 'This task produced no hypotheses.')}
         </div>
       ) : view === 'tree' ? (
         <TreeView nodes={nodes} standings={standings} pruneRecords={pruneRecords} />

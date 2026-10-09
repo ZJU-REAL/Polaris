@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
+import { TaskStatus } from './shared/StatusDot';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
-import { StatusPill } from '../../components/ui/StatusPill';
 import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useProject } from '../../app/project';
@@ -25,7 +25,7 @@ export const FILTERS: { v: Filter; zh: string; en: string }[] = [
   { v: 'active', zh: '进行中', en: 'Active' },
   { v: 'paused', zh: '等待中', en: 'Waiting' },
   { v: 'done', zh: '已完成', en: 'Done' },
-  { v: 'failed', zh: '失败/取消', en: 'Failed/cancelled' },
+  { v: 'failed', zh: '失败/取消', en: 'Failed' },
 ];
 
 /** 正在推进中的状态（列表行左缘蓝条 + 淡蓝底 + 进度条动画）。 */
@@ -56,19 +56,19 @@ interface KindMeta {
 }
 
 export const KIND_META: Record<string, KindMeta> = {
-  wiki_bootstrap: { zh: '初始建库', en: 'Initial library build', icon: 'book', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
-  wiki_ingest: { zh: '增量更新', en: 'Incremental sync', icon: 'refresh', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
-  idea_forge: { zh: '想法生成', en: 'Idea forge', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
-  idea_review: { zh: '评审锦标赛', en: 'Review tournament', icon: 'scale', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
-  idea_proposal: { zh: '方案细化', en: 'Proposal', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
+  wiki_bootstrap: { zh: '初始建库', en: 'Library build', icon: 'book', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
+  wiki_ingest: { zh: '文献库更新', en: 'Library update', icon: 'refresh', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
+  idea_forge: { zh: '生成想法', en: 'Idea generation', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
+  idea_review: { zh: '想法评审', en: 'Idea review', icon: 'scale', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
+  idea_proposal: { zh: '研究方案', en: 'Research plan', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
   experiment: { zh: '实验', en: 'Experiment', icon: 'flask', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)' },
-  paper_writing: { zh: '论文起草', en: 'Draft writing', icon: 'pen', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
+  paper_writing: { zh: '论文起草', en: 'Paper draft', icon: 'pen', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
   paper_review: { zh: '论文评审', en: 'Paper review', icon: 'check', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
-  presentation: { zh: '论文分享', en: 'Paper slides', icon: 'chart', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
-  discovery: { zh: '假设探索', en: 'Hypothesis discovery', icon: 'compass', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
-  custom: { zh: '自定义流程', en: 'Custom workflow', icon: 'sparkle', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
+  presentation: { zh: '论文汇报', en: 'Slides', icon: 'chart', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
+  discovery: { zh: '假设探索', en: 'Hypothesis search', icon: 'compass', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
+  custom: { zh: '自定义任务', en: 'Custom task', icon: 'sparkle', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
   demo: { zh: '演示', en: 'Demo', icon: 'play', bg: 'var(--surface-3)', tx: 'var(--text-2)' },
-  daily_feed_sync: { zh: '每日新论文', en: 'Daily paper sync', icon: 'refresh', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
+  daily_feed_sync: { zh: '每日新论文', en: 'Daily papers', icon: 'refresh', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
 };
 
 function kindMeta(kind: string): KindMeta {
@@ -100,7 +100,7 @@ function StepProgress({ v }: { v: VoyageRead }) {
   const total = Array.isArray(v.plan) ? v.plan.length : 0;
   if (!total) {
     return (
-      <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }} title={tr('尚未生成执行计划', 'No execution plan yet')}>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }} title={tr('还没有计划', 'No plan yet')}>
         —
       </span>
     );
@@ -123,7 +123,7 @@ function StepProgress({ v }: { v: VoyageRead }) {
       <span className="mini-bar">
         <i className={running ? 'anim' : undefined} style={{ width: `${frac * 100}%`, background: fill }} />
       </span>
-      <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', minWidth: 30, textAlign: 'right' }}>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', minWidth: 30, textAlign: 'right' }}>
         {cur}/{total}
       </span>
     </span>
@@ -144,36 +144,30 @@ export function VoyageRow({ v, first }: { v: VoyageRead; first?: boolean }) {
       onClick={() => navigate(`/voyages/${v.id}`)}
       style={{ borderTop: first ? 'none' : '0.5px solid var(--border)' }}
     >
-      <KindBadge kind={v.kind} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           title={v.goal}
-          style={{ fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         >
           {v.goal}
         </div>
-        <div className="row gap8" style={{ marginTop: 4 }}>
-          <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{v.id.slice(0, 8)}</span>
-          <span style={{ fontSize: 11, color: 'var(--text-3)' }} title={fmtFullTime(v.created_at)}>
-            · {fmtRelative(v.created_at)}
+        {/* 元信息并入标题下一行：窄屏不再把标题列挤成 0 宽 */}
+        <div className="row gap8" style={{ marginTop: 5, fontSize: 12, color: 'var(--text-3)', flexWrap: 'wrap' }}>
+          <KindBadge kind={v.kind} />
+          <span title={fmtFullTime(v.created_at)}>{fmtRelative(v.created_at)}</span>
+          <StepProgress v={v} />
+          <span
+            className="mono"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontVariantNumeric: 'tabular-nums' }}
+            title={tr('耗时', 'Duration')}
+          >
+            <Icon name="clock" size={11} />
+            {fmtDuration(v.created_at, active ? null : v.updated_at)}
           </span>
         </div>
       </div>
-      <span style={{ width: 130, display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
-        <StepProgress v={v} />
-      </span>
-      <span
-        className="mono"
-        style={{
-          fontSize: 11.5, color: 'var(--text-3)', width: 78, flexShrink: 0,
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
-        }}
-      >
-        <Icon name="clock" size={11} />
-        {fmtDuration(v.created_at, active ? null : v.updated_at)}
-      </span>
-      <span style={{ width: 134, display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
-        <StatusPill status={v.status} sm />
+      <span style={{ minWidth: 92, display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+        <TaskStatus status={v.status} />
       </span>
       {/* 动作就地可用：不必逐个点进详情才能取消/续跑/删除 */}
       <VoyageActions voyage={v} compact />
@@ -195,11 +189,9 @@ export function SkeletonRows() {
           <span className="skel" style={{ width: 76, height: 19 }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="skel" style={{ width: '44%', height: 12, marginBottom: 7 }} />
-            <div className="skel" style={{ width: 148, height: 9 }} />
+            <div className="skel" style={{ width: 220, height: 9 }} />
           </div>
-          <span className="skel" style={{ width: 126, height: 8, flexShrink: 0 }} />
-          <span className="skel" style={{ width: 62, height: 10, flexShrink: 0 }} />
-          <span className="skel" style={{ width: 88, height: 19, borderRadius: 10, flexShrink: 0 }} />
+          <span className="skel" style={{ width: 64, height: 12, flexShrink: 0 }} />
         </div>
       ))}
     </div>
@@ -249,7 +241,7 @@ export function VoyagesList({
               aria-label={tr('按类型筛选', 'Filter by type')}
               value={kindFilter}
               onChange={(e) => setKindFilter(e.target.value)}
-              style={{ height: 33, fontSize: 12.5, fontWeight: 600, width: 128, color: kindFilter === 'all' ? 'var(--text-3)' : 'var(--text)' }}
+              style={{ height: 33, fontSize: 13, fontWeight: 600, width: 128, color: kindFilter === 'all' ? 'var(--text-3)' : 'var(--text)' }}
             >
               <option value="all">{tr('全部类型', 'All types')}</option>
               {(kinds ?? Object.keys(KIND_META)).map((k) => (
@@ -277,8 +269,8 @@ export function VoyagesList({
             <div className="card">
               <EmptyState
                 icon="x"
-                title={tr('无法加载任务列表', 'Failed to load tasks')}
-                desc={tr('后端不可用或接口尚未就绪，稍后可重试。', 'Backend unavailable or endpoint not ready — try again later.')}
+                title={tr('无法加载任务', 'Couldn’t load tasks')}
+                desc={tr('请确认本机引擎在运行，然后重试。', 'Make sure the local engine is running, then retry.')}
                 compact
                 action={
                   <button className="btn btn-soft" onClick={() => void refetch()}>
@@ -292,11 +284,11 @@ export function VoyagesList({
             <div className="card">
               <EmptyState
                 icon="compass"
-                title={tr('暂无任务', 'No tasks yet')}
+                title={filter !== 'all' || kindFilter !== 'all' ? tr('没有符合条件的任务', 'No matching tasks') : tr('还没有任务', 'No tasks yet')}
                 desc={
                   filter !== 'all' || kindFilter !== 'all'
-                    ? tr('当前筛选条件下没有任务，换个筛选试试。', 'No tasks match the current filters — try different ones.')
-                    : tr('想法生成、实验、论文起草等操作发起后，任务会出现在这里。', 'Tasks show up here once you start idea generation, experiments, draft writing, and so on.')
+                    ? undefined
+                    : tr('生成想法、运行实验或起草论文后，任务会显示在这里。', 'Tasks appear here when you generate ideas, run experiments or draft papers.')
                 }
                 compact
               />
@@ -315,7 +307,7 @@ export function VoyagesList({
           {labLink && (
             <div className="row gap6" style={{ marginTop: 12, fontSize: 12, color: 'var(--text-3)' }}>
               <Icon name="flask" size={13} style={{ flexShrink: 0 }} />
-              <span>{tr('这里只看当前课题的任务；课题外的任务（建库、每日新论文等）在', 'Only this topic’s tasks are listed here. Tasks outside topics (library builds, daily papers, …) live in')}</span>
+              <span>{tr('建库和每日新论文的任务见', 'Library builds and daily papers are under')}</span>
               <Link to="/lab" style={{ color: 'var(--accent)', fontWeight: 600 }}>
                 {tr('文献任务', 'Library Tasks')}
               </Link>
@@ -329,7 +321,7 @@ export function VoyagesPage() {
   return (
     <div className="page fadeup">
       <PageHead
-        eyebrow="Polaris · Voyages"
+        eyebrow="Polaris · Tasks"
         title={tr('任务', 'Tasks')}
       />
       <VoyagesList showScopeSwitch />

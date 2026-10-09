@@ -1,9 +1,9 @@
 import { memo, useEffect, useState } from 'react';
+import { TaskStatus } from '../voyages/shared/StatusDot';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
-import { StatusPill } from '../../components/ui/StatusPill';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Segmented } from '../../components/ui/Segmented';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
@@ -100,20 +100,20 @@ const ExperimentCard = memo(function ExperimentCard({
           />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 650, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {exp.idea_title}
           </div>
-          <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 3 }}>
-            {exp.id.slice(0, 8)} · {tr('创建', 'Created')} {fmtTime(exp.created_at)}
+          <div className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3 }}>
+            {tr('创建于', 'Created')} {fmtTime(exp.created_at)}
           </div>
         </div>
-        <StatusPill status={exp.status} sm />
+        <TaskStatus status={exp.status} />
       </div>
       {isTrash ? (
         <div className="row gap10" style={{ marginTop: 12, alignItems: 'center' }}>
           <span className="mono muted" style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <Icon name="trash" size={11} />
-            {tr('删除于', 'trashed')} {exp.trashed_at ? fmtRelative(exp.trashed_at) : '—'}
+            {tr('删除于', 'Trashed')} {exp.trashed_at ? fmtRelative(exp.trashed_at) : '—'}
           </span>
           <div className="row gap8" style={{ marginLeft: 'auto' }}>
             <button
@@ -144,7 +144,7 @@ const ExperimentCard = memo(function ExperimentCard({
           <div className="row gap10" style={{ marginTop: 12, flexWrap: 'wrap' }}>
             <span className="pill sm">
               <Icon name="server" size={11} />
-              {exp.server_host ?? tr('未分配', 'Unassigned')}
+              {exp.server_host ?? tr('未分配机器', 'No machine yet')}
             </span>
             <span className="pill sm mono" style={{ background: 'var(--surface-3)' }}>{budgetText(exp.budget)}</span>
             <span className="mono muted" style={{ fontSize: 11, marginLeft: 'auto' }}>
@@ -260,7 +260,7 @@ export function ExperimentPage() {
   const invalidateAll = () => void queryClient.invalidateQueries({ queryKey: ['experiments', pid] });
   const onMutError = (e: unknown) => {
     if (e instanceof ApiError && e.status === 403) {
-      toast(tr('只有项目管理者可删除', 'Only project managers can delete'), 'error');
+      toast(tr('没有删除权限', 'You can’t delete this'), 'error');
     } else {
       toast(`${tr('操作失败：', 'Action failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
     }
@@ -296,7 +296,7 @@ export function ExperimentPage() {
     onSuccess: (r) => {
       invalidateAll();
       clearSelection();
-      toast(`${tr('已移入回收站', 'Moved to trash')} · ${r.affected}`, 'ok');
+      toast(tr(`已将 ${r.affected} 个移入回收站`, `Moved ${r.affected} to trash`), 'ok');
     },
     onError: onMutError,
   });
@@ -305,7 +305,7 @@ export function ExperimentPage() {
     onSuccess: (r) => {
       invalidateAll();
       clearSelection();
-      toast(`${tr('已恢复', 'Restored')} · ${r.affected}`, 'ok');
+      toast(tr(`已恢复 ${r.affected} 个`, `Restored ${r.affected}`), 'ok');
     },
     onError: onMutError,
   });
@@ -314,7 +314,7 @@ export function ExperimentPage() {
     onSuccess: (r) => {
       invalidateAll();
       clearSelection();
-      toast(`${tr('已永久删除', 'Permanently deleted')} · ${r.affected}`, 'ok');
+      toast(tr(`已永久删除 ${r.affected} 个`, `Deleted ${r.affected} permanently`), 'ok');
     },
     onError: onMutError,
     onSettled: () => setConfirm(null),
@@ -324,7 +324,7 @@ export function ExperimentPage() {
     onSuccess: (r) => {
       invalidateAll();
       clearSelection();
-      toast(`${tr('回收站已清空', 'Trash emptied')} · ${r.affected}`, 'ok');
+      toast(tr(`已清空回收站，删除 ${r.affected} 个`, `Trash emptied: ${r.affected} deleted`), 'ok');
     },
     onError: onMutError,
     onSettled: () => setConfirm(null),
@@ -334,8 +334,8 @@ export function ExperimentPage() {
   return (
     <div className="page fadeup" style={{ maxWidth: 1180 }}>
       <PageHead
-        eyebrow="Stage 03 · Experiment Lab"
-        title={tr('实验搭建', 'Experiment Lab')}
+        eyebrow="Stage 03 · Experiments"
+        title={tr('实验搭建', 'Experiments')}
         sub={
           pid
             ? undefined
@@ -370,10 +370,10 @@ export function ExperimentPage() {
           <button
             className={`btn sm ${multiSelect ? 'btn-primary' : 'btn-soft'}`}
             onClick={toggleMultiSelect}
-            title={tr('批量选择', 'Multi-select')}
+            title={tr('批量选择', 'Select several')}
           >
             <Icon name="check" size={13} />
-            {tr('多选', 'Multi-select')}
+            {tr('多选', 'Select')}
           </button>
           {/* 全选放工具栏：不再插入额外行导致卡片下移（#132） */}
           {multiSelect && experiments.length > 0 && (
@@ -392,12 +392,14 @@ export function ExperimentPage() {
               style={{ marginLeft: 'auto', color: 'var(--danger)' }}
               onClick={() =>
                 setConfirm({
-                  title: tr('清空回收站', 'Empty trash'),
+                  title: tr('清空回收站？', 'Empty the trash?'),
                   message: tr(
-                    `将永久删除回收站内全部 ${trashCount} 个实验，不可恢复。确定继续？`,
-                    `This permanently deletes all ${trashCount} experiment(s) in the trash. This cannot be undone. Continue?`,
+                    `其中 ${trashCount} 个实验会被永久删除，无法恢复。`,
+                    trashCount === 1
+                      ? 'The experiment in it will be deleted permanently. This can’t be undone.'
+                      : `Its ${trashCount} experiments will be deleted permanently. This can’t be undone.`,
                   ),
-                  confirmText: tr('清空', 'Empty'),
+                  confirmText: tr('清空', 'Empty trash'),
                   run: () => emptyTrash.mutate(),
                 })
               }
@@ -417,15 +419,15 @@ export function ExperimentPage() {
         </div>
       ) : isLoading ? (
         <div className="card">
-          <div className="empty" style={{ padding: 60 }}>{view === 'trash' ? tr('加载回收站…', 'Loading trash…') : tr('加载实验列表…', 'Loading experiments…')}</div>
+          <div className="empty" style={{ padding: 60 }}>{tr('加载中…', 'Loading…')}</div>
         </div>
       ) : isError ? (
         <div className="card">
           <EmptyState
             compact
             icon="x"
-            title={tr('无法加载实验列表', 'Could not load experiments')}
-            desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or the API is not ready yet.')}
+            title={tr('无法加载实验', 'Couldn’t load experiments')}
+            desc={tr('请确认本机引擎在运行，然后重试。', 'Make sure the local engine is running, then retry.')}
             action={<button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>}
           />
         </div>
@@ -441,18 +443,11 @@ export function ExperimentPage() {
             <EmptyState
               icon="flask"
               title={tr('还没有实验', 'No experiments yet')}
-              desc={tr('先在想法评审页晋级一个想法，再回到这里发起实验。', 'Promote an idea in Idea Review first, then come back to start an experiment.')}
+              desc={tr('晋级一个想法后，就可以为它新建实验。', 'Promote an idea, then start an experiment for it.')}
               action={
-                <div className="row gap8">
-                  <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'review'))}>
-                    <Icon name="scale" size={14} />
-                    {tr('前往想法评审', 'Go to Idea Review')}
-                  </button>
-                  <button className="btn btn-primary" onClick={() => setModalOpen(true)}>
-                    <Icon name="plus" size={14} />
-                    {tr('新建实验', 'New experiment')}
-                  </button>
-                </div>
+                <button className="btn btn-soft sm" onClick={() => navigate(topicPath(currentProjectId, 'review'))}>
+                  {tr('前往想法评审', 'Go to Idea Review')}
+                </button>
               }
             />
           )}
@@ -473,12 +468,9 @@ export function ExperimentPage() {
                 onRestore={() => restoreOne.mutate(e.id)}
                 onDelete={() =>
                   setConfirm({
-                    title: tr('永久删除实验', 'Delete experiment permanently'),
-                    message: tr(
-                      `将永久删除${e.idea_title}，不可恢复。确定继续？`,
-                      `This permanently deletes "${e.idea_title}". This cannot be undone. Continue?`,
-                    ),
-                    confirmText: tr('永久删除', 'Delete permanently'),
+                    title: tr(`永久删除「${e.idea_title}」？`, `Delete “${e.idea_title}” permanently?`),
+                    message: tr('删除后无法恢复。', 'This can’t be undone.'),
+                    confirmText: tr('永久删除', 'Delete'),
                     run: () => deleteOne.mutate(e.id),
                   })
                 }
@@ -502,7 +494,7 @@ export function ExperimentPage() {
             gap: 12,
           }}
         >
-          <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>
             {tr(`已选 ${selected.size} 个`, `${selected.size} selected`)}
           </span>
           <div className="row gap8" style={{ marginLeft: 'auto' }}>
@@ -513,7 +505,7 @@ export function ExperimentPage() {
                 onClick={() => batchTrash.mutate(selectedIds)}
               >
                 <Icon name="trash" size={13} />
-                {tr('批量删除', 'Delete selected')}
+                {tr('移入回收站', 'Move to trash')}
               </button>
             ) : (
               <>
@@ -523,25 +515,25 @@ export function ExperimentPage() {
                   onClick={() => batchRestore.mutate(selectedIds)}
                 >
                   <Icon name="refresh" size={13} />
-                  {tr('批量恢复', 'Restore selected')}
+                  {tr('恢复', 'Restore')}
                 </button>
                 <button
                   className="btn btn-danger sm"
                   disabled={batchDelete.isPending}
                   onClick={() =>
                     setConfirm({
-                      title: tr('永久删除所选', 'Delete selected permanently'),
-                      message: tr(
-                        `将永久删除所选 ${selected.size} 个实验，不可恢复。确定继续？`,
-                        `This permanently deletes the ${selected.size} selected experiment(s). This cannot be undone. Continue?`,
+                      title: tr(
+                        `永久删除 ${selected.size} 个实验？`,
+                        selected.size === 1 ? 'Delete 1 experiment permanently?' : `Delete ${selected.size} experiments permanently?`,
                       ),
-                      confirmText: tr('永久删除', 'Delete permanently'),
+                      message: tr('删除后无法恢复。', 'This can’t be undone.'),
+                      confirmText: tr('永久删除', 'Delete'),
                       run: () => batchDelete.mutate(selectedIds),
                     })
                   }
                 >
                   <Icon name="trash" size={13} />
-                  {tr('批量永久删除', 'Delete permanently')}
+                  {tr('永久删除', 'Delete permanently')}
                 </button>
               </>
             )}

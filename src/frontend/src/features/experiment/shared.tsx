@@ -1,39 +1,36 @@
 import type { ExperimentBudget, ExperimentStatus, HypothesisStatus } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { StatusDot, type DotTone } from '../voyages/shared/StatusDot';
 
 /* ============================================================
    Experiment Lab 共享小件：假设 chip、状态进度、预算文案。
    ============================================================ */
 
-/** 假设状态 chip（色点 + 文案）：testing 灰 / verified 绿 / falsified 红。
+/** 假设状态（色点 + 文案）：testing 灰 / verified 绿 / falsified 红。
     title 传判定依据 evidence，鼠标悬停可见。 */
 export function HypChip({ status, title }: { status: HypothesisStatus | string; title?: string }) {
-  const map: Record<string, [string, string, string]> = {
-    verified: ['var(--ok-bg)', 'var(--ok-tx)', tr('✓ 已验证', '✓ Verified')],
-    falsified: ['var(--danger-bg)', 'var(--danger-tx)', tr('✗ 已证伪', '✗ Falsified')],
-    testing: ['var(--surface-3)', 'var(--text-3)', tr('◴ 测试中', '◴ Testing')],
+  const map: Record<string, [DotTone, string]> = {
+    verified: ['ok', tr('已验证', 'Verified')],
+    falsified: ['err', tr('已证伪', 'Refuted')],
+    testing: ['idle', tr('验证中', 'Testing')],
   };
-  const [bg, c, t] = map[status] ?? map.testing!;
-  return (
-    <span className="pill sm" title={title} style={{ background: bg, color: c, flexShrink: 0 }}>
-      {t}
-    </span>
-  );
+  const [tone, label] = map[status] ?? map.testing!;
+  return <StatusDot tone={tone} label={label} title={title} />;
 }
 
 /** 迭代停止原因 → 大白话（未知值原样显示）。 */
 export function stopReasonText(reason: string | null | undefined): string | null {
   if (!reason) return null;
-  const llmStop = tr('AI 判断可以收尾', 'AI decided to wrap up');
-  const noImprove = tr('连续 2 轮主指标无提升，自动停止', 'No metric gain for 2 runs in a row — auto stopped');
-  const debugLimit = tr('修错次数用完（3 次）仍未跑通', 'Still failing after all 3 debug attempts');
-  const hypResolved = tr('所有假设都有结论了', 'All hypotheses resolved');
+  const llmStop = tr('AI 判断可以结束', 'The AI decided to stop');
+  const noImprove = tr('连续 2 轮主指标无提升', 'No improvement in 2 rounds');
+  const debugLimit = tr('修复 3 次后仍未跑通', 'Still failing after 3 fixes');
+  const hypResolved = tr('假设都已有结论', 'All hypotheses answered');
   const map: Record<string, string> = {
     stop: llmStop,
     decision_stop: llmStop,
     llm_stop: llmStop,
-    max_runs: tr('达到最大运行次数上限', 'Hit the max run count'),
-    max_hours: tr('达到时间上限', 'Hit the time limit'),
+    max_runs: tr('达到轮次上限', 'Round limit reached'),
+    max_hours: tr('达到时长上限', 'Time limit reached'),
     no_improve: noImprove,
     no_improvement: noImprove,
     no_improve_stop: noImprove,
@@ -41,7 +38,7 @@ export function stopReasonText(reason: string | null | undefined): string | null
     debug_limit_exceeded: debugLimit,
     hypotheses_resolved: hypResolved,
     all_hypotheses_resolved: hypResolved,
-    cancelled: tr('被人工取消', 'Cancelled manually'),
+    cancelled: tr('已手动取消', 'Cancelled'),
   };
   return map[reason] ?? reason;
 }
@@ -63,11 +60,11 @@ export function expProgress(status: ExperimentStatus): number {
   return 100; // failed / cancelled：走到哪算哪，统一画满并靠颜色区分
 }
 
-/** 预算 → "≤4h · ≤10 runs"。 */
+/** 预算 → "≤ 4 小时 · ≤ 10 轮" / "≤ 4 h · ≤ 10 rounds"。 */
 export function budgetText(budget: ExperimentBudget | null | undefined): string {
   if (!budget) return '—';
   const parts: string[] = [];
-  if (budget.max_hours !== undefined) parts.push(`≤${budget.max_hours}h`);
-  if (budget.max_runs !== undefined) parts.push(`≤${budget.max_runs} runs`);
-  return parts.length > 0 ? parts.join(' · ') : '—';
+  if (budget.max_hours) parts.push(tr(`≤ ${budget.max_hours} 小时`, `≤ ${budget.max_hours} h`));
+  if (budget.max_runs) parts.push(tr(`≤ ${budget.max_runs} 轮`, `≤ ${budget.max_runs} rounds`));
+  return parts.length > 0 ? parts.join(' · ') : tr('不限时', 'No limit');
 }

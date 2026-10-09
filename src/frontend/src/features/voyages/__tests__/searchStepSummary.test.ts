@@ -36,8 +36,8 @@ describe('search step summary', () => {
       already_in_library: 5,
       inserted: 4,
     });
-    expect(out?.text).toContain('Daily pool 40');
-    expect(out?.text).toContain('4 newly added');
+    expect(out?.text).toContain('40 in the daily feed');
+    expect(out?.text).toContain('4 new papers');
   });
 
   it('reports sources searched because they have no daily feed', () => {
@@ -49,7 +49,7 @@ describe('search step summary', () => {
       feed_total: 0,
       inserted: 2,
     });
-    expect(out?.text).toContain('searched OpenAlex: 10');
-    expect(out?.text).not.toContain('Daily pool');
+    expect(out?.text).toContain('10 from OpenAlex');
+    expect(out?.text).not.toContain('daily feed');
   });
 });

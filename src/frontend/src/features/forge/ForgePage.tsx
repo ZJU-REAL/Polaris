@@ -7,7 +7,8 @@ import { StatusPill } from '../../components/ui/StatusPill';
 import { Segmented } from '../../components/ui/Segmented';
 import { Modal } from '../../components/ui/Modal';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
-import { KnobRange } from '../../components/ui/KnobRange';
+import { ConfigRow, RangeControl } from '../voyages/shared/ConfigRow';
+import { StatusDot, TaskStatus } from '../voyages/shared/StatusDot';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
@@ -90,9 +91,9 @@ const SORTS: { v: IdeaSort; zh: string; en: string }[] = [
 /* ---------------- 收敛漏斗（横向阶段计数条） ---------------- */
 
 const FUNNEL_STAGES: { key: keyof NonNullable<ForgeState['idea_counts']>; zh: string; en: string }[] = [
-  { key: 'candidate', zh: '候选', en: 'candidate' },
-  { key: 'under_review', zh: '评审中', en: 'under review' },
-  { key: 'promoted', zh: '已晋级', en: 'promoted' },
+  { key: 'candidate', zh: '候选', en: 'Candidates' },
+  { key: 'under_review', zh: '评审中', en: 'In review' },
+  { key: 'promoted', zh: '已晋级', en: 'Promoted' },
 ];
 
 function FunnelBar({ state }: { state: ForgeState | undefined }) {
@@ -116,13 +117,13 @@ function FunnelBar({ state }: { state: ForgeState | undefined }) {
                 className="mono"
                 style={{
                   fontSize: 20,
-                  fontWeight: 700,
+                  fontWeight: 600,
                   color: i === 2 ? 'var(--ok-tx)' : i === 1 ? 'var(--violet-tx)' : 'var(--accent-text)',
                 }}
               >
                 {n ?? '—'}
               </div>
-              <div style={{ fontSize: 11.5, fontWeight: 600, marginTop: 2 }}>{tr(s.zh, s.en)}</div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginTop: 2 }}>{tr(s.zh, s.en)}</div>
             </div>
           </div>
         );
@@ -181,17 +182,16 @@ const CandidateCard = memo(function CandidateCard({
             title={selected ? tr('取消选择', 'Deselect') : tr('选择', 'Select')}
           />
         </span>
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{idea.id.slice(0, 8)}</span>
         <DepthBadge depth={idea.depth} />
         <ResearchTypeBadge type={idea.research_type} />
         <span style={{ marginLeft: 'auto' }}>
           <StatusPill status={idea.status} sm />
         </span>
       </div>
-      <div style={{ fontSize: 14.5, fontWeight: 650, lineHeight: 1.35, marginBottom: 8 }}>{idea.title}</div>
+      <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.35, marginBottom: 8 }}>{idea.title}</div>
       <div
         style={{
-          fontSize: 12.5,
+          fontSize: 13,
           color: 'var(--text-2)',
           lineHeight: 1.55,
           marginBottom: 14,
@@ -206,17 +206,17 @@ const CandidateCard = memo(function CandidateCard({
       <div className="row" style={{ marginTop: 'auto', justifyContent: 'space-between', alignItems: 'flex-end' }}>
         <ScoreRingGroup scores={idea.scores} size={36} />
         <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 12 }}>
-          <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: 'var(--accent-text)' }}>
+          <div className="mono" style={{ fontSize: 15, fontWeight: 600, color: 'var(--accent-text)' }}>
             {Math.round(idea.elo_rating)}
           </div>
-          <div className="mono" style={{ fontSize: 9.5, color: 'var(--text-3)' }}>Elo</div>
+          <div className="mono" style={{ fontSize: 10, color: 'var(--text-3)' }}>Elo</div>
         </div>
       </div>
       {isTrash ? (
         <div className="row gap10" style={{ marginTop: 12, alignItems: 'center' }}>
           <span className="mono muted" style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <Icon name="trash" size={11} />
-            {tr('删除于', 'trashed')} {idea.trashed_at ? fmtRelative(idea.trashed_at) : '—'}
+            {tr('删除于', 'Trashed')} {idea.trashed_at ? fmtRelative(idea.trashed_at) : '—'}
           </span>
           <div className="row gap8" style={{ marginLeft: 'auto' }}>
             <button
@@ -254,7 +254,7 @@ const CandidateCard = memo(function CandidateCard({
               }}
             >
               <Icon name="sparkle" size={13} />
-              {tr('深化为研究方案', 'Deepen into proposal')}
+              {tr('展开为研究方案', 'Develop into proposal')}
             </button>
           )}
           <button
@@ -304,14 +304,14 @@ function RunForgeModal({
         max_context_papers: maxContextPapers,
       }),
     onSuccess: (v) => {
-      toast(tr('想法生成已开始，跳转任务详情…', 'Idea generation started — opening the task…'), 'ok');
+      toast(tr('已开始生成想法', 'Generating ideas'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       onClose();
       navigate(`/voyages/${v.id}`);
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
-        toast(tr('已有 AI 想法任务在运行，请等待其完成。', 'An AI idea task is already running — wait for it to finish.'), 'error');
+        toast(tr('已有想法任务在运行，请等它完成', 'An idea task is already running. Wait for it to finish.'), 'error');
         void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       } else {
         toast(`${tr('启动失败：', 'Start failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
@@ -326,7 +326,7 @@ function RunForgeModal({
       title={
         <>
           <Icon name="bulb" size={16} style={{ color: 'var(--accent)' }} />
-          {tr('运行 Idea Forge', 'Run Idea Forge')}
+          {tr('生成想法', 'Generate ideas')}
         </>
       }
       footer={
@@ -341,44 +341,39 @@ function RunForgeModal({
             ) : (
               <>
                 <Icon name="play" size={14} />
-                {tr('开始生成', 'Start generating')}
+                {tr('开始生成', 'Generate')}
               </>
             )}
           </button>
         </>
       }
     >
-      <KnobRange
-        label={tr('生成数量', 'Ideas to generate')}
-        en="num_ideas"
-        hint={tr('本次生成的候选想法数（去重前）。', 'Number of candidate ideas per run (before dedup).')}
-        value={numIdeas}
-        min={3}
-        max={20}
-        step={1}
-        onChange={setNumIdeas}
-      />
-      <KnobRange
-        label={tr('去重阈值', 'Dedup threshold')}
-        en="dedup_threshold"
-        hint={tr('语义相似度高于该阈值的想法视为重复。', 'Ideas above this semantic-similarity threshold count as duplicates.')}
-        value={dedupThreshold}
-        min={0.5}
-        max={0.95}
-        step={0.05}
-        format={(v) => v.toFixed(2)}
-        onChange={setDedupThreshold}
-      />
-      <KnobRange
-        label={tr('上下文论文数', 'Context papers')}
-        en="max_context_papers"
-        hint={tr('gap 分析时注入的 compiled wiki 页上限（成本旋钮）。', 'Max compiled wiki pages fed into gap analysis (a cost knob).')}
-        value={maxContextPapers}
-        min={5}
-        max={50}
-        step={5}
-        onChange={setMaxContextPapers}
-      />
+      <div className="settings-list">
+        <ConfigRow label={tr('想法数量', 'Number of ideas')} hint={tr('去重前的数量', 'Before duplicates are removed')}>
+          <RangeControl ariaLabel={tr('想法数量', 'Number of ideas')} value={numIdeas} min={3} max={20} step={1} onChange={setNumIdeas} />
+        </ConfigRow>
+        <ConfigRow label={tr('去重阈值', 'Duplicate threshold')} hint={tr('相似度高于此值视为重复', 'Ideas more similar than this are duplicates')}>
+          <RangeControl
+            ariaLabel={tr('去重阈值', 'Duplicate threshold')}
+            value={dedupThreshold}
+            min={0.5}
+            max={0.95}
+            step={0.05}
+            format={(v) => v.toFixed(2)}
+            onChange={setDedupThreshold}
+          />
+        </ConfigRow>
+        <ConfigRow label={tr('参考论文数', 'Papers to draw on')} hint={tr('越多越全面，用量也越大', 'More papers, broader ideas, more usage')}>
+          <RangeControl
+            ariaLabel={tr('参考论文数', 'Papers to draw on')}
+            value={maxContextPapers}
+            min={5}
+            max={50}
+            step={5}
+            onChange={setMaxContextPapers}
+          />
+        </ConfigRow>
+      </div>
     </Modal>
   );
 }
@@ -482,7 +477,7 @@ export function ForgePage() {
   };
   const onMutError = (e: unknown) => {
     if (e instanceof ApiError && e.status === 403) {
-      toast(tr('只有项目管理者可删除', 'Only project managers can delete'), 'error');
+      toast(tr('没有删除权限', 'You can’t delete this'), 'error');
     } else {
       toast(`${tr('操作失败：', 'Action failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
     }
@@ -518,7 +513,7 @@ export function ForgePage() {
     onSuccess: (r) => {
       invalidateIdeas();
       clearSelection();
-      toast(`${tr('已移入回收站', 'Moved to trash')} · ${r.affected}`, 'ok');
+      toast(tr(`已将 ${r.affected} 条移入回收站`, `Moved ${r.affected} to trash`), 'ok');
     },
     onError: onMutError,
   });
@@ -527,7 +522,7 @@ export function ForgePage() {
     onSuccess: (r) => {
       invalidateIdeas();
       clearSelection();
-      toast(`${tr('已恢复', 'Restored')} · ${r.affected}`, 'ok');
+      toast(tr(`已恢复 ${r.affected} 条`, `Restored ${r.affected}`), 'ok');
     },
     onError: onMutError,
   });
@@ -536,7 +531,7 @@ export function ForgePage() {
     onSuccess: (r) => {
       invalidateIdeas();
       clearSelection();
-      toast(`${tr('已永久删除', 'Permanently deleted')} · ${r.affected}`, 'ok');
+      toast(tr(`已永久删除 ${r.affected} 条`, `Deleted ${r.affected} permanently`), 'ok');
     },
     onError: onMutError,
     onSettled: () => setConfirm(null),
@@ -546,7 +541,7 @@ export function ForgePage() {
     onSuccess: (r) => {
       invalidateIdeas();
       clearSelection();
-      toast(`${tr('回收站已清空', 'Trash emptied')} · ${r.affected}`, 'ok');
+      toast(tr(`已清空回收站，删除 ${r.affected} 条`, `Trash emptied: ${r.affected} deleted`), 'ok');
     },
     onError: onMutError,
     onSettled: () => setConfirm(null),
@@ -563,8 +558,8 @@ export function ForgePage() {
   return (
     <div className="page fadeup">
       <PageHead
-        eyebrow="Stage 01 · Idea Forge"
-        title={tr('想法生成', 'Idea Forge')}
+        eyebrow="Stage 01 · Ideas"
+        title={tr('想法生成', 'Ideas')}
         sub={
           pid
             ? undefined
@@ -590,7 +585,7 @@ export function ForgePage() {
           <div className="row gap8">
             <button className="btn btn-soft sm" disabled={!pid || running} onClick={() => setModalOpen(true)}>
               <Icon name="play" size={13} />
-              {tr('运行 Idea Forge', 'Run Idea Forge')}
+              {tr('生成想法', 'Generate ideas')}
             </button>
             <button className="btn btn-primary sm" disabled={!pid || running} onClick={() => openDeepDrawer()}>
               {running ? (
@@ -601,7 +596,7 @@ export function ForgePage() {
               ) : (
                 <>
                   <Icon name="sparkle" size={13} />
-                  {tr('深度生成', 'Deep Dive')}
+                  {tr('深度生成', 'Deep dive')}
                 </>
               )}
             </button>
@@ -617,14 +612,11 @@ export function ForgePage() {
           style={{ marginBottom: 16, borderColor: 'var(--warn)', background: 'var(--warn-bg)' }}
         >
           <div className="row gap10">
-            <span className="pill" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
-              <span className="dot pulse" />
-              {tr('待确认', 'Needs confirmation')}
+            <StatusDot tone="warn" label={tr('待审批', 'Needs approval')} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--warn-tx)', minWidth: 0 }}>
+              {tr('研究目标已生成，批准后开始起草研究方案', 'Approve the research goal to start drafting the proposal')}
             </span>
-            <span style={{ fontSize: 13.5, fontWeight: 650, color: 'var(--warn-tx)' }}>
-              {tr('有研究目标待确认 — AI 已完成目标构建，等你确认后继续起草研究方案', 'A research goal awaits your confirmation — the AI built it and will draft the proposal once you confirm')}
-            </span>
-            <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--warn-tx)' }}>{tr('去审批', 'Open approvals')}</span>
+            <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--warn-tx)', flexShrink: 0 }}>{tr('查看', 'Review')}</span>
             <Icon name="arrow" size={14} style={{ color: 'var(--warn-tx)' }} />
           </div>
         </div>
@@ -638,14 +630,9 @@ export function ForgePage() {
           style={{ marginBottom: 16, borderColor: 'var(--accent-soft-2)', background: 'var(--accent-soft)' }}
         >
           <div className="row gap10">
-            <span className="pill" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-              <span className="dot pulse" />
-              {tr('运行中', 'Running')}
-            </span>
-            <span style={{ fontSize: 13.5, fontWeight: 650 }}>{tr('深度生成进行中 — 点击查看目标构建 / 方案起草的实时进度', 'Deep Dive in progress — click to watch goal building / proposal drafting live')}</span>
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
-              {deepRunningId.slice(0, 8)}…
-            </span>
+            <span className="dot pulse" style={{ background: 'var(--accent)', flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 600, minWidth: 0 }}>{tr('正在深度生成', 'Deep dive in progress')}</span>
+            <span style={{ fontSize: 12, color: 'var(--accent-text)', marginLeft: 'auto', flexShrink: 0 }}>{tr('查看进度', 'View progress')}</span>
             <Icon name="arrow" size={14} style={{ color: 'var(--accent-text)' }} />
           </div>
         </div>
@@ -659,14 +646,9 @@ export function ForgePage() {
           style={{ marginBottom: 16, borderColor: 'var(--accent-soft-2)', background: 'var(--accent-soft)' }}
         >
           <div className="row gap10">
-            <span className="pill" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-              <span className="dot pulse" />
-              {tr('运行中', 'Running')}
-            </span>
-            <span style={{ fontSize: 13.5, fontWeight: 650 }}>{tr('想法生成任务进行中 — 点击查看实时进度', 'Idea generation in progress — click to watch live')}</span>
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
-              voyage {state.running_voyage_id.slice(0, 8)}…
-            </span>
+            <span className="dot pulse" style={{ background: 'var(--accent)', flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 600, minWidth: 0 }}>{tr('正在生成想法', 'Generating ideas')}</span>
+            <span style={{ fontSize: 12, color: 'var(--accent-text)', marginLeft: 'auto', flexShrink: 0 }}>{tr('查看进度', 'View progress')}</span>
             <Icon name="arrow" size={14} style={{ color: 'var(--accent-text)' }} />
           </div>
         </div>
@@ -676,30 +658,29 @@ export function ForgePage() {
       <div className="card card-pad" style={{ marginBottom: 22 }}>
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
           <span className="section-h">
-            <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('筛选漏斗', 'Selection funnel')} <span className="en-label" style={{ fontSize: 11 }}>{tr('候选 → 评审中 → 已晋级', 'candidate → in review → promoted')}</span>
+            {tr('想法概况', 'Overview')}
           </span>
           <div className="row gap8">
             {counts?.rejected !== undefined && (
               <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-                {tr('已淘汰', 'Rejected')} <span className="mono" style={{ fontWeight: 700 }}>{counts.rejected}</span>
+                {tr('已淘汰', 'Rejected')} <span className="mono" style={{ fontWeight: 600 }}>{counts.rejected}</span>
               </span>
             )}
             {counts?.total !== undefined && (
               <span className="pill sm" style={{ background: 'var(--surface-2)' }}>
-                {tr('总计', 'Total')} <span className="mono" style={{ fontWeight: 700 }}>{counts.total}</span>
+                {tr('总计', 'Total')} <span className="mono" style={{ fontWeight: 600 }}>{counts.total}</span>
               </span>
             )}
           </div>
         </div>
         {stateQuery.isLoading ? (
-          <div className="empty" style={{ padding: 16 }}>{tr('加载状态…', 'Loading state…')}</div>
+          <div className="empty" style={{ padding: 16 }}>{tr('加载中…', 'Loading…')}</div>
         ) : stateQuery.isError ? (
-          <div className="empty" style={{ padding: 16 }}>{tr('无法加载 forge 状态（后端不可用或接口未就绪）', 'Could not load forge state (backend unavailable or API not ready)')}</div>
+          <div className="empty" style={{ padding: 16 }}>{tr('无法加载想法概况，请确认本机引擎在运行', 'Couldn’t load the overview. Make sure the local engine is running.')}</div>
         ) : (
           <>
             <FunnelBar state={state} />
-            <div className="row gap8" style={{ marginTop: 14, fontSize: 11.5, color: 'var(--text-3)' }}>
+            <div className="row gap8" style={{ marginTop: 14, fontSize: 12, color: 'var(--text-3)' }}>
               <Icon name="clock" size={13} />
               {tr('上次运行：', 'Last run: ')}
               {state?.last_run?.voyage_id ? (
@@ -708,12 +689,12 @@ export function ForgePage() {
                   onClick={() => navigate(`/voyages/${state.last_run?.voyage_id ?? ''}`)}
                   style={{ color: 'var(--accent-text)' }}
                 >
-                  {state.last_run.status && <StatusPill status={state.last_run.status} sm />}
+                  {state.last_run.status && <TaskStatus status={state.last_run.status} />}
                   <span className="mono">{fmtTime(state.last_run.finished_at)}</span>
                   <Icon name="chevron" size={12} />
                 </span>
               ) : (
-                <span>{tr('尚未运行过想法生成', 'Idea generation has not run yet')}</span>
+                <span>{tr('还没有生成过想法', 'No ideas generated yet')}</span>
               )}
             </div>
           </>
@@ -724,18 +705,17 @@ export function ForgePage() {
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
         <div className="row gap10" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
           <span className="section-h">
-            <Icon name="bulb" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('候选池', 'Candidate pool')} <span className="en-label" style={{ fontSize: 11 }}>{tr(`${ideas.length} 条`, `${ideas.length} ideas`)}</span>
+            {tr('想法', 'Ideas')} <span className="en-label" style={{ fontSize: 11 }}>{tr(`${ideas.length} 条`, ideas.length === 1 ? '1 idea' : `${ideas.length} ideas`)}</span>
           </span>
           {pid && (
             <>
               <button
                 className={`btn sm ${multiSelect ? 'btn-primary' : 'btn-soft'}`}
                 onClick={toggleMultiSelect}
-                title={tr('批量选择', 'Multi-select')}
+                title={tr('批量选择', 'Select several')}
               >
                 <Icon name="check" size={13} />
-                {tr('多选', 'Multi-select')}
+                {tr('多选', 'Select')}
               </button>
               {/* 全选放工具栏：不再插入额外行导致卡片下移（#132） */}
               {multiSelect && ideas.length > 0 && (
@@ -754,12 +734,14 @@ export function ForgePage() {
                   style={{ color: 'var(--danger)' }}
                   onClick={() =>
                     setConfirm({
-                      title: tr('清空回收站', 'Empty trash'),
+                      title: tr('清空回收站？', 'Empty the trash?'),
                       message: tr(
-                        `将永久删除回收站内全部 ${trashCount} 条想法，不可恢复。确定继续？`,
-                        `This permanently deletes all ${trashCount} idea(s) in the trash. This cannot be undone. Continue?`,
+                        `其中 ${trashCount} 条想法会被永久删除，无法恢复。`,
+                        trashCount === 1
+                          ? 'The idea in it will be deleted permanently. This can’t be undone.'
+                          : `Its ${trashCount} ideas will be deleted permanently. This can’t be undone.`,
                       ),
-                      confirmText: tr('清空', 'Empty'),
+                      confirmText: tr('清空', 'Empty trash'),
                       run: () => emptyTrash.mutate(),
                     })
                   }
@@ -775,20 +757,20 @@ export function ForgePage() {
           <div className="row gap10 wrap">
             <select
               className="input"
-              style={{ height: 32, fontSize: 12.5, padding: '0 8px' }}
+              style={{ height: 32, fontSize: 13, padding: '0 8px' }}
               value={depthFilter}
-              title={tr('按草案 / 研究方案过滤', 'Filter by sketch / proposal')}
+              title={tr('按草案或研究方案筛选', 'Filter by sketch or proposal')}
               onChange={(e) => setDepthFilter(e.target.value as DepthFilter)}
             >
-              <option value="all">{tr('全部深度', 'All depths')}</option>
+              <option value="all">{tr('草案和方案', 'Sketches & proposals')}</option>
               <option value="sketch">{tr('草案', 'Sketch')}</option>
               <option value="proposal">{tr('研究方案', 'Proposal')}</option>
             </select>
             <select
               className="input"
-              style={{ height: 32, fontSize: 12.5, padding: '0 8px' }}
+              style={{ height: 32, fontSize: 13, padding: '0 8px' }}
               value={typeFilter}
-              title={tr('按研究类型过滤', 'Filter by research type')}
+              title={tr('按研究类型筛选', 'Filter by research type')}
               onChange={(e) => setTypeFilter(e.target.value)}
             >
               <option value="all">{tr('全部类型', 'All types')}</option>
@@ -812,15 +794,15 @@ export function ForgePage() {
         </div>
       ) : listQuery.isLoading ? (
         <div className="card">
-          <div className="empty">{view === 'trash' ? tr('加载回收站…', 'Loading trash…') : tr('加载候选池…', 'Loading candidates…')}</div>
+          <div className="empty">{tr('加载中…', 'Loading…')}</div>
         </div>
       ) : listQuery.isError ? (
         <div className="card">
           <EmptyState
             compact
             icon="x"
-            title={tr('无法加载候选池', 'Could not load candidates')}
-            desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or the API is not ready yet.')}
+            title={tr('无法加载想法', 'Couldn’t load ideas')}
+            desc={tr('请确认本机引擎在运行，然后重试。', 'Make sure the local engine is running, then retry.')}
             action={
               <button className="btn btn-soft sm" onClick={() => void listQuery.refetch()}>
                 {tr('重试', 'Retry')}
@@ -839,11 +821,11 @@ export function ForgePage() {
           ) : (
             <EmptyState
               icon="bulb"
-              title={tr('候选池为空', 'The candidate pool is empty')}
+              title={tr('还没有想法', 'No ideas yet')}
               action={
-                <button className="btn btn-primary" disabled={running} onClick={() => setModalOpen(true)}>
+                <button className="btn btn-soft" disabled={running} onClick={() => setModalOpen(true)}>
                   <Icon name="play" size={14} />
-                  {tr('运行 Idea Forge', 'Run Idea Forge')}
+                  {tr('生成想法', 'Generate ideas')}
                 </button>
               }
             />
@@ -865,12 +847,9 @@ export function ForgePage() {
               onRestore={() => restoreOne.mutate(idea.id)}
               onDelete={() =>
                 setConfirm({
-                  title: tr('永久删除想法', 'Delete idea permanently'),
-                  message: tr(
-                    `将永久删除${idea.title}，不可恢复。确定继续？`,
-                    `This permanently deletes "${idea.title}". This cannot be undone. Continue?`,
-                  ),
-                  confirmText: tr('永久删除', 'Delete permanently'),
+                  title: tr(`永久删除「${idea.title}」？`, `Delete “${idea.title}” permanently?`),
+                  message: tr('删除后无法恢复。', 'This can’t be undone.'),
+                  confirmText: tr('永久删除', 'Delete'),
                   run: () => deleteOne.mutate(idea.id),
                 })
               }
@@ -893,7 +872,7 @@ export function ForgePage() {
             gap: 12,
           }}
         >
-          <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>
             {tr(`已选 ${selected.size} 条`, `${selected.size} selected`)}
           </span>
           <div className="row gap8" style={{ marginLeft: 'auto' }}>
@@ -904,7 +883,7 @@ export function ForgePage() {
                 onClick={() => batchTrash.mutate(selectedIds)}
               >
                 <Icon name="trash" size={13} />
-                {tr('批量删除', 'Delete selected')}
+                {tr('移入回收站', 'Move to trash')}
               </button>
             ) : (
               <>
@@ -914,25 +893,25 @@ export function ForgePage() {
                   onClick={() => batchRestore.mutate(selectedIds)}
                 >
                   <Icon name="refresh" size={13} />
-                  {tr('批量恢复', 'Restore selected')}
+                  {tr('恢复', 'Restore')}
                 </button>
                 <button
                   className="btn btn-danger sm"
                   disabled={batchDelete.isPending}
                   onClick={() =>
                     setConfirm({
-                      title: tr('永久删除所选', 'Delete selected permanently'),
-                      message: tr(
-                        `将永久删除所选 ${selected.size} 条想法，不可恢复。确定继续？`,
-                        `This permanently deletes the ${selected.size} selected idea(s). This cannot be undone. Continue?`,
+                      title: tr(
+                        `永久删除 ${selected.size} 条想法？`,
+                        selected.size === 1 ? 'Delete 1 idea permanently?' : `Delete ${selected.size} ideas permanently?`,
                       ),
-                      confirmText: tr('永久删除', 'Delete permanently'),
+                      message: tr('删除后无法恢复。', 'This can’t be undone.'),
+                      confirmText: tr('永久删除', 'Delete'),
                       run: () => batchDelete.mutate(selectedIds),
                     })
                   }
                 >
                   <Icon name="trash" size={13} />
-                  {tr('批量永久删除', 'Delete permanently')}
+                  {tr('永久删除', 'Delete permanently')}
                 </button>
               </>
             )}

@@ -76,7 +76,7 @@ function ExpFigureThumb({
         {isLoading ? (
           <div className="pulse" style={{ width: '100%', height: '100%', background: 'var(--surface-3)' }} />
         ) : isError || !url ? (
-          <div style={{ textAlign: 'center', color: 'var(--text-4)' }}>
+          <div style={{ textAlign: 'center', color: 'var(--text-3)' }}>
             <Icon name="chart" size={16} style={{ margin: '0 auto 4px' }} />
             <div style={{ fontSize: 10 }}>{tr('图片加载失败', 'Image failed to load')}</div>
           </div>
@@ -92,7 +92,7 @@ function ExpFigureThumb({
       <div
         style={{
           marginTop: 5,
-          fontSize: 10.5,
+          fontSize: 11,
           lineHeight: 1.45,
           color: 'var(--text-3)',
           overflow: 'hidden',
@@ -238,7 +238,7 @@ function ExpLightbox({
         ) : isError || !url ? (
           <div style={{ textAlign: 'center', color: 'var(--on-scrim-2)' }}>
             <Icon name="chart" size={26} style={{ margin: '0 auto 8px' }} />
-            <div style={{ fontSize: 13 }}>{tr('这张图加载失败了，稍后再试', 'This figure failed to load — try again later')}</div>
+            <div style={{ fontSize: 13 }}>{tr('图片加载失败，请稍后再试', 'Couldn’t load this figure. Try again later.')}</div>
           </div>
         ) : (
           <img
@@ -260,7 +260,7 @@ function ExpLightbox({
             marginTop: 14,
             maxWidth: 720,
             textAlign: 'center',
-            fontSize: 12.5,
+            fontSize: 13,
             lineHeight: 1.6,
             color: 'var(--on-scrim)',
           }}

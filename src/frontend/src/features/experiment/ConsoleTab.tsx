@@ -117,7 +117,7 @@ function RemoteLogView({
         borderRadius: 12,
         padding: '12px 14px',
         fontFamily: 'var(--mono)',
-        fontSize: 11.5,
+        fontSize: 12,
         lineHeight: 1.65,
         color: 'var(--terminal-fg)',
         whiteSpace: 'pre-wrap',
@@ -126,14 +126,14 @@ function RemoteLogView({
     >
       {truncated && (
         <div style={{ color: 'var(--terminal-dim)' }}>
-          {tr('…（更早日志已截断，仅显示尾部）', '… (earlier log truncated, showing the tail)')}
+          {tr('… 只显示最近的输出', '… Showing the latest output only')}
         </div>
       )}
       {lines.length === 0 ? (
         <div style={{ color: 'var(--terminal-dim)' }}>
           {source === 'script'
-            ? tr('暂无脚本输出（尚未开始运行）', 'No script output yet (not running)')
-            : tr('暂无远端命令输出', 'No remote command output yet')}
+            ? tr('还没有脚本输出', 'No script output yet')
+            : tr('还没有命令输出', 'No command output yet')}
         </div>
       ) : (
         lines.map((l, i) => <div key={i}>{l}</div>)
@@ -155,8 +155,7 @@ function OverviewPanel({ exp }: { exp: ExperimentDetail }) {
     <div className="card card-pad">
       <div className="row gap8" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
         <span className="section-h">
-          <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('服务器状态', 'Server status')}
+          {tr('实验机器', 'Experiment machine')}
           {exp.server_host && <span className="mono muted" style={{ fontSize: 11 }}>{exp.server_host}</span>}
         </span>
         <span className="pill sm mono" style={{ marginLeft: 'auto', background: 'var(--surface-3)' }}>
@@ -203,7 +202,7 @@ export function ConsoleTab({ exp }: { exp: ExperimentDetail }) {
   const resumeMutation = useMutation({
     mutationFn: () => api.resumeVoyage(vid!),
     onSuccess: () => {
-      toast(tr('已重新入队，从断点续跑', 'Re-queued — resuming from where it stopped'), 'ok');
+      toast(tr('已从出错的步骤继续', 'Resumed from the failed step'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['voyage', vid] });
     },
     onError: (e) =>
@@ -222,13 +221,13 @@ export function ConsoleTab({ exp }: { exp: ExperimentDetail }) {
     mutationFn: ({ id, decision, comment }: { id: string; decision: GateDecision; comment?: string }) =>
       api.decideGate(id, decision, comment),
     onSuccess: () => {
-      toast(tr('已提交审批结果', 'Decision submitted'), 'ok');
+      toast(tr('已提交', 'Decision saved'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['gates'] });
       void queryClient.invalidateQueries({ queryKey: ['voyage', vid] });
       void queryClient.invalidateQueries({ queryKey: ['experiment'] });
     },
     onError: (e) =>
-      toast(`${tr('审批失败：', 'Decision failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('提交失败：', 'Couldn’t submit: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const steps = useMemo(() => [...(voyage?.steps ?? [])].sort(byListOrder), [voyage?.steps]);
@@ -256,8 +255,8 @@ export function ConsoleTab({ exp }: { exp: ExperimentDetail }) {
         <EmptyState
           compact
           icon="server"
-          title={tr('该实验没有关联 AI 任务', 'This experiment has no linked AI task')}
-          desc={tr('早期实验数据，无法使用运行台。', 'Legacy experiment — the console is unavailable.')}
+          title={tr('这个实验没有关联任务', 'This experiment has no linked task')}
+          desc={tr('较早创建的实验不支持运行台。', 'Older experiments don’t support the console.')}
         />
       </div>
     );
@@ -294,20 +293,19 @@ export function ConsoleTab({ exp }: { exp: ExperimentDetail }) {
       <div className="card" style={{ padding: '10px 14px' }}>
         <div className="row gap8" style={{ flexWrap: 'wrap' }}>
           <span className="section-h">
-            <Icon name="compass" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('任务地图', 'Task map')}
+            {tr('步骤', 'Steps')}
           </span>
           {planAdjusted && (
             <label
               className="row gap6"
-              style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--text-3)', cursor: 'pointer', userSelect: 'none' }}
+              style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-3)', cursor: 'pointer', userSelect: 'none' }}
             >
               <input
                 type="checkbox"
                 checked={showObsolete}
                 onChange={(e) => setShowObsolete(e.target.checked)}
               />
-              {tr('显示已作废步骤', 'Show obsolete steps')}
+              {tr('显示已作废步骤', 'Show dropped steps')}
             </label>
           )}
         </div>
@@ -327,8 +325,7 @@ export function ConsoleTab({ exp }: { exp: ExperimentDetail }) {
         <div className="col gap8">
           <div className="row">
             <span className="section-h">
-              <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
-              {tr('步骤详情', 'Step detail')}
+              {tr('步骤详情', 'Step details')}
             </span>
             <button className="btn btn-ghost sm" style={{ marginLeft: 'auto' }} onClick={() => setSelectedId(null)}>
               <Icon name="x" size={12} />
@@ -357,18 +354,18 @@ export function ConsoleTab({ exp }: { exp: ExperimentDetail }) {
               <>
                 <label
                   className="row gap6"
-                  style={{ fontSize: 11.5, color: 'var(--text-3)', cursor: 'pointer', userSelect: 'none' }}
+                  style={{ fontSize: 12, color: 'var(--text-3)', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
                 >
                   <input type="checkbox" checked={chatOnly} onChange={(e) => setChatOnly(e.target.checked)} />
-                  {tr('仅看对话', 'Chat only')}
+                  {tr('只看对话', 'Messages only')}
                 </label>
                 <Segmented
                   value={source}
                   onChange={(v) => setSource(v as 'ai' | 'script' | 'terminal')}
                   options={[
-                    { v: 'ai' as const, label: tr('AI 过程', 'AI process') },
+                    { v: 'ai' as const, label: tr('AI 日志', 'AI log') },
                     { v: 'script' as const, label: tr('脚本输出', 'Script output') },
-                    { v: 'terminal' as const, label: tr('终端输出', 'Terminal output') },
+                    { v: 'terminal' as const, label: tr('命令输出', 'Command output') },
                   ]}
                 />
               </>
@@ -384,22 +381,18 @@ export function ConsoleTab({ exp }: { exp: ExperimentDetail }) {
           />
         ) : (
           <>
-            <div className="row" style={{ margin: '20px 0 12px' }}>
-              <span className="section-h">
-                <Icon name="cpu" size={15} style={{ color: 'var(--accent)' }} />
-                {source === 'script' ? tr('运行日志', 'Run log') : tr('远端命令输出', 'Remote terminal')}
-                <span className="en-label" style={{ fontSize: 11 }}>
-                  {source === 'script' ? 'run.log' : 'stdout / stderr'}
-                </span>
+            <div className="row" style={{ margin: '20px 0 12px', flexWrap: 'wrap', gap: 8 }}>
+              <span className="section-h" style={{ whiteSpace: 'nowrap' }}>
+                {source === 'script' ? tr('脚本输出', 'Script output') : tr('命令输出', 'Command output')}
               </span>
-              <div className="row gap8" style={{ marginLeft: 'auto' }}>
+              <div className="row gap8" style={{ marginLeft: 'auto', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 <Segmented
                   value={source}
                   onChange={(v) => setSource(v as 'ai' | 'script' | 'terminal')}
                   options={[
-                    { v: 'ai' as const, label: tr('AI 过程', 'AI process') },
+                    { v: 'ai' as const, label: tr('AI 日志', 'AI log') },
                     { v: 'script' as const, label: tr('脚本输出', 'Script output') },
-                    { v: 'terminal' as const, label: tr('终端输出', 'Terminal output') },
+                    { v: 'terminal' as const, label: tr('命令输出', 'Command output') },
                   ]}
                 />
               </div>

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../../../components/ui/Icon';
-import { StatusPill } from '../../../components/ui/StatusPill';
 import { topicPath, useProject } from '../../../app/project';
 import { fmtDuration, fmtTime, fmtTokens } from '../../../lib/format';
 import { tr } from '../../../lib/i18n';
@@ -12,7 +11,8 @@ import type {
   VoyageStepAttempt,
   VoyageStepRead,
 } from '../../../lib/api';
-import { asObj, num, obsoleteReasonOf, PLAN_SOURCE, stepTokenCount } from './stepUtils';
+import { asObj, enCount, num, obsoleteReasonOf, PLAN_SOURCE, stepTokenCount } from './stepUtils';
+import { StatusDot, TaskStatus } from './StatusDot';
 
 /* ============================================================
    步骤卡（StepCard）与其子块：验收标准 / 判定 / 尝试记录 / 原始观测 /
@@ -85,21 +85,25 @@ export function wikiStepFriendly(action: string, obs: Record<string, unknown>): 
         if (!searched.length || num(obs.feed_total) > 0 || String(obs.source ?? '').startsWith('daily_feed')) {
           parts.push(
             tr(
-              `每日论文池 ${num(obs.feed_total)} 篇 → 按方向粗排 ${num(obs.after_vector_rank)} 篇 → 已在库 ${num(obs.already_in_library)} 篇`,
-              `Daily pool ${num(obs.feed_total)} → ranked ${num(obs.after_vector_rank)} → ${num(obs.already_in_library)} already in library`,
+              `每日新论文 ${num(obs.feed_total)} 篇，初筛 ${num(obs.after_vector_rank)} 篇，已在库 ${num(obs.already_in_library)} 篇`,
+              `${num(obs.feed_total)} in the daily feed, ${num(obs.after_vector_rank)} shortlisted, ${num(obs.already_in_library)} already in the library`,
             ),
           );
         }
         if (searched.length) {
           parts.push(
             tr(
-              `检索 ${searched.map(sourceLabel).join('、')} ${num(obs.search_fetched)} 篇`,
-              `searched ${searched.map(sourceLabel).join(', ')}: ${num(obs.search_fetched)}`,
+              `${searched.map(sourceLabel).join('、')} 检索到 ${num(obs.search_fetched)} 篇`,
+              `${num(obs.search_fetched)} from ${searched.map(sourceLabel).join(', ')}`,
             ),
           );
         }
         return {
-          text: parts.join(tr('；', '; ')) + tr(` → 新收录 ${num(obs.inserted)} 篇`, ` → ${num(obs.inserted)} newly added`),
+          text:
+            tr(`新收录 ${num(obs.inserted)} 篇`, enCount(num(obs.inserted), 'new paper')) +
+            tr('（', ' (') +
+            parts.join(tr('；', '; ')) +
+            tr('）', ')'),
           papers: briefsOf(obs.new_papers),
           papersTotal: num(obs.inserted),
         };
@@ -111,22 +115,22 @@ export function wikiStepFriendly(action: string, obs: Record<string, unknown>): 
       const where = used.length ? used.map(sourceLabel).join(tr('、', ', ')) : tr('数据源', 'the sources');
       return {
         text: tr(
-          `从 ${where} 检索到 ${num(obs.found)} 篇，去重后新收录 ${num(obs.inserted)} 篇`,
-          `Found ${num(obs.found)} papers on ${where}; ${num(obs.inserted)} new after dedup`,
+          `新收录 ${num(obs.inserted)} 篇（在 ${where} 找到 ${num(obs.found)} 篇）`,
+          `${enCount(num(obs.inserted), 'new paper')} (${num(obs.found)} found on ${where})`,
         ),
         papers: briefsOf(obs.new_papers),
         papersTotal: num(obs.inserted),
       };
     }
     case 'wiki.snowball':
-      if (obs.skipped) return { text: tr('已跳过（未开启参考文献扩展）', 'Skipped (reference expansion is off)'), papers: [] };
+      if (obs.skipped) return { text: tr('已跳过：未开启参考文献扩展', 'Skipped: reference expansion is off'), papers: [] };
       return {
         text:
           tr(
-            `顺着 ${num(obs.processed)} 篇种子论文的参考文献与引用扩展，新收录 ${num(obs.inserted)} 篇`,
-            `Expanded references and citations of ${num(obs.processed)} seed papers; ${num(obs.inserted)} new papers added`,
+            `从 ${num(obs.processed)} 篇论文的参考文献和引用中新收录 ${num(obs.inserted)} 篇`,
+            `${enCount(num(obs.inserted), 'new paper')} from the references and citations of ${num(obs.processed)}`,
           ) +
-          (failedCount ? tr(`（${failedCount} 篇种子查询失败）`, ` (${failedCount} seed lookups failed)`) : ''),
+          (failedCount ? tr(`，${failedCount} 篇查询失败`, `; ${failedCount} lookups failed`) : ''),
         papers: briefsOf(obs.new_papers),
         papersTotal: num(obs.inserted),
       };
@@ -135,10 +139,10 @@ export function wikiStepFriendly(action: string, obs: Record<string, unknown>): 
       return {
         text:
           tr(
-            `AI 按课题给 ${num(obs.processed)} 篇候选论文打了相关性分：${passed} 篇通过，${num(obs.excluded)} 篇相关性不足自动删除`,
-            `AI scored ${num(obs.processed)} candidate papers against the research direction: ${passed} passed, ${num(obs.excluded)} removed as not relevant enough`,
+            `${passed} 篇相关，${num(obs.excluded)} 篇不相关已移除（共评估 ${num(obs.processed)} 篇）`,
+            `${passed} relevant, ${num(obs.excluded)} removed as off-topic (${num(obs.processed)} checked)`,
           ) +
-          (failedCount ? tr(`，${failedCount} 篇打分失败`, `; ${failedCount} failed to score`) : ''),
+          (failedCount ? tr(`，${failedCount} 篇评估失败`, `; ${failedCount} couldn’t be checked`) : ''),
         papers: briefsOf(obs.scored_papers),
         papersTotal: num(obs.succeeded),
       };
@@ -146,12 +150,9 @@ export function wikiStepFriendly(action: string, obs: Record<string, unknown>): 
     case 'wiki.fetch_extract':
       return {
         text:
-          tr(
-            `为 ${num(obs.processed)} 篇高分论文下载 PDF 并提取全文`,
-            `Downloaded PDFs and extracted full text for ${num(obs.processed)} high-scoring papers`,
-          ) +
+          tr(`获取 ${num(obs.processed)} 篇论文的全文`, `Fetched full text for ${enCount(num(obs.processed), 'paper')}`) +
           (num(obs.degraded)
-            ? tr(`，${num(obs.degraded)} 篇没拿到原文（后续用摘要代替）`, `; ${num(obs.degraded)} had no full text (abstract used instead)`)
+            ? tr(`，其中 ${num(obs.degraded)} 篇无全文，改用摘要`, `; ${num(obs.degraded)} had none, so the abstract is used`)
             : ''),
         papers: briefsOf(obs.fetched_papers),
         papersTotal: num(obs.processed),
@@ -159,16 +160,16 @@ export function wikiStepFriendly(action: string, obs: Record<string, unknown>): 
     case 'wiki.compile':
       return {
         text:
-          tr(`AI 精读并编译了 ${num(obs.succeeded)} 篇论文介绍`, `AI read and compiled intros for ${num(obs.succeeded)} papers`) +
-          (failedCount ? tr(`，${failedCount} 篇失败（下次同步会重试）`, `; ${failedCount} failed (will retry next sync)`) : ''),
+          tr(`生成 ${num(obs.succeeded)} 篇解读`, `Generated ${enCount(num(obs.succeeded), 'summary', 'summaries')}`) +
+          (failedCount ? tr(`，${failedCount} 篇失败，下次同步时重试`, `; ${failedCount} failed and will retry on the next sync`) : ''),
         papers: briefsOf(obs.compiled_papers),
         papersTotal: num(obs.succeeded),
       };
     case 'wiki.link_concepts':
       return {
         text: tr(
-          `从编译的介绍中整理概念：收录 ${num(obs.concepts_promoted)} 个概念（被 2 篇以上论文提到的才收录），建立 ${num(obs.links_created)} 条论文—概念关联`,
-          `Organized concepts from the compiled intros: ${num(obs.concepts_promoted)} concepts added (only those cited by 2+ papers), ${num(obs.links_created)} paper–concept links`,
+          `新增 ${num(obs.concepts_promoted)} 个概念，关联论文 ${num(obs.links_created)} 次`,
+          `${enCount(num(obs.concepts_promoted), 'new concept')}, ${enCount(num(obs.links_created), 'paper link')}`,
         ),
         papers: [],
         concepts: namesOf(obs.new_concepts),
@@ -177,10 +178,10 @@ export function wikiStepFriendly(action: string, obs: Record<string, unknown>): 
       return {
         text: obs.watermark
           ? tr(
-              `已记录本次同步时间，下次增量同步从 ${String(obs.watermark).slice(0, 10)} 附近继续`,
-              `Sync time recorded — the next incremental sync resumes from around ${String(obs.watermark).slice(0, 10)}`,
+              `下次从 ${String(obs.watermark).slice(0, 10)} 起同步`,
+              `Next sync starts from ${String(obs.watermark).slice(0, 10)}`,
             )
-          : tr('已记录本次同步时间', 'Sync time recorded'),
+          : tr('已记录同步时间', 'Sync time saved'),
         papers: [],
       };
     default:
@@ -210,7 +211,7 @@ function StepPaperList({ papers, total }: { papers: PaperBrief[]; total?: number
           <span
             style={{
               cursor: 'pointer',
-              color: p.passed === false ? 'var(--text-4)' : 'var(--text-2)',
+              color: p.passed === false ? 'var(--text-3)' : 'var(--text-2)',
               textDecoration: p.passed === false ? 'line-through' : 'none',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -223,7 +224,7 @@ function StepPaperList({ papers, total }: { papers: PaperBrief[]; total?: number
             {p.title}
           </span>
           {typeof p.score === 'number' && (
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', flexShrink: 0 }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
               {p.score.toFixed(2)}
             </span>
           )}
@@ -235,13 +236,13 @@ function StepPaperList({ papers, total }: { papers: PaperBrief[]; total?: number
       {papers.length > PAPER_LIST_PREVIEW && (
         <button
           onClick={() => setOpen(!open)}
-          style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11.5, color: 'var(--accent-text)', textAlign: 'left' }}
+          style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 12, color: 'var(--accent-text)', textAlign: 'left' }}
         >
           {open
             ? tr('收起', 'Collapse')
             : truncated
-              ? tr(`展开清单（显示前 ${papers.length} 篇，共 ${total} 篇）`, `Show list (first ${papers.length} of ${total} papers)`)
-              : tr(`展开全部 ${papers.length} 篇`, `Show all ${papers.length} papers`)}
+              ? tr(`显示前 ${papers.length} 篇（共 ${total} 篇）`, `Show first ${papers.length} of ${total}`)
+              : tr(`显示全部 ${papers.length} 篇`, `Show all ${papers.length}`)}
         </button>
       )}
     </div>
@@ -256,7 +257,7 @@ export function WikiStepSummary({ friendly }: { friendly: WikiStepFriendly }) {
         padding: '9px 12px',
         background: 'var(--surface-2)',
         borderRadius: 9,
-        fontSize: 12.5,
+        fontSize: 13,
         lineHeight: 1.6,
         color: 'var(--text)',
       }}
@@ -266,7 +267,7 @@ export function WikiStepSummary({ friendly }: { friendly: WikiStepFriendly }) {
       {friendly.concepts && friendly.concepts.length > 0 && (
         <div className="row gap6 wrap" style={{ marginTop: 8 }}>
           {friendly.concepts.map((name) => (
-            <span key={name} className="tag" style={{ fontSize: 10.5 }}>
+            <span key={name} className="tag" style={{ fontSize: 11 }}>
               {name}
             </span>
           ))}
@@ -305,7 +306,7 @@ function checkText(c: VoyageAcceptanceCheck): string {
         `${String(c.field ?? '')} count ≥ ${String(c.value ?? '')}`,
       );
     case 'llm_rubric':
-      return tr(`AI 按标准评审：${String(c.rubric ?? '')}`, `AI reviews against the rubric: ${String(c.rubric ?? '')}`);
+      return tr(`AI 评审：${String(c.rubric ?? '')}`, `AI review: ${String(c.rubric ?? '')}`);
     default:
       return c.kind;
   }
@@ -321,7 +322,7 @@ export function AcceptanceBlock({ acceptance }: { acceptance: VoyageAcceptance }
       <button
         className="row gap6"
         onClick={() => setOpen(!open)}
-        style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11.5, fontWeight: 600, color: 'var(--text-3)' }}
+        style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 12, fontWeight: 600, color: 'var(--text-3)' }}
       >
         <Icon name="chevDown" size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
         {checks.length > 0
@@ -337,7 +338,7 @@ export function AcceptanceBlock({ acceptance }: { acceptance: VoyageAcceptance }
             </div>
           ))}
           {acceptance.text && (
-            <div style={{ marginTop: checks.length > 0 ? 6 : 0, color: 'var(--text-3)', fontSize: 11.5 }}>
+            <div style={{ marginTop: checks.length > 0 ? 6 : 0, color: 'var(--text-3)', fontSize: 12 }}>
               {acceptance.text}
             </div>
           )}
@@ -356,26 +357,26 @@ export function PlanEventCard({ event }: { event: VoyagePlanEvent }) {
         padding: '10px 14px',
         background: 'var(--accent-soft)',
         borderRadius: 10,
-        fontSize: 12.5,
+        fontSize: 13,
         lineHeight: 1.6,
       }}
     >
       <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-        <span style={{ fontWeight: 650, color: 'var(--accent-text)' }}>
+        <span style={{ fontWeight: 600, color: 'var(--accent-text)' }}>
           <Icon name="refresh" size={12} style={{ display: 'inline-block', verticalAlign: '-1.5px', marginRight: 5 }} />
           {tr(`计划调整 #${event.iteration}`, `Plan adjustment #${event.iteration}`)}
         </span>
         <span className="pill sm" style={{ background: 'var(--surface)', color: 'var(--text-2)' }}>
           {src ? tr(src.zh, src.en) : event.source}
         </span>
-        {event.at && <span className="mono muted" style={{ fontSize: 10.5, marginLeft: 'auto' }}>{fmtTime(event.at)}</span>}
+        {event.at && <span className="mono muted" style={{ fontSize: 11, marginLeft: 'auto' }}>{fmtTime(event.at)}</span>}
       </div>
       {event.reason && <div style={{ marginTop: 4, color: 'var(--text)' }}>{event.reason}</div>}
       <div className="row gap10" style={{ marginTop: 4, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-3)' }}>
-        {event.added > 0 && <span>{tr(`新增 ${event.added} 步`, `${event.added} step(s) added`)}</span>}
-        {event.obsoleted > 0 && <span>{tr(`作废 ${event.obsoleted} 步`, `${event.obsoleted} step(s) dropped`)}</span>}
+        {event.added > 0 && <span>{tr(`新增 ${event.added} 步`, `${enCount(event.added, 'step')} added`)}</span>}
+        {event.obsoleted > 0 && <span>{tr(`作废 ${event.obsoleted} 步`, `${enCount(event.obsoleted, 'step')} dropped`)}</span>}
         {event.trigger_step && (
-          <span>{tr(`由${event.trigger_step}触发`, `Triggered by “${event.trigger_step}”`)}</span>
+          <span>{tr(`由「${event.trigger_step}」触发`, `After “${event.trigger_step}”`)}</span>
         )}
       </div>
     </div>
@@ -386,11 +387,11 @@ export function PlanEventCard({ event }: { event: VoyagePlanEvent }) {
 
 /** stopped_reason → 大白话（未收录原样展示）。 */
 export const STOPPED_REASON: Record<string, { zh: string; en: string }> = {
-  no_improve: { zh: '连续无提升', en: 'no improvement across rounds' },
-  max_runs: { zh: '达到轮次上限', en: 'hit the round limit' },
-  max_hours: { zh: '达到时长上限', en: 'hit the time limit' },
-  debug_limit: { zh: '修复次数用尽', en: 'debug attempts exhausted' },
-  hypotheses_resolved: { zh: '假设已全部有结论', en: 'all hypotheses resolved' },
+  no_improve: { zh: '连续几轮无提升', en: 'no further improvement' },
+  max_runs: { zh: '达到轮次上限', en: 'round limit reached' },
+  max_hours: { zh: '达到时长上限', en: 'time limit reached' },
+  debug_limit: { zh: '修复次数用完', en: 'fix attempts used up' },
+  hypotheses_resolved: { zh: '假设都已有结论', en: 'all hypotheses answered' },
 };
 
 /** plan_signal → 一句因果摘要（为什么后面多了/没多新步骤）。 */
@@ -398,8 +399,8 @@ export function planSignalText(sig: Record<string, unknown>): string | null {
   if (sig.decision === 'continue') {
     const nr = num(sig.next_round);
     return nr > 0
-      ? tr(`分析判定：继续迭代 → 已追加第 ${nr} 轮`, `Analysis verdict: keep iterating → round ${nr} appended`)
-      : tr('分析判定：继续迭代 → 已追加下一轮', 'Analysis verdict: keep iterating → next round appended');
+      ? tr(`继续迭代，已加入第 ${nr} 轮`, `Continuing: round ${nr} added`)
+      : tr('继续迭代，已加入下一轮', 'Continuing: next round added');
   }
   if (sig.decision === 'finish') {
     const raw = typeof sig.stopped_reason === 'string' ? sig.stopped_reason : '';
@@ -407,8 +408,8 @@ export function planSignalText(sig: Record<string, unknown>): string | null {
     const reasonZh = m ? m.zh : raw;
     const reasonEn = m ? m.en : raw;
     return tr(
-      `判定迭代结束${reasonZh ? `（${reasonZh}）` : ''} → 进入图表与报告`,
-      `Iteration finished${reasonEn ? ` (${reasonEn})` : ''} → moving on to figures & report`,
+      `迭代结束${reasonZh ? `（${reasonZh}）` : ''}，接下来生成图表和报告`,
+      `Iterations done${reasonEn ? ` (${reasonEn})` : ''}. Figures and report are next.`,
     );
   }
   return null;
@@ -439,7 +440,7 @@ export function experimentStepFriendly(action: string, obs: Record<string, unkno
   // 任何动作失败时 helm 会把错误写进 observation.error（后端 _guarded）
   if (typeof obs.error === 'string' && obs.error) {
     return {
-      text: tr(`这一步出错：${obs.error}`, `This step failed: ${obs.error}`),
+      text: tr(`出错：${obs.error}`, `Failed: ${obs.error}`),
       tone: 'warn',
     };
   }
@@ -448,24 +449,21 @@ export function experimentStepFriendly(action: string, obs: Record<string, unkno
       const pm = asObj(obs.primary_metric);
       const name = pm && typeof pm.name === 'string' ? pm.name : '';
       const dir = pm ? metricDirection(pm.direction) : null;
-      const metricZh = name ? `主指标 ${name}${dir ? `（${dir.zh}）` : ''}` : '主指标待定';
-      const metricEn = name ? `primary metric ${name}${dir ? ` (${dir.en})` : ''}` : 'primary metric TBD';
+      const metricZh = name ? `主指标 ${name}${dir ? `（${dir.zh}）` : ''}` : '主指标未定';
+      const metricEn = name ? `Primary metric ${name}${dir ? ` (${dir.en})` : ''}` : 'No primary metric yet';
       return {
         text: tr(
-          `规划完成：${metricZh}，${num(obs.hypotheses)} 条假设，${num(obs.steps)} 个步骤`,
-          `Plan ready: ${metricEn}, ${num(obs.hypotheses)} hypotheses, ${num(obs.steps)} steps`,
+          `${metricZh} · ${num(obs.hypotheses)} 条假设 · ${num(obs.steps)} 个步骤`,
+          `${metricEn} · ${enCount(num(obs.hypotheses), 'hypothesis', 'hypotheses')} · ${enCount(num(obs.steps), 'step')}`,
         ),
       };
     }
     case 'experiment.setup': {
       const files = namesOf(obs.files);
       return {
-        text: tr(
-          `建好实验环境，生成 ${files.length} 个代码文件`,
-          `Environment ready — generated ${files.length} code files`,
-        ),
+        text: tr(`生成 ${files.length} 个代码文件`, `Generated ${enCount(files.length, 'code file')}`),
         items: files,
-        itemsLabel: tr('生成文件', 'Files'),
+        itemsLabel: tr('文件', 'Files'),
       };
     }
     case 'experiment.smoke': {
@@ -473,14 +471,14 @@ export function experimentStepFriendly(action: string, obs: Record<string, unkno
       const passed = num(obs.exit_code) === 0;
       if (!passed) {
         return {
-          text: tr('代码试跑自检未通过', 'Trial run self-check failed'),
+          text: tr('试运行未通过', 'Trial run failed'),
           tone: 'warn',
         };
       }
       return {
         text: fixes > 0
-          ? tr(`代码试跑自检通过（自动修正代码 ${fixes} 次）`, `Trial run self-check passed (auto-fixed code ${fixes} times)`)
-          : tr('代码试跑自检通过', 'Trial run self-check passed'),
+          ? tr(`试运行通过（修正代码 ${fixes} 次）`, `Trial run passed after ${enCount(fixes, 'fix', 'fixes')}`)
+          : tr('试运行通过', 'Trial run passed'),
       };
     }
     case 'experiment.run': {
@@ -488,8 +486,8 @@ export function experimentStepFriendly(action: string, obs: Record<string, unkno
         const reason = typeof obs.stopped_reason === 'string' ? STOPPED_REASON[obs.stopped_reason] : undefined;
         return {
           text: tr(
-            `本轮运行跳过：迭代已结束${reason ? `（${reason.zh}）` : ''}`,
-            `Run skipped — iteration already finished${reason ? ` (${reason.en})` : ''}`,
+            `已跳过：迭代已结束${reason ? `（${reason.zh}）` : ''}`,
+            `Skipped: iterations already done${reason ? ` (${reason.en})` : ''}`,
           ),
         };
       }
@@ -498,11 +496,11 @@ export function experimentStepFriendly(action: string, obs: Record<string, unkno
       const exit = num(obs.exit_code);
       const abnormal = exit !== 0 || (typeof obs.run_status === 'string' && obs.run_status !== 'succeeded');
       const base = abnormal
-        ? tr(`第 ${seq} 轮运行结束（脚本非正常退出，退出码 ${exit}）`, `Round ${seq} finished (script exited abnormally, code ${exit})`)
-        : tr(`第 ${seq} 轮运行成功`, `Round ${seq} ran successfully`);
+        ? tr(`第 ${seq} 轮异常退出（退出码 ${exit}）`, `Round ${seq} exited with code ${exit}`)
+        : tr(`第 ${seq} 轮完成`, `Round ${seq} done`);
       return {
         text: metrics.length
-          ? base + tr(`，产出 ${metrics.length} 项指标`, `; produced ${metrics.length} metrics`)
+          ? base + tr(`，得到 ${metrics.length} 项指标`, `, ${enCount(metrics.length, 'metric')}`)
           : base,
         items: metrics,
         itemsLabel: tr('指标', 'Metrics'),
@@ -512,26 +510,26 @@ export function experimentStepFriendly(action: string, obs: Record<string, unkno
     case 'experiment.analyze': {
       const seq = num(obs.seq);
       const rounds = num(obs.rounds);
-      const roundsZh = rounds > 0 ? `（累计 ${rounds} 轮）` : '';
-      const roundsEn = rounds > 0 ? ` (${rounds} rounds total)` : '';
+      const roundsZh = rounds > 0 ? `（共 ${rounds} 轮）` : '';
+      const roundsEn = rounds > 0 ? ` (${enCount(rounds, 'round')} so far)` : '';
       let decisionZh: string;
       let decisionEn: string;
       switch (obs.decision) {
         case 'improve':
-          decisionZh = 'AI 决定继续改进方案';
-          decisionEn = 'AI decided to keep improving the approach';
+          decisionZh = '继续改进方法';
+          decisionEn = 'keep improving the method';
           break;
         case 'debug':
-          decisionZh = 'AI 决定先排查报错再重跑';
-          decisionEn = 'AI decided to debug the errors before rerunning';
+          decisionZh = '先修复报错再重跑';
+          decisionEn = 'fix the errors, then rerun';
           break;
         case 'stop':
-          decisionZh = 'AI 决定收尾';
-          decisionEn = 'AI decided to wrap up';
+          decisionZh = '结束迭代';
+          decisionEn = 'stop iterating';
           break;
         default:
-          decisionZh = 'AI 已完成本轮分析';
-          decisionEn = 'AI finished analyzing this round';
+          decisionZh = '分析完成';
+          decisionEn = 'analysis done';
       }
       // 若 observation 带了诊断说明（reflection 字段）则一并展示，读不到就跳过
       const diag = typeof obs.diagnosis === 'string' ? obs.diagnosis
@@ -548,14 +546,14 @@ export function experimentStepFriendly(action: string, obs: Record<string, unkno
       const fixes = num(obs.fixes);
       const qcPassed = obs.qc_passed !== false;
       const problem = typeof obs.problem === 'string' ? obs.problem : '';
-      const qcZh = qcPassed ? '质检通过' : `质检未通过，已降级出图${problem ? `（${problem}）` : ''}`;
-      const qcEn = qcPassed ? 'quality check passed' : `quality check failed, figures degraded${problem ? ` (${problem})` : ''}`;
-      const fixZh = fixes > 0 ? `，自动修 ${fixes} 次` : '';
-      const fixEn = fixes > 0 ? `, auto-fixed ${fixes} times` : '';
+      const qcZh = qcPassed ? '' : `，质检未通过，改用简化图表${problem ? `：${problem}` : ''}`;
+      const qcEn = qcPassed ? '' : `; failed the quality check, so simpler figures were used${problem ? `: ${problem}` : ''}`;
+      const fixZh = fixes > 0 ? `，修正 ${fixes} 次` : '';
+      const fixEn = fixes > 0 ? ` after ${enCount(fixes, 'fix', 'fixes')}` : '';
       return {
         text: tr(
-          `生成 ${figures} 张图表（${qcZh}${fixZh}）`,
-          `Generated ${figures} figures (${qcEn}${fixEn})`,
+          `生成 ${figures} 张图表${fixZh}${qcZh}`,
+          `Generated ${enCount(figures, 'figure')}${fixEn}${qcEn}`,
         ),
         tone: qcPassed ? 'ok' : 'warn',
       };
@@ -564,8 +562,8 @@ export function experimentStepFriendly(action: string, obs: Record<string, unkno
       const chars = num(obs.report_chars);
       return {
         text: chars > 0
-          ? tr(`实验报告已生成（约 ${chars} 字）`, `Experiment report generated (about ${chars} chars)`)
-          : tr('实验报告已生成', 'Experiment report generated'),
+          ? tr(`报告已生成，约 ${chars} 字`, `Report generated, about ${chars} characters`)
+          : tr('报告已生成', 'Report generated'),
       };
     }
     default:
@@ -582,7 +580,7 @@ export function ExperimentStepSummary({ friendly }: { friendly: ExperimentStepFr
         padding: '9px 12px',
         background: 'var(--surface-2)',
         borderRadius: 9,
-        fontSize: 12.5,
+        fontSize: 13,
         lineHeight: 1.6,
         color: warn ? 'var(--warn-tx)' : 'var(--text)',
       }}
@@ -591,11 +589,11 @@ export function ExperimentStepSummary({ friendly }: { friendly: ExperimentStepFr
       {friendly.items && friendly.items.length > 0 && (
         <div className="col" style={{ gap: 6, marginTop: 8 }}>
           {friendly.itemsLabel && (
-            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>{friendly.itemsLabel}</span>
+            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{friendly.itemsLabel}</span>
           )}
           <div className="row gap6 wrap">
             {friendly.items.map((name) => (
-              <span key={name} className="tag mono" style={{ fontSize: 10.5 }}>
+              <span key={name} className="tag mono" style={{ fontSize: 11 }}>
                 {name}
               </span>
             ))}
@@ -615,7 +613,7 @@ export function AttemptsBlock({ attempts }: { attempts: VoyageStepAttempt[] }) {
       <button
         className="row gap6"
         onClick={() => setOpen(!open)}
-        style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11.5, fontWeight: 600, color: 'var(--text-3)' }}
+        style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 12, fontWeight: 600, color: 'var(--text-3)' }}
       >
         <Icon name="chevDown" size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
         {open ? tr('收起尝试记录', 'Hide run history') : tr(`查看 ${attempts.length} 次尝试记录`, `Show ${attempts.length} runs`)}
@@ -623,25 +621,21 @@ export function AttemptsBlock({ attempts }: { attempts: VoyageStepAttempt[] }) {
       {open && (
         <div className="col" style={{ gap: 6, marginTop: 6 }}>
           {attempts.map((a) => (
-            <div key={a.attempt} style={{ padding: '7px 12px', background: 'var(--surface-2)', borderRadius: 8, fontSize: 11.5, lineHeight: 1.6 }}>
+            <div key={a.attempt} style={{ padding: '7px 12px', background: 'var(--surface-2)', borderRadius: 8, fontSize: 12, lineHeight: 1.6 }}>
               <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-                <span className="mono" style={{ fontWeight: 650 }}>#{a.attempt}</span>
+                <span className="mono" style={{ fontWeight: 600 }}>#{a.attempt}</span>
                 {a.started_at && (
-                  <span className="mono muted" style={{ fontSize: 10.5 }}>
+                  <span className="mono muted" style={{ fontSize: 11 }}>
                     {fmtTime(a.started_at)}
                     {a.finished_at ? ` – ${fmtTime(a.finished_at)} · ${fmtDuration(a.started_at, a.finished_at)}` : ''}
                   </span>
                 )}
                 {a.verdict && (
-                  <span
-                    className="pill sm"
-                    style={
-                      a.verdict.passed
-                        ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)', marginLeft: 'auto' }
-                        : { background: 'var(--danger-bg)', color: 'var(--danger-tx)', marginLeft: 'auto' }
-                    }
-                  >
-                    {a.verdict.passed ? tr('通过', 'Passed') : tr('未通过', 'Failed')}
+                  <span style={{ marginLeft: 'auto' }}>
+                    <StatusDot
+                      tone={a.verdict.passed ? 'ok' : 'err'}
+                      label={a.verdict.passed ? tr('通过', 'Passed') : tr('未通过', 'Failed')}
+                    />
                   </span>
                 )}
               </div>
@@ -676,7 +670,7 @@ export function ObservationBlock({ observation, compact }: { observation: unknow
       <button
         className="row gap6"
         onClick={() => setOpen(!open)}
-        style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11.5, fontWeight: 600, color: 'var(--text-3)' }}
+        style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 12, fontWeight: 600, color: 'var(--text-3)' }}
       >
         <Icon name="chevDown" size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
         {compact ? tr('原始数据', 'Raw data') : tr('运行结果数据', 'Result data')}
@@ -697,13 +691,14 @@ function FailureEvidenceCard({ failure }: { failure: Record<string, unknown> }) 
   const raw = [stderr && `stderr:\n${stderr}`, stdout && `stdout:\n${stdout}`].filter(Boolean).join('\n\n');
   return (
     <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, background: 'var(--danger-bg)', color: 'var(--danger-tx)' }}>
-      <div style={{ fontWeight: 650, overflowWrap: 'anywhere' }}>
-        {String(failure.phase ?? 'unknown')} · {String(failure.message ?? failure.exception_type ?? 'Command failed')}
+      <div style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>
+        {failure.phase && failure.phase !== 'unknown' ? `${String(failure.phase)} · ` : ''}
+        {String(failure.message ?? failure.exception_type ?? tr('命令执行失败', 'Command failed'))}
       </div>
       <div className="mono" style={{ marginTop: 5, fontSize: 11, overflowWrap: 'anywhere' }}>
         {failure.command_display ? `${tr('命令', 'Command')}: ${String(failure.command_display)}` : ''}
         {failure.exit_status !== null && failure.exit_status !== undefined
-          ? ` · exit=${String(failure.exit_status)}`
+          ? ` · ${tr('退出码', 'exit code')} ${String(failure.exit_status)}`
           : ''}
         {failure.elapsed_seconds !== null && failure.elapsed_seconds !== undefined
           ? ` · ${Number(failure.elapsed_seconds).toFixed(1)}s`
@@ -711,8 +706,8 @@ function FailureEvidenceCard({ failure }: { failure: Record<string, unknown> }) 
       </div>
       {raw && (
         <details style={{ marginTop: 8 }}>
-          <summary style={{ cursor: 'pointer', fontSize: 11.5 }}>
-            {tr('查看原始输出摘要', 'Show raw output tail')}
+          <summary style={{ cursor: 'pointer', fontSize: 12 }}>
+            {tr('查看输出末尾', 'Show last output')}
           </summary>
           <pre style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 11 }}>
             {raw}
@@ -737,57 +732,48 @@ export function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvent
   return (
     <div className="card" style={{ padding: '14px 16px', opacity: obsolete ? 0.55 : 1 }}>
       <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 13.5, fontWeight: 650, textDecoration: obsolete ? 'line-through' : 'none' }}>
+        <span title={step.action} style={{ fontSize: 13, fontWeight: 600, textDecoration: obsolete ? 'line-through' : 'none' }}>
           {step.title}
         </span>
-        <span className="tag mono" style={{ fontSize: 10.5 }}>{step.action}</span>
         {planIter > 0 && (
           <span
-            className="pill sm"
-            style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
-            title={tr('这一步不在初始计划里，是后来计划调整时新增的', 'Not in the initial plan — added by a later plan adjustment')}
+            style={{ fontSize: 12, color: 'var(--text-3)' }}
+            title={tr('不在最初的计划里，调整计划时加入', 'Not in the original plan; added when the plan changed')}
           >
-            {tr(`第 ${planIter} 次调整新增`, `Added in adjustment ${planIter}`)}
+            {tr(`第 ${planIter} 次调整加入`, `Added in revision ${planIter}`)}
           </span>
         )}
         {step.requires_gate && (
           <span
             className="pill sm"
             style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}
-            title={tr('执行到这一步会暂停，等人工审批通过后继续', 'The task pauses here until a human approves')}
+            title={tr('到这一步会暂停，等你批准后继续', 'Pauses here until you approve')}
           >
             <Icon name="gate" size={11} />
             {tr(`需审批：${gateKind ? gateKind.zh : step.requires_gate}`, `Needs approval: ${gateKind ? gateKind.en : step.requires_gate}`)}
           </span>
         )}
         {step.attempt > 1 && (
-          <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }} title={tr('出错后带诊断自动重试过', 'Auto-retried with diagnostics after an error')}>
+          <span style={{ fontSize: 12, color: 'var(--warn-tx)' }} title={tr('出错后已自动重试', 'Retried after an error')}>
             {tr(`第 ${step.attempt} 次尝试`, `Attempt ${step.attempt}`)}
           </span>
         )}
         <div style={{ marginLeft: 'auto' }}>
-          <StatusPill status={step.status} sm />
+          <TaskStatus status={step.status} />
         </div>
       </div>
       <div className="row gap10" style={{ marginTop: 8, flexWrap: 'wrap' }}>
-        {step.verdict && (
-          <span
-            className="pill sm"
-            style={
-              step.verdict.passed
-                ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
-                : { background: 'var(--danger-bg)', color: 'var(--danger-tx)' }
-            }
+        {step.verdict && !(step.verdict.passed && step.status === 'passed') && (
+          <StatusDot
+            tone={step.verdict.passed ? 'ok' : 'err'}
+            label={step.verdict.passed ? tr('校验通过', 'Check passed') : tr('校验未通过', 'Check failed')}
             title={step.verdict.reason}
-          >
-            <Icon name={step.verdict.passed ? 'check' : 'x'} size={11} />
-            {step.verdict.passed ? tr('自动校验通过', 'Auto-check passed') : tr('自动校验未通过', 'Auto-check failed')}
-          </span>
+          />
         )}
-        {stepTokenCount(step.tokens) !== null && (
+        {(stepTokenCount(step.tokens) ?? 0) > 0 && (
           <span className="mono muted" style={{ fontSize: 11 }}>
             <Icon name="cpu" size={11} style={{ display: 'inline-block', verticalAlign: '-1.5px', marginRight: 4 }} />
-            {fmtTokens(stepTokenCount(step.tokens))} tok
+            {fmtTokens(stepTokenCount(step.tokens))} tokens
           </span>
         )}
         {step.started_at && (
@@ -800,7 +786,7 @@ export function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvent
           reason 是后端原样透传的错误文本，可能整段是一条没有断点的长 URL
           （如 arXiv 检索失败时的 query 串）。overflow-wrap 默认 normal 时这种
           token 会直接溢出盒子而不是换行，把卡片撑破，故显式允许任意位置断行。 */}
-      {step.verdict?.reason && (
+      {step.verdict?.reason && !step.verdict.passed && !failure && (
         <div
           style={{
             marginTop: 8,
@@ -810,13 +796,13 @@ export function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvent
             overflowWrap: 'anywhere',
           }}
         >
-          {tr('判定理由：', 'Verdict: ')}
+          {tr('理由：', 'Reason: ')}
           {step.verdict.reason}
         </div>
       )}
       {/* 作废步骤：补一行为什么被作废 */}
       {obsolete && (
-        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-4)', lineHeight: 1.5 }}>
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
           {obsoleteReasonOf(step, planEvents)}
         </div>
       )}
@@ -824,7 +810,7 @@ export function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvent
       {signalText && (
         <div
           className="row gap6"
-          style={{ marginTop: 10, padding: '8px 12px', background: 'var(--accent-soft)', color: 'var(--accent-text)', borderRadius: 8, fontSize: 12.5, lineHeight: 1.5, alignItems: 'flex-start' }}
+          style={{ marginTop: 10, padding: '8px 12px', background: 'var(--accent-soft)', color: 'var(--accent-text)', borderRadius: 8, fontSize: 13, lineHeight: 1.5, alignItems: 'flex-start' }}
         >
           <Icon name="compass" size={13} style={{ flexShrink: 0, marginTop: 2 }} />
           {/* 同上：signalText 会拼进 observation.error 的原文 */}
@@ -832,7 +818,7 @@ export function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvent
         </div>
       )}
       {friendly && <WikiStepSummary friendly={friendly} />}
-      {expFriendly && <ExperimentStepSummary friendly={expFriendly} />}
+      {expFriendly && !(failure && typeof obs?.error === 'string') && <ExperimentStepSummary friendly={expFriendly} />}
       {failure && <FailureEvidenceCard failure={failure} />}
       {step.acceptance && <AcceptanceBlock acceptance={step.acceptance} />}
       {attempts.length > 1 && <AttemptsBlock attempts={attempts} />}

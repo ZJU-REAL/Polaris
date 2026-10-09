@@ -51,7 +51,7 @@ function langExtensions(path: string) {
 const viewerTheme = EditorView.theme({
   '&': {
     height: '100%',
-    fontSize: '12.5px',
+    fontSize: '13px',
     backgroundColor: 'var(--surface)',
     color: 'var(--text)',
   },
@@ -153,7 +153,7 @@ function TreeLevel({
                 color: 'var(--text-2)',
                 padding: `4px 8px 4px ${8 + depth * 14}px`,
                 alignItems: 'center',
-                fontSize: 12.5,
+                fontSize: 13,
                 fontWeight: 600,
               }}
             >
@@ -184,7 +184,7 @@ function TreeLevel({
               color: isSel ? 'var(--accent-text)' : 'var(--text-2)',
               padding: `4px 8px 4px ${22 + depth * 14}px`,
               alignItems: 'center',
-              fontSize: 12.5,
+              fontSize: 13,
             }}
           >
             <Icon name="file" size={12} style={{ flexShrink: 0 }} />
@@ -237,7 +237,7 @@ export function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolea
       const blob = await api.fetchExperimentCodeArchive(exp.id);
       saveBlob(blob, `experiment-${exp.id.slice(0, 8)}-code.zip`);
     } catch {
-      toast(tr('打包下载失败', 'Archive download failed'), 'error');
+      toast(tr('打包下载失败，请重试', 'Couldn’t download the zip. Try again.'), 'error');
     } finally {
       setZipping(false);
     }
@@ -248,7 +248,7 @@ export function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolea
       const blob = await api.fetchExperimentCodeFileRaw(exp.id, path);
       saveBlob(blob, path.split('/').pop() ?? path);
     } catch {
-      toast(tr('文件下载失败', 'File download failed'), 'error');
+      toast(tr('文件下载失败，请重试', 'Couldn’t download the file. Try again.'), 'error');
     }
   }, [exp.id]);
   const listing = useQuery({
@@ -280,7 +280,7 @@ export function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolea
       <EmptyState
         icon="git"
         title={tr('还没有代码', 'No code yet')}
-        desc={tr('建环境步骤会生成实验代码并写入服务器工作目录。', 'The setup step generates experiment code into the remote workdir.')}
+        desc={tr('环境搭建完成后，实验代码会显示在这里。', 'Experiment code appears here once setup finishes.')}
       />
     );
   }
@@ -298,7 +298,7 @@ export function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolea
           }
         >
           <Icon name={live ? 'play' : 'clock'} size={11} />
-          {live ? tr('服务器实时', 'Live from server') : tr('离线快照', 'Offline snapshot')}
+          {live ? tr('实时', 'Live') : tr('已保存', 'Saved copy')}
         </span>
         {listing.data?.workdir && (
           <span className="mono muted" style={{ fontSize: 11, wordBreak: 'break-all' }}>{listing.data.workdir}</span>
@@ -371,7 +371,7 @@ export function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolea
               <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{selected ?? ''}</span>
               {file.data?.truncated && (
                 <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)', marginLeft: 8 }}>
-                  {tr('仅前 200KB', 'first 200KB')}
+                  {tr('只显示前 200 KB', 'First 200 KB only')}
                 </span>
               )}
               {selected && (
@@ -390,7 +390,7 @@ export function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolea
                 <div className="muted" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
               ) : file.data ? (
                 file.data.binary ? (
-                  <div className="muted" style={{ padding: 24, fontSize: 12.5 }}>
+                  <div className="muted" style={{ padding: 24, fontSize: 13 }}>
                     {tr('二进制文件，不支持预览', 'Binary file, preview unavailable')} · {fmtBytes(file.data.size)}
                   </div>
                 ) : (
