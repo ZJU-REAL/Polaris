@@ -116,6 +116,16 @@ export interface KernelStatus {
  */
 export interface LocalBackendInfo {
   baseUrl: string | null;
+  /**
+   * 本次启动的本地会话口令（#850）：界面取会话时放进 X-Polaris-Session-Secret 头，
+   * 引擎只认带着它的 /auth/local-session 请求。老外壳不带这个字段（它的引擎也不要求）。
+   */
+  sessionSecret?: string | null;
+  /**
+   * 引擎没起来的已知原因（#850），给兜底页说清楚：
+   * port-in-use = 端口被别的程序占着；stale-engine = 还有一个旧的 Polaris 引擎在跑。
+   */
+  problem?: 'port-in-use' | 'stale-engine' | null;
 }
 
 /**

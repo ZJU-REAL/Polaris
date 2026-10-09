@@ -92,7 +92,11 @@ Every engine start runs `alembic upgrade head` under a **migration guard**: a no
 is snapshotted to `engine/snapshots/<timestamp>/` first, a failed migration restores the
 snapshot before re-raising, and only the last 3 snapshots are kept. A failed bootstrap or engine
 start never blocks the window — it logs and reports `failed`, and the waiting page turns into the
-"local setup did not finish" page with the same **Restart Polaris** button.
+"local setup did not finish" page with the same **Restart Polaris** button. When the engine could
+not start because port 18080 is taken, the page says so instead: either an older Polaris engine is
+still running, or another program holds the port (see
+[Securing the local engine](#securing-the-local-engine)). The port stays 18080 because MCP
+clients and the browser extension are configured with it.
 
 ## Where the data lives
 
@@ -108,6 +112,8 @@ Everything is under Electron's `userData` directory; uninstalling the app and de
 | `userData/engine/data/` | User files: PDFs, exports, experiment logs (`POLARIS_DATA_DIR`) |
 | `userData/engine/data/workspace/` | The **file projection**: a continuously refreshed, read-only copy of your papers (`papers/`), notes (`notes/`), and library wikis (`wiki/`, an Obsidian vault). The database is the source of truth — edits here are not written back and are overwritten on the next change. |
 | `userData/plugins/` | Market-installed plugin bundles |
+| `userData/engine-secrets.json` | The engine's per-install signing and encryption keys (file mode `0600`); see [Securing the local engine](#securing-the-local-engine). Back it up together with `engine/polaris.db` — without it the saved API keys and SSH credentials in a restored database cannot be decrypted. |
+| `userData/engine.pid.json` | Process id and launch id of the engine the shell started, used to stop an orphaned engine on the next launch |
 
 ## Why Electron rather than Tauri
 
@@ -260,7 +266,48 @@ the client whether its preload is new enough to run it; see `src/desktop/src/mai
 ## Backend side
 
 The engine's CORS whitelist always includes `app://polaris` — it is a constant (`DESKTOP_ORIGIN` in
-`src/backend/app/main.py`), not something to configure. The whitelist matters because every
+`src/backend/app/core/config.py`), not something to configure. The whitelist matters because every
 desktop request carries an `Authorization` header, so every request triggers a preflight, and with
 an empty `allow_origins` Starlette answers those preflights with 400. This cannot be worked around
 on the client — injecting response headers cannot change a status code.
+
+## Securing the local engine
+
+The engine listens on `127.0.0.1:18080`, but "only this machine can reach it" is not the same as
+"only this user's Polaris window can use it": any web page open in a browser can send requests to
+a local port, a malicious domain can be re-pointed at `127.0.0.1` (DNS rebinding), and other
+accounts on the same computer can connect too. A session on the engine is enough to register an MCP
+server or agent backend with an arbitrary command, so the engine guards its door (#850):
+
+- **No wildcard CORS.** Cross-origin access is allowed only for `app://polaris` and the origins in
+  `POLARIS_CORS_ORIGINS`, whatever `POLARIS_ENV` is. Other pages cannot read any response.
+- **Host header check.** Requests whose `Host` is not `127.0.0.1`, `localhost`, or `[::1]` (any
+  port) get `400` — this is what stops DNS rebinding. `POLARIS_ALLOWED_HOSTS` adds names.
+- **A per-launch session secret.** Every time the `legacy-engine` plugin starts the engine it
+  generates a random secret and passes it as `POLARIS_LOCAL_SESSION_SECRET`. The shell hands the
+  same value to its own renderer through `kernel.localBackend` (`sessionSecret`), and
+  `lib/local-session.ts` sends it in the `X-Polaris-Session-Secret` header. With the variable set,
+  `POST /api/auth/local-session` answers `403` to anyone without it. When the variable is not set
+  (running from source, tests), the endpoint instead accepts requests with no `Origin` header or
+  an allowed one, so a browser page on another site still gets `403`.
+- **Per-install keys.** On first launch the plugin writes `userData/engine-secrets.json` (mode
+  `0600`) with a random `POLARIS_SECRET_KEY` (session tokens, signed download links, browser
+  extension key digests) and a Fernet `POLARIS_ENCRYPTION_KEY` (stored API keys, SSH credentials,
+  MCP/agent environment variables). Earlier versions used the public default secret key and
+  derived the encryption key from it. The engine still decrypts values written that way, and at
+  startup it re-encrypts every one of them with the new key (`rotate_encrypted_secrets` in
+  `app/core/security.py`): idempotent, committed table by table, and safe to interrupt, because
+  decryption accepts both keys. The secret-key change signs everyone out once; the renderer
+  simply fetches a new session. Browser-extension keys keep working: a key whose digest still
+  matches the old default is accepted once and re-hashed.
+- **Knowing its own engine.** The plugin also passes a random `POLARIS_INSTANCE_ID`, which
+  `/api/health` echoes back; the health check only accepts an answer carrying that id. Before
+  starting, if something already answers on the port, the plugin compares it with
+  `userData/engine.pid.json`: if it is the engine the shell itself started last time (same
+  instance id), the shell stops it and carries on; otherwise it refuses to start and the
+  "engine not running" page says whether the port is held by an older Polaris engine or by
+  another program. It never stops a process it cannot identify as its own.
+
+The keys travel only through environment variables (docker mode passes them by name, so they
+never appear in a command line) and never through the plugin config tree, which the renderer can
+read through `plugins.list`.

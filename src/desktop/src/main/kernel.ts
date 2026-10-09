@@ -15,7 +15,8 @@
    - Loader + SqliteTree（#699/#703）：其余插件一律由持久化配置树驱动，
      条目名走 cordis:<键> 查 loader.builtins 表，打包态零动态 import。
      首启种下 desktop-probe / sources / legacy-engine 三条目；此后树内容
-     以用户状态为真相，启动时不再增删改写。
+     以用户状态为真相，启动时不再增删改写（唯一例外：legacy-engine 条目
+     丢了会补回 disabled 占位，否则应用只剩「引擎没启动」页且无从修复）。
    - legacy-engine：树上只是 disabled 占位条目，引擎参数每次启动现算后
      动态注入（见 startKernel 内注释）。配置来源按优先级：
        1. POLARIS_DESKTOP_ENGINE 显式指定（开发/调试，行为与从前完全一致）
@@ -27,10 +28,14 @@
 
 import { app } from 'electron';
 
+import { join } from 'node:path';
+
 import {
   createPluginHost,
+  enginePortProblem,
   marketPluginsDir as kernelMarketPluginsDir,
   type ConfigEntry,
+  type EnginePortProblem,
   type Kernel,
   type LegacyEngineConfig,
   type PluginMetaStore,
@@ -63,6 +68,9 @@ export function marketPluginsDir(): string {
  * - failed + done：内嵌引导或引擎启动失败
  */
 let bootstrapStatus: EngineBootstrapStatus = { phase: 'starting', done: false };
+
+/** 本次启动引擎失败的已知原因（#850：端口被别的程序/残留旧引擎占着），给兜底页说清楚。 */
+let engineProblem: EnginePortProblem | null = null;
 
 /**
  * 首启种子树。只在 store 完全为空时写入：树是用户状态的真相，任何非空
@@ -153,6 +161,7 @@ async function doStartKernel(): Promise<Kernel> {
   // smoke 等场景会 stop 后再次 start：进度回到初始态，别让上一轮的
   // ready/failed 冒充本轮结论
   bootstrapStatus = { phase: 'starting', done: false };
+  engineProblem = null;
   // 装配顺序（storage → baseUrl → 哈希复核 → 种子 → Loader → SqliteTree）
   // 住在 @polaris/kernel 的 createPluginHost 里（#754）：
   // 装哪些内置插件、树长什么样、三方包的 import 基准在哪，两个形态必须一致，
@@ -177,6 +186,17 @@ async function doStartKernel(): Promise<Kernel> {
   if (!engine && app.isPackaged) {
     engine = await bootstrapPackagedEngine();
   }
+  if (engine) {
+    // 引擎安全（#850）：每份安装的密钥文件与孤儿引擎记录都放在 userData。
+    // 只传路径——密钥本身由 legacy-engine 插件读出后经环境变量交给引擎，
+    // 不进条目配置（plugins.list 会把配置原样交给渲染进程）。
+    const userData = app.getPath('userData');
+    engine = {
+      ...engine,
+      secretsFile: join(userData, 'engine-secrets.json'),
+      pidFile: join(userData, 'engine.pid.json'),
+    };
+  }
   if (engine && configTree) {
     // 引擎注入走 entry.update 而不是 tree.update：后者会把 enabled+spec
     // 写进持久树，下次启动 env 变了树还按旧答案自启引擎；entry.update 只
@@ -185,18 +205,31 @@ async function doStartKernel(): Promise<Kernel> {
     // entry.update 内部 init → fiber.await()：resolve 返回时引擎已健康或
     // 已抛错。#721 起窗口先于内核创建：首个文档的 CSP 可能没放行本地引擎，
     // 前端首启等待页在 bootstrapStatus done 后 reload 拿到最终 CSP 与地址。
-    const entry = configTree.store['legacy-engine'];
+    let entry = configTree.store['legacy-engine'];
+    if (!entry) {
+      // 条目不见了（用户删掉、导入了不含它的树）：没有引擎整个应用就只剩兜底页，
+      // 而用户没有任何界面能把它加回来——补一个 disabled 占位，与首启种子同形。
+      console.warn('[kernel] 配置树没有 legacy-engine 条目，重新补上占位');
+      try {
+        await configTree.create({
+          id: 'legacy-engine',
+          name: 'cordis:legacy-engine',
+          disabled: true,
+        } as Parameters<SqliteTree['create']>[0]);
+      } catch (err) {
+        console.error('[kernel] 补 legacy-engine 条目失败：', err);
+      }
+      entry = configTree.store['legacy-engine'];
+    }
     if (entry) {
       try {
         await entry.update({ config: engine, disabled: null });
       } catch (err) {
         // 失败时 Entry.update 自己把 options 回滚到 disabled 且不落库，
         // 用户树不被污染；这里只记录错误，前端会显示「引擎没启动」页。
+        engineProblem = enginePortProblem(err);
         console.error('[kernel] 本地引擎启动失败：', err);
       }
-    } else {
-      // 条目被用户从树里删掉：用户状态即真相，不偷偷种回去
-      console.warn('[kernel] 配置树没有 legacy-engine 条目，跳过本地引擎');
     }
   } else if (engine) {
     console.error('[kernel] 配置树不可用，本地引擎无法注入');
@@ -280,6 +313,11 @@ export function kernelPluginMeta(): PluginMetaStore | null {
  * 一律拿到 undefined，统一折叠成 null。
  */
 export function localBackend(): LocalBackendInfo {
-  const legacy = kernel?.ctx.get('legacy') as { baseUrl?: string } | undefined;
-  return { baseUrl: legacy?.baseUrl ?? null };
+  const legacy = kernel?.ctx.get('legacy') as { baseUrl?: string; sessionSecret?: string } | undefined;
+  return {
+    baseUrl: legacy?.baseUrl ?? null,
+    // 本次启动的本地会话口令（#850）：只经这条 IPC 交给自己的界面
+    sessionSecret: legacy?.sessionSecret ?? null,
+    problem: legacy?.baseUrl ? null : engineProblem,
+  };
 }

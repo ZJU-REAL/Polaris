@@ -38,7 +38,12 @@ export function isDesktop(): boolean {
    引擎没有启动」页。web 端没有宿主桥，探测直接短路成 null——零请求。 */
 
 let localBase: string | null = null;
+let localSecret: string | null = null;
+let localProblem: LocalEngineProblem | null = null;
 let localProbe: Promise<string | null> | null = null;
+
+/** 引擎没起来的已知原因（contract.ts LocalBackendInfo.problem 的镜像）。 */
+export type LocalEngineProblem = 'port-in-use' | 'stale-engine';
 
 /**
  * 探测本地引擎地址（幂等，结果缓存）。main.tsx 在桌面端挂载前 await 它，
@@ -49,13 +54,30 @@ export function probeLocalBackend(): Promise<string | null> {
     try {
       const info = await kernelLocalBackend();
       localBase = info?.baseUrl?.replace(/\/+$/, '') || null;
+      localSecret = info?.sessionSecret || null;
+      localProblem = info?.problem ?? null;
     } catch {
       // 探测失败按「无本地引擎」处理；不让一次 IPC 故障卡死首屏
       localBase = null;
+      localSecret = null;
+      localProblem = null;
     }
     return localBase;
   })();
   return localProbe;
+}
+
+/**
+ * 本次启动的本地会话口令（#850）；浏览器开发态与老外壳为 null。
+ * 只给 local-session.ts 用来取会话，别处不要读。
+ */
+export function localSessionSecret(): string | null {
+  return localSecret;
+}
+
+/** 本机引擎没起来的已知原因（端口被占等）；没有已知原因时为 null。 */
+export function localEngineProblem(): LocalEngineProblem | null {
+  return localProblem;
 }
 
 /** 本地引擎 origin（如 http://127.0.0.1:18080）；未探测到时为 null。 */

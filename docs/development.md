@@ -51,6 +51,14 @@ The engine started this way uses `polaris_dev.db` (SQLite) and `./data` in `src/
 its tables on startup, and runs the same scheduler as the desktop app. To override settings, copy
 `.env.example` to `src/backend/.env` (see [Configuration](configuration.md)).
 
+The engine never allows `*` for CORS and only accepts `Host` headers for `127.0.0.1`, `localhost`,
+and `[::1]` (#850). Running from source needs no extra setup: the Vite dev server proxies `/api`
+same-origin (and drops the `Origin` header that equals its own address), and without
+`POLARIS_LOCAL_SESSION_SECRET` the engine hands out the local session to requests with no
+`Origin` or an allowed one. If you point the frontend at the engine without the proxy, set
+`POLARIS_CORS_ORIGINS=http://localhost:5173`; if the proxy target is not a loopback name (for
+example `VITE_PROXY_TARGET=http://api:8000`), set `POLARIS_ALLOWED_HOSTS=api`.
+
 To work on the desktop shell, see [Desktop](desktop.md#developing-and-packaging):
 `make desktop-dev` builds the frontend and starts the shell. In development the shell starts no
 engine unless you set `POLARIS_DESKTOP_ENGINE`.

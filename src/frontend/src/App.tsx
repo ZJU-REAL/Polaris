@@ -4,7 +4,7 @@ import { RouterProvider } from 'react-router-dom';
 import { AuthProvider } from './app/auth';
 import { router } from './app/routes';
 import { EngineUnavailablePage } from './features/desktop/EngineUnavailablePage';
-import { isDesktop, localOrigin } from './lib/endpoint';
+import { isDesktop, localEngineProblem, localOrigin } from './lib/endpoint';
 import { loadCapabilities } from './lib/host';
 
 const queryClient = new QueryClient({
@@ -35,7 +35,7 @@ export function App() {
   // 桌面端：main.tsx 挂载前已探测过本机引擎地址。拿不到就没有可用的后端，
   // 在 AuthProvider 之外拦下，确保不会有请求打向不存在的地址。
   if (isDesktop() && localOrigin() == null) {
-    return <EngineUnavailablePage />;
+    return <EngineUnavailablePage problem={localEngineProblem()} />;
   }
 
   return (

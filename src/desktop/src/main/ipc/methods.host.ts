@@ -15,7 +15,10 @@ export function hostInfo(): HostInfo {
  * 下次启动重新引导、重新拉起引擎。
  */
 export function relaunch(): void {
-  app.relaunch();
+  // Linux AppImage：process.execPath 指向挂载到 /tmp/.mount_* 的临时目录，退出时就被
+  // 卸载了，按它重启只会什么都不发生。要重新执行 AppImage 文件本身（APPIMAGE 由运行时注入）。
+  const appImage = process.env.APPIMAGE;
+  app.relaunch(appImage ? { execPath: appImage, args: process.argv.slice(1) } : undefined);
   app.quit();
 }
 

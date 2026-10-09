@@ -50,9 +50,17 @@ export {
 export { BUILTIN_PLUGINS, desktopProbe, registerBuiltins } from './plugins/builtins.ts'
 export {
   ENGINE_CONTAINER,
+  ENGINE_SECRET_ENV,
+  EnginePortError,
   LegacyEngineConfig,
   buildEngineArgv,
+  enginePortProblem,
+  generateFernetKey,
   legacyEngine,
+  loadOrCreateEngineSecrets,
+  portInUse,
+  type EnginePortProblem,
+  type EngineSecrets,
   type LegacyEngineService,
 } from './plugins/legacy-engine.ts'
 export {

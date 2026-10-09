@@ -1,7 +1,7 @@
 import type { ComparisonTable } from './comparison';
 import { apiBase, serverOrigin } from './endpoint';
 import { readToken, writeToken } from './token-store';
-import { handleUnauthorized } from './local-session';
+import { handleUnauthorized, isSessionExpiry } from './local-session';
 /* ============================================================
    Polaris API client — thin fetch wrapper.
    baseURL /api (proxied to FastAPI at :8000 in dev), JSON,
@@ -34,6 +34,36 @@ export function setToken(token: string | null): void {
   writeToken(token);
 }
 
+/**
+ * 把失败响应变成 ApiError；若是「会话失效」的 401，顺带清 token 并交给
+ * handleUnauthorized 重取会话。别的 401（扩展 key 不对等）只报错，不刷新页面（#850）。
+ */
+async function errorFromResponse(
+  res: Response,
+  path: string,
+  token: string | null,
+  headers: Headers,
+): Promise<ApiError> {
+  let detail = res.statusText || `HTTP ${res.status}`;
+  let rawDetail: string | null = null;
+  let body: unknown;
+  try {
+    body = await res.json();
+    if (body && typeof body === 'object' && 'detail' in body) {
+      const d = (body as { detail: unknown }).detail;
+      detail = typeof d === 'string' ? d : JSON.stringify(d);
+      rawDetail = detail;
+    }
+  } catch {
+    /* non-JSON error body — keep statusText */
+  }
+  if (token && !path.startsWith('/auth/') && isSessionExpiry(res.status, rawDetail, headers)) {
+    setToken(null);
+    handleUnauthorized();
+  }
+  return new ApiError(res.status, detail, body);
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   const token = getToken();
@@ -41,26 +71,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set('Authorization', `Bearer ${token}`);
   }
   const res = await fetch(`${apiBase()}${path}`, { ...init, headers });
-  if (res.status === 401 && token && !path.startsWith('/auth/')) {
-    // 会话过期/失效：清 token 后统一处理——免登录模式重取本地会话并刷新页面，
-    // 否则跳登录（避免在登录/注册接口上误触发）
-    setToken(null);
-    handleUnauthorized();
-  }
-  if (!res.ok) {
-    let detail = res.statusText || `HTTP ${res.status}`;
-    let body: unknown;
-    try {
-      body = await res.json();
-      if (body && typeof body === 'object' && 'detail' in body) {
-        const d = (body as { detail: unknown }).detail;
-        detail = typeof d === 'string' ? d : JSON.stringify(d);
-      }
-    } catch {
-      /* non-JSON error body — keep statusText */
-    }
-    throw new ApiError(res.status, detail, body);
-  }
+  if (!res.ok) throw await errorFromResponse(res, path, token, headers);
   if (res.status === 204) {
     return undefined as T;
   }
@@ -81,24 +92,7 @@ async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> 
   const token = getToken();
   if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
   const res = await fetch(`${apiBase()}${path}`, { ...init, headers });
-  if (res.status === 401 && token && !path.startsWith('/auth/')) {
-    setToken(null);
-    handleUnauthorized();
-  }
-  if (!res.ok) {
-    let detail = res.statusText || `HTTP ${res.status}`;
-    let body: unknown;
-    try {
-      body = await res.json();
-      if (body && typeof body === 'object' && 'detail' in body) {
-        const d = (body as { detail: unknown }).detail;
-        detail = typeof d === 'string' ? d : JSON.stringify(d);
-      }
-    } catch {
-      /* keep statusText */
-    }
-    throw new ApiError(res.status, detail, body);
-  }
+  if (!res.ok) throw await errorFromResponse(res, path, token, headers);
   return res.blob();
 }
 
@@ -126,24 +120,7 @@ async function requestStream(path: string, init: RequestInit = {}): Promise<Resp
   const token = getToken();
   if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
   const res = await fetch(`${apiBase()}${path}`, { ...init, headers });
-  if (res.status === 401 && token && !path.startsWith('/auth/')) {
-    setToken(null);
-    handleUnauthorized();
-  }
-  if (!res.ok) {
-    let detail = res.statusText || `HTTP ${res.status}`;
-    let body: unknown;
-    try {
-      body = await res.json();
-      if (body && typeof body === 'object' && 'detail' in body) {
-        const value = (body as { detail: unknown }).detail;
-        detail = typeof value === 'string' ? value : JSON.stringify(value);
-      }
-    } catch {
-      /* keep statusText */
-    }
-    throw new ApiError(res.status, detail, body);
-  }
+  if (!res.ok) throw await errorFromResponse(res, path, token, headers);
   if (!res.body) throw new ApiError(502, 'TTS_EMPTY_STREAM');
   return res;
 }

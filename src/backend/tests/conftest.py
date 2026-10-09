@@ -14,6 +14,10 @@ os.environ["POLARIS_ENV"] = "dev"
 os.environ["POLARIS_DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMPDIR}/test.db"
 os.environ["POLARIS_SECRET_KEY"] = "test-secret-key-0123456789abcdef0123456789abcdef"
 os.environ["POLARIS_ENCRYPTION_KEY"] = ""
+# Host 白名单（#850）只认回环地址；httpx 测试客户端的 base_url 是 http://test
+os.environ["POLARIS_ALLOWED_HOSTS"] = "test,testserver"
+os.environ.pop("POLARIS_LOCAL_SESSION_SECRET", None)
+os.environ.pop("POLARIS_CORS_ORIGINS", None)
 os.environ["POLARIS_DATA_DIR"] = f"{_TMPDIR}/data"  # PDF/全文落盘目录（M2）
 os.environ["POLARIS_LLM_FAKE_FALLBACK"] = "1"  # 测试套件依赖确定性 fake provider
 # 补全钩子里的 OpenAlex 对齐是真实出网调用，离线测试一律关（专测用例自行开）
