@@ -63,26 +63,26 @@ export function AddToLibraryModal({
         // 还要下载正文 → 弹进度替代成功 toast，避免重复打扰
         setProgress({ taskId: entry.task_id, title: entry.title });
       } else {
-        toast(tr('已加进我的收藏', 'Added to your saved papers'), 'ok');
+        toast(tr('已添加到我的收藏', 'Added to Saved'), 'ok');
       }
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 422) {
         setParseError(
-          e.message.replace(/^PARSE_FAILED:?\s*/, '') ||
-            tr('内容解析失败，请检查格式', 'Failed to parse — check the format'),
+          tr('无法解析：', 'Couldn’t parse: ') +
+            (e.message.replace(/^PARSE_FAILED:?\s*/, '') || tr('请检查格式', 'check the format')),
         );
       } else if (e instanceof ApiError && e.status === 503) {
         // 上游（arXiv/OpenAlex）在限流。说清楚是别人家的问题、以及能怎么办——
         // 「添加失败」三个字会让用户以为是自己输错了编号。
         setParseError(
           tr(
-            'arXiv 正在限流，暂时查不到这个编号的元数据。过几分钟再试，或者改用 DOI / BibTeX 添加。',
-            'arXiv is rate-limiting us and the metadata cannot be fetched right now. Try again in a few minutes, or add it by DOI / BibTeX.',
+            'arXiv 暂时繁忙，请几分钟后重试，或改用 DOI、BibTeX 添加。',
+            'arXiv is busy right now. Try again in a few minutes, or add the paper by DOI or BibTeX.',
           ),
         );
       } else {
-        toast(`${tr('添加失败：', 'Failed to add: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('添加失败：', 'Couldn’t add: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -93,11 +93,8 @@ export function AddToLibraryModal({
         open={open}
         onClose={onClose}
         width={520}
-        title={tr('添加文献', 'Add paper')}
-        sub={tr(
-          '加进我的收藏，只有你自己看得到。',
-          'Goes into your saved papers — visible only to you.',
-        )}
+        title={tr('添加论文', 'Add paper')}
+        sub={tr('添加到我的收藏。', 'Adds the paper to Saved.')}
         footer={
           <>
             <button className="btn btn-ghost sm" onClick={onClose}>
@@ -125,7 +122,7 @@ export function AddToLibraryModal({
       >
         <Segmented<AddMethod>
           options={[
-            { v: 'ref', label: tr('arXiv 编号 / DOI / PMID', 'arXiv ID / DOI / PMID') },
+            { v: 'ref', label: tr('编号或链接', 'ID or link') },
             { v: 'corpus', label: 'Corpus ID' },
             { v: 'bibtex', label: tr('粘贴 BibTeX', 'Paste BibTeX') },
           ]}
@@ -157,10 +154,10 @@ export function AddToLibraryModal({
                   }
                 }}
               />
-              <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
+              <div className="muted" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.6 }}>
                 {tr(
-                  '编号或论文链接都行，其余信息自动抓取。',
-                  'An ID or a paper link both work — the rest is fetched automatically.',
+                  '支持 arXiv 编号、DOI、PMID 或论文链接。',
+                  'Accepts an arXiv ID, DOI, PMID or paper link.',
                 )}
               </div>
             </>
@@ -170,7 +167,7 @@ export function AddToLibraryModal({
                 className="input mono"
                 autoFocus
                 style={{ width: '100%' }}
-                placeholder={tr('例如 13756489 或 CorpusId:13756489', 'e.g. 13756489 or CorpusId:13756489')}
+                placeholder={tr('例如 13756489', 'e.g. 13756489')}
                 value={corpusId}
                 onChange={(e) => {
                   setCorpusId(e.target.value);
@@ -182,8 +179,8 @@ export function AddToLibraryModal({
                   }
                 }}
               />
-              <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-                {tr('从 Semantic Scholar 获取论文元数据。', 'Fetches paper metadata from Semantic Scholar.')}
+              <div className="muted" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.6 }}>
+                {tr('Semantic Scholar 的论文编号。', 'The paper’s Semantic Scholar ID.')}
               </div>
             </>
           ) : (
@@ -192,35 +189,23 @@ export function AddToLibraryModal({
                 className="textarea mono"
                 autoFocus
                 style={{ width: '100%', minHeight: 150, resize: 'vertical', fontSize: 12 }}
-                placeholder={tr(
-                  '粘贴单条 BibTeX 条目，例如：\n@inproceedings{smith2024example,\n  title = {...},\n  author = {...},\n  year = {2024},\n}',
-                  'Paste one BibTeX entry, e.g.:\n@inproceedings{smith2024example,\n  title = {...},\n  author = {...},\n  year = {2024},\n}',
-                )}
+                placeholder={'@article{smith2024,\n  title = {…},\n  author = {…},\n  year = {2024}\n}'}
                 value={bibtex}
                 onChange={(e) => {
                   setBibtex(e.target.value);
                   setParseError(null);
                 }}
               />
-              <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-                {tr(
-                  '一次粘贴一条；title 必填，作者/年份/期刊/DOI 能解析多少取多少。',
-                  'One entry at a time; title is required — authors/year/venue/DOI are parsed on a best-effort basis.',
-                )}
+              <div className="muted" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.6 }}>
+                {tr('每次一条，须包含 title。', 'One entry at a time. A title is required.')}
               </div>
             </>
           )}
-          <div className="muted" style={{ fontSize: 11.5, marginTop: 10, lineHeight: 1.6 }}>
-            {tr(
-              '已经在回收站里的会重新回到收藏。',
-              'A paper sitting in your trash comes back to your saved papers.',
-            )}
-          </div>
           {parseError && (
             <div
               style={{
                 marginTop: 10,
-                fontSize: 11.5,
+                fontSize: 12,
                 color: 'var(--danger-tx)',
                 background: 'var(--danger-bg)',
                 borderRadius: 8,
@@ -228,7 +213,6 @@ export function AddToLibraryModal({
                 lineHeight: 1.6,
               }}
             >
-              {tr('解析失败：', 'Parse failed: ')}
               {parseError}
             </div>
           )}

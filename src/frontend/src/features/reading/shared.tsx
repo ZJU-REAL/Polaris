@@ -28,7 +28,7 @@ export function readerBackLabel(kind: ReaderFromKind): string {
     case 'library':
       return tr('回我的文献库', 'Back to my library');
     case 'daily':
-      return tr('回每日新论文', 'Back to Daily Papers');
+      return tr('回每日新论文', 'Back to Daily papers');
     default:
       return tr('回文献库', 'Back to library');
   }
@@ -69,16 +69,17 @@ export function readingStatusMeta(s: string | undefined): ReadingStatusMeta {
 export interface HighlightColorMeta {
   v: HighlightColor;
   label: string;
+  en: string;
   solid: string;
   wash: string;
 }
 
 export const HIGHLIGHT_COLORS: readonly HighlightColorMeta[] = [
-  { v: 'yellow', label: '黄', solid: '#f5c518', wash: 'rgba(250, 204, 21, 0.45)' },
-  { v: 'green', label: '绿', solid: '#22c55e', wash: 'rgba(34, 197, 94, 0.40)' },
-  { v: 'blue', label: '蓝', solid: '#3b82f6', wash: 'rgba(59, 130, 246, 0.35)' },
-  { v: 'pink', label: '粉', solid: '#ec4899', wash: 'rgba(236, 72, 153, 0.35)' },
-  { v: 'purple', label: '紫', solid: '#a855f7', wash: 'rgba(168, 85, 247, 0.35)' },
+  { v: 'yellow', label: '黄', en: 'Yellow', solid: '#f5c518', wash: 'rgba(250, 204, 21, 0.45)' },
+  { v: 'green', label: '绿', en: 'Green', solid: '#22c55e', wash: 'rgba(34, 197, 94, 0.40)' },
+  { v: 'blue', label: '蓝', en: 'Blue', solid: '#3b82f6', wash: 'rgba(59, 130, 246, 0.35)' },
+  { v: 'pink', label: '粉', en: 'Pink', solid: '#ec4899', wash: 'rgba(236, 72, 153, 0.35)' },
+  { v: 'purple', label: '紫', en: 'Purple', solid: '#a855f7', wash: 'rgba(168, 85, 247, 0.35)' },
 ] as const;
 
 export function highlightColorMeta(c: string | undefined): HighlightColorMeta {
@@ -89,12 +90,13 @@ export function highlightColorMeta(c: string | undefined): HighlightColorMeta {
 export interface HighlightStyleMeta {
   v: HighlightStyle;
   label: string;
+  en: string;
 }
 
 export const HIGHLIGHT_STYLES: readonly HighlightStyleMeta[] = [
-  { v: 'highlight', label: '高亮' },
-  { v: 'underline', label: '下划线' },
-  { v: 'wave', label: '波浪线' },
+  { v: 'highlight', label: '高亮', en: 'Highlight' },
+  { v: 'underline', label: '下划线', en: 'Underline' },
+  { v: 'wave', label: '波浪线', en: 'Wavy line' },
 ] as const;
 
 /** 列表行里的阅读状态小圆点（未读不显示）。 */
@@ -103,7 +105,7 @@ export function ReadingDot({ status }: { status: string | undefined }) {
   const meta = readingStatusMeta(status);
   return (
     <span
-      title={`阅读状态：${meta.label}`}
+      title={tr(`阅读状态：${meta.label}`, `Status: ${meta.en}`)}
       style={{
         width: 7,
         height: 7,

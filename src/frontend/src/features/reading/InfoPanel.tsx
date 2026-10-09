@@ -25,7 +25,7 @@ import { MetaFold } from '../wiki/shared';
 function MetaItem({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="row" style={{ gap: 10, padding: '3px 0', alignItems: 'flex-start' }}>
-      <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', width: 78, flexShrink: 0 }}>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', width: 78, flexShrink: 0 }}>
         {label}
       </span>
       <span style={{ fontSize: 12, color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>
@@ -75,15 +75,15 @@ export function InfoPanel({
         {typeof paper.note_count === 'number' && paper.note_count > 0 && (
           <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
             <Icon name="pen" size={10} />
-            {paper.note_count} {tr('条笔记', 'notes')}
+            {tr(`${paper.note_count} 条笔记`, `${paper.note_count} ${paper.note_count === 1 ? 'note' : 'notes'}`)}
           </span>
         )}
         {/* 向量索引状态跟着徽章走；不带重建按钮——这一行是速览，不是操作区 */}
         <PaperIndexStatusRow paperId={paper.id} showRebuild={false} />
       </div>
-      <div style={{ fontSize: 14.5, fontWeight: 660, lineHeight: 1.4, marginBottom: 5 }}>{paper.title}</div>
+      <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.4, marginBottom: 5 }}>{paper.title}</div>
       {paper.authors.length > 0 && (
-        <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6 }}>
           {paper.authors.map((a, i) => {
             const affil = a.affiliations?.filter(Boolean) ?? [];
             return (
@@ -94,14 +94,14 @@ export function InfoPanel({
                   title={
                     affil.length > 0
                       ? `${a.name} — ${affil.join('; ')}`
-                      : tr(`回文献库只看 ${a.name} 的论文`, `Back to the library, showing only ${a.name}'s papers`)
+                      : tr(`在文献库中查看 ${a.name} 的论文`, `See papers by ${a.name} in the library`)
                   }
                   {...clickable(() => navigate(topicPath(paper.project_id, `wiki?author=${encodeURIComponent(a.name)}`)))}
                 >
                   {a.name}
                 </span>
                 {affil.length > 0 && (
-                  <span style={{ color: 'var(--text-4)', fontSize: 10.5 }}> ({affil[0]}{affil.length > 1 ? ` +${affil.length - 1}` : ''})</span>
+                  <span style={{ color: 'var(--text-3)', fontSize: 11 }}> ({affil[0]}{affil.length > 1 ? ` +${affil.length - 1}` : ''})</span>
                 )}
               </span>
             );
@@ -115,8 +115,8 @@ export function InfoPanel({
             <span
               key={name}
               className="chip"
-              style={{ fontSize: 10.5, height: 20 }}
-              title={tr(`回文献库只看 ${name} 的论文`, `Back to the library, showing only papers from ${name}`)}
+              style={{ fontSize: 11, height: 20 }}
+              title={tr(`在文献库中查看 ${name} 的论文`, `See papers from ${name} in the library`)}
               {...clickable(() => navigate(topicPath(paper.project_id, `wiki?affiliation=${encodeURIComponent(name)}`)))}
             >
               {name}
@@ -134,7 +134,7 @@ export function InfoPanel({
             style={{ textDecoration: 'none' }}
           >
             <Icon name="link" size={12} />
-            {arxivUrl ? tr('arXiv 原文', 'View on arXiv') : tr('原文链接', 'Source link')}
+            {arxivUrl ? tr('在 arXiv 查看', 'View on arXiv') : tr('原文链接', 'Original link')}
           </a>
         )}
         <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />
@@ -142,23 +142,23 @@ export function InfoPanel({
 
       {/* —— 元信息（默认折叠） —— */}
       <MetaFold style={{ margin: '14px 0 0' }}>
-        <MetaItem label="arxiv_id">
+        <MetaItem label={tr('arXiv 编号', 'arXiv ID')}>
           {paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}
         </MetaItem>
-        <MetaItem label="doi">
+        <MetaItem label="DOI">
           {paper.doi ? <span className="mono">{paper.doi}</span> : <span className="muted">—</span>}
         </MetaItem>
-        <MetaItem label="published">
+        <MetaItem label={tr('发布日期', 'Published')}>
           {paper.published_at ? <span className="mono">{paper.published_at.slice(0, 10)}</span> : <span className="muted">—</span>}
         </MetaItem>
-        <MetaItem label="relevance">
+        <MetaItem label={tr('相关度', 'Relevance')}>
           {paper.relevance_score !== null ? (
             <RelevanceBar value={paper.relevance_score} width={120} />
           ) : (
-            <span className="muted">{tr('未打分', 'Not scored')}</span>
+            <span className="muted">{tr('暂无', 'None')}</span>
           )}
         </MetaItem>
-        <MetaItem label="ingested">
+        <MetaItem label={tr('添加时间', 'Added')}>
           <span className="mono">{fmtTime(paper.created_at)}</span>
         </MetaItem>
       </MetaFold>
@@ -191,7 +191,7 @@ export function InfoPanel({
             onClick={() => setAbstractOpen((o) => !o)}
             style={{ padding: '9px 13px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
           >
-            <span style={{ fontSize: 12, fontWeight: 650 }}>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>
               {tr('摘要', 'Abstract')}
             </span>
             <Icon
@@ -220,7 +220,7 @@ export function InfoPanel({
             padding: '10px 13px',
             borderRadius: 10,
             background: 'var(--accent-soft)',
-            fontSize: 12.5,
+            fontSize: 13,
             lineHeight: 1.65,
           }}
         >
@@ -246,8 +246,8 @@ export function InfoPanel({
               className="row gap8"
               style={{ paddingBottom: 8, marginBottom: 12, borderBottom: '0.5px solid var(--border)' }}
             >
-              <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
-                {tr('AI 图文介绍', 'AI intro')}
+              <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
+                {tr('AI 解读', 'AI summary')}
               </span>
               <CompileBadge model={paper.compiled_model} at={paper.compiled_at} />
             </div>
@@ -255,15 +255,15 @@ export function InfoPanel({
               source={paper.wiki_content}
               onWikiLink={onWikiLink}
               renderFigure={renderFigure}
-              style={{ fontSize: 12.5 }}
+              style={{ fontSize: 13 }}
             />
           </>
         ) : (
           <EmptyState
             compact
             icon="pen"
-            title={tr('这篇还没有 AI 解读', 'No AI wiki for this paper yet')}
-            desc={tr('可能是相关度不足，或还没运行初始建库 / 增量同步。', 'Possibly low relevance, or the initial library build / incremental sync has not run.')}
+            title={tr('还没有解读', 'No summary yet')}
+            desc={tr('文献库只为相关度较高的论文生成解读。', 'Libraries generate summaries only for highly relevant papers.')}
           />
         )}
       </div>

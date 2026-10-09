@@ -10,6 +10,7 @@ import {
   type PaperContentVersionRead,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { StateDot } from './StateDot';
 
 const ACTIVE_PARSE_STATES = new Set([
   'queued',
@@ -24,58 +25,61 @@ const ACTIVE_PARSE_STATES = new Set([
 export interface AssetStateMeta {
   label: string;
   tone: 'neutral' | 'accent' | 'warning' | 'success' | 'danger';
+  /** 具体在哪个解析阶段（MinerU / PyMuPDF 兜底等），只放进悬停提示，不占标签文案。 */
+  detail?: string;
 }
 
 export function parseStateMeta(status?: string | null): AssetStateMeta {
   switch (status) {
     case 'queued':
-      return { label: tr('等待解析', 'Queued'), tone: 'warning' };
+      return { label: tr('排队中', 'Queued'), tone: 'warning' };
     case 'mineru_uploading':
-      return { label: tr('正在上传 MinerU', 'Uploading to MinerU'), tone: 'accent' };
+      return { label: tr('正在提取全文', 'Extracting text'), tone: 'accent', detail: tr('正在上传到 MinerU', 'Uploading to MinerU') };
     case 'mineru_acceptance_wait':
-      return { label: tr('等待 MinerU 接收', 'Waiting for MinerU'), tone: 'accent' };
+      return { label: tr('正在提取全文', 'Extracting text'), tone: 'accent', detail: tr('等待 MinerU 接收', 'Waiting for MinerU') };
     case 'mineru_processing':
-      return { label: tr('MinerU 解析中', 'MinerU parsing'), tone: 'accent' };
+      return { label: tr('正在提取全文', 'Extracting text'), tone: 'accent', detail: tr('MinerU 解析中', 'MinerU is parsing') };
     case 'mineru_downloading':
-      return { label: tr('正在获取 MinerU 结果', 'Fetching MinerU result'), tone: 'accent' };
+      return { label: tr('正在提取全文', 'Extracting text'), tone: 'accent', detail: tr('正在获取 MinerU 结果', 'Fetching the MinerU result') };
     case 'parsing':
-      return { label: tr('原文解析中', 'Parsing full text'), tone: 'accent' };
+      return { label: tr('正在提取全文', 'Extracting text'), tone: 'accent' };
     case 'fallback_parsing':
-      return { label: tr('PyMuPDF 兜底解析中', 'PyMuPDF fallback parsing'), tone: 'warning' };
+      return { label: tr('正在提取全文', 'Extracting text'), tone: 'warning', detail: tr('使用 PyMuPDF 解析', 'Parsing with PyMuPDF') };
     case 'ready':
-      return { label: tr('结构化原文已就绪', 'Structured text ready'), tone: 'success' };
+      return { label: tr('有全文', 'Full text ready'), tone: 'success' };
     case 'ready_fallback':
-      return { label: tr('纯原文已就绪', 'Plain full text ready'), tone: 'success' };
+      return { label: tr('有全文（纯文本）', 'Full text ready (plain)'), tone: 'success' };
     case 'vector_ready':
-      return { label: tr('解析与向量化完成', 'Parsed and vectorized'), tone: 'success' };
+      return { label: tr('有全文', 'Full text ready'), tone: 'success' };
     case 'failed':
       return { label: tr('解析失败', 'Parsing failed'), tone: 'danger' };
     default:
-      return { label: tr('尚未解析', 'Not parsed'), tone: 'neutral' };
+      return { label: tr('无全文', 'No full text'), tone: 'neutral' };
   }
 }
 
 export function vectorStateMeta(state?: string | null): AssetStateMeta {
   switch (state) {
     case 'ready':
-      return { label: tr('已完成', 'Ready'), tone: 'success' };
+      return { label: tr('可语义检索', 'Searchable'), tone: 'success' };
     case 'building':
-      return { label: tr('构建中', 'Building'), tone: 'accent' };
+      return { label: tr('正在建立索引', 'Indexing'), tone: 'accent' };
     case 'pending':
-      return { label: tr('等待构建', 'Pending'), tone: 'warning' };
+      return { label: tr('等待建立索引', 'Waiting to index'), tone: 'warning' };
     case 'failed':
-      return { label: tr('构建失败', 'Failed'), tone: 'danger' };
+      return { label: tr('索引失败', 'Indexing failed'), tone: 'danger' };
     default:
-      return { label: tr('未建立', 'Not built'), tone: 'neutral' };
+      return { label: tr('未建立索引', 'Not indexed'), tone: 'neutral' };
   }
 }
 
-function toneStyle(tone: AssetStateMeta['tone']): React.CSSProperties {
-  if (tone === 'success') return { background: 'var(--ok-bg)', color: 'var(--ok-tx)' };
-  if (tone === 'danger') return { background: 'var(--danger-bg)', color: 'var(--danger-tx)' };
-  if (tone === 'warning') return { background: 'var(--warn-bg)', color: 'var(--warn-tx)' };
-  if (tone === 'accent') return { background: 'var(--accent-soft)', color: 'var(--accent-text)' };
-  return { background: 'var(--surface-3)', color: 'var(--text-3)' };
+/** 论文级与分块级两个索引合成一个状态：先报最需要关注的那个。 */
+function combinedVectorState(a?: string | null, b?: string | null): string | null {
+  for (const s of ['failed', 'building', 'pending']) {
+    if (a === s || b === s) return s;
+  }
+  if (a === 'ready' && b === 'ready') return 'ready';
+  return a === 'ready' || b === 'ready' ? 'pending' : null;
 }
 
 function formatBytes(value: number): string {
@@ -86,18 +90,12 @@ function formatBytes(value: number): string {
 function sourceLabel(source: string): string {
   const labels: Record<string, string> = {
     oa: 'OA',
-    upload: tr('用户上传', 'Upload'),
-    extension: tr('扩展归档', 'Extension'),
+    upload: tr('上传', 'Uploaded'),
+    extension: tr('浏览器扩展', 'Browser extension'),
     arxiv: 'arXiv',
-    manual: tr('手动导入', 'Manual'),
+    manual: tr('手动添加', 'Added manually'),
   };
   return labels[source] ?? source;
-}
-
-function sharingLabel(scope: string): string {
-  if (scope === 'public') return tr('公开复用', 'Public reuse');
-  if (scope === 'library') return tr('本库共享', 'Library shared');
-  return tr('私有授权', 'Private grant');
 }
 
 function savePdf(blob: Blob, paperId: string): void {
@@ -120,7 +118,8 @@ export function PaperAssetPanel({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
-  const [sharingScope, setSharingScope] = useState<'private' | 'library' | 'public'>('library');
+  // 单用户本地版不再让人选共享范围，上传一律按「本库」。
+  const sharingScope = 'library' as const;
   const [reparseAsset, setReparseAsset] = useState<PaperAssetRead | null>(null);
 
   const assetsQuery = useQuery({
@@ -166,11 +165,11 @@ export function PaperAssetPanel({
     },
     onSuccess: () => {
       invalidate();
-      toast(tr('PDF 已保存，MinerU 优先解析任务已开始', 'PDF saved; MinerU-first parsing has started'), 'ok');
+      toast(tr('PDF 已上传，正在解析', 'PDF uploaded. Parsing now.'), 'ok');
     },
     onError: (error) => {
       invalidate();
-      toast(`${tr('PDF 处理失败：', 'PDF processing failed: ')}${error instanceof Error ? error.message : String(error)}`, 'error');
+      toast(`${tr('PDF 上传失败：', 'Couldn’t upload the PDF: ')}${error instanceof Error ? error.message : String(error)}`, 'error');
     },
   });
 
@@ -179,15 +178,15 @@ export function PaperAssetPanel({
     onSuccess: () => {
       setReparseAsset(null);
       invalidate();
-      toast(tr('已提交新的解析版本', 'A new parse version was queued'), 'ok');
+      toast(tr('已开始重新解析', 'Reparsing started'), 'ok');
     },
-    onError: (error) => toast(`${tr('提交解析失败：', 'Failed to queue parsing: ')}${error instanceof Error ? error.message : String(error)}`, 'error'),
+    onError: (error) => toast(`${tr('无法开始解析：', 'Couldn’t start parsing: ')}${error instanceof Error ? error.message : String(error)}`, 'error'),
   });
 
   const downloadMutation = useMutation({
     mutationFn: (asset: PaperAssetRead) => api.downloadLibraryPaperAsset(libraryId, paperId, asset.id),
     onSuccess: (blob) => savePdf(blob, paperId),
-    onError: (error) => toast(`${tr('下载失败：', 'Download failed: ')}${error instanceof Error ? error.message : String(error)}`, 'error'),
+    onError: (error) => toast(`${tr('下载失败：', 'Couldn’t download: ')}${error instanceof Error ? error.message : String(error)}`, 'error'),
   });
 
   const assets = assetsQuery.data?.items ?? [];
@@ -195,13 +194,13 @@ export function PaperAssetPanel({
   const version = versionQuery.data ?? null;
   const parseMeta = parseStateMeta(version?.status);
   const parsing = Boolean(version && ACTIVE_PARSE_STATES.has(version.status));
-  const documentVector = vectorStateMeta(version?.document_vector_state);
-  const chunkVector = vectorStateMeta(version?.chunk_vector_state);
+  const indexState = vectorStateMeta(combinedVectorState(version?.document_vector_state, version?.chunk_vector_state));
+  const pageCount = version?.page_count;
 
   return (
     <section
       className="paper-asset-panel"
-      aria-label={tr('PDF 资产与全文索引', 'PDF asset and full-text index')}
+      aria-label={tr('PDF 与全文', 'PDF & full text')}
       style={{
         marginTop: 16,
         padding: '14px 0',
@@ -211,26 +210,29 @@ export function PaperAssetPanel({
     >
       <div className="row gap10 wrap paper-asset-summary" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <div style={{ fontSize: 12.5, fontWeight: 650 }}>{tr('PDF 资产与全文索引', 'PDF asset and full-text index')}</div>
-          <div className="muted" style={{ fontSize: 11.5, marginTop: 3 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{tr('PDF 与全文', 'PDF & full text')}</div>
+          <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>
             {preferred
-              ? `${sourceLabel(preferred.source)} · ${sharingLabel(preferred.sharing_scope)} · ${formatBytes(preferred.byte_size)}`
-              : tr('尚未绑定可处理的 PDF', 'No processable PDF is attached')}
+              ? [
+                  sourceLabel(preferred.source),
+                  formatBytes(preferred.byte_size),
+                  pageCount ? tr(`${pageCount} 页`, `${pageCount} ${pageCount === 1 ? 'page' : 'pages'}`) : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
+              : tr('还没有 PDF', 'No PDF yet')}
           </div>
         </div>
         <div className="row gap6 wrap paper-asset-states">
-          <span className="pill sm" style={toneStyle(parseMeta.tone)}>{parseMeta.label}</span>
-          <span className="pill sm" style={toneStyle(documentVector.tone)} title={tr('标题、摘要与全文摘要的论文级检索向量', 'Paper-level retrieval vector')}>
-            {tr('论文向量', 'Paper vector')} · {documentVector.label}
-          </span>
-          <span className="pill sm" style={toneStyle(chunkVector.tone)} title={tr('供句子级证据检索使用的全文分块向量', 'Full-text chunk vectors for sentence-level evidence retrieval')}>
-            {tr('全文分块', 'Full-text chunks')} · {chunkVector.label}
-          </span>
+          <StateDot tone={parseMeta.tone} title={parseMeta.detail}>{parseMeta.label}</StateDot>
+          <StateDot tone={indexState.tone} title={tr('用于检索和定位原句', 'Used for search and locating quoted sentences')}>
+            {indexState.label}
+          </StateDot>
         </div>
       </div>
 
       {version?.error_code && (
-        <div style={{ marginTop: 10, color: 'var(--danger-tx)', fontSize: 11.5 }}>
+        <div className="mono" style={{ marginTop: 10, color: 'var(--danger-tx)', fontSize: 11 }}>
           {version.error_code}{version.error_detail ? ` · ${version.error_detail}` : ''}
         </div>
       )}
@@ -254,20 +256,9 @@ export function PaperAssetPanel({
               if (file) uploadMutation.mutate(file);
             }}
           />
-          <select
-            className="input sm"
-            aria-label={tr('PDF 共享范围', 'PDF sharing scope')}
-            value={sharingScope}
-            disabled={uploadMutation.isPending}
-            onChange={(event) => setSharingScope(event.target.value as typeof sharingScope)}
-          >
-            <option value="private">{tr('私有授权', 'Private grant')}</option>
-            <option value="library">{tr('本库共享', 'Library shared')}</option>
-            <option value="public">{tr('公开复用', 'Public reuse')}</option>
-          </select>
           <button className="btn btn-soft sm" disabled={uploadMutation.isPending} onClick={() => inputRef.current?.click()}>
             <Icon name={uploadMutation.isPending ? 'refresh' : 'plus'} size={13} style={uploadMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
-            {uploadMutation.isPending ? tr('上传并排队…', 'Uploading and queuing…') : tr('上传 PDF', 'Upload PDF')}
+            {uploadMutation.isPending ? tr('上传中…', 'Uploading…') : tr('上传 PDF', 'Upload PDF')}
           </button>
           {preferred && (
             <button className="btn btn-ghost sm" disabled={parseMutation.isPending || parsing} onClick={() => setReparseAsset(preferred)}>
@@ -278,30 +269,16 @@ export function PaperAssetPanel({
         </>
       </div>
 
-      {version && (
-        <div className="mono" style={{ marginTop: 10, fontSize: 10.5, color: 'var(--text-4)' }}>
-          {tr(`内容版本 v${version.version_no} · ${version.parser} · ${version.page_count} 页 · ${version.chunk_count} 个分块`, `Content v${version.version_no} · ${version.parser} · ${version.page_count} pages · ${version.chunk_count} chunks`)}
-        </div>
-      )}
 
       <ConfirmModal
         open={reparseAsset !== null}
         onClose={() => setReparseAsset(null)}
-        title={tr('重新解析 PDF', 'Reparse PDF')}
-        message={(
-          <>
-            <div style={{ marginBottom: 10 }}>
-              {tr('将创建新的内容版本并重新构建全文索引。', 'A new content version and full-text index will be created.')}
-            </div>
-            <div style={{ padding: 12, borderRadius: 6, background: 'var(--warn-bg)', color: 'var(--warn-tx)', lineHeight: 1.65 }}>
-              {tr(
-                '重新解析会替换当前结构化原文、分块和向量。旧 AI 内容仍能打开论文，但原句定位失效时会退回论文级来源。源 PDF 不会删除。',
-                'Reparsing replaces the current structured text, chunks, and vectors. Existing AI content still opens the paper, but stale sentence anchors fall back to the paper-level source. The source PDF is retained.',
-              )}
-            </div>
-          </>
+        title={tr('重新解析 PDF？', 'Reparse the PDF?')}
+        message={tr(
+          '全文和索引会重新生成，已有引用可能无法再定位到原句。PDF 文件保留。',
+          'The full text and index are rebuilt, so existing citations may no longer point to exact sentences. The PDF is kept.',
         )}
-        confirmText={tr('确认重新解析', 'Reparse')}
+        confirmText={tr('重新解析', 'Reparse')}
         busy={parseMutation.isPending}
         onConfirm={() => {
           if (reparseAsset) parseMutation.mutate(reparseAsset.id);

@@ -93,9 +93,9 @@ function ParentRow({
         style={{ flex: 1, minWidth: 0, cursor: disabled ? 'default' : 'pointer', userSelect: 'none' }}
       >
         <CheckBox state={state} disabled={disabled} />
-        <span style={{ fontSize: 12.5, fontWeight: 680, color: 'var(--text)' }}>{label}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{label}</span>
         {tail && (
-          <span style={{ fontSize: 11, color: 'var(--text-4)', marginLeft: 'auto', flexShrink: 0 }}>{tail}</span>
+          <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 'auto', flexShrink: 0 }}>{tail}</span>
         )}
       </div>
     </div>
@@ -144,7 +144,7 @@ function LeafRow({
       <CheckBox state={checked || disabled ? 'all' : 'none'} disabled={disabled} />
       <span
         style={{
-          fontSize: 12.5,
+          fontSize: 13,
           minWidth: 0,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
@@ -156,7 +156,7 @@ function LeafRow({
         {name}
       </span>
       {disabled && (
-        <span style={{ fontSize: 11, color: 'var(--text-4)', marginLeft: 'auto', flexShrink: 0 }}>
+        <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 'auto', flexShrink: 0 }}>
           {tr('已在库中', 'Already added')}
         </span>
       )}
@@ -234,7 +234,7 @@ export function CollectTreeModal({
   const shownTopics = needle
     ? projects.filter((p) => p.name.toLowerCase().includes(needle))
     : projects;
-  const personalShown = !needle || tr('个人库', 'My library').toLowerCase().includes(needle);
+  const personalShown = !needle || tr('我的文献库', 'My library').toLowerCase().includes(needle);
   const libsOpen = expandLibs || !!needle;
   const topicsOpen = expandTopics || !!needle;
 
@@ -278,13 +278,13 @@ export function CollectTreeModal({
       const forbidden = resp.results.some((r) => r.forbidden);
       toast(
         tr(
-          `已收进 ${ok} 个位置${skipped > 0 ? `（${skipped} 篇本来就在）` : ''}`,
-          `Added to ${ok} places${skipped > 0 ? ` (${skipped} already there)` : ''}`,
+          `已添加到 ${ok} 处${skipped > 0 ? `，${skipped} 处已有` : ''}`,
+          `Added to ${ok} ${ok === 1 ? 'place' : 'places'}${skipped > 0 ? `, ${skipped} already had it` : ''}`,
         ),
         'ok',
       );
       if (forbidden) {
-        toast(tr('部分目标无权限，已跳过', 'Some targets were skipped: no permission'), 'error');
+        toast(tr('部分位置无法添加，已跳过', 'Some places couldn’t be added and were skipped'), 'error');
       }
       void queryClient.invalidateQueries({ queryKey: ['daily-collections', paper.entry_id] });
       onClose();
@@ -294,7 +294,7 @@ export function CollectTreeModal({
     },
     onError: (e) =>
       toast(
-        `${tr('收录失败：', 'Failed to add: ')}${e instanceof Error ? e.message : String(e)}`,
+        `${tr('添加失败：', 'Couldn’t add: ')}${e instanceof Error ? e.message : String(e)}`,
         'error',
       ),
   });
@@ -319,15 +319,15 @@ export function CollectTreeModal({
       title={
         <>
           <Icon name="book" size={16} style={{ color: 'var(--accent)' }} />
-          {tr('收进文献库', 'Add to libraries')}
+          {tr('添加到文献库', 'Add to library')}
         </>
       }
       sub={paper.title}
       width={520}
       footer={
         <>
-          <span style={{ marginRight: 'auto', fontSize: 11.5, color: 'var(--text-3)' }}>
-            {tr(`已选 ${selectedCount} 个位置`, `${selectedCount} destinations selected`)}
+          <span style={{ marginRight: 'auto', fontSize: 12, color: 'var(--text-3)' }}>
+            {tr(`已选 ${selectedCount} 处`, `${selectedCount} selected`)}
           </span>
           <button className="btn btn-ghost sm" onClick={onClose} disabled={collectMutation.isPending}>
             {tr('取消', 'Cancel')}
@@ -337,13 +337,13 @@ export function CollectTreeModal({
             disabled={selectedCount === 0 || collectMutation.isPending}
             onClick={() => collectMutation.mutate()}
           >
-            {collectMutation.isPending ? tr('收录中…', 'Adding…') : tr('确认收录', 'Add')}
+            {collectMutation.isPending ? tr('添加中…', 'Adding…') : tr('添加', 'Add')}
           </button>
         </>
       }
     >
       <div className="row gap8" style={{ marginBottom: 10 }}>
-        <SearchInput value={q} onChange={setQ} placeholder={tr('按名称过滤…', 'Filter by name…')} />
+        <SearchInput value={q} onChange={setQ} placeholder={tr('按名称筛选', 'Filter by name')} />
       </div>
 
       {loading ? (
@@ -361,14 +361,14 @@ export function CollectTreeModal({
             onToggleCheck={() =>
               toggleGroup(shownLibs.map((l) => l.id), disabledLibs, selLibs, setSelLibs)
             }
-            tail={tr(`${shownLibs.length} 个库`, `${shownLibs.length}`)}
+            tail={tr(`${shownLibs.length} 个`, `${shownLibs.length}`)}
           />
           {libsOpen &&
             (shownLibs.length === 0 ? (
-              <div style={{ padding: '2px 6px 6px 34px', fontSize: 11.5, color: 'var(--text-4)' }}>
+              <div style={{ padding: '2px 6px 6px 34px', fontSize: 12, color: 'var(--text-3)' }}>
                 {needle
-                  ? tr('没有匹配的库', 'No matching library')
-                  : tr('没有你可以管理的方向库', 'No libraries you can manage')}
+                  ? tr('没有匹配的文献库', 'No matching libraries')
+                  : tr('还没有文献库', 'No libraries yet')}
               </div>
             ) : (
               shownLibs.map((l) => (
@@ -395,8 +395,8 @@ export function CollectTreeModal({
           />
           {topicsOpen &&
             (shownTopics.length === 0 ? (
-              <div style={{ padding: '2px 6px 6px 34px', fontSize: 11.5, color: 'var(--text-4)' }}>
-                {needle ? tr('没有匹配的课题', 'No matching topic') : tr('还没有课题', 'No topics yet')}
+              <div style={{ padding: '2px 6px 6px 34px', fontSize: 12, color: 'var(--text-3)' }}>
+                {needle ? tr('没有匹配的课题', 'No matching topics') : tr('还没有课题', 'No topics yet')}
               </div>
             ) : (
               shownTopics.map((p) => (
@@ -413,7 +413,7 @@ export function CollectTreeModal({
           {/* —— 个人库（父即叶） —— */}
           {personalShown && (
             <ParentRow
-              label={tr('个人库', 'My library')}
+              label={tr('我的文献库', 'My library')}
               state={personal || personalDisabled ? 'all' : 'none'}
               onToggleCheck={() => setPersonal((v) => !v)}
               disabled={personalDisabled}

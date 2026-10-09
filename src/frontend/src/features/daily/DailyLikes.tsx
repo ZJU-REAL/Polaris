@@ -215,17 +215,17 @@ export function DailyLikes({
                 animation: 'fadeUp 0.12s ease',
               }}
             >
-              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', padding: '0 12px 6px' }}>
-                {tr(`${item.like_count} 人点了赞`, `${item.like_count} likes`)}
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', padding: '0 12px 6px' }}>
+                {tr(`${item.like_count} 人赞过`, `${item.like_count} ${item.like_count === 1 ? 'like' : 'likes'}`)}
               </div>
               <div className="scroll" style={{ maxHeight: 12 * 26, overflowY: 'auto' }}>
                 {likersQuery.isLoading ? (
-                  <div style={{ padding: '5px 12px', fontSize: 11.5, color: 'var(--text-4)' }}>
+                  <div style={{ padding: '5px 12px', fontSize: 12, color: 'var(--text-3)' }}>
                     {tr('加载中…', 'Loading…')}
                   </div>
                 ) : likersQuery.isError ? (
-                  <div style={{ padding: '5px 12px', fontSize: 11.5, color: 'var(--text-4)' }}>
-                    {tr('名单加载失败', 'Failed to load')}
+                  <div style={{ padding: '5px 12px', fontSize: 12, color: 'var(--text-3)' }}>
+                    {tr('加载失败', 'Couldn’t load')}
                   </div>
                 ) : (
                   (likersQuery.data ?? []).map((u) => (
@@ -239,7 +239,7 @@ export function DailyLikes({
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
                           color: u.id === me?.id ? 'var(--accent-text)' : 'var(--text)',
-                          fontWeight: u.id === me?.id ? 650 : 450,
+                          fontWeight: u.id === me?.id ? 600 : 400,
                         }}
                       >
                         {u.display_name}
@@ -265,8 +265,8 @@ export function DailyLikes({
       >
         {isRow
           ? item.like_count > 0
-            ? tr(`${item.like_count} 人赞过`, `${item.like_count} likes`)
-            : tr('还没人赞过', 'No likes yet')
+            ? tr(`${item.like_count} 人赞过`, `${item.like_count} ${item.like_count === 1 ? 'like' : 'likes'}`)
+            : tr('暂无点赞', 'No likes yet')
           : item.like_count}
       </span>
     </div>

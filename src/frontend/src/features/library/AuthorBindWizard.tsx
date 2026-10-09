@@ -90,7 +90,7 @@ export function MultiValueInput({
           outline: 'none',
           background: 'transparent',
           font: 'inherit',
-          fontSize: 12.5,
+          fontSize: 13,
           color: 'var(--text)',
           padding: '2px 0',
         }}
@@ -129,39 +129,38 @@ export function AuthorBindWizard({
       queryClient.setQueryData(['author-profile'], saved);
       void queryClient.invalidateQueries({ queryKey: ['author-profile'] });
       void queryClient.invalidateQueries({ queryKey: ['publications'] });
-      toast(tr('署名信息已保存', 'Author info saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       onDone();
     },
-    onError: (e) => toast(`${tr('保存失败：', 'Save failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败：', 'Couldn’t save: ')}${errText(e)}`, 'error'),
   });
 
   const body = (
     <>
       <div className="section-h">
-        <Icon name="users" size={15} />
-        {tr('你的署名信息', 'Your author info')}
+        {tr('作者信息', 'Author profile')}
       </div>
-      <p style={{ fontSize: 12.5, color: 'var(--text-2)', margin: '8px 0 16px', lineHeight: 1.6 }}>
+      <p style={{ fontSize: 13, color: 'var(--text-2)', margin: '8px 0 16px', lineHeight: 1.6 }}>
         {tr(
-          '保存后每天会自动从文献库里匹配你发表的论文。',
-          'Once saved, your publications are matched from the library daily.',
+          '用于每天找出你发表的论文。',
+          'Used to find your publications each day.',
         )}
       </p>
 
       <FormField
         label="姓名写法"
         en="Name variants"
-        hint={tr('可以填多个，如 San Zhang、Zhang San；回车添加', 'Add as many as you use, e.g. San Zhang, Zhang San — Enter to add')}
+        hint={tr('可填多个，按回车添加', 'Add each variant you use. Press Enter to add.')}
       >
-        <MultiValueInput values={names} onChange={setNames} placeholder="e.g. San Zhang" autoFocus />
+        <MultiValueInput values={names} onChange={setNames} placeholder={tr('例如 San Zhang', 'e.g. San Zhang')} autoFocus />
       </FormField>
       <FormField
         label="机构（选填）"
         en="Affiliations (optional)"
         style={{ marginTop: 12 }}
-        hint={tr('回车添加，可以填多个', 'Enter to add; multiple allowed')}
+        hint={tr('可填多个，按回车添加', 'Press Enter to add each one.')}
       >
-        <MultiValueInput values={affiliations} onChange={setAffiliations} placeholder="e.g. Zhejiang University" />
+        <MultiValueInput values={affiliations} onChange={setAffiliations} placeholder={tr('例如 Zhejiang University', 'e.g. Zhejiang University')} />
       </FormField>
 
       <div className="row gap8" style={{ marginTop: 14 }}>

@@ -48,19 +48,19 @@ function LikedRow({
       }}
     >
       <div className="row gap8" style={{ marginBottom: 5 }}>
-        <span className="mono" style={{ fontSize: 10.5, color: active ? 'var(--accent-text)' : 'var(--text-3)' }}>
+        <span className="mono" style={{ fontSize: 11, color: active ? 'var(--accent-text)' : 'var(--text-3)' }}>
           {p.arxiv_id ?? p.primary_category}
         </span>
         {p.year !== null && (
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>{p.year}</span>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{p.year}</span>
         )}
-        <span className="row gap6" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-4)', flexShrink: 0 }}>
+        <span className="row gap6" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
           <span className="row" style={{ gap: 3 }}>
             <Icon name="heartFill" size={11} style={{ color: HEART_RED }} />
             <span className="mono">{p.like_count}</span>
           </span>
           {p.liked_at && (
-            <span className="mono">{tr(`赞于 ${fmtRelative(p.liked_at)}`, `liked ${fmtRelative(p.liked_at)}`)}</span>
+            <span className="mono">{tr(`${fmtRelative(p.liked_at)} 赞过`, `Liked ${fmtRelative(p.liked_at)}`)}</span>
           )}
         </span>
       </div>
@@ -69,7 +69,7 @@ function LikedRow({
         <div
           title={authors}
           style={{
-            fontSize: 11.5,
+            fontSize: 12,
             color: 'var(--text-3)',
             marginTop: 3,
             whiteSpace: 'nowrap',
@@ -96,7 +96,7 @@ function LikedDetail({ p }: { p: DailyPaperItem }) {
         )}
         {p.year !== null && <span className="pill sm" style={{ background: 'var(--surface-3)' }}>{p.year}</span>}
       </div>
-      <h1 style={{ fontSize: 21, fontWeight: 680, lineHeight: 1.3, margin: '2px 0 6px', letterSpacing: '-0.01em' }}>
+      <h1 style={{ fontSize: 21, fontWeight: 600, lineHeight: 1.3, margin: '2px 0 6px', letterSpacing: '-0.01em' }}>
         {p.url ? (
           <a href={p.url} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
             {p.title}
@@ -106,9 +106,9 @@ function LikedDetail({ p }: { p: DailyPaperItem }) {
           p.title
         )}
       </h1>
-      {authors && <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 6 }}>{authors}</div>}
+      {authors && <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 6 }}>{authors}</div>}
       {p.published_at && (
-        <div style={{ fontSize: 11.5, color: 'var(--text-4)', marginBottom: 14 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 14 }}>
           {tr('发布于', 'Published')} {fmtTime(p.published_at)}
         </div>
       )}
@@ -116,12 +116,12 @@ function LikedDetail({ p }: { p: DailyPaperItem }) {
         <div className="card card-pad" style={{ background: 'var(--surface-2)' }}>
           <div className="row gap8" style={{ marginBottom: 8 }}>
             <Icon name="file" size={14} style={{ color: 'var(--accent)' }} />
-            <span style={{ fontSize: 12, fontWeight: 700 }}>{tr('摘要', 'Abstract')}</span>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>{tr('摘要', 'Abstract')}</span>
           </div>
-          <p style={{ fontSize: 13.5, lineHeight: 1.7, margin: 0 }}>{p.abstract}</p>
+          <p style={{ fontSize: 13, lineHeight: 1.7, margin: 0 }}>{p.abstract}</p>
         </div>
       ) : (
-        <div className="empty" style={{ padding: 20 }}>{tr('这篇还没有摘要。', 'No abstract for this paper.')}</div>
+        <div className="empty" style={{ padding: 20 }}>{tr('暂无摘要', 'No abstract')}</div>
       )}
     </div>
   );
@@ -153,8 +153,8 @@ export function DailyLikedTab() {
             <EmptyState
               compact
               icon="x"
-              title={tr('赞过的论文暂时加载不出来', 'Failed to load liked papers')}
-              desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
+              title={tr('无法加载赞过的论文', 'Couldn’t load liked papers')}
+              desc={tr('请确认本机引擎正在运行，然后重试。', 'Make sure the local engine is running, then try again.')}
               action={
                 <button className="btn btn-soft sm" onClick={() => void listQuery.refetch()}>
                   {tr('重试', 'Retry')}
@@ -167,8 +167,8 @@ export function DailyLikedTab() {
               icon="heart"
               title={tr('还没有赞过的论文', 'No liked papers yet')}
               desc={tr(
-                '每日新论文只保留 7 天，过期后这里也会跟着清空。',
-                'Daily papers are kept for 7 days; expired ones disappear from here too.',
+                '在每日新论文中点赞的论文会出现在这里，保留 7 天。',
+                'Papers you like in Daily papers appear here for 7 days.',
               )}
             />
           ) : (
@@ -209,7 +209,7 @@ export function DailyLikedTab() {
           <LikedDetail p={selected} />
         ) : (
           <div className="empty" style={{ margin: 'auto' }}>
-            {tr('选择论文查看详情', 'Select a paper to view details')}
+            {tr('选择一篇论文查看详情', 'Select a paper to see details')}
           </div>
         )}
       </div>
