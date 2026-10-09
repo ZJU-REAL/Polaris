@@ -12,7 +12,7 @@ import type { ChatMsg, ContextRef } from '../chat/types';
 
 /* ============================================================
    阅读工作台 · AI 伴读面板：复用 ChatSurface 的壳
-   （历史 / 技能条 / / 上下文 / @ 分享），
+   （历史 / 技能条 / / 上下文），
    伴读特有：每条回答可存为笔记，分享附带本篇阅读链接。
    ============================================================ */
 
@@ -150,7 +150,7 @@ export function ChatPanel({ paperId, pid }: { paperId: string; pid: string }) {
         '例如它解决了什么问题、核心方法是什么、和已有工作有何不同。',
         'For example: what problem it solves, its core method, how it differs from prior work.',
       )}
-      placeholder={tr('提问，或输入 @ 分享', 'Ask a question, or type @ to share')}
+      placeholder={tr('提问，或输入 / 加入其他论文', 'Ask a question, or type / to add papers')}
       renderAssistant={(m: ChatMsg) => <Markdown source={m.content} style={{ fontSize: 13 }} />}
       assistantExtras={(m: ChatMsg) =>
         (m.sources?.length ?? 0) > 0 && (m.done || m.content) ? (

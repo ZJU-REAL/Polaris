@@ -148,15 +148,13 @@ export function AuthorBindWizard({
       </p>
 
       <FormField
-        label="姓名写法"
-        en="Name variants"
+        label={tr('姓名写法', 'Name variants')}
         hint={tr('可填多个，按回车添加', 'Add each variant you use. Press Enter to add.')}
       >
         <MultiValueInput values={names} onChange={setNames} placeholder={tr('例如 San Zhang', 'e.g. San Zhang')} autoFocus />
       </FormField>
       <FormField
-        label="机构（选填）"
-        en="Affiliations (optional)"
+        label={tr('机构（选填）', 'Affiliations (optional)')}
         style={{ marginTop: 12 }}
         hint={tr('可填多个，按回车添加', 'Press Enter to add each one.')}
       >

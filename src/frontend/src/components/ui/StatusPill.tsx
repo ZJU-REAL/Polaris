@@ -49,6 +49,7 @@ export const STATUS: Record<string, StatusMeta> = {
   reporting: { cls: 'st-reviewed', zh: '写报告中', en: 'Writing report' },
   succeeded: { cls: 'st-implemented', zh: '成功', en: 'Succeeded' },
   // —— Manuscript 状态（M5-B Paper Writer） ——
+  drafting: { cls: 'st-running', zh: '起草中', en: 'Drafting' },
   writing: { cls: 'st-running', zh: '起草中', en: 'Drafting' },
   submitted: { cls: 'st-implemented', zh: '已投稿', en: 'Submitted' },
   // —— Project 状态 ——

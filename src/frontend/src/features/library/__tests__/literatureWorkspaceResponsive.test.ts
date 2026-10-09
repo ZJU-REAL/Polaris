@@ -24,8 +24,16 @@ describe('literature workspace responsive layout', () => {
   });
 
   it('uses the main content container and preserves complete tab labels', () => {
-    expect(css).toContain('@container mainarea (max-width: 1180px)');
-    expect(css).toContain('.literature-workspace-card .split { flex-direction: column; }');
+    // 1440 窗口下主区约 1170px：列表与详情必须仍然并排（与每日新论文一致），
+    // 只有主区窄于 900px 才堆叠。
+    const stackRule = '.literature-workspace-card .split { flex-direction: column; }';
+    const at900 = css.indexOf('@container mainarea (max-width: 900px)');
+    const at1180 = css.indexOf('@container mainarea (max-width: 1180px)');
+    expect(at900).toBeGreaterThan(-1);
+    expect(css.indexOf(stackRule)).toBeGreaterThan(at900);
+    expect(css.indexOf(stackRule, at1180)).toBeGreaterThan(at900);
+    expect(css.indexOf(stackRule)).toBeLessThan(css.indexOf('@container mainarea (max-width: 460px)'));
+    expect(css.split(stackRule)).toHaveLength(2);
     expect(css).toMatch(/\.literature-workspace-tabs \.segmented > button[\s\S]*white-space: nowrap/);
   });
   it('declares the container the queries name', () => {

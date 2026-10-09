@@ -1,8 +1,10 @@
 import { FormField } from './FormField';
 
 export interface KnobRangeProps {
+  /** 已翻译好的标签（调用方用 tr(zh, en) 传入） */
   label: string;
-  en: string;
+  /** 旧写法：label 传中文原文时的英文版本。见 FormField 的 en */
+  en?: string;
   hint?: string;
   value: number;
   min: number;
