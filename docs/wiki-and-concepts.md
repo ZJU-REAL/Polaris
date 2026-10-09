@@ -623,8 +623,8 @@ production on PostgreSQL.
   `LIKE`, which only folds ASCII. Irrelevant for CJK names, relevant for accented Latin ones.
 - The concept migration uses `batch_alter_table` to drop `library_id`, because SQLite cannot drop a
   column in place.
-- Semantic paper search is PostgreSQL-only (`papers.py:1131`), so `GET /projects/{id}/search`
-  silently falls back to keyword mode elsewhere. Concept search is keyword-only on both.
+- Semantic paper search ranks in pgvector on PostgreSQL and in Python on SQLite
+  (`services/vector_search.py`) with the same results. Concept search is keyword-only on both.
 
 **Truncation is invisible.** The body is cut at 24000 characters with no marker and no warning in the
 response; a long paper is compiled from its first ~24k characters. Similarly, definition batches are

@@ -152,10 +152,10 @@ async def test_backfill_counts(client, monkeypatch):
     assert resp.status_code == 403
 
 
-# ---- 3. 语义检索（sqlite 下回退关键词） ----
+# ---- 3. 语义检索（sqlite 上在 Python 侧打分，同样是语义模式） ----
 
 
-async def test_semantic_mode_falls_back_on_sqlite(client, monkeypatch):
+async def test_semantic_mode_works_on_sqlite(client, monkeypatch):
     headers = await _admin_headers(client)
     await _run_sync(monkeypatch, {"cs.AI": [_rss_entry("2607.10004", "Delta Networks")]})
 
@@ -164,7 +164,7 @@ async def test_semantic_mode_falls_back_on_sqlite(client, monkeypatch):
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["mode_used"] == "keyword"  # sqlite 无 pgvector → 回退
+    assert body["mode_used"] == "semantic"  # 不再因为没有 pgvector 回退关键词
     assert body["total"] == 1 and body["items"][0]["title"] == "Delta Networks"
 
     # 默认仍是关键词模式，且响应带 mode_used

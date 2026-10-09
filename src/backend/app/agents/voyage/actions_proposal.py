@@ -31,7 +31,6 @@ from app.agents.voyage.actions_ideas import (
     _params,
     _statement,
     _validate_scores,
-    cosine_similarity,
 )
 from app.agents.voyage.tool_loop import run_tool_loop
 from app.core.db import get_sessionmaker
@@ -46,7 +45,6 @@ from app.models.review import ReviewMessage, ReviewSession
 from app.services.embedding import (
     embed_documents,
     embed_query,
-    paper_vectors,
     upsert_idea_vector,
 )
 from app.services.libraries import (
@@ -761,11 +759,10 @@ async def proposal_experiments(ctx: ActionContext, params: dict[str, Any]) -> di
 async def _internal_similar(ctx: ActionContext, query_text: str) -> list[dict[str, Any]]:
     """库内相似论文：向量余弦 top-k；向量不可用降级关键词检索。
 
-    postgres 上交给 pgvector 在库里排（原先是把全库论文向量拉进内存逐条算余弦，
-    库一大就是一次全表扫描 + 上万次 Python 浮点运算）；sqlite 没有 pgvector，
-    仍走内存路径，但只取激活空间下的向量。
+    交给 semantic_search_papers 在库里排：postgres 上是 pgvector，SQLite 上按库圈定
+    候选后在 Python 侧打分（services/vector_search.py），两边同口径。
     """
-    from app.services.papers import semantic_search_papers, semantic_search_supported
+    from app.services.papers import semantic_search_papers
 
     async with get_sessionmaker()() as session:
         library_ids = await get_source_library_ids(session, ctx.run.project_id)
@@ -781,34 +778,14 @@ async def _internal_similar(ctx: ActionContext, query_text: str) -> list[dict[st
             except NotImplementedError:
                 vector, space = None, None
             if vector is not None and space is not None:
-                if semantic_search_supported(session):
-                    rows = await semantic_search_papers(
-                        session,
-                        project_id=ctx.run.project_id,
-                        query_vector=vector,
-                        space=space,
-                        limit=_INTERNAL_SIMILAR_K,
-                    )
-                    scored = [(score, view.paper) for view, score in rows]
-                else:
-                    papers = (
-                        (
-                            await session.execute(
-                                select(Paper)
-                                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                                .where(LibraryPaper.library_id.in_(library_ids))
-                                .distinct()
-                            )
-                        )
-                        .scalars()
-                        .all()
-                    )
-                    known = await paper_vectors(session, [p.id for p in papers], space)
-                    scored = [
-                        (cosine_similarity(vector, known[p.id]), p) for p in papers if p.id in known
-                    ]
-                    scored.sort(key=lambda x: -x[0])
-                    scored = scored[:_INTERNAL_SIMILAR_K]
+                rows = await semantic_search_papers(
+                    session,
+                    project_id=ctx.run.project_id,
+                    query_vector=vector,
+                    space=space,
+                    limit=_INTERNAL_SIMILAR_K,
+                )
+                scored = [(score, view.paper) for view, score in rows]
                 if scored:
                     return [
                         {

@@ -41,6 +41,7 @@ from app.models.project import Project
 from app.models.publication import UserPublication
 from app.models.topic_shelf import TopicPaper
 from app.services import concepts as concepts_service
+from app.services import vector_search
 from app.services.libraries import (
     dedupe_member_rows,
     get_library_for_project,
@@ -1332,7 +1333,14 @@ async def keyword_search_concepts(
 
 
 def semantic_search_supported(session: AsyncSession) -> bool:
-    return session.get_bind().dialect.name == "postgresql"
+    """语义检索在这个数据库上可用吗。
+
+    postgres 走 pgvector；SQLite 等没有向量算子的库在 Python 侧打分
+    （services/vector_search.py），两边过滤与排序口径一致，所以一律可用。
+    保留这个函数是给调用方一个统一的判断点（以及测试里打桩）。
+    """
+    del session
+    return True
 
 
 async def semantic_search_papers(
@@ -1346,7 +1354,7 @@ async def semantic_search_papers(
     space: EmbeddingSpace,
     limit: int,
 ) -> list[tuple[PaperView, float]]:
-    """pgvector 余弦检索（仅 postgres；调用方需先判 semantic_search_supported）。
+    """余弦检索：postgres 上 pgvector 在 SQL 里排，其余方言在 Python 侧打分。
 
     只跟 ``space`` 这一个向量空间里的论文比较——别的空间的向量出自别的模型，
     余弦值没有可比性。
@@ -1356,6 +1364,23 @@ async def semantic_search_papers(
     )
     if not library_ids:
         return []
+    if not vector_search.uses_pgvector(session):
+        from app.models.vectors import PaperVector
+
+        # 与下面的 SQL 同口径：激活空间 + 库成员（状态分组）；IN 子查询天然去重
+        candidates = select(
+            PaperVector.paper_id, vector_search.raw_embedding(PaperVector.embedding)
+        ).where(
+            PaperVector.space == space.key,
+            PaperVector.paper_id.in_(
+                select(LibraryPaper.paper_id).where(
+                    LibraryPaper.library_id.in_(library_ids),
+                    LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+                )
+            ),
+        )
+        hits = await vector_search.search_statement(session, candidates, query_vector, limit)
+        return await _paper_views_for_scores(session, library_ids, project_id, hits)
     qv = json.dumps(query_vector)
     # DISTINCT p.id：一篇论文命中多个关联库时只召回一次（分数不受成员行影响）。
     # status 过滤与 keyword_search_papers 对齐：回收站（excluded）和未筛选的候选
@@ -1382,16 +1407,28 @@ async def semantic_search_papers(
             },
         )
     ).all()
-    if not rows:
+    return await _paper_views_for_scores(
+        session, library_ids, project_id, [(row.id, float(row.score)) for row in rows]
+    )
+
+
+async def _paper_views_for_scores(
+    session: AsyncSession,
+    library_ids: Sequence[uuid.UUID],
+    project_id: uuid.UUID | None,
+    hits: Sequence[tuple[Any, float]],
+) -> list[tuple[PaperView, float]]:
+    """按命中顺序把 (paper_id, 分数) 补成 (PaperView, 分数)。"""
+    if not hits:
         return []
-    scores = {row.id: float(row.score) for row in rows}
+    scores = dict(hits)
     pairs = dedupe_member_rows(
         (
             await session.execute(member_papers_stmt(library_ids).where(Paper.id.in_(list(scores))))
         ).all()
     )
     by_id = {p.id: PaperView(p, m, project_id) for p, m in pairs}
-    return [(by_id[pid], scores[pid]) for pid in (r.id for r in rows) if pid in by_id]
+    return [(by_id[pid], score) for pid, score in hits if pid in by_id]
 
 
 def rerank_document_of(paper: Any) -> str:

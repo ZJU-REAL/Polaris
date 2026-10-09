@@ -50,7 +50,7 @@ from app.models.topic_shelf import TopicPaper
 from app.models.user import User
 from app.models.vectors import PaperVector
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep
-from app.services import owner_settings, paper_wiki, user_library
+from app.services import owner_settings, paper_wiki, user_library, vector_search
 from app.services import projects as projects_service
 from app.services import topic_shelf as shelf_service
 from app.services.dedup import pool_dedup_key
@@ -1214,11 +1214,29 @@ async def semantic_search_daily(
     collected: bool = False,
     terms: list[str] | None = None,
 ) -> list[tuple[DailyFeedEntry, Paper, float]]:
-    """池内向量检索（pgvector 余弦；仅 postgres，调用方先判 semantic_search_supported）。
+    """池内向量检索（余弦）：postgres 上 pgvector 在 SQL 里排，其余方言 Python 侧打分。
 
     只召回**在给定空间下**已有向量的池论文，所以结果可能不全，调用方需要如实告知
     前端。筛选条件与关键词列表一致（日期/分类/公告类型/作者/机构）。
+    候选集是整个池（不按库圈定）——池受保留窗口约束，只有几千条，Python 打分也快。
     """
+    if terms is not None and not terms:
+        return []
+    if not vector_search.uses_pgvector(session):
+        return await _semantic_search_daily_in_python(
+            session,
+            query_vector=query_vector,
+            space=space,
+            limit=limit,
+            date=date,
+            category=category,
+            announce=announce,
+            author=author,
+            affiliation=affiliation,
+            library_id=library_id,
+            collected=collected,
+            terms=terms,
+        )
     where = ["v.space = :space"]
     params: dict[str, Any] = {
         "qv": json.dumps(query_vector),
@@ -1286,18 +1304,84 @@ async def semantic_search_daily(
             params,
         )
     ).all()
-    if not rows:
+    return await _daily_rows_for_scores(session, [(row.entry_id, float(row.score)) for row in rows])
+
+
+async def _semantic_search_daily_in_python(
+    session: AsyncSession,
+    *,
+    query_vector: list[float],
+    space: EmbeddingSpace,
+    limit: int,
+    date: dt.date | None,
+    category: str | None,
+    announce: str | None,
+    author: str | None,
+    affiliation: str | None,
+    library_id: uuid.UUID | None,
+    collected: bool,
+    terms: list[str] | None,
+) -> list[tuple[DailyFeedEntry, Paper, float]]:
+    """没有 pgvector 时的同口径实现：筛选条件逐条对应上面那条 SQL。"""
+    from app.services.papers import PAPER_STATUS_GROUPS
+
+    stmt = (
+        select(DailyFeedEntry.id, vector_search.raw_embedding(PaperVector.embedding))
+        .join(Paper, Paper.id == DailyFeedEntry.paper_id)
+        .join(PaperVector, PaperVector.paper_id == Paper.id)
+        .where(PaperVector.space == space.key)
+    )
+    if date is not None:
+        stmt = stmt.where(DailyFeedEntry.feed_date == date)
+    if announce in ("new", "cross"):
+        stmt = stmt.where(DailyFeedEntry.announce_type == announce)
+    if terms is not None:
+        stmt = _only_subscribed(stmt, terms)
+    if category:
+        stmt = stmt.where(
+            (DailyFeedEntry.primary_category == category)
+            | cast(DailyFeedEntry.categories, String).like(f'%"{category}"%')
+        )
+    if author:
+        stmt = stmt.where(cast(Paper.authors, String).ilike(f"%{author}%"))
+    if affiliation:
+        stmt = stmt.where(cast(Paper.affiliations, String).ilike(f"%{affiliation}%"))
+    if library_id is not None:
+        stmt = stmt.where(
+            Paper.id.in_(
+                select(LibraryPaper.paper_id).where(
+                    LibraryPaper.library_id == library_id,
+                    LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+                )
+            )
+        )
+    if collected:
+        stmt = stmt.where(
+            Paper.id.in_(
+                select(LibraryPaper.paper_id).where(
+                    LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"])
+                )
+            )
+        )
+    hits = await vector_search.search_statement(session, stmt, query_vector, limit)
+    return await _daily_rows_for_scores(session, hits)
+
+
+async def _daily_rows_for_scores(
+    session: AsyncSession, hits: list[tuple[Any, float]]
+) -> list[tuple[DailyFeedEntry, Paper, float]]:
+    """按命中顺序把 (entry_id, 分数) 补成 (条目, 论文, 分数)。"""
+    if not hits:
         return []
-    scores = {row.entry_id: float(row.score) for row in rows}
     pairs = (
         await session.execute(
             select(DailyFeedEntry, Paper)
             .join(Paper, Paper.id == DailyFeedEntry.paper_id)
-            .where(DailyFeedEntry.id.in_(list(scores)))
+            .where(DailyFeedEntry.id.in_([eid for eid, _ in hits]))
         )
     ).all()
     by_id = {entry.id: (entry, paper) for entry, paper in pairs}
-    return [(*by_id[eid], scores[eid]) for eid in (row.entry_id for row in rows) if eid in by_id]
+    return [(*by_id[eid], score) for eid, score in hits if eid in by_id]
 
 
 async def get_entry_item(
@@ -1812,9 +1896,7 @@ DEFAULT_SYNC_UTC = (1, 30)
 
 async def get_sync_time(session: AsyncSession) -> tuple[int, int]:
     """抓取时刻（UTC 时、分）。存量值非法时回落默认。"""
-    value = await owner_settings.read_setting(
-        session, SYNC_TIME_USER_KEY
-    )
+    value = await owner_settings.read_setting(session, SYNC_TIME_USER_KEY)
     if isinstance(value, str) and ":" in value:
         hh, _, mm = value.partition(":")
         try:
@@ -1832,9 +1914,7 @@ async def set_sync_time(
     if not (0 <= hour < 24 and 0 <= minute < 60):
         raise ValueError(f"invalid time: {hour}:{minute}")
     value = f"{hour:02d}:{minute:02d}"
-    await owner_settings.write_setting(
-        session, SYNC_TIME_USER_KEY, value, user=user
-    )
+    await owner_settings.write_setting(session, SYNC_TIME_USER_KEY, value, user=user)
     await session.commit()
     return hour, minute
 
@@ -2093,9 +2173,7 @@ DEFAULT_RETENTION_DAYS = 14
 
 async def get_retention_days(session: AsyncSession) -> int:
     """保留天数（默认 14）。存量值非法时回落默认。"""
-    value = await owner_settings.read_setting(
-        session, RETENTION_USER_KEY
-    )
+    value = await owner_settings.read_setting(session, RETENTION_USER_KEY)
     if isinstance(value, int) and 1 <= value <= 90:
         return value
     return DEFAULT_RETENTION_DAYS
@@ -2104,9 +2182,7 @@ async def get_retention_days(session: AsyncSession) -> int:
 async def set_retention_days(session: AsyncSession, days: int, *, user: User | None = None) -> int:
     if not (1 <= days <= 90):
         raise ValueError(f"retention out of range: {days}")
-    await owner_settings.write_setting(
-        session, RETENTION_USER_KEY, days, user=user
-    )
+    await owner_settings.write_setting(session, RETENTION_USER_KEY, days, user=user)
     await session.commit()
     return days
 
@@ -2128,17 +2204,13 @@ SYNC_SCOPES = ("since_last", "daily", "full")
 
 
 async def get_sync_scope(session: AsyncSession) -> str:
-    value = await owner_settings.read_setting(
-        session, SYNC_SCOPE_USER_KEY
-    )
+    value = await owner_settings.read_setting(session, SYNC_SCOPE_USER_KEY)
     return value if value in SYNC_SCOPES else DEFAULT_SYNC_SCOPE
 
 
 async def set_sync_scope(session: AsyncSession, scope: str, *, user: User | None = None) -> str:
     if scope not in SYNC_SCOPES:
         raise ValueError(f"unknown scope: {scope}")
-    await owner_settings.write_setting(
-        session, SYNC_SCOPE_USER_KEY, scope, user=user
-    )
+    await owner_settings.write_setting(session, SYNC_SCOPE_USER_KEY, scope, user=user)
     await session.commit()
     return scope

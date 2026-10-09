@@ -31,6 +31,9 @@ dependencies = [
     "python-pptx>=1.0",
     "pyyaml>=6.0",
     "tzdata>=2025.2",
+    # SQLite 上的语义检索在 Python 侧打余弦分（services/vector_search.py）；
+    # 缺了也能跑（退回纯 Python），只是慢一个数量级
+    "numpy>=1.26",
     # desktop 档位运行时依赖（POLARIS_PROFILE=desktop：SQLite + 进程内 redis 替身）
     "aiosqlite>=0.20",
     "fakeredis>=2.26",

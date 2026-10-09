@@ -1,8 +1,8 @@
 """检索不得返回回收站里的论文。
 
 删掉的论文又被搜出来，比搜不到更让人困惑——尤其它在列表里已经不见了。
-关键词路径能在 sqlite 上真跑；向量路径是 pgvector 裸 SQL，测试库是 sqlite，
-只能做源码级守卫（挡住有人把过滤删掉），这一点在下面的用例里写明。
+关键词路径在这里真跑；向量路径的 SQLite 实现在 test_sqlite_vector_search.py 里端到端
+验证，postgres 的 pgvector 裸 SQL 测试库跑不到，下面只做源码级守卫。
 """
 
 import inspect
@@ -80,7 +80,7 @@ async def test_keyword_chunk_search_skips_the_recycle_bin(client):
 
 
 def test_vector_search_paths_filter_the_recycle_bin():
-    """向量检索走 pgvector 裸 SQL，sqlite 测试库跑不到，这里做源码级守卫。
+    """postgres 分支是 pgvector 裸 SQL，sqlite 测试库跑不到，这里做源码级守卫。
 
     删掉任一处过滤，这条会失败——比没有守卫强，但它确实不是端到端验证。
     """

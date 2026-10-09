@@ -1,6 +1,6 @@
 """库级 agentic RAG（#644）：四件套逐环节确定性用例 + 端到端问答。
 
-sqlite 测试库没有 pgvector，检索走关键词降级路径——四件套的判定全都不依赖
+检索固定走关键词降级路径（见 ``_keyword_retrieval``）——四件套的判定全都不依赖
 向量相似度，语料按「哪条查询能命中哪篇论文」精确埋词：
 
 - 问题 "planning agent approaches" 只命中论文 A；
@@ -12,16 +12,27 @@ sqlite 测试库没有 pgvector，检索走关键词降级路径——四件套�
 import uuid
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
 from app.models.paper import PaperChunk
 from app.models.paper_citation import PaperCitation
+from app.services import chunks as chunks_service
 from app.services import library_rag
 from tests.conftest import add_paper, make_project_with_library, register_and_login
 
 QUESTION = "planning agent approaches"
 FAKE_EXPANSION_QUERY = "expansion probe query (fake)"
+
+
+@pytest.fixture(autouse=True)
+def _keyword_retrieval(monkeypatch):
+    """SQLite 上也有向量检索了（services/vector_search.py），而 fake 嵌入下每篇论文都有
+    向量，首轮就会把整库召回、扩展和引文补召回无从验证。这里的用例测的是流水线的
+    分轮逻辑，不是向量排序，所以把检索钉在可精确控制命中的关键词路径上。"""
+    monkeypatch.setattr(chunks_service, "chunk_vector_search_supported", lambda session: False)
+
 
 # 每篇正文只含「自己该被谁命中」的词，互不串词（fake/query 等词也都只出现在 B）
 BODY_A = "planning agent approaches with tree search. " + "规划方法的细节论述。" * 60

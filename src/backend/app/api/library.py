@@ -76,7 +76,7 @@ async def list_library(
     user: User = Depends(current_active_user),
 ) -> LibraryPage:
     # 语义检索：仅「我的收藏」tab 有意义（浏览记录不做语义），候选=本人收藏且有向量的论文。
-    # embed/rerank 记个人账（无课题上下文）；非 postgres / provider 不支持 → 回退关键词。
+    # embed/rerank 记个人账（无课题上下文）；provider 不支持 → 回退关键词。
     if (
         mode == "semantic"
         and tab == "saved"

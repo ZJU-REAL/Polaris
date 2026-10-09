@@ -18,8 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.evidence import PaperEvidenceAnchor
 from app.models.library_direction import LibraryPaper
 from app.models.paper_assets import AssetGrant
-from app.models.paper_content import PaperContentChunk, PaperContentVersion
+from app.models.paper_content import (
+    PaperContentChunk,
+    PaperContentChunkVector,
+    PaperContentVersion,
+)
 from app.schemas.evidence import EvidenceResolution
+from app.services import vector_search
 
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?。！？])(?:[\"'”’»\)\]]+)?\s+|\n+")
 _JOINED_HYPHEN = "\ufff0"
@@ -433,7 +438,9 @@ class FulltextChunkHit:
 
 
 def fulltext_vector_search_supported(session: AsyncSession) -> bool:
-    return session.get_bind().dialect.name == "postgresql"
+    """版本化全文向量检索可用吗：postgres 走 pgvector，其余方言在 Python 侧打分。"""
+    del session
+    return True
 
 
 def _library_scope_exists(library_ids: Sequence[uuid.UUID]):
@@ -515,6 +522,33 @@ async def semantic_search_current_fulltext(
     """Search current full-text vectors with permission checks in correlated EXISTS."""
     if not library_ids or not fulltext_vector_search_supported(session):
         return []
+    if not vector_search.uses_pgvector(session):
+        # 同一套权限过滤（当前版本 + 就绪状态 + 库成员 + 资产授权），Python 侧打分
+        candidates = (
+            select(
+                PaperContentChunkVector.chunk_id,
+                PaperContentVersion.paper_id,
+                vector_search.raw_embedding(PaperContentChunkVector.embedding),
+            )
+            .join(PaperContentChunk, PaperContentChunk.id == PaperContentChunkVector.chunk_id)
+            .join(
+                PaperContentVersion,
+                PaperContentVersion.id == PaperContentChunk.content_version_id,
+            )
+            .where(
+                PaperContentChunkVector.space == space_key,
+                PaperContentVersion.is_current.is_(True),
+                PaperContentVersion.status.in_(_READY_CONTENT_STATUSES),
+                _library_scope_exists(library_ids),
+                _asset_grant_exists(library_ids),
+            )
+        )
+        hits = await vector_search.search_statement(
+            session, candidates, query_vector, max(1, limit)
+        )
+        return await _fulltext_hits_for_scores(
+            session, [(chunk_id, paper_id, score) for (chunk_id, paper_id), score in hits]
+        )
     from app.services.papers import PAPER_STATUS_GROUPS
 
     rows = (
@@ -547,24 +581,32 @@ async def semantic_search_current_fulltext(
             },
         )
     ).all()
-    if not rows:
+    return await _fulltext_hits_for_scores(
+        session, [(row.id, row.paper_id, float(row.score)) for row in rows]
+    )
+
+
+async def _fulltext_hits_for_scores(
+    session: AsyncSession, hits: Sequence[tuple[uuid.UUID, uuid.UUID, float]]
+) -> list[FulltextChunkHit]:
+    """按命中顺序把 (chunk_id, paper_id, 分数) 补成 FulltextChunkHit。"""
+    if not hits:
         return []
-    scores = {row.id: float(row.score) for row in rows}
-    paper_ids = {row.id: row.paper_id for row in rows}
+    chunk_ids = [chunk_id for chunk_id, _, _ in hits]
     chunks = list(
-        (await session.execute(select(PaperContentChunk).where(PaperContentChunk.id.in_(scores))))
+        (
+            await session.execute(
+                select(PaperContentChunk).where(PaperContentChunk.id.in_(chunk_ids))
+            )
+        )
         .scalars()
         .all()
     )
     by_id = {chunk.id: chunk for chunk in chunks}
     return [
-        FulltextChunkHit(
-            chunk=by_id[row.id],
-            paper_id=paper_ids[row.id],
-            score=scores[row.id],
-        )
-        for row in rows
-        if row.id in by_id
+        FulltextChunkHit(chunk=by_id[chunk_id], paper_id=paper_id, score=score)
+        for chunk_id, paper_id, score in hits
+        if chunk_id in by_id
     ]
 
 

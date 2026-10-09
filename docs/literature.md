@@ -218,10 +218,11 @@ with a PDF export.
 - **The global palette** (⌘K) searches the current topic across papers, concepts, ideas,
   experiments, tasks, and drafts — keyword only, no model call.
 
-::: warning Semantic search needs PostgreSQL
-Semantic mode requires pgvector, i.e. the standard Docker deployment. On other database backends the
-toggle silently falls back to keyword matching, and the UI shows a "fell back to keyword matching"
-banner.
+::: tip Semantic search works on every database
+On PostgreSQL the ranking runs in pgvector; on SQLite (the local engine) the candidates are narrowed
+in SQL with the same filters and scored in Python. Semantic mode falls back to keyword matching only
+when no embedding model is configured or the embedding call fails, and the UI then shows a "fell
+back to keyword matching" banner.
 :::
 
 ## Research digests

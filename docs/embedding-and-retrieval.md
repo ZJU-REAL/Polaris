@@ -102,13 +102,17 @@ In summary:
 
 ## Retrieval
 
-All five pgvector queries join the vector side table and filter `WHERE v.space = :space`; the query
+All vector queries join the vector side table and filter `WHERE v.space = :space`; the query
 vector passed in must come from that same space (`embed_query` returns the pair together, so callers
 cannot mismatch them by accident).
 
-Postgres with pgvector is required for vector search: `semantic_search_supported(session)` and
-`chunk_vector_search_supported(session)` return true only on `postgresql`. On SQLite (tests / no
-pgvector) every path **degrades gracefully to keyword or summary retrieval** and never raises.
+Vector search works on both databases. On PostgreSQL each query ranks in SQL with pgvector's `<=>`
+cosine distance. On SQLite the `embedding` column is JSON, so each query selects the same candidate
+set in SQL (active space, library membership and status group, paper / date / category filters) and
+`services/vector_search.py` scores it in Python: cosine similarity (= 1 − cosine distance), highest
+first, each id counted once, top-`limit`. Rows are streamed in batches; rows with the wrong
+dimension, malformed JSON, non-finite values or a zero norm are skipped. Candidate sets are always
+scoped to a library, a paper set or the daily pool — never the whole vector table.
 
 ### Paper-level semantic search
 
@@ -135,8 +139,7 @@ own pgvector query over the right candidate set. Two exist:
   honoring the date / category / announce filters, then reranks. It returns `mode_used` plus
   `vector_ready` / `vector_total` so the UI can state honestly how much of the pool is embedded.
 
-Every semantic path falls back to keyword when pgvector is unavailable or the provider cannot embed,
-reporting `mode_used="keyword"` rather than failing.
+Every semantic path falls back to keyword when the provider cannot embed, reporting `mode_used="keyword"` rather than failing.
 
 **Citation export** follows the same per-collection scoping: `papers_for_export` (project),
 `papers_for_library_export`, `papers_for_personal_export` (caller's saved papers), and
@@ -149,8 +152,8 @@ The literature-chat surfaces (direction-library chat, course related-work chat, 
 chat, daily-feed chat) all build their context through `library_chat.py`, which retrieves passages
 with a **graded fallback** (`_retrieve_chunks`) so any failure degrades instead of erroring:
 
-1. **Chunk vector search** (`semantic_search_chunks`, pgvector, scoped to the given `paper_ids` or
-   library) — the primary path when chunks + pgvector are available.
+1. **Chunk vector search** (`semantic_search_chunks`, scoped to the given `paper_ids` or library) —
+   the primary path when chunks have vectors.
 2. **Chunk keyword search** (`keyword_search_chunks`, `ILIKE` over chunk text) — when vectors are
    unavailable or fail.
 3. **Summary fallback** — when no chunks are retrieved at all, feed the papers' `tldr` / abstract
@@ -181,7 +184,8 @@ is shared by the shelf, personal-library and daily chats and changing it must no
   daily paper into a library skips the embed step and only does the missing work.
 - **Opt-in for the expensive part.** Chunk embeddings (and daily embeddings) are the token-heavy
   pieces, so they are gated behind explicit settings rather than run for every paper.
-- **Postgres for vectors, graceful degradation elsewhere.** Vector search needs pgvector; without it,
-  search and chat fall back to keyword / summary retrieval and stay functional.
+- **Same results on every database.** pgvector ranks in SQL on PostgreSQL; SQLite filters in SQL and
+  scores in Python with the same semantics. Without an embedding model, search and chat fall back to
+  keyword / summary retrieval and stay functional.
 - **Honest coverage.** Index-build endpoints report `indexed` / `skipped (no full text)` so users can
   see that a fast build skipped most papers rather than silently indexing "everything".
