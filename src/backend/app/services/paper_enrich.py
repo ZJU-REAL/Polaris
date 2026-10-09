@@ -163,9 +163,12 @@ async def enrich_paper(
     from app.services.literature import sources as literature_sources
     from app.services.literature.pdf_extract import extract_full_text, save_pdf
 
-    # 先固定 id：rollback 会让 ORM 对象过期，之后再同步读其属性会触发意外 IO
+    # 先固定要用的值：任何一步失败都会 rollback，rollback 让会话里**所有** ORM 对象过期
+    # （paper 之外还有 target），之后再同步读其属性就是异步会话里的惰性加载 →
+    # MissingGreenlet。paper 由 _rollback_and_reload 重新取回；target 只读这两个字段。
     paper_id = paper.id
     target_id = target.id if target is not None else None
+    target_discipline = target.discipline if target is not None else None
 
     async def _rollback_and_reload() -> Paper:
         """回滚失败事务并重新取回附着的 paper（rollback 会过期原实例）。"""
@@ -311,7 +314,7 @@ async def enrich_paper(
     method_extracted = False
     # 内置 schema 对所有论文都抽；学科 schema 只在声明了该学科的库里抽（#754 后续：
     # 学科包）。装一个学科包不该让别的学科的论文也多跑一次抽取。
-    for schema in schemas_for(getattr(target, "discipline", None)):
+    for schema in schemas_for(target_discipline):
         try:
             outcome = await extract_paper(
                 session,
@@ -445,7 +448,7 @@ async def enrich_paper(
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
-                logger.warning("enrich score failed for paper %s", paper.id, exc_info=True)
+                logger.warning("enrich score failed for paper %s", paper_id, exc_info=True)
                 await emit("score", "error", f"{type(e).__name__}: {e}")
 
 

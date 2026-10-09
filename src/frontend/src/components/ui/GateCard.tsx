@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Icon } from './Icon';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { useProject } from '../../app/project';
 import type { GateDecision, GateRead } from '../../lib/api';
 
 const GATE_KIND: Record<string, { zh: string; en: string }> = {
@@ -222,6 +223,10 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
   const structured = isGoal || isPivot;
   const lines = structured ? [] : payloadLines(g.payload);
   const desc = structured ? null : gateDesc(g);
+  // 审批中心是全局的（所有课题的审批都在这里）：别的课题的审批标上课题名，
+  // 免得和当前课题概况里的待处理数对不上还看不出是哪个课题的
+  const { projects, currentProjectId } = useProject();
+  const topicName = g.project_id !== currentProjectId ? projects.find((p) => p.id === g.project_id)?.name : undefined;
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
       <div
@@ -258,6 +263,7 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
         <div style={{ fontSize: 13, fontWeight: 600 }}>{gateTitle(g)}</div>
         <div className="row gap8" style={{ marginTop: 5 }}>
           <span className="muted" style={{ fontSize: 'var(--fs-sm)' }}>{fmtTime(g.created_at)}</span>
+          {topicName && <span className="muted" style={{ fontSize: 'var(--fs-sm)' }}>· {topicName}</span>}
         </div>
       </div>
       {expanded && (

@@ -257,10 +257,15 @@ export function WriterEditorPage() {
   });
   const ms = detailQuery.data;
 
-  // AI 起草实时相位（AppShell 从 WS manuscript.ai_writing 写入缓存；无网络请求）
+  // AI 起草实时相位（AppShell 从 WS manuscript.ai_writing 写入缓存；无网络请求）。
+  // 这是个只订阅缓存的查询：queryFn 只回读缓存里已有的值，不能省——省掉的话 react-query
+  // 每次渲染都在控制台报「No queryFn was passed」，而且万一被 refetch 就会以
+  // 「Missing queryFn」失败。
   const { data: aiWriting } = useQuery<AiWritingState | null>({
     queryKey: ['ai-writing', id],
+    queryFn: () => queryClient.getQueryData<AiWritingState | null>(['ai-writing', id]) ?? null,
     enabled: false,
+    staleTime: Infinity,
     initialData: null,
   });
 
