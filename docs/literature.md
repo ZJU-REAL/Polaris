@@ -86,8 +86,8 @@ direction:
 
 **Daily Papers** is the deployment-wide feed of each day's new arXiv announcements (`new` and `cross`
 listings) in the categories an admin subscribes. There is no default subscription — until categories
-are added in Settings the feed stays empty and the page says so. A worker probes
-arXiv from a configurable time each day (default 01:30 UTC) until the day's batch actually appears;
+are added in Settings the feed stays empty and the page says so. While the app is running, the
+engine scheduler probes arXiv from a configurable time each day (default 01:30 UTC) until the day's batch actually appears;
 weekends show as quiet because arXiv does not publish. Feed papers enter the content pool as
 lightweight rows — metadata and abstract, no PDF, no LLM cost — and get embeddings so semantic
 search works over them immediately.
@@ -218,11 +218,10 @@ with a PDF export.
 - **The global palette** (⌘K) searches the current topic across papers, concepts, ideas,
   experiments, tasks, and drafts — keyword only, no model call.
 
-::: tip Semantic search works on every database
-On PostgreSQL the ranking runs in pgvector; on SQLite (the local engine) the candidates are narrowed
-in SQL with the same filters and scored in Python. Semantic mode falls back to keyword matching only
-when no embedding model is configured or the embedding call fails, and the UI then shows a "fell
-back to keyword matching" banner.
+::: tip Semantic search
+Candidates are narrowed in SQL with the active filters and scored by cosine similarity in Python.
+Semantic mode falls back to keyword matching only when no embedding model is configured or the
+embedding call fails, and the UI then shows a "fell back to keyword matching" banner.
 :::
 
 ## Research digests

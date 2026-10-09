@@ -106,9 +106,8 @@ All vector queries join the vector side table and filter `WHERE v.space = :space
 vector passed in must come from that same space (`embed_query` returns the pair together, so callers
 cannot mismatch them by accident).
 
-Vector search works on both databases. On PostgreSQL each query ranks in SQL with pgvector's `<=>`
-cosine distance. On SQLite the `embedding` column is JSON, so each query selects the same candidate
-set in SQL (active space, library membership and status group, paper / date / category filters) and
+Vectors live in SQLite's `embedding` column as JSON. Each query selects its candidate set in SQL
+(active space, library membership and status group, paper / date / category filters) and
 `services/vector_search.py` scores it in Python: cosine similarity (= 1 − cosine distance), highest
 first, each id counted once, top-`limit`. Rows are streamed in batches; rows with the wrong
 dimension, malformed JSON, non-finite values or a zero norm are skipped. Candidate sets are always

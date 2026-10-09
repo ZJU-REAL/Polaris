@@ -1,10 +1,11 @@
 # Desktop client (Electron shell)
 
-The desktop app is Polaris's primary form: an **offline, single-machine build**. The packaged
-app ships its own Python backend and boots it locally on first launch — no Docker, no Postgres,
-no Redis, no account, no server address. Sign-in does not exist in this form: the backend runs
-with `POLARIS_PROFILE=desktop` and the frontend silently adopts a local session (the machine's
-owner is their own admin).
+The desktop app is the only form Polaris ships in: an **offline, single-machine build**. The
+packaged app ships its own Python backend — the engine — and boots it locally on first launch: no
+Docker, no database server, no Redis, no account, no server address. Sign-in does not exist: the
+frontend silently adopts a local session, and whoever uses the app is the owner. The engine is one
+process with SQLite, an in-process task queue, and an in-process scheduler (see
+[Architecture](architecture.md)).
 
 > [!NOTE]
 > The local engine first shipped in **v0.4.0**. Releases up to v0.3.9 are remote-only shells that
@@ -12,9 +13,10 @@ owner is their own admin).
 > install v0.4.0 or later from [Releases](https://github.com/ZJU-REAL/Polaris/releases/latest) over
 > the old app.
 
-Connecting to a remote multi-user server is still supported: whenever no local engine is
-available (or the bootstrap fails), the renderer falls back to the classic
-"shell plus a remote server" flow, with all heavy state on the server.
+When no local engine is available (the bootstrap failed, or a development run without
+`POLARIS_DESKTOP_ENGINE`), the renderer shows a server-address page instead. That page is left over
+from the retired server form (#842); there are no new Polaris servers to point it at, so treat it as
+a sign that the engine did not start.
 
 The code lives in `src/desktop/`, a sibling of `src/frontend` and `src/backend` with its own
 `package.json` (one pnpm workspace at the repo root).
@@ -31,14 +33,11 @@ Main (shell and arbitration: window, menu, protocol, config)
        ├─ Loader + SqliteTree   mounts plugins from the persisted config tree
        └─ legacy-engine  spawns the local Python backend and health-checks it
             → http://127.0.0.1:18080 — the full FastAPI backend, run locally:
-              uv-bootstrapped venv, SQLite database, in-process task queue,
-              POLARIS_PROFILE=desktop (no external services, no login)
-
-Remote server (api / worker / postgres / redis) — the fallback path, reached
-directly by the renderer when no local engine is up (or one is configured away)
+              uv-bootstrapped venv, SQLite database, in-process task queue
+              and scheduler (no external services, no login)
 ```
 
-**The renderer talks to the backend over HTTP in both forms; main never proxies the API.** The
+**The renderer talks to the engine over HTTP; main never proxies the API.** The
 local engine is a real HTTP server on loopback, so `lib/api.ts`, `lib/sse.ts` and `lib/ws.ts`
 work against it unchanged. The moment main starts proxying, SSE streaming, WebSocket upgrades,
 blob streams and token handling all have to be reimplemented there. The shell exists to *add*
@@ -65,8 +64,8 @@ computed fresh on every launch and injected in memory only — the tree stores t
 2. **Packaged auto-bootstrap** — when the app is packaged and no env is set, the installer's own
    resources bootstrap a local environment (next section). The user's machine needs neither
    Python nor Docker.
-3. **Neither** (development, no env) — the entry stays disabled and the app follows the
-   remote-server flow.
+3. **Neither** (development, no env) — the entry stays disabled and no engine starts; the app
+   shows the leftover server-address page.
 
 ## First launch: bootstrap and the progress page
 
@@ -85,15 +84,14 @@ later launch skip the whole sequence at the cost of a few file reads.
 
 The window opens **before** the kernel starts: a first-launch waiting page polls
 `kernel.engineBootstrapStatus` and shows the phase (`check` / `python` / `venv` / `install` /
-`engine` / `ready`; `idle` means the embedded path was not taken, `failed` means it was and fell
-back to the remote flow). The first run downloads the Python toolchain and dependencies, which
+`engine` / `ready`; `idle` means the embedded path was not taken, `failed` means it was and did not
+finish). The first run downloads the Python toolchain and dependencies, which
 can take minutes; after that, startup cost is zero.
 
 Every engine start runs `alembic upgrade head` under a **migration guard**: a non-empty database
 is snapshotted to `engine/snapshots/<timestamp>/` first, a failed migration restores the
 snapshot before re-raising, and only the last 3 snapshots are kept. A failed bootstrap or engine
-start never blocks the window — it logs, reports `failed`, and the renderer falls back to the
-remote-server flow.
+start never blocks the window — it logs and reports `failed`.
 
 ## Where the data lives
 
@@ -104,7 +102,7 @@ Everything is under Electron's `userData` directory; uninstalling the app and de
 |---|---|
 | `userData/kernel/storage.db` | The kernel's SQLite store: plugin config tree, install records |
 | `userData/engine/` | Managed Python, venv, uv cache — the bootstrapped runtime |
-| `userData/engine/polaris.db` | The backend's SQLite database (system of record in desktop form) |
+| `userData/engine/polaris.db` | The engine's SQLite database (the system of record) |
 | `userData/engine/snapshots/` | Pre-migration database snapshots (last 3) |
 | `userData/engine/data/` | User files: PDFs, exports, experiment logs (`POLARIS_DATA_DIR`) |
 | `userData/engine/data/workspace/` | The **file projection**: a continuously refreshed, read-only copy of your papers (`papers/`), notes (`notes/`), and library wikis (`wiki/`, an Obsidian vault). The database is the source of truth — edits here are not written back and are overwritten on the next change. |
@@ -158,7 +156,7 @@ was removed once the kernel landed (#731).
 Every frontend decision about local-versus-remote reads the capability manifest
 (`host.capabilities`). **Do not branch on the platform or on a version number.** A declared
 capability that is unavailable at call time fails with `ERR_CAPABILITY_UNAVAILABLE` and the
-frontend falls back to the server; `plugins.manage` is the first capability that is actually
+frontend falls back to the engine; `plugins.manage` is the first capability that is actually
 `true` (it tracks whether the kernel's config tree is reachable), while `latex.compile`
 still reports unavailable (the tectonic probe already runs, the implementation does not
 exist yet).
@@ -203,12 +201,13 @@ cd src/desktop && pnpm run smoke   # loads the SPA for real; non-zero exit means
 make desktop-dist          # stage uv + backend, build an installer (unsigned)
 ```
 
-In development the shell starts with **no local engine** by default and follows the
-remote-server flow; set `POLARIS_DESKTOP_ENGINE` (either form above) to exercise the local
-engine chain. The packaged app boots its own engine, so it asks for nothing on first launch;
-the server-address page appears only when no local engine came up. For internal server-mode
-distribution, `POLARIS_DEFAULT_SERVER_URL` pre-fills the address so no internal address has to
-be committed. The server can be changed later from the Server… menu item (Cmd+,).
+In development the shell starts with **no local engine** by default; set
+`POLARIS_DESKTOP_ENGINE` (either form above) to exercise the local engine chain. The quickest
+way is `command:` pointing at a backend you run from source, or `docker:` with the dev/test
+engine image (`make engine-image` builds `polaris-api-test:local`; see
+[Development](development.md#the-engine-image-for-tests)). The smoke and E2E engine groups use
+that image too (`POLARIS_SMOKE_ENGINE=1`, `POLARIS_E2E_ENGINE=1`). The packaged app boots its own
+engine, so it asks for nothing on first launch.
 
 CI covers both: `desktop-build.yml` runs the smoke test on pull requests that touch the
 frontend or the shell, and `desktop-release.yml` builds all three platforms on a `v*` tag
@@ -261,12 +260,8 @@ the client whether its preload is new enough to run it; see `src/desktop/src/mai
 
 ## Backend side
 
-The production CORS whitelist always includes `app://polaris` — it is a constant
-(`DESKTOP_ORIGIN` in `src/backend/app/main.py`), not something to configure per deployment;
-`POLARIS_CORS_ORIGINS` only adds further origins for deployments where the web frontend
-lives on a different domain. The whitelist matters because every desktop request carries an
-`Authorization` header, so every request triggers a preflight, and with an empty
-`allow_origins` Starlette answers those preflights with 400. This cannot be worked around on
-the client — injecting response headers cannot change a status code.
-
-For server deployment topics see `docs/deployment.md`.
+The engine's CORS whitelist always includes `app://polaris` — it is a constant (`DESKTOP_ORIGIN` in
+`src/backend/app/main.py`), not something to configure. The whitelist matters because every
+desktop request carries an `Authorization` header, so every request triggers a preflight, and with
+an empty `allow_origins` Starlette answers those preflights with 400. This cannot be worked around
+on the client — injecting response headers cannot change a status code.

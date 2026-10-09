@@ -63,7 +63,6 @@ export default withMermaid(
                   { text: 'Introduction', link: '/docs/' },
                   { text: 'Getting started', link: '/docs/getting-started' },
                   { text: 'Configuration', link: '/docs/configuration' },
-                  { text: 'Deployment', link: '/docs/deployment' },
                   { text: 'Development', link: '/docs/development' },
                   { text: 'Desktop app', link: '/docs/desktop' },
                   { text: 'Plugins', link: '/docs/plugins' },

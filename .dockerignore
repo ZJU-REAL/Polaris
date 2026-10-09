@@ -1,6 +1,6 @@
-# Docker 构建上下文过滤（compose 里 context: 仓库根）。
+# Docker 构建上下文过滤（make engine-image 以仓库根为 context；只用于开发/测试引擎镜像）。
 # 目的：① 绝不把机密带进公开镜像；② 大幅缩小上传给 daemon 的上下文。
-# 说明：Dockerfile 的 COPY 只取 src/backend、src/frontend；此文件是显式加固，
+# 说明：Dockerfile.api 的 COPY 只取 src/backend；此文件是显式加固，
 #       防止有人误加 COPY 或往子目录里丢机密文件时静默泄露。
 
 # ---- 机密：任何情况都不许进镜像 ----

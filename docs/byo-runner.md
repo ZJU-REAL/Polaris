@@ -88,7 +88,7 @@ $ python agent.py register --server https://polaris.example --token prt_…
    携 token + name + machine 自述信息）
 ```
 
-- token 是随机串 + Redis TTL，GETDEL 原子消费：**用后即焚**，重放/过期一律
+- token 是随机串 + Redis TTL（引擎内的进程内 Redis 替身，重启即失效），GETDEL 原子消费：**用后即焚**，重放/过期一律
   401（不区分原因）；
 - 注册成功 = 自动创建 `host` 类 Resource（与 tier-1 同一张表，租约语义共用），
   `config.transport = "websocket"`、`config.machine` 存 agent 自述信息；
@@ -108,14 +108,13 @@ agent → wss://polaris.example/ws/runner-agents/connect
 ```
 
 - 鉴权走**首消息**而非 Authorization header/query：长期 secret 不进 URL 与
-  各级访问日志；失败以 4401 关闭。WS 路径不挂 `/api` 前缀（nginx 按 `/ws`
-  反代 Upgrade，与现有 WS 端点一致）；
+  各级访问日志；失败以 4401 关闭。WS 路径不挂 `/api` 前缀（与现有 `/ws` 端点一致）；
 - 在线判定：连接即在线（`config.agent_online`，连接边沿写库），90 秒收不到
   任何帧（含心跳）判离线并以 4408 关闭；
 - 派发座 `dispatch_task(resource_id, payload) → task_id`：任务先进 Redis
   队列（**离线排队**，TTL 1 小时兜底），再 publish 唤醒在线连接——在线即推、
-  离线排队、断线重连补投同一条路径；worker 进程也可经 Redis 向 API 进程的
-  连接派发；
+  离线排队、断线重连补投同一条路径；后台任务与 API 同在引擎进程内，
+  同样经这条路径派发（#842 起没有独立 worker 进程）；
 - 事件回传落专用 Redis 记录（`runner:task:{id}:events` 回放 list + 实时频道，
   同 paper-task 的「先回放后实时」模式但独立 key 空间），runner v2 接线时
   消费。seq/ack 断点续传（不丢不重的强保证）归接线 PR，当前档位：任务未投递

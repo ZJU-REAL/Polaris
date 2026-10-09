@@ -1,34 +1,35 @@
 # Architecture
 
 This is a conceptual overview of how Polaris is put together. For the concepts a user works with
-(the pipeline stages, Voyages, skills, tools), see [Core Concepts](concepts.md). For running the
-system, see [Getting Started](getting-started.md) and [Deployment](deployment.md).
+(the pipeline stages, Voyages, skills, tools), see [Core Concepts](concepts.md). For installing and
+running it, see [Getting Started](getting-started.md) and [Desktop](desktop.md).
 
-## One codebase, two forms
+## One form: the desktop app and its local engine
 
-The same backend and frontend ship in two forms:
+Polaris ships as a desktop app only. The Electron app hosts a plugin kernel (`@polaris/kernel`, a
+cordis runtime) in its main process; the kernel's `legacy-engine` plugin bootstraps and supervises
+the FastAPI backend as a **single local process** — the engine. The engine keeps everything in one
+process on the user's computer:
 
-- **Desktop (primary)** — the Electron app hosts a plugin kernel (`@polaris/kernel`, a cordis
-  runtime) in its main process; the kernel's `legacy-engine` plugin bootstraps and supervises the
-  same FastAPI backend as a **single local process** (`POLARIS_PROFILE=desktop`): SQLite instead
-  of Postgres, an in-process task queue instead of Redis + a separate ARQ worker, and a local
-  session instead of login. See [Desktop](desktop.md).
-- **Server** — the multi-user deployment described in the rest of this page: separate API, worker,
-  Postgres, and Redis processes behind nginx.
+- **SQLite** as the database;
+- an **in-process task queue** for long tasks;
+- an **in-process stand-in for Redis** (fakeredis) for pub/sub, the event streams, and small caches;
+- an **in-process scheduler** for periodic jobs;
+- a **local session** instead of a login: whoever uses the app is the owner.
 
-Everything below about layers, the LLM boundary, the task engine, and real-time channels holds in
-both forms; only the process topology and the stores differ.
+No database server, broker, or worker process runs next to it. See [Desktop](desktop.md) for how the
+app sets the engine up and where the data lives. (Earlier releases also ran as a multi-user server
+with separate API, worker, Postgres, and Redis processes; that form was retired in #842.)
 
 ## The big picture
 
-Polaris is a monorepo with three parts:
+Polaris is a monorepo with these parts:
 
-- A React + Vite frontend that talks to the backend over REST (OpenAPI), Server-Sent Events (SSE),
-  and WebSocket.
-- A fully async FastAPI backend organized in strict layers, plus an ARQ worker that runs every long
-  task off the request thread.
-- PostgreSQL (with the pgvector extension) as the system of record, and Redis as the task broker and
-  cache.
+- A React + Vite frontend that talks to the engine over REST (OpenAPI), Server-Sent Events (SSE),
+  and WebSocket, on the loopback address.
+- The engine: a fully async FastAPI backend organized in strict layers, which runs long tasks on its
+  in-process queue, off the request path.
+- The Electron shell and the plugin kernel that start the engine and host plugins.
 
 ```mermaid
 flowchart TB
@@ -40,33 +41,26 @@ flowchart TB
     UI -- "SSE (agent streaming, Voyage progress)" --> API
     UI -- "WebSocket (discussion, approvals, logs, co-editing)" --> API
 
-    subgraph backend["Backend (FastAPI, fully async)"]
+    subgraph engine["Engine (one local process: FastAPI, fully async)"]
       API["api/  thin routers"]
       SVC["services/  business logic"]
       MODELS["models/  SQLAlchemy 2"]
-      CORE["core/  config, db, redis, queue, events, security, llm/"]
+      CORE["core/  config, db, queue, scheduler, events, security, llm/"]
       TOOLS["tools/  read-only tool registry"]
       MCP["mcp/  external MCP server"]
+      TASKS["Long tasks (in-process queue)\nVoyage engine: Navigator / Helm / Sextant\nliterature ingest, idea forge,\nreview debate, LaTeX compile"]
       API --> SVC --> MODELS
       SVC --> CORE
       SVC --> TOOLS
       TOOLS --> MCP
+      API -- "enqueue" --> TASKS
+      TASKS --> SVC
     end
 
-    subgraph worker["ARQ Worker (Redis broker)"]
-      VOY["Voyage engine\nNavigator / Helm / Sextant"]
-      PIPE["Pipelines: literature ingest,\nidea forge, review debate,\nLaTeX compile"]
-    end
-
-    API -- "enqueue long tasks" --> REDIS[("Redis 7")]
-    REDIS --> worker
-    SVC --> PG[("PostgreSQL 16\n+ pgvector")]
-    worker --> PG
-    worker --> CORE
-
-    CORE -- "core/llm abstraction" --> LLM["LLM providers\n(OpenAI-compatible, Anthropic)"]
-    PIPE -- "asyncssh (whitelisted, audited writes)" --> GPU["GPU servers"]
-    PIPE -- "httpx" --> LIT["arXiv, Semantic Scholar, OpenAlex"]
+    MODELS --> DB[("SQLite")]
+    CORE -- "core/llm abstraction" --> LLM["Agent backends (ACP)\nor model APIs"]
+    TASKS -- "asyncssh (whitelisted, audited writes)" --> GPU["GPU servers"]
+    TASKS -- "httpx" --> LIT["arXiv, Semantic Scholar, OpenAlex"]
     MCP -- "Streamable HTTP / stdio" --> EXT["Claude Code, Codex, Cursor"]
 ```
 
@@ -74,63 +68,79 @@ flowchart TB
 
 The backend follows one strict rule: `api/` (thin routers) then `services/` (business logic) then
 `models/` (SQLAlchemy). Routers hold no business logic, and services never import FastAPI. This keeps
-the HTTP surface thin and makes the business logic reusable from both request handlers and worker
-tasks.
+the HTTP surface thin and makes the business logic reusable from both request handlers and
+background tasks.
 
-- `api/` exposes REST endpoints (all under `/api`), authenticated with JWT via fastapi-users, with
-  invite-code registration. Project-scoped endpoints verify ownership.
+- `api/` exposes REST endpoints (all under `/api`), authenticated with JWT via fastapi-users; the
+  frontend fetches a local session from the engine, so there is nothing to type in. Project-scoped
+  endpoints verify ownership.
 - `services/` holds the actual work: literature ingest, wiki compilation, idea forge, review, SSH
   experiment execution, manuscript editing and compilation, skills, and so on.
-- `models/` holds the SQLAlchemy 2 models. Migrations are managed with Alembic.
-- `core/` holds cross-cutting infrastructure: configuration, the database and Redis clients, the ARQ
-  queue, the SSE event bus, Fernet-based security, and the LLM abstraction layer.
+- `models/` holds the SQLAlchemy 2 models. Migrations are managed with Alembic; the desktop app
+  applies them every time it starts the engine.
+- `core/` holds cross-cutting infrastructure: configuration, the database, the in-process Redis
+  stand-in, the task queue, the scheduler, the SSE event bus, Fernet-based security, and the LLM
+  abstraction layer.
+- `worker/tasks.py` (a separate package for historical reasons) holds the long-task functions the
+  queue runs.
 
-## The ARQ worker and long tasks
+## Long tasks and periodic jobs
 
 Research tasks are long-running by nature: a cold-start literature backfill takes hours, an experiment
-runs for days. Nothing long happens in the request thread. Instead the API enqueues work onto ARQ
-(with Redis as the broker) and the worker process runs it. The worker hosts:
+runs for days. Nothing long happens in the request handler. Instead the API enqueues work onto the
+in-process task queue (`app/core/queue.py`), which runs it as a background task in the same process.
+Long tasks include:
 
 - The Voyage engine (Navigator / Helm / Sextant), described in [Core Concepts](concepts.md).
 - Deterministic pipelines: literature ingest, idea forge, review debate, and LaTeX compilation.
-- The SSH executor that reaches the lab's GPU servers via asyncssh.
+- The SSH executor that reaches GPU servers via asyncssh.
 
-Because Voyages persist their state, a worker that restarts mid-run resumes from its last checkpoint
-after a health check rather than starting over.
+The engine scheduler (`app/core/scheduler.py`) runs the periodic jobs while the app is open: the
+daily paper sync, scheduled literature discovery, publication matching, recovery of stale runs, and
+a watchdog for remote commands nobody answered — each every few minutes, and each deciding for itself
+whether it is due. Once at startup it also re-queues runs a crash or quit left in flight. A job never
+overlaps itself, and a failure is logged without stopping its loop.
+
+Because Voyages persist their state, a run cut off by a crash or by quitting the app resumes from its
+last checkpoint on the next start rather than starting over.
 
 ## The LLM abstraction and model routing
 
 All model calls go through a single boundary, `app/core/llm/`, which exposes a uniform
-`complete()` / `stream()` interface over multiple providers (OpenAI-compatible endpoints such as
-DeepSeek or Qwen, and Anthropic). Business code never imports a provider SDK directly.
+`complete()` / `stream()` interface over agent backends (Claude Code, Codex and other ACP agents —
+see [Agent backends](agents.md)) and model APIs (OpenAI-compatible endpoints such as DeepSeek or
+Qwen, the OpenAI Responses API, and Anthropic). Business code never imports a provider SDK directly.
 
-Model choice is not hard-coded. A DB-backed routing table maps each research stage to a provider and
-model, so cheap models can score literature while strong models handle idea debate and paper
-drafting. The routing table is editable from the admin panel. Every call is metered: tokens and cost
-are attributed to the user, project, and Voyage.
+Model choice is not hard-coded. A DB-backed routing table maps each research stage to an agent or a
+provider and model, so cheap models can score literature while strong models handle idea debate and
+paper drafting. The routing table is editable under Settings → Models & agents. Every call is
+metered: tokens and cost are attributed to the project and Voyage.
 
 ## Deterministic vs. judgemental split
 
 This is the principle that keeps runs cheap, reproducible, and auditable. Deterministic work
 (crawling, parsing, deduplication, watermark-based incremental sync, metric parsing, citation
-matching) is written as ordinary code or worker tasks. Only the judgement calls (relevance scoring,
+matching) is written as ordinary code or background tasks. Only the judgement calls (relevance scoring,
 synthesis, drafting, review) reach an LLM. Guardrails such as "experiment numbers may only come from
 real run metrics" and "citations must map to real knowledge-base entries" live in code and cannot be
 overridden by prompts or skills.
 
 ## Data stores
 
-- **PostgreSQL 16 with pgvector** is the system of record: users, projects, papers and concepts,
-  ideas, review sessions, experiments and runs, manuscripts, gates, activity, and Voyage runs and
-  steps. pgvector powers semantic search over papers and full-text chunks.
-- **Redis 7** is the ARQ broker and a cache.
-- A **file volume** holds PDFs and generated artifacts (mounted at `/srv/data` in containers), kept
-  out of the code tree so it does not trigger reloads.
+- **SQLite** is the system of record: projects, papers and concepts, ideas, review sessions,
+  experiments and runs, manuscripts, gates, activity, and Voyage runs and steps. The desktop app
+  keeps it at `engine/polaris.db` in its user-data folder and snapshots it before each migration.
+  Vector search over papers and chunks needs PostgreSQL's pgvector, so on SQLite semantic search
+  falls back to keyword search (see [Embedding & retrieval](embedding-and-retrieval.md)).
+- An **in-process Redis stand-in** (fakeredis) carries pub/sub for the live event streams and small
+  caches. It lives in memory, so its contents are gone after a restart.
+- A **data folder** (`POLARIS_DATA_DIR`) holds PDFs, exports, experiment logs, and the file
+  projection, kept out of the code tree.
 
 ## Real-time channels
 
 - **SSE** carries one-way streams: agent token output and Voyage progress. A periodic heartbeat keeps
-  proxies from dropping the connection.
+  the connection alive.
 - **WebSocket** carries bidirectional traffic: review discussions (where human comments enter the
   agent context as first-class input), approval notifications, live experiment log tracking, and
   CRDT-based collaborative editing of manuscripts.
@@ -144,9 +154,3 @@ cancellation, event streaming) serves all task kinds, while the full plan-execut
 experiments. Predictable pipelines (wiki compile, idea review, paper drafting) run on fixed templates
 instead of being over-orchestrated. See [Core Concepts](concepts.md#the-voyage-long-running-agent)
 for the full explanation.
-
-## Deployment shape
-
-Production runs as Docker Compose services: `postgres`, `redis`, `api`, `worker`, and `frontend`
-(served by nginx, which reverse-proxies `/api` with SSE buffering disabled and `/ws` with the
-WebSocket upgrade). See [Deployment](deployment.md) for the full procedure.

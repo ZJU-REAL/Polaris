@@ -1,6 +1,15 @@
-# api 镜像：基于共享 TeX 基础镜像（tectonic + TeX Live + 中文字体，见 Dockerfile.texbase），
-# 本文件只做 pip 依赖 + 源码拷贝，日常代码更新的重建量控制在分钟级。
-# 先构建基础镜像：make texbase
+# Dev/test engine image only — not a deployment artifact. Polaris ships as the
+# desktop app; there is no server image to deploy (#842).
+#
+# Builds the single-process local engine (FastAPI + SQLite + in-process task
+# queue and scheduler) for:
+#   - the desktop smoke/e2e "engine in docker" mode
+#     (POLARIS_DESKTOP_ENGINE=docker:polaris-api-test:local:<abs path to src/backend>)
+#   - `make golden-record`
+# Build it with: make engine-image (tag polaris-api-test:local)
+#
+# 基于共享 TeX 基础镜像（tectonic + TeX Live + 中文字体，见 Dockerfile.texbase），
+# 本文件只做 pip 依赖 + 源码拷贝。
 ARG TEXBASE_IMAGE=polaris-texbase:latest
 FROM ${TEXBASE_IMAGE}
 
@@ -17,4 +26,5 @@ COPY src/backend/ ./
 RUN pip install ${PIP_INDEX_URL:+-i $PIP_INDEX_URL} -e .
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Same start sequence as the desktop engine launcher: migrate, then serve.
+CMD ["sh", "-c", "python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

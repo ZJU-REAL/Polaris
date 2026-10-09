@@ -12,7 +12,6 @@
   <a href="http://101.37.174.109:8080"><img src="https://img.shields.io/badge/Live_Demo-online-2ea44f?style=flat-square&logo=rocket&logoColor=white" alt="Live Demo"></a>
   <a href="https://github.com/ZJU-REAL/Polaris/releases/latest"><img src="https://img.shields.io/github/v/release/ZJU-REAL/Polaris?style=flat-square&color=7438F0&label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square" alt="License: Apache 2.0"></a>
-  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker Compose">
   <a href="docs/assets/wechat-group-qr.jpg"><img src="https://img.shields.io/badge/%E5%BE%AE%E4%BF%A1%E7%BE%A4-%E6%89%AB%E7%A0%81%E5%8A%A0%E5%85%A5-07C160?style=flat-square&logo=wechat&logoColor=white" alt="扫码加入微信群"></a>
 </p>
 
@@ -26,9 +25,9 @@
 
 ---
 
-Polaris 把完整的科研生命周期做成一个 Web 应用：文献调研、想法生成、想法评审、在真实 GPU
-服务器上做实验、LaTeX 论文写作，以及论文评审。它是为一个研究团队设计的，具备多用户、RBAC
-和邀请码注册；并且把每一项长任务都当作一次 **Voyage**——一次被持久化、可恢复、由人工把关的
+Polaris 把完整的科研生命周期做进一个桌面应用：文献调研、想法生成、想法评审、在真实 GPU
+服务器上做实验、LaTeX 论文写作，以及论文评审。它是给一个研究者在自己电脑上用的——所有东西都在
+本地运行，不需要架服务器；并且把每一项长任务都当作一次 **Voyage**——一次被持久化、可恢复、由人工把关的
 智能体运行，可以横跨数小时甚至数天而不丢状态（界面上就叫「任务」)。
 
 > [!NOTE]
@@ -44,7 +43,7 @@ https://github.com/user-attachments/assets/388972c1-7ffa-45f2-94c4-07f388379ba2
 
 ### 在线试用
 
-有一个跑在真实实例上的访客账号可以随便逛：在 <http://101.37.174.109:8080> 用用户名 `guest`、
+有一个跑在旧版网页实例上的访客账号可以随便逛（该实例已冻结，新版本只发布桌面版）：在 <http://101.37.174.109:8080> 用用户名 `guest`、
 密码 `zjuguest123` 登录。
 
 **该账号仅用于演示：它是只读的，且不能调用任何模型。** 它能走到每一个页面，包括管理端视图，
@@ -80,11 +79,11 @@ flowchart LR
 
 | 阶段 | Polaris 实际做的事 |
 | --- | --- |
-| **文献** | Research Wiki 从 OpenAlex、Semantic Scholar 和 arXiv 摄入论文。冷启动时以锚点论文为起点滚雪球式扩展引用网络，按**方向库**的收录配置（方向陈述、目标、范围与排除项，由一场结构化 AI 访谈写成）打分筛选相关性，再抽取全文（PyMuPDF）并编译成互相链接的 wiki 页面（TL;DR、方法、可复用的点子、概念反向链接）。**一篇论文只有一份解读，全平台共享**:编译时不带任何库的方向陈述或 rubric，所以同一篇论文不会因为你从哪儿点进去而读到不同内容；一个概念要有两篇论文引用才会被提升为正式概念。arXiv 新论文统一从每日新论文流进来，它是各文献库同步的唯一入口；支持带水位线断点续传的增量同步、pgvector 语义检索、研究摘要，以及 Obsidian 库同步。 |
+| **文献** | Research Wiki 从 OpenAlex、Semantic Scholar 和 arXiv 摄入论文。冷启动时以锚点论文为起点滚雪球式扩展引用网络，按**方向库**的收录配置（方向陈述、目标、范围与排除项，由一场结构化 AI 访谈写成）打分筛选相关性，再抽取全文（PyMuPDF）并编译成互相链接的 wiki 页面（TL;DR、方法、可复用的点子、概念反向链接）。**一篇论文只有一份解读，全平台共享**:编译时不带任何库的方向陈述或 rubric，所以同一篇论文不会因为你从哪儿点进去而读到不同内容；一个概念要有两篇论文引用才会被提升为正式概念。arXiv 新论文统一从每日新论文流进来，它是各文献库同步的唯一入口；支持带水位线断点续传的增量同步、研究摘要，以及 Obsidian 库同步。 |
 | **想法** | Idea Forge 在知识库上做多信号缺口分析（概念共现的空洞、从论文中抽取的局限、趋势速度、综述空白）,以此驱动带检索规划的想法生成。想法会在四个维度上打分（新颖性、可行性、可操作性、影响力）,做语义去重，汇入候选池。随后一个深度 Research Proposal 构建器用「规划—执行—验证」循环把胜出的想法夯实。 |
 | **想法评审** | 可配置人设的评审智能体两两辩论；由一个裁判产出 Elo 锦标赛排名。实验室成员可通过 WebSocket 实时加入讨论，他们的意见会作为一等输入进入智能体上下文。 |
 | **实验** | Experiment Lab 使用按用户隔离、经 Fernet 加密的 SSH 凭据连接实验室的 GPU 服务器。一次实验 Voyage 会先做摸底提问，然后规划研究方案、通过算力预算校验、编写代码、跑冒烟测试、启动运行并流式输出日志与实时指标曲线，接着自动迭代：解析指标、反思，再决定改进、调试还是停止——修复失败靠的是**时间**预算，而不是固定的重试次数。它还有一份跨步骤读写的文件式记忆；真卡住时它会**向你提问**,而不是直接失败。控制台为每次运行提供任务图和一个可以边跑边对话的终端。图表会被生成并交由 VLM 检查。 |
-| **论文写作** | Paper Writer 打开一个多文件 LaTeX 项目（NeurIPS、ICLR、ACL 模板）,配 CodeMirror 6 编辑器、实时协同编辑（CRDT）,以及服务端 tectonic 编译出的实时 PDF 预览。智能体逐节起草，但实验数字只能来自真实的 `ExperimentRun` 指标，引文也必须能对应到真实的知识库条目。一键刷新参考文献，并把 bibliography 接进主 TeX 文件。 |
+| **论文写作** | Paper Writer 打开一个多文件 LaTeX 项目（NeurIPS、ICLR、ACL 模板）,配 CodeMirror 6 编辑器、实时协同编辑（CRDT）,以及本地 tectonic 编译出的实时 PDF 预览。智能体逐节起草，但实验数字只能来自真实的 `ExperimentRun` 指标，引文也必须能对应到真实的知识库条目。一键刷新参考文献，并把 bibliography 接进主 TeX 文件。 |
 | **论文评审** | 逐条引文核查（存在性：精确、轻微偏差或伪造；支撑度：支撑、部分支撑或不支撑）,外加把每一个数字与实验记录做确定性事实核对，然后由多视角的顶会评审智能体给出意见并汇总成 meta-review。只要出现一条伪造引文，就直接判为不通过。 |
 
 ## Voyage 智能体内核
@@ -99,8 +98,8 @@ flowchart LR
 | **Sextant（六分仪）** | 自验证。按结构化的验收标准检查每一步（退出码、产物是否存在、schema 是否合法、指标阈值、数量、LLM 量规）。确定性检查先跑；失败会把诊断信息回喂给 Navigator，反复失败则转交人工处理。 |
 
 > [!IMPORTANT]
-> 一次 Voyage 背后是一个持久化状态机（`planning -> executing -> verifying -> ...`）。如果 worker
-> 在运行中途崩溃，Voyage 会在健康检查后从上一个检查点继续。预算挂在这次运行上，超出即自动暂停；
+> 一次 Voyage 背后是一个持久化状态机（`planning -> executing -> verifying -> ...`）。如果应用
+> 在运行中途退出或崩溃，Voyage 会在健康检查后从上一个检查点继续。预算挂在这次运行上，超出即自动暂停；
 > 每一份计划、每一个动作、每一条判定都会被保留，并可在界面上回放。
 
 不是每个任务都需要完整的认知循环。一个共享的 **Runtime** 外壳（状态机、检查点、人工审批、预算、
@@ -126,7 +125,7 @@ flowchart LR
   日志和图表；远程写操作需要放行，配有命令允许/拒绝清单、完整审计，以及三重预算上限（总量、
   单次运行、并发）。每次运行都有跨步骤的文件式记忆，在时间预算内自我修复，卡住时会**停下来
   向你提问**而不是直接死掉；它的控制台提供任务图和一个可以边跑边对话的终端。
-- **Paper Writer。** 在线多文件 LaTeX,支持 CRDT 协同编辑和服务端 tectonic 编译；智能体起草被
+- **Paper Writer。** 在线多文件 LaTeX,支持 CRDT 协同编辑和本地 tectonic 编译；智能体起草被
   约束在真实指标和真实引文上，另有一键刷新参考文献并接入主 TeX 文件。
 - **带引文核查的论文评审。** 每一条引文的存在性与支撑度都会对照本地文献库、Semantic Scholar 和
   OpenAlex 核查；所有数字都与实验记录做事实核对。
@@ -146,143 +145,118 @@ flowchart LR
   Codex 和 Cursor 使用，并带自检和 try-it 演练场。按课题隔离，且严格只读。
 - **处处实时。** SSE 用于智能体流式输出和 Voyage 进度；WebSocket 用于评审讨论、审批通知、实验
   日志跟踪和协同编辑。
-- **多用户与 RBAC。** JWT 鉴权（fastapi-users）、邀请码注册、基于角色的访问控制，以及按调用记录
-  的 token/成本核算，可归因到用户、课题和 voyage。文献库和论文的浏览量会被统计成 7 天热榜，
-  让实验室看到大家真正在读什么。
-- **LLM 抽象与模型路由。** 所有模型调用都走同一层；一张存在数据库里的路由表把每个科研阶段映射到
-  具体的提供商、模型和推理强度档位（打分用便宜模型，辩论和起草用强模型）。管理员设定全局路由，
-  用户可以覆盖自己的。内置的 fake provider 在生产环境被结构性禁用——就算把开关设错也打不开。
+- **成本核算。** 按调用记录 token 和成本，可归因到课题和 voyage，看得清每个任务花了多少。
+- **智能体后端与模型路由。** 给 Polaris 配模型最省事的办法是用你已经在用的智能体——Claude Code、
+  Codex、Gemini CLI 等 [ACP](docs/agents.md) 智能体不需要 API key 就能回答模型调用。模型 API
+  （OpenAI 兼容、OpenAI Responses、Anthropic）是可选的。所有模型调用都走同一层；一张存在数据库里
+  的路由表把每个科研阶段映射到某个智能体或模型，以及推理强度档位（打分用便宜模型，辩论和起草用
+  强模型）。内置的 fake provider 必须显式开启，产品自身从不打开它。
 
 ## 技术栈
 
 | 层 | 技术 |
 | --- | --- |
-| 前端 | React 18 + TypeScript 5 + Vite 5,所有服务端状态走 TanStack Query,CodeMirror 6、Yjs（CRDT）、react-pdf、KaTeX |
-| 桌面端 | Electron 外壳（macOS / Windows / Linux）,通过 `app://` 协议复用 Web 产物；所有重状态仍留在远程服务器 |
-| 后端 | FastAPI（全异步）+ SQLAlchemy 2 + Alembic + fastapi-users（JWT） |
-| 任务队列 | ARQ（Redis 作为 broker）;每个长任务都跑在请求线程之外 |
-| 数据 | PostgreSQL 16 + pgvector（向量空间按模型隔离，不同模型的向量绝不混用）,以及 Redis 7 |
+| 桌面端 | Electron 外壳（macOS / Windows / Linux），通过 `app://` 协议加载 Web 产物，并拉起本地引擎 |
+| 前端 | React 18 + TypeScript 5 + Vite 5，所有服务端状态走 TanStack Query，CodeMirror 6、Yjs（CRDT）、react-pdf、KaTeX |
+| 引擎 | 一个本地进程：FastAPI（全异步）+ SQLAlchemy 2 + Alembic，任务队列和定时任务都在进程内 |
+| 数据 | SQLite，外加一个存 PDF、导出文件和实验日志的数据目录——都在应用的用户数据目录里 |
 | 远程执行 | 用 asyncssh 连接 GPU 服务器；SSH 密钥用 Fernet 静态加密 |
-| LaTeX | 服务端 tectonic,带一个缓存的宏包卷 |
-| LLM | 多提供商抽象（OpenAI 兼容与 Anthropic）,配数据库模型路由表 |
-| 部署 | Docker Compose（postgres、redis、api、worker、frontend） |
+| LaTeX | tectonic，或经 latexmk 调用 TeX Live——用你电脑上装了的那个 |
+| 模型 | 经 ACP 接入的智能体后端（Claude Code、Codex、Gemini CLI……），或模型 API（OpenAI 兼容、OpenAI Responses、Anthropic），配数据库模型路由表 |
 
-## 桌面客户端
+## 安装
 
-Polaris 提供 macOS、Windows 和 Linux 桌面应用。**安装包请到
-[Releases](https://github.com/ZJU-REAL/Polaris/releases/latest) 下载**——`.dmg` / `.zip`(macOS,
-universal)、`.exe` / 便携版 `.zip`(Windows)、`.AppImage` / `.deb`(Linux),由 CI 在每个 `v*`
+Polaris 是 macOS、Windows 和 Linux 上的桌面应用。**安装包请到
+[Releases](https://github.com/ZJU-REAL/Polaris/releases/latest) 下载**——`.dmg` / `.zip`（macOS，
+universal）、`.exe` / 便携版 `.zip`（Windows）、`.AppImage` / `.deb`（Linux），由 CI 在每个 `v*`
 tag 上构建。应用会检查更新，能不重启就直接应用。
 
-这些构建**既未签名也未公证**,所以每个平台都要先告诉系统一次它是安全的：macOS 执行
-`xattr -dr com.apple.quarantine /Applications/Polaris.app`(或右键 → 打开）;Windows 在
-SmartScreen 上选「更多信息 → 仍要运行」;Linux 的 AppImage 需要 `libnss3 libgtk-3-0 libasound2`,
+这些构建**既未签名也未公证**，所以每个平台都要先告诉系统一次它是安全的：macOS 执行
+`xattr -dr com.apple.quarantine /Applications/Polaris.app`（或右键 → 打开）；Windows 在
+SmartScreen 上选「更多信息 → 仍要运行」；Linux 的 AppImage 需要 `libnss3 libgtk-3-0 libasound2`，
 在 Ubuntu 24.04+ 的 AppArmor 限制下要加 `--no-sandbox`。
 
-从 **v0.4.0** 起，桌面版是离线的单机版：安装包自带 Python 后端，首次启动时自动装好本地环境
-（SQLite，不需要 Docker、不用登录、不填服务器地址）。首次启动要下载 Python 工具链和依赖，可能需要
-几分钟；之后启动不再等待。本地引擎起不来时，应用会退回到填写 Polaris 服务器地址的流程——连接多人
-共用的服务器也走这条路。
+所有东西都在你自己的电脑上运行：安装包自带 Python 引擎，首次启动时自动装好本地环境（SQLite，
+不需要 Docker、不用登录、不填服务器地址）。首次启动要下载 Python 工具链和依赖，可能需要几分钟；
+之后启动不再等待。
+
+装好后，到 **设置 → 模型与智能体** 给 Polaris 配一个模型。最省事的是用你已经在用的智能体：在同一台
+电脑上装好并登录 Claude Code、Codex 或 Gemini CLI，在 **智能体后端** 里添加，它就能回答所有模型
+调用，不需要 API key——见 [Agent backends](docs/agents.md)。模型 API 是可选的；想要向量嵌入和重排
+时再加一个。
 
 > [!NOTE]
 > **v0.3.x 及更早的版本**只是连接远程服务器的外壳，首次启动一定会要求填服务器地址，也没法自己
-> 更新成带本地引擎的版本。请到 [Releases](https://github.com/ZJU-REAL/Polaris/releases/latest)
-> 下载 v0.4.0 及以上的安装包，直接覆盖安装。
+> 更新成本地版。请到 [Releases](https://github.com/ZJU-REAL/Polaris/releases/latest) 下载当前的
+> 安装包，直接覆盖安装。
 
-想自己构建：
+## 开发
 
-```bash
-make desktop-deps           # 安装外壳的依赖（只需一次）
-make desktop-dev            # 构建前端并启动外壳（app:// 协议）
-make desktop-dist           # 为当前平台打一个未签名的安装包
-```
-
-进程模型、IPC 约定和打包注意事项见 [docs/desktop.md](docs/desktop.md)。
-
-## 快速开始
-
-> [!TIP]
-> 无论开发还是生产，都推荐用 Docker Compose 跑 Polaris。它只需要装 Docker 和 Docker Compose,
-> 本地不需要 Python、Node 或数据库。生产部署见
-> [docs/deployment.md](docs/deployment.md)。
+从源码运行各部分：
 
 ```bash
-cp .env.example .env        # 填入各提供商的密钥和 secret
-make dev                    # 通过 docker compose 起全栈，支持热重载
+make venv                   # 只需一次：创建 src/backend/.venv 并安装依赖
+make backend-dev            # 引擎，监听 :8000（SQLite，进程内队列和定时任务）
+make frontend-dev           # 前端开发服务器，监听 :5173
 ```
 
 - 前端：<http://localhost:5173>
-- 后端 API 文档：<http://localhost:8000/docs>
+- 引擎 API 文档：<http://localhost:8000/docs>
 
-不用 Docker 的本地开发（会回退到 SQLite）:
+桌面外壳：
 
 ```bash
-make backend-dev            # venv + uvicorn，监听 :8000
-make frontend-dev           # npm install + vite dev，监听 :5173
+make desktop-deps           # 安装工作区依赖（只需一次）
+make desktop-dev            # 构建前端并启动外壳（app:// 协议）
+make desktop-dist           # 为当前平台打一个未签名的安装包
 ```
 
 常用命令：
 
 ```bash
 make migrate                # alembic upgrade head
-make test                   # 后端 pytest + 前端构建
+make test                   # 后端 pytest + 前端测试与构建
 make lint                   # ruff check + tsc --noEmit
+make help                   # 列出所有目标
 ```
 
-## Docker 部署
-
-直接用 Docker Hub 上预构建的镜像部署（`tricktreat/polaris-{api,worker,frontend}`,由 CI 在每个
-`v*` tag 上发布）——本地无需构建：
-
-```bash
-cp .env.example .env        # 设置 POLARIS_ENV=prod、POLARIS_IMAGE_TAG、各类 secret，以及一个 LLM key
-docker compose --env-file .env -f docker/docker-compose.yml pull
-docker compose --env-file .env -f docker/docker-compose.yml up -d
-docker compose -f docker/docker-compose.yml exec api alembic upgrade head   # 首次运行必须执行
-```
-
-前端在 `http://<host>:8080` 提供服务。`worker` 容器是必需的（所有长任务都由它执行）,首次运行的
-迁移也是必须的（Postgres 的表不会自动创建）。记得带上 `--env-file .env`,这样 Compose 才能从仓库
-根目录的 `.env` 里读到 `POLARIS_IMAGE_TAG`(默认 `latest`)/ `POLARIS_IMAGE_PREFIX`(默认
-`tricktreat`)。
-
-如果你想改为本地构建，或需要绑定挂载、备份和受限网络的说明，见
-[docs/deployment.md](docs/deployment.md)。
+详见 [docs/development.md](docs/development.md) 和 [docs/desktop.md](docs/desktop.md)。
 
 ## 文档
 
-完整文档在 [docs/](docs/)(英文）:
+完整文档在 [docs/](docs/)（英文）：
 
-- [Getting started](docs/getting-started.md):安装、配置并运行 Polaris
-- [Architecture](docs/architecture.md):系统设计与 Voyage 智能体内核
-- [Concepts](docs/concepts.md):科研流水线、Voyage、技能与 MCP 工具
-- [Deployment](docs/deployment.md):用 Docker Compose 做生产部署
-- [Desktop](docs/desktop.md):Electron 外壳——进程模型、IPC 约定与打包
-- [Configuration](docs/configuration.md):环境变量与各项设置
-- [Development](docs/development.md):本地开发流程与约定
+- [Getting started](docs/getting-started.md)：安装应用、配好模型、建第一个文献库（[中文版](docs/zh/getting-started.md)）
+- [Agent backends](docs/agents.md)：把 Claude Code、Codex 等 ACP 智能体当作 Polaris 的模型
+- [Architecture](docs/architecture.md)：系统设计与 Voyage 智能体内核
+- [Concepts](docs/concepts.md)：科研流水线、Voyage、技能与 MCP 工具
+- [Desktop](docs/desktop.md)：Electron 外壳——进程模型、本地引擎、IPC 约定与打包
+- [Configuration](docs/configuration.md)：环境变量与各项设置
+- [Development](docs/development.md)：本地开发流程与约定
 
 ## 仓库结构
 
 ```text
 src/
-  backend/       FastAPI 应用（包名：app）与 ARQ worker（包名：worker）
+  backend/       引擎：FastAPI 应用（包名：app）与长任务函数（包名：worker）
     app/
       api/         轻薄的路由层
       services/    业务逻辑（摄入、wiki、想法、评审、实验、稿件……）
       models/      SQLAlchemy 模型
       agents/voyage/  Voyage 引擎（navigator、helm、sextant、工具循环、各领域动作）
-      core/        配置、数据库、队列（ARQ）、事件（SSE）、llm/ 抽象层
+      core/        配置、数据库、进程内队列与定时任务、事件（SSE）、llm/ 抽象层
       tools/, mcp/ 只读工具注册表与对外的 MCP server
   frontend/      React + Vite（src/features/ 下每个产品模块一个目录）
-  desktop/       包装 Web 产物的 Electron 外壳（macOS / Windows / Linux）
-docker/          Dockerfile 与 compose（base、dev override、prod overlay）
+  desktop/       包装 Web 产物、拉起引擎的 Electron 外壳
+  kernel/        挂在桌面外壳里的插件运行时
+docker/          只用于开发/测试的引擎镜像（桌面冒烟/E2E、golden 录制）——不是部署用的
 docs/            英文项目文档
 ```
 
 ## 设计原则
 
 - **严格分层。** 轻薄的路由调用 service;service 承载业务逻辑，且从不导入 Web 框架；模型层在最底下。
-- **确定性与判断性分离。** 确定性的活（抓取、解析、去重）交给普通代码或 worker 任务；只有需要
+- **确定性与判断性分离。** 确定性的活（抓取、解析、去重）交给普通代码或后台任务；只有需要
   判断的地方才走大模型。
 - **单一 LLM 边界。** 所有模型调用都经过同一个抽象层，模型的选择来自数据库里的路由表，而不是硬编码。
 

@@ -34,7 +34,7 @@ body:
         - skills
         - llm routing / usage
         - auth / users
-        - infra / deploy
+        - desktop app install / engine startup
         - docs
         - other / not sure
     validations:
@@ -57,21 +57,28 @@ body:
       description: What you expected to happen, and what actually happened.
     validations:
       required: true
-  - type: dropdown
-    id: env
+  - type: input
+    id: version
     attributes:
-      label: Environment
-      description: Where did you hit this?
+      label: Polaris version
+      description: Settings → About shows it (for example 0.6.0). Running from source? Give the commit.
+    validations:
+      required: false
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
       options:
-        - Local dev (docker compose)
-        - Production (zju-54)
-        - Both
+        - macOS
+        - Windows
+        - Linux
+        - Other
     validations:
       required: false
   - type: textarea
     id: logs
     attributes:
       label: Logs / screenshots
-      description: Relevant console/server logs or screenshots. Paste text logs in a code block.
+      description: Relevant console/engine logs or screenshots. Paste text logs in a code block.
     validations:
       required: false
