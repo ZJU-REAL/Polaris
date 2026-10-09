@@ -26,9 +26,9 @@ export interface FactPackDrawerProps {
 function SectionTitle({ zh, count }: { zh: string; count?: number }) {
   return (
     <div className="row gap8" style={{ margin: '18px 0 8px' }}>
-      <span style={{ fontSize: 12.5, fontWeight: 660 }}>{zh}</span>
+      <span style={{ fontSize: 13, fontWeight: 600 }}>{zh}</span>
       {count !== undefined && (
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>{count}</span>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{count}</span>
       )}
     </div>
   );
@@ -41,10 +41,10 @@ export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertC
   const refreshMutation = useMutation({
     mutationFn: () => api.refreshFactPack(manuscript.id),
     onSuccess: () => {
-      toast(tr('事实包已重新组装', 'Fact pack rebuilt'), 'ok');
+      toast(tr('已更新事实包', 'Fact pack updated'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['manuscript', manuscript.id] });
     },
-    onError: (e) => toast(`${tr('刷新失败：', 'Refresh failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('无法更新事实包：', 'Couldn’t update the fact pack: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const hypotheses = fp?.hypotheses ?? [];
@@ -59,14 +59,14 @@ export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertC
       title={
         <>
           <Icon name="layers" size={17} style={{ color: 'var(--accent)' }} />
-          <span style={{ fontSize: 14.5, fontWeight: 660 }}>{tr('事实包', 'Fact pack')}</span>
+          <span style={{ fontSize: 15, fontWeight: 600 }}>{tr('事实包', 'Fact pack')}</span>
         </>
       }
-      sub={tr('AI 起草只能引用这里的引文、图表和实验数字。', 'AI drafting may only cite the references, figures and numbers listed here.')}
+      sub={tr('AI 起草时只使用这里的文献、图表和数字。', 'AI drafts use only the papers, figures and numbers listed here.')}
     >
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
-        <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-          {fp?.generated_at ? `${tr('组装于 ', 'Assembled ')}${fmtRelative(fp.generated_at)}` : tr('还没有组装过', 'Not assembled yet')}
+        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+          {fp?.generated_at ? `${tr('更新于 ', 'Updated ')}${fmtRelative(fp.generated_at)}` : tr('尚未生成', 'Not created yet')}
         </span>
         <button
           className="btn btn-soft sm"
@@ -74,35 +74,35 @@ export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertC
           onClick={() => refreshMutation.mutate()}
         >
           <Icon name="refresh" size={12} style={refreshMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
-          {refreshMutation.isPending ? tr('正在重新组装…', 'Rebuilding…') : tr('刷新', 'Refresh')}
+          {refreshMutation.isPending ? tr('更新中…', 'Updating…') : tr('更新', 'Update')}
         </button>
       </div>
 
       {!fp ? (
         <div className="empty" style={{ padding: 40 }}>
-          {tr('还没有事实包。点上方的刷新按钮，从实验结果和文献库重新组装一份。', 'No fact pack yet. Click refresh above to assemble one from experiment results and the library.')}
+          {tr('还没有事实包。点击「更新」，从实验结果和文献库生成。', 'No fact pack yet. Click Update to build one from your experiments and library.')}
         </div>
       ) : (
         <>
           {/* —— Idea —— */}
-          <SectionTitle zh={tr('研究想法', 'Idea')} />
+          <SectionTitle zh={tr('想法', 'Idea')} />
           {fp.idea ? (
             <div className="list-row">
-              <div style={{ fontSize: 12.5, fontWeight: 620 }}>{fp.idea.title ?? '—'}</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{fp.idea.title ?? '—'}</div>
               {fp.idea.summary && (
-                <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 4, lineHeight: 1.6 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, lineHeight: 1.6 }}>
                   {fp.idea.summary}
                 </div>
               )}
             </div>
           ) : (
-            <div style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('未关联想法', 'No linked idea')}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{tr('未关联想法', 'No linked idea')}</div>
           )}
 
           {/* —— 假设 —— */}
           <SectionTitle zh={tr('实验假设', 'Hypotheses')} count={hypotheses.length} />
           {hypotheses.length === 0 ? (
-            <div style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('暂无（未关联实验或实验还没出结论）', 'None (no linked experiment, or no conclusions yet)')}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{tr('暂无，需关联已出结论的实验', 'None yet. Link an experiment with results.')}</div>
           ) : (
             <div className="col gap6">
               {hypotheses.map((h, i) => (
@@ -115,9 +115,9 @@ export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertC
           )}
 
           {/* —— 指标 —— */}
-          <SectionTitle zh={tr('实验指标', 'Metrics')} count={metrics.length} />
+          <SectionTitle zh={tr('指标', 'Metrics')} count={metrics.length} />
           {metrics.length === 0 ? (
-            <div style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('暂无实验指标', 'No experiment metrics')}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{tr('暂无指标', 'No metrics yet')}</div>
           ) : (
             <div className="table-wrap">
               <table className="table">
@@ -125,14 +125,14 @@ export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertC
                   <tr>
                     <th>{tr('指标', 'Metric')}</th>
                     <th style={{ textAlign: 'right' }}>{tr('最优值', 'Best')}</th>
-                    <th style={{ textAlign: 'right' }}>{tr('轮数', 'Runs')}</th>
+                    <th style={{ textAlign: 'right' }}>{tr('运行次数', 'Runs')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {metrics.map((m) => (
                     <tr key={m.name}>
-                      <td className="mono" style={{ fontSize: 11.5 }}>{m.name}</td>
-                      <td className="mono" style={{ textAlign: 'right', fontWeight: 650 }}>
+                      <td className="mono" style={{ fontSize: 12 }}>{m.name}</td>
+                      <td className="mono" style={{ textAlign: 'right', fontWeight: 600 }}>
                         {m.best ?? '—'}
                       </td>
                       <td className="mono" style={{ textAlign: 'right', color: 'var(--text-3)' }}>
@@ -146,9 +146,9 @@ export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertC
           )}
 
           {/* —— 图表 —— */}
-          <SectionTitle zh={tr('可用图表', 'Figures')} count={figures.length} />
+          <SectionTitle zh={tr('图表', 'Figures')} count={figures.length} />
           {figures.length === 0 ? (
-            <div style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('暂无实验图表', 'No experiment figures')}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{tr('暂无图表', 'No figures yet')}</div>
           ) : (
             <div className="col gap6">
               {figures.map((f) => (
@@ -157,13 +157,13 @@ export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertC
                     <span className="pill sm mono" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
                       {f.fig_id}
                     </span>
-                    {f.source && <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>{tr('来自', 'from ')}{f.source === 'experiment' ? tr('实验', 'experiment') : f.source}</span>}
+                    {f.source && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{f.source === 'experiment' ? tr('来自实验', 'From experiment') : f.source}</span>}
                     {onInsertFigure && (
                       <button
                         className="btn btn-soft sm"
-                        style={{ marginLeft: 'auto', height: 22, fontSize: 10.5, padding: '0 8px' }}
+                        style={{ marginLeft: 'auto', height: 22, fontSize: 11, padding: '0 8px' }}
                         disabled={!canInsert}
-                        title={canInsert ? tr('在编辑器光标处插入 figure 环境', 'Insert a figure environment at the cursor') : tr('先在编辑器里打开一个可写的 .tex 文件', 'Open a writable .tex file in the editor first')}
+                        title={canInsert ? tr('在光标处插入图表', 'Insert the figure at the cursor') : tr('请先打开一个可编辑的 .tex 文件', 'Open an editable .tex file first')}
                         onClick={() => onInsertFigure(f.fig_id, f.caption)}
                       >
                         <Icon name="plus" size={11} />
@@ -172,7 +172,7 @@ export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertC
                     )}
                   </div>
                   {f.caption && (
-                    <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 4, lineHeight: 1.55 }}>{f.caption}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, lineHeight: 1.55 }}>{f.caption}</div>
                   )}
                 </div>
               ))}
@@ -180,28 +180,28 @@ export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertC
           )}
 
           {/* —— 引文 —— */}
-          <SectionTitle zh={tr('可引用文献', 'Citations')} count={citations.length} />
+          <SectionTitle zh={tr('文献', 'Citations')} count={citations.length} />
           {citations.length === 0 ? (
-            <div style={{ fontSize: 11.5, color: 'var(--text-4)' }}>
-              {tr('暂无可引用文献（先在文献库里精读/纳入几篇论文）', 'No citable papers yet (read or include some papers in the library first)')}
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+              {tr('暂无文献，先在文献库中收录几篇论文', 'No papers yet. Add some to your library first.')}
             </div>
           ) : (
             <div className="col gap6">
               {citations.map((c) => (
                 <div key={c.bibkey} className="list-row row gap8" style={{ alignItems: 'flex-start' }}>
-                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', flexShrink: 0, paddingTop: 1 }}>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', flexShrink: 0, paddingTop: 1 }}>
                     {c.bibkey}
                   </span>
-                  <span style={{ flex: 1, fontSize: 11.5, lineHeight: 1.5 }}>
+                  <span style={{ flex: 1, fontSize: 12, lineHeight: 1.5 }}>
                     {c.title}
-                    {c.year != null && <span style={{ color: 'var(--text-4)' }}>（{c.year}）</span>}
+                    {c.year != null && <span style={{ color: 'var(--text-3)' }}> · {c.year}</span>}
                   </span>
                   {onInsertCite && (
                     <button
                       className="btn btn-soft sm"
-                      style={{ height: 22, fontSize: 10.5, padding: '0 8px', flexShrink: 0 }}
+                      style={{ height: 22, fontSize: 11, padding: '0 8px', flexShrink: 0 }}
                       disabled={!canInsert}
-                      title={canInsert ? tr('在编辑器光标处插入 \\cite{bibkey}', 'Insert \\cite{bibkey} at the cursor').replace('bibkey', c.bibkey) : tr('先在编辑器里打开一个可写的 .tex 文件', 'Open a writable .tex file in the editor first')}
+                      title={canInsert ? tr(`在光标处插入 \\cite{${c.bibkey}}`, `Insert \\cite{${c.bibkey}} at the cursor`) : tr('请先打开一个可编辑的 .tex 文件', 'Open an editable .tex file first')}
                       onClick={() => onInsertCite(c.bibkey)}
                     >
                       <Icon name="plus" size={11} />
@@ -213,10 +213,10 @@ export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertC
             </div>
           )}
 
-          <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6, marginTop: 20 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.6, marginTop: 20 }}>
             {tr(
-              '编译时会按这里的文献自动生成 references.bib，实验图表自动复制到 figures/ 目录（均为只读文件）。实验或文献库更新后，点刷新重新组装。',
-              'On compile, references.bib is generated from these papers and experiment figures are copied into figures/ (both read-only). After experiments or the library change, click refresh to rebuild.',
+              '实验或文献库有变化后，点击「更新」同步到这里。',
+              'Click Update after your experiments or library change.',
             )}
           </div>
         </>

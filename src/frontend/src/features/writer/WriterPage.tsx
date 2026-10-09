@@ -11,7 +11,7 @@ import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
-import { api, ApiError, type ManuscriptRead } from '../../lib/api';
+import { api, type ManuscriptRead } from '../../lib/api';
 import { NewManuscriptModal } from './NewManuscriptModal';
 import { saveBlob } from '../wiki/shared';
 
@@ -146,8 +146,8 @@ function ManuscriptCard({
             )}
             <div
               style={{
-                fontSize: 13.5,
-                fontWeight: 650,
+                fontSize: 13,
+                fontWeight: 600,
                 lineHeight: 1.4,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -159,8 +159,8 @@ function ManuscriptCard({
               {m.title}
             </div>
           </div>
-          <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 3 }}>
-            {m.id.slice(0, 8)} · {tr('更新', 'updated')} {fmtRelative(m.updated_at)}
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3 }}>
+            {tr('更新于', 'Updated')} {fmtRelative(m.updated_at)}
           </div>
         </div>
         <StatusPill status={m.status} sm />
@@ -168,9 +168,9 @@ function ManuscriptCard({
 
       {isTrash ? (
         <div className="row gap10" style={{ marginTop: 12, alignItems: 'center' }}>
-          <span className="mono muted" style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <span className="muted" style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <Icon name="trash" size={11} />
-            {tr('删除于', 'trashed')} {m.trashed_at ? fmtRelative(m.trashed_at) : '—'}
+            {tr('删除于', 'Deleted')} {m.trashed_at ? fmtRelative(m.trashed_at) : '—'}
           </span>
           <div className="row gap8" style={{ marginLeft: 'auto' }}>
             <button
@@ -202,17 +202,11 @@ function ManuscriptCard({
             <Icon name="file" size={11} />
             {templateName}
           </span>
-          {m.status === 'writing' && (
-            <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-              <Icon name="sparkle" size={11} />
-              {tr('AI 正在写', 'AI writing')}
-            </span>
-          )}
           <div className="row gap2" style={{ marginLeft: 'auto' }}>
             <CardAction
               icon="pin"
               active={isPinned}
-              title={isPinned ? tr('取消置顶', 'Unpin') : tr('置顶', 'Pin to top')}
+              title={isPinned ? tr('取消置顶', 'Unpin') : tr('置顶', 'Pin')}
               onClick={onPin}
             />
             <CardAction
@@ -296,12 +290,10 @@ export function WriterPage() {
 
   const invalidateAll = () => void queryClient.invalidateQueries({ queryKey: ['manuscripts', pid] });
   const onMutError = (e: unknown) => {
-    if (e instanceof ApiError && e.status === 403) {
-      toast(tr('只有项目管理者可删除', 'Only project managers can delete'), 'error');
-    } else {
-      toast(`${tr('操作失败：', 'Action failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
-    }
+    toast(`${tr('操作失败：', 'Something went wrong: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
   };
+  /** 「3 篇稿件」/「3 manuscripts」 */
+  const countText = (n: number) => tr(`${n} 篇稿件`, n === 1 ? '1 manuscript' : `${n} manuscripts`);
 
   const trashOne = useMutation({
     mutationFn: (id: string) => api.trashManuscript(id),
@@ -323,7 +315,7 @@ export function WriterPage() {
     mutationFn: (id: string) => api.deleteManuscriptPermanent(id),
     onSuccess: () => {
       invalidateAll();
-      toast(tr('已永久删除', 'Permanently deleted'), 'ok');
+      toast(tr('已永久删除', 'Deleted permanently'), 'ok');
     },
     onError: onMutError,
     onSettled: () => setConfirm(null),
@@ -332,7 +324,7 @@ export function WriterPage() {
     mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) => api.patchManuscript(id, { pinned }),
     onSuccess: (_r, v) => {
       invalidateAll();
-      toast(v.pinned ? tr('已置顶', 'Pinned to top') : tr('已取消置顶', 'Unpinned'), 'ok');
+      toast(v.pinned ? tr('已置顶', 'Pinned') : tr('已取消置顶', 'Unpinned'), 'ok');
     },
     onError: onMutError,
   });
@@ -342,16 +334,16 @@ export function WriterPage() {
       const safe = (m.title || 'manuscript').replace(/[/\\?%*:|"<>]/g, '_');
       saveBlob(blob, `${safe}-arxiv.tar.gz`);
       if (notes.length > 0) toast(`${tr('导出提示：', 'Export notes: ')}${notes.join('；')}`, 'info');
-      else toast(tr('已导出 arXiv 投稿包', 'arXiv package exported'), 'ok');
+      else toast(tr('已导出 arXiv 投稿包', 'Exported arXiv package'), 'ok');
     },
-    onError: (e) => toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('导出失败：', 'Couldn’t export: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   const batchTrash = useMutation({
     mutationFn: (ids: string[]) => api.batchManuscripts(pid!, 'trash', ids),
     onSuccess: (r) => {
       invalidateAll();
       clearSelection();
-      toast(`${tr('已移入回收站', 'Moved to trash')} · ${r.affected}`, 'ok');
+      toast(tr(`已将 ${countText(r.affected)}移入回收站`, `Moved ${countText(r.affected)} to trash`), 'ok');
     },
     onError: onMutError,
   });
@@ -360,7 +352,7 @@ export function WriterPage() {
     onSuccess: (r) => {
       invalidateAll();
       clearSelection();
-      toast(`${tr('已恢复', 'Restored')} · ${r.affected}`, 'ok');
+      toast(tr(`已恢复 ${countText(r.affected)}`, `Restored ${countText(r.affected)}`), 'ok');
     },
     onError: onMutError,
   });
@@ -369,17 +361,17 @@ export function WriterPage() {
     onSuccess: (r) => {
       invalidateAll();
       clearSelection();
-      toast(`${tr('已永久删除', 'Permanently deleted')} · ${r.affected}`, 'ok');
+      toast(tr(`已永久删除 ${countText(r.affected)}`, `Deleted ${countText(r.affected)} permanently`), 'ok');
     },
     onError: onMutError,
     onSettled: () => setConfirm(null),
   });
   const emptyTrash = useMutation({
     mutationFn: () => api.emptyManuscriptTrash(pid!),
-    onSuccess: (r) => {
+    onSuccess: () => {
       invalidateAll();
       clearSelection();
-      toast(`${tr('回收站已清空', 'Trash emptied')} · ${r.affected}`, 'ok');
+      toast(tr('已清空回收站', 'Emptied trash'), 'ok');
     },
     onError: onMutError,
     onSettled: () => setConfirm(null),
@@ -396,14 +388,14 @@ export function WriterPage() {
           pid
             ? undefined
             : projectsLoading
-              ? tr('加载课题…', 'Loading topics…')
-              : tr('选择一个课题', 'Pick a topic')
+              ? tr('加载中…', 'Loading…')
+              : tr('请先选择课题', 'Choose a topic first')
         }
         right={
           pid ? undefined : (
             <button className="btn btn-primary" disabled onClick={() => setModalOpen(true)}>
               <Icon name="plus" size={14} />
-              {tr('新建论文草稿', 'New manuscript')}
+              {tr('新建稿件', 'New manuscript')}
             </button>
           )
         }
@@ -415,21 +407,21 @@ export function WriterPage() {
             value={view}
             onChange={(v) => setView(v)}
             options={[
-              { v: 'active', label: tr('论文列表', 'Manuscripts') },
+              { v: 'active', label: tr('稿件', 'Manuscripts') },
               { v: 'trash', label: `${tr('回收站', 'Trash')}${trashCount > 0 ? ` (${trashCount})` : ''}` },
             ]}
           />
           <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={() => setModalOpen(true)}>
             <Icon name="plus" size={13} />
-            {tr('新建论文草稿', 'New manuscript')}
+            {tr('新建稿件', 'New manuscript')}
           </button>
           <button
             className={`btn sm ${multiSelect ? 'btn-primary' : 'btn-soft'}`}
             onClick={toggleMultiSelect}
-            title={tr('批量选择', 'Multi-select')}
+            title={tr('选择多篇稿件', 'Select several manuscripts')}
           >
             <Icon name="check" size={13} />
-            {tr('多选', 'Multi-select')}
+            {tr('选择', 'Select')}
           </button>
           {/* 全选放工具栏：不再插入额外行导致卡片下移（#132） */}
           {multiSelect && manuscripts.length > 0 && (
@@ -448,12 +440,12 @@ export function WriterPage() {
               style={{ marginLeft: 'auto', color: 'var(--danger)' }}
               onClick={() =>
                 setConfirm({
-                  title: tr('清空回收站', 'Empty trash'),
+                  title: tr('清空回收站？', 'Empty trash?'),
                   message: tr(
-                    `将永久删除回收站内全部 ${trashCount} 篇论文草稿，不可恢复。确定继续？`,
-                    `This permanently deletes all ${trashCount} manuscript(s) in the trash. This cannot be undone. Continue?`,
+                    `其中的 ${countText(trashCount)}将被永久删除，无法恢复。`,
+                    `${countText(trashCount)} will be deleted permanently. This can’t be undone.`,
                   ),
-                  confirmText: tr('清空', 'Empty'),
+                  confirmText: tr('清空回收站', 'Empty trash'),
                   run: () => emptyTrash.mutate(),
                 })
               }
@@ -468,20 +460,20 @@ export function WriterPage() {
       {!pid ? (
         <div className="card">
           <div className="empty" style={{ padding: 60 }}>
-            {projectsLoading ? tr('加载课题…', 'Loading topics…') : tr('请先选择课题', 'Pick a topic first')}
+            {projectsLoading ? tr('加载中…', 'Loading…') : tr('请先选择课题', 'Choose a topic first')}
           </div>
         </div>
       ) : activeQ.isLoading ? (
         <div className="card">
-          <div className="empty" style={{ padding: 60 }}>{tr('加载论文列表…', 'Loading manuscripts…')}</div>
+          <div className="empty" style={{ padding: 60 }}>{tr('加载中…', 'Loading…')}</div>
         </div>
       ) : activeQ.isError ? (
         <div className="card">
           <EmptyState
             compact
             icon="x"
-            title={tr('无法加载论文列表', 'Failed to load manuscripts')}
-            desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or API not ready.')}
+            title={tr('无法加载稿件', 'Couldn’t load manuscripts')}
+            desc={tr('请确认本机引擎正在运行，然后重试。', 'Make sure the local engine is running, then retry.')}
             action={<button className="btn btn-soft sm" onClick={() => void activeQ.refetch()}>{tr('重试', 'Retry')}</button>}
           />
         </div>
@@ -496,15 +488,15 @@ export function WriterPage() {
           ) : (
             <EmptyState
               icon="pen"
-              title={tr('还没有论文草稿', 'No manuscripts yet')}
+              title={tr('还没有稿件', 'No manuscripts yet')}
               desc={tr(
-                '选一个会议模板新建，AI 会按关联实验的结果起草。',
-                'Pick a venue template to start — AI drafts from the linked experiment results.',
+                '从会议模板新建，可由 AI 根据实验起草。',
+                'Start from a venue template; AI can draft it from your experiments.',
               )}
               action={
-                <button className="btn btn-primary" onClick={() => setModalOpen(true)}>
+                <button className="btn btn-soft" onClick={() => setModalOpen(true)}>
                   <Icon name="plus" size={14} />
-                  {tr('新建论文草稿', 'New manuscript')}
+                  {tr('新建稿件', 'New manuscript')}
                 </button>
               }
             />
@@ -530,11 +522,8 @@ export function WriterPage() {
                 onRestore={() => restoreOne.mutate(m.id)}
                 onDelete={() =>
                   setConfirm({
-                    title: tr('永久删除论文草稿', 'Delete manuscript permanently'),
-                    message: tr(
-                      `将永久删除${m.title}，不可恢复。确定继续？`,
-                      `This permanently deletes "${m.title}". This cannot be undone. Continue?`,
-                    ),
+                    title: tr(`永久删除「${m.title}」？`, `Delete “${m.title}” permanently?`),
+                    message: tr('删除后无法恢复。', 'This can’t be undone.'),
                     confirmText: tr('永久删除', 'Delete permanently'),
                     run: () => deleteOne.mutate(m.id),
                   })
@@ -559,18 +548,19 @@ export function WriterPage() {
             gap: 12,
           }}
         >
-          <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>
             {tr(`已选 ${selected.size} 篇`, `${selected.size} selected`)}
           </span>
           <div className="row gap8" style={{ marginLeft: 'auto' }}>
             {view === 'active' ? (
               <button
-                className="btn btn-danger sm"
+                className="btn btn-ghost sm"
+                style={{ color: 'var(--danger-tx)' }}
                 disabled={batchTrash.isPending}
                 onClick={() => batchTrash.mutate(selectedIds)}
               >
                 <Icon name="trash" size={13} />
-                {tr('批量删除', 'Delete selected')}
+                {tr('移入回收站', 'Move to trash')}
               </button>
             ) : (
               <>
@@ -580,30 +570,28 @@ export function WriterPage() {
                   onClick={() => batchRestore.mutate(selectedIds)}
                 >
                   <Icon name="refresh" size={13} />
-                  {tr('批量恢复', 'Restore selected')}
+                  {tr('恢复', 'Restore')}
                 </button>
                 <button
-                  className="btn btn-danger sm"
+                  className="btn btn-ghost sm"
+                  style={{ color: 'var(--danger-tx)' }}
                   disabled={batchDelete.isPending}
                   onClick={() =>
                     setConfirm({
-                      title: tr('永久删除所选', 'Delete selected permanently'),
-                      message: tr(
-                        `将永久删除所选 ${selected.size} 篇论文草稿，不可恢复。确定继续？`,
-                        `This permanently deletes the ${selected.size} selected manuscript(s). This cannot be undone. Continue?`,
-                      ),
+                      title: tr(`永久删除 ${countText(selected.size)}？`, `Delete ${countText(selected.size)} permanently?`),
+                      message: tr('删除后无法恢复。', 'This can’t be undone.'),
                       confirmText: tr('永久删除', 'Delete permanently'),
                       run: () => batchDelete.mutate(selectedIds),
                     })
                   }
                 >
                   <Icon name="trash" size={13} />
-                  {tr('批量永久删除', 'Delete permanently')}
+                  {tr('永久删除', 'Delete permanently')}
                 </button>
               </>
             )}
             <button className="btn btn-ghost sm" onClick={clearSelection}>
-              {tr('取消选择', 'Clear')}
+              {tr('取消选择', 'Clear selection')}
             </button>
           </div>
         </div>

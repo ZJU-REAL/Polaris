@@ -1,3 +1,4 @@
+import { tr } from '../../lib/i18n';
 import { StateEffect, StateField, RangeSet } from '@codemirror/state';
 import {
   Decoration,
@@ -84,7 +85,7 @@ class AiCaretWidget extends WidgetType {
     bar.className = 'ai-caret-bar';
     const label = document.createElement('span');
     label.className = 'ai-caret-label';
-    label.textContent = this.phase === 'revising' ? '✨ AI 修订中' : '✨ AI';
+    label.textContent = this.phase === 'revising' ? tr('AI 修订中', 'AI revising') : 'AI';
     wrap.appendChild(bar);
     wrap.appendChild(label);
     return wrap;

@@ -24,7 +24,7 @@ type AddTab = 'library' | 'manual';
 // 模块级常量不调 tr()：保留 zh/en 字段，渲染处再 tr
 const TABS: { v: AddTab; zh: string; en: string }[] = [
   { v: 'library', zh: '从文献库', en: 'From library' },
-  { v: 'manual', zh: '手动添加', en: 'By arXiv / DOI / PMID' },
+  { v: 'manual', zh: '按编号添加', en: 'By ID' },
 ];
 
 export function AddPaperModal({
@@ -74,7 +74,7 @@ export function AddPaperModal({
     if (!input) {
       toast(
         importInput.trim()
-          ? tr('认不出这个编号：请输入 arXiv 编号、DOI 或 PMID', 'Not a recognisable arXiv ID, DOI or PMID')
+          ? tr('无法识别这个编号，请输入 arXiv 编号、DOI 或 PMID', 'That isn’t an arXiv ID, DOI or PMID')
           : tr('先输入 arXiv 编号、DOI 或 PMID', 'Enter an arXiv ID, DOI or PMID first'),
         'info',
       );
@@ -90,7 +90,7 @@ export function AddPaperModal({
       open={open}
       onClose={onClose}
       width={600}
-      title={tr('添加文献', 'Add paper')}
+      title={tr('添加论文', 'Add paper')}
     >
       <Segmented<AddTab> options={TABS.map((t) => ({ v: t.v, label: tr(t.zh, t.en) }))} value={tab} onChange={setTab} />
 
@@ -101,7 +101,7 @@ export function AddPaperModal({
             <SearchInput
               value={qInput}
               onChange={setQInput}
-              placeholder={tr('搜文献库：标题 / 摘要 / 解读…', 'Search the library: title / abstract / wiki…')}
+              placeholder={tr('搜索标题、摘要或解读…', 'Search titles, abstracts or summaries…')}
             />
             <button
               className="btn btn-ghost sm"
@@ -118,13 +118,13 @@ export function AddPaperModal({
 
           {q.length === 0 ? (
             <div className="empty" style={{ padding: '28px 14px' }}>
-              {tr('输入关键词，搜这个课题关联的文献库', 'Type a keyword to search this topic’s library')}
+              {tr('输入关键词，搜索课题关联的文献库', 'Type a keyword to search this topic’s libraries')}
             </div>
           ) : searchQuery.isLoading ? (
             <div className="empty" style={{ padding: '28px 14px' }}>{tr('搜索中…', 'Searching…')}</div>
           ) : results.length === 0 ? (
             <div className="empty" style={{ padding: '28px 14px' }}>
-              {tr('文献库里没搜到，试试手动添加页签', 'Nothing found — try the “By arXiv / DOI / PMID” tab')}
+              {tr('没有找到，可以切换到「按编号添加」', 'Nothing found. Try adding it by ID.')}
             </div>
           ) : (
             <div className="col" style={{ marginTop: 8 }}>
@@ -137,14 +137,14 @@ export function AddPaperModal({
                     style={{ padding: '9px 4px', borderBottom: '0.5px solid var(--border)' }}
                   >
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35 }}>{p.title}</div>
-                      <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 2 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>{p.title}</div>
+                      <div className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
                         {p.arxiv_id ?? p.venue ?? '—'}
                         {p.year !== null ? ` · ${p.year}` : ''}
                       </div>
                     </div>
                     {added ? (
-                      <span className="row gap6" style={{ fontSize: 11.5, color: 'var(--ok-tx)', flexShrink: 0 }}>
+                      <span className="row gap6" style={{ fontSize: 12, color: 'var(--ok-tx)', flexShrink: 0 }}>
                         <Icon name="check" size={13} />
                         {tr('已添加', 'Added')}
                       </span>
@@ -172,15 +172,15 @@ export function AddPaperModal({
             <input
               className="input"
               autoFocus
-              style={{ height: 32, fontSize: 12.5, flex: 1, minWidth: 0 }}
+              style={{ height: 32, fontSize: 13, flex: 1, minWidth: 0 }}
               value={importInput}
               onChange={(e) => setImportInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') submitImport();
               }}
               placeholder={tr(
-                'arXiv 编号（2401.12345）、DOI（10.1234/abc）或 PMID（31452104），也可粘贴链接',
-                'arXiv ID (2401.12345), DOI (10.1234/abc) or PMID (31452104); links work too',
+                '例如 2401.12345、10.1234/abc、31452104 或论文链接',
+                'e.g. 2401.12345, 10.1234/abc, 31452104 or a paper link',
               )}
             />
             <button
@@ -192,10 +192,10 @@ export function AddPaperModal({
               {importPending ? tr('解析中…', 'Resolving…') : tr('添加', 'Add')}
             </button>
           </div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-4)', marginTop: 10, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 10, lineHeight: 1.6 }}>
             {tr(
-              '自动查重；新论文只进这个课题和你的个人文献库，不进任何方向文献库。',
-              'Duplicates are reused automatically; new papers go to this topic and your personal library only — no direction library is changed.',
+              '支持 arXiv 编号、DOI 和 PMID。论文会同时加入我的文献库。',
+              'Accepts arXiv IDs, DOIs and PMIDs. The paper is also added to My library.',
             )}
           </div>
         </div>

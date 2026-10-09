@@ -80,20 +80,20 @@ export function DebateBubble({ msg, role }: { msg: ReviewMessageRead; role: Deba
         <span className="pill sm" style={{ background: s.badgeBg, color: s.badgeTx }}>
           {tr(s.zh, s.en)}
         </span>
-        <span style={{ fontSize: 12, fontWeight: 650 }}>{msg.author_name}</span>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>{msg.author_name}</span>
         {msg.round !== null && (
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>round {msg.round}</span>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{tr(`第 ${msg.round} 轮`, `Round ${msg.round}`)}</span>
         )}
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginLeft: 'auto' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 'auto' }}>
           {fmtTime(msg.created_at)}
         </span>
       </div>
       {judge && (
-        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--warn-tx)', marginBottom: 4 }}>
-          {tr('裁判判决', 'Judge verdict')}
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--warn-tx)', marginBottom: 4 }}>
+          {tr('判决', 'Verdict')}
         </div>
       )}
-      <Markdown source={msg.content} style={{ fontSize: 12.5 }} />
+      <Markdown source={msg.content} style={{ fontSize: 13 }} />
     </div>
   );
 }
@@ -113,12 +113,12 @@ export function DiscussionBubble({ msg }: { msg: ReviewMessageRead }) {
         }}
       >
         <div className="row gap8" style={{ marginBottom: 4, justifyContent: human ? 'flex-end' : 'flex-start' }}>
-          <span style={{ fontSize: 11, fontWeight: 650, color: human ? 'var(--accent-text)' : 'var(--text-2)' }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: human ? 'var(--accent-text)' : 'var(--text-2)' }}>
             {msg.author_name}
           </span>
-          <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{fmtTime(msg.created_at)}</span>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{fmtTime(msg.created_at)}</span>
         </div>
-        <Markdown source={msg.content} style={{ fontSize: 12.5 }} />
+        <Markdown source={msg.content} style={{ fontSize: 13 }} />
       </div>
     </div>
   );

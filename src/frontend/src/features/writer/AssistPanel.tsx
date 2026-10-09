@@ -3,6 +3,7 @@ import type { EditorView } from '@codemirror/view';
 import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
 import { assistManuscriptSse, type AssistInput } from '../../lib/sse';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    内联 AI 面板（编辑器下方停靠条）：
@@ -14,11 +15,10 @@ import { assistManuscriptSse, type AssistInput } from '../../lib/sse';
 
 export type AssistMode = 'polish' | 'rewrite' | 'continue';
 
-const MODE_TEXT: Record<AssistMode, string> = {
-  polish: '润色',
-  rewrite: '改写',
-  continue: '续写',
-};
+/** 面板标题（渲染时求值，随语言切换） */
+function modeTitle(mode: AssistMode): string {
+  return mode === 'polish' ? tr('AI 润色', 'AI polish') : mode === 'rewrite' ? tr('AI 改写', 'AI rewrite') : tr('AI 续写', 'AI continue');
+}
 
 /** 选区/光标前后文窗口（与后端 MAX_CONTEXT_CHARS 对齐即可，超出后端会截断） */
 const CONTEXT_CHARS = 2000;
@@ -80,7 +80,7 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
   function start() {
     if (selectionMissing) return;
     if (mode === 'rewrite' && !instruction.trim()) {
-      toast('先写一句改写要求，比如更简洁改成主动语态', 'info');
+      toast(tr('请先写下改写要求，例如「更简洁」', 'Say how to rewrite it first, e.g. “more concise”'), 'info');
       return;
     }
     setPhase('streaming');
@@ -105,7 +105,7 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
           } else if (event === 'done') {
             setPhase('done');
           } else if (event === 'error') {
-            setErrorText(String(obj.detail ?? '生成失败'));
+            setErrorText(String(obj.detail ?? tr('未知错误', 'Unknown error')));
             setPhase('error');
           }
         } catch {
@@ -142,11 +142,11 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
           scrollIntoView: true,
         });
         view.focus();
-        toast('已替换选中文字', 'ok');
+        toast(tr('已替换选中文字', 'Replaced the selection'), 'ok');
         onClose();
         return;
       }
-      toast('原选区内容已被改动，改为插入到当前光标处', 'info');
+      toast(tr('选中的文字已改动，已改为插入到光标处', 'The selection changed, so the text was inserted at the cursor'), 'info');
     }
     const sel = view.state.selection.main;
     view.dispatch({
@@ -155,7 +155,7 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
       scrollIntoView: true,
     });
     view.focus();
-    toast('已插入到光标处', 'ok');
+    toast(tr('已插入到光标处', 'Inserted at the cursor'), 'ok');
     onClose();
   }
 
@@ -173,27 +173,29 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
       {/* 头部 */}
       <div className="row gap8" style={{ padding: '7px 14px', flexShrink: 0 }}>
         <Icon name="sparkle" size={13} style={{ color: 'var(--accent)' }} />
-        <span style={{ fontSize: 12, fontWeight: 650 }}>AI {MODE_TEXT[mode]}</span>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>{modeTitle(mode)}</span>
         {needsSelection && !selectionMissing && (
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-            选中 {captured.text.length} 个字符
+          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+            {tr(`已选 ${captured.text.length} 个字符`, `${captured.text.length} characters selected`)}
           </span>
         )}
         <span style={{ flex: 1 }} />
         {phase === 'streaming' && (
           <button className="btn btn-ghost sm" onClick={stop}>
             <Icon name="pause" size={12} />
-            停止
+            {tr('停止', 'Stop')}
           </button>
         )}
-        <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={onClose} aria-label="关闭">
+        <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={onClose} aria-label={tr('关闭', 'Close')}>
           <Icon name="x" size={13} />
         </button>
       </div>
 
       {selectionMissing ? (
         <div style={{ padding: '4px 14px 12px', fontSize: 12, color: 'var(--text-3)' }}>
-          先在编辑器里选中要{MODE_TEXT[mode]}的文字，再点上方的AI {MODE_TEXT[mode]}。
+          {mode === 'polish'
+            ? tr('先在编辑器中选中要润色的文字。', 'Select the text to polish in the editor first.')
+            : tr('先在编辑器中选中要改写的文字。', 'Select the text to rewrite in the editor first.')}
         </div>
       ) : (
         <>
@@ -205,8 +207,8 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
                 style={{ flex: 1, height: 30, fontSize: 12 }}
                 placeholder={
                   mode === 'rewrite'
-                    ? '改写要求（必填），如：更简洁 / 语气更正式 / 强调贡献'
-                    : '补充要求（可选），回车开始'
+                    ? tr('改写要求，例如：更简洁、语气更正式', 'How to rewrite, e.g. more concise, more formal')
+                    : tr('补充要求（可选），按回车开始', 'Extra instructions (optional), press Enter to start')
                 }
                 value={instruction}
                 autoFocus
@@ -218,7 +220,7 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
               />
               <button className="btn btn-primary sm" onClick={start}>
                 <Icon name="sparkle" size={12} />
-                开始
+                {tr('开始', 'Start')}
               </button>
             </div>
           )}
@@ -231,10 +233,10 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
                 borderRadius: 7,
                 background: 'var(--danger-bg)',
                 color: 'var(--danger-tx)',
-                fontSize: 11.5,
+                fontSize: 12,
               }}
             >
-              生成失败：{errorText}
+              {tr('生成失败：', 'Couldn’t generate: ')}{errorText}
             </div>
           )}
 
@@ -250,7 +252,7 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
                   borderRadius: 8,
                   border: '0.5px solid var(--border)',
                   background: 'var(--surface)',
-                  fontSize: 11.5,
+                  fontSize: 12,
                   lineHeight: 1.65,
                   whiteSpace: 'pre-wrap',
                   overflowY: 'auto',
@@ -258,7 +260,7 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
                   flex: 1,
                 }}
               >
-                {result || <span style={{ color: 'var(--text-4)' }}>正在生成…</span>}
+                {result || <span style={{ color: 'var(--text-3)' }}>{tr('生成中…', 'Generating…')}</span>}
                 {phase === 'streaming' && result && <span className="pulse">▌</span>}
               </div>
               {warnings.length > 0 && (
@@ -274,7 +276,7 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
                   }}
                 >
                   {warnings.map((w, i) => (
-                    <div key={i}>⚠ {w}</div>
+                    <div key={i}>{w}</div>
                   ))}
                 </div>
               )}
@@ -284,7 +286,7 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
                     {needsSelection && (
                       <button className="btn btn-primary sm" onClick={() => apply(true)}>
                         <Icon name="check" size={12} />
-                        替换选中
+                        {tr('替换选中文字', 'Replace selection')}
                       </button>
                     )}
                     <button
@@ -292,7 +294,7 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
                       onClick={() => apply(false)}
                     >
                       <Icon name="plus" size={12} />
-                      插到光标处
+                      {tr('插入到光标处', 'Insert at cursor')}
                     </button>
                     <button
                       className="btn btn-ghost sm"
@@ -303,13 +305,13 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
                       }}
                     >
                       <Icon name="refresh" size={12} />
-                      重来
+                      {tr('重新生成', 'Regenerate')}
                     </button>
                   </>
                 )}
                 <span style={{ flex: 1 }} />
-                <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-                  AI 结果需自行核对，引用与数字以事实包为准
+                <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                  {tr('请核对 AI 生成的引用和数字', 'Check citations and numbers before using')}
                 </span>
               </div>
             </>

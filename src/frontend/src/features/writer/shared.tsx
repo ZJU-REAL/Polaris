@@ -40,10 +40,10 @@ export function colorForUser(name: string): string {
 /** 编译诊断规则 → 大白话。 */
 export function ruleText(rule: DiagnosticRule | string): string {
   const map: Record<string, string> = {
-    undefined_citation: tr('引用没找到', 'Citation not found'),
-    undefined_reference: tr('交叉引用没找到', 'Cross-reference not found'),
+    undefined_citation: tr('找不到引用', 'Citation not found'),
+    undefined_reference: tr('找不到交叉引用', 'Cross-reference not found'),
     latex_error: tr('LaTeX 错误', 'LaTeX error'),
-    overfull: tr('排版溢出', 'Overfull box'),
+    overfull: tr('排版溢出', 'Text overflows'),
     other: tr('其他', 'Other'),
   };
   return map[rule] ?? rule;

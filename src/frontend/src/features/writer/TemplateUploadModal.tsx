@@ -58,7 +58,7 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
         ...(global ? {} : { project_id: pid }),
       }),
     onSuccess: (tpl) => {
-      toast(tr('模板已上传', 'Template uploaded'), 'ok');
+      toast(tr('已上传模板', 'Template uploaded'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['manuscript-templates'] });
       onUploaded(tpl);
       onClose();
@@ -66,11 +66,11 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
     onError: (e) => {
       if (e instanceof ApiError) {
         if (e.status === 422) {
-          toast(tr('模板包无效：zip 内需包含 .tex 文件', 'Invalid template: the zip must contain a .tex file'), 'error');
+          toast(tr('zip 中没有 .tex 文件，请检查模板包', 'The zip has no .tex file. Check the template package.'), 'error');
           return;
         }
       }
-      toast(`${tr('上传失败：', 'Upload failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+      toast(`${tr('上传失败：', 'Couldn’t upload: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
     },
   });
 
@@ -84,7 +84,7 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
       title={
         <>
           <Icon name="file" size={16} style={{ color: 'var(--accent)' }} />
-          {tr('上传论文模板', 'Upload template')}
+          {tr('上传模板', 'Upload template')}
         </>
       }
       footer={
@@ -107,8 +107,8 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
       }
     >
       <FormField
-        label={tr('模板包（zip）', 'Template package (zip)')}
-        hint={tr('zip 内需至少包含一个 .tex 文件；可含 .cls / .sty / .bst 等排版资源。', 'The zip must contain at least one .tex file; may include .cls / .sty / .bst assets.')}
+        label={tr('模板包', 'Template package')}
+        hint={tr('zip 格式，至少包含一个 .tex 文件', 'A zip with at least one .tex file')}
       >
         <input
           ref={fileInputRef}
@@ -133,7 +133,7 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
         </div>
       </FormField>
 
-      <FormField label={tr('模板名称', 'Template name')}>
+      <FormField label={tr('名称', 'Name')}>
         <input
           className="input"
           value={name}
@@ -148,7 +148,7 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
           rows={2}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder={tr('简要说明这个模板适用的场景。', 'Briefly describe when to use this template.')}
+          placeholder={tr('例如：组内技术报告格式', 'e.g. Lab tech report format')}
         />
       </FormField>
 
@@ -161,7 +161,7 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
           />
         </FormField>
         <FormField
-          label={tr('正文页数上限（可选）', 'Body page limit (optional)')}
+          label={tr('页数上限（可选）', 'Page limit (optional)')}
           style={{ flex: 1 }}
         >
           <input
@@ -170,19 +170,17 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
             min={1}
             value={pageLimit}
             onChange={(e) => setPageLimit(e.target.value)}
-            placeholder={tr('如 9', 'e.g. 9')}
+            placeholder={tr('例如 9', 'e.g. 9')}
           />
         </FormField>
       </div>
 
-      <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer', marginTop: 4 }}>
+      <label className="row gap8" style={{ fontSize: 13, cursor: 'pointer', marginTop: 4 }}>
         <input type="checkbox" checked={global} onChange={(e) => setGlobal(e.target.checked)} />
-        {tr('设为全平台可用（需平台管理员）', 'Make available platform-wide (admin required)')}
+        {tr('在所有课题中可用', 'Use in all topics')}
       </label>
       <div className="field-hint" style={{ marginTop: 4 }}>
-        {global
-          ? tr('全平台模板对所有课题可见，仅平台管理员可创建。', 'Platform-wide templates are visible to every topic; only platform admins can create them.')
-          : tr('默认仅当前课题可用。', 'By default only the current topic can use it.')}
+        {tr('不勾选则只在当前课题可用', 'Otherwise only this topic can use it')}
       </div>
     </Modal>
   );

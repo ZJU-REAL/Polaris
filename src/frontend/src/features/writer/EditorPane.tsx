@@ -34,7 +34,7 @@ export interface PeerInfo {
 const cmTheme = EditorView.theme({
   '&': {
     height: '100%',
-    fontSize: '12.5px',
+    fontSize: '13px',
     backgroundColor: 'var(--surface)',
     color: 'var(--text)',
   },
@@ -47,7 +47,7 @@ const cmTheme = EditorView.theme({
   '.cm-content': { padding: '10px 0' },
   '.cm-gutters': {
     backgroundColor: 'var(--surface-2)',
-    color: 'var(--text-4)',
+    color: 'var(--text-3)',
     border: 'none',
     borderRight: '0.5px solid var(--border)',
   },
@@ -118,7 +118,7 @@ const cmTheme = EditorView.theme({
     border: '1px solid var(--border)',
     borderRadius: '6px',
     padding: '4px 9px',
-    fontSize: '11.5px',
+    fontSize: '12px',
     cursor: 'pointer',
   },
   '.cm-panel.cm-search .cm-button:hover': {
@@ -152,18 +152,18 @@ function searchExtensions() {
       'Find': tr('查找', 'Find'),
       'Replace': tr('替换为', 'Replace'),
       'next': tr('下一个', 'Next'),
-      'previous': tr('上一个', 'Prev'),
+      'previous': tr('上一个', 'Previous'),
       'all': tr('全选', 'Select all'),
-      'match case': tr('区分大小写', 'match case'),
-      'regexp': tr('正则', 'regexp'),
-      'by word': tr('全词', 'by word'),
+      'match case': tr('区分大小写', 'Match case'),
+      'regexp': tr('正则', 'Regex'),
+      'by word': tr('全词匹配', 'Whole word'),
       'replace': tr('替换', 'Replace'),
       'replace all': tr('全部替换', 'Replace all'),
-      'close': tr('关闭', 'close'),
-      'current match': tr('当前匹配', 'current match'),
+      'close': tr('关闭', 'Close'),
+      'current match': tr('当前匹配', 'Current match'),
       'on line': tr('位于第', 'on line'),
       'Go to line': tr('跳转到行', 'Go to line'),
-      'go': tr('跳转', 'go'),
+      'go': tr('跳转', 'Go'),
     }),
   ];
 }
@@ -341,7 +341,7 @@ export function BinaryPreview({ manuscriptId, file }: { manuscriptId: string; fi
   const isImage = IMG_RE.test(file.path);
 
   if (rawQuery.isLoading) {
-    return <div className="empty" style={{ flex: 1, paddingTop: 80 }}>{tr('加载文件…', 'Loading file…')}</div>;
+    return <div className="empty" style={{ flex: 1, paddingTop: 80 }}>{tr('加载中…', 'Loading…')}</div>;
   }
   if (rawQuery.isError || !url) {
     return (
@@ -349,8 +349,8 @@ export function BinaryPreview({ manuscriptId, file }: { manuscriptId: string; fi
         <EmptyState
           compact
           icon="x"
-          title={tr('读不到这个文件', 'Cannot read this file')}
-          desc={tr('后端不可用或文件已被删除。', 'Backend unavailable or the file was deleted.')}
+          title={tr('无法打开这个文件', 'Couldn’t open this file')}
+          desc={tr('文件可能已被删除，或本机引擎没有运行。', 'It may have been deleted, or the local engine isn’t running.')}
           action={
             <button className="btn btn-soft sm" onClick={() => void rawQuery.refetch()}>
               {tr('重试', 'Retry')}
@@ -372,12 +372,12 @@ export function BinaryPreview({ manuscriptId, file }: { manuscriptId: string; fi
   return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <div style={{ textAlign: 'center', maxWidth: 340 }}>
-        <div style={{ color: 'var(--text-4)', display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+        <div style={{ color: 'var(--text-3)', display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
           <Icon name="file" size={40} />
         </div>
-        <div className="mono" style={{ fontSize: 12.5, fontWeight: 600, wordBreak: 'break-all' }}>{name}</div>
-        <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
-          {tr('二进制文件，无法在线预览', 'Binary file — no inline preview')} · {fmtBytes(file.size)}
+        <div className="mono" style={{ fontSize: 13, fontWeight: 600, wordBreak: 'break-all' }}>{name}</div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+          {tr('无法预览这个文件', 'No preview for this file')} · {fmtBytes(file.size)}
         </div>
         <a className="btn btn-primary sm" href={url} download={name} style={{ marginTop: 14, textDecoration: 'none' }}>
           <Icon name="download" size={13} />
@@ -424,7 +424,7 @@ function ReadonlyEditor({ manuscriptId, fileId, onView, onDocChange }: EditorPan
   }, [content]);
 
   if (fileQuery.isLoading) {
-    return <div className="empty" style={{ flex: 1, paddingTop: 80 }}>{tr('加载文件内容…', 'Loading file…')}</div>;
+    return <div className="empty" style={{ flex: 1, paddingTop: 80 }}>{tr('加载中…', 'Loading…')}</div>;
   }
   if (fileQuery.isError) {
     return (
@@ -432,8 +432,8 @@ function ReadonlyEditor({ manuscriptId, fileId, onView, onDocChange }: EditorPan
         <EmptyState
           compact
           icon="x"
-          title={tr('读不到这个文件', 'Cannot read this file')}
-          desc={tr('后端不可用或文件已被删除。', 'Backend unavailable or the file was deleted.')}
+          title={tr('无法打开这个文件', 'Couldn’t open this file')}
+          desc={tr('文件可能已被删除，或本机引擎没有运行。', 'It may have been deleted, or the local engine isn’t running.')}
           action={
             <button className="btn btn-soft sm" onClick={() => void fileQuery.refetch()}>
               {tr('重试', 'Retry')}

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Icon } from '../../components/ui/Icon';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    章节大纲面板（左栏下半）：解析当前文件的 \section /
@@ -94,20 +95,20 @@ export function OutlinePanel({ content, open, onToggle, onJump }: OutlinePanelPr
           className="row gap6"
           onClick={onToggle}
           style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-3)' }}
-          title={open ? '收起大纲' : '展开大纲'}
+          title={open ? tr('收起大纲', 'Collapse outline') : tr('展开大纲', 'Expand outline')}
         >
           <Icon name="chevDown" size={10} style={{ transform: open ? 'none' : 'rotate(-90deg)', transition: 'transform .12s' }} />
-          <span style={{ fontSize: 11, fontWeight: 650, letterSpacing: '0.04em' }}>大纲</span>
+          <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em' }}>{tr('大纲', 'Outline')}</span>
         </button>
         {open && entries.length > 0 && (
-          <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{totalWords} 词</span>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{tr(`${totalWords} 词`, `${totalWords} ${totalWords === 1 ? 'word' : 'words'}`)}</span>
         )}
       </div>
       {open && (
         <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 8px 10px' }}>
           {entries.length === 0 ? (
-            <div style={{ fontSize: 11, color: 'var(--text-4)', padding: '2px 6px' }}>
-              {content == null ? '等待编辑器加载…' : '当前文件没有章节标题'}
+            <div style={{ fontSize: 11, color: 'var(--text-3)', padding: '2px 6px' }}>
+              {content == null ? tr('加载中…', 'Loading…') : tr('这个文件没有章节标题', 'No section headings in this file')}
             </div>
           ) : (
             entries.map((e, i) => (
@@ -115,7 +116,7 @@ export function OutlinePanel({ content, open, onToggle, onJump }: OutlinePanelPr
                 key={`${e.line}-${i}`}
                 className="row gap6 writer-file"
                 onClick={() => onJump(e.line)}
-                title={`跳到第 ${e.line} 行`}
+                title={tr(`跳到第 ${e.line} 行`, `Go to line ${e.line}`)}
                 style={{
                   padding: '4px 8px',
                   paddingLeft: e.level === 2 ? 22 : 8,
@@ -125,7 +126,7 @@ export function OutlinePanel({ content, open, onToggle, onJump }: OutlinePanelPr
                 }}
               >
                 <span
-                  title={e.pending ? '还没写（占位）' : '已有内容'}
+                  title={e.pending ? tr('还没写', 'Not written yet') : tr('已有内容', 'Has content')}
                   style={{
                     width: 7,
                     height: 7,
@@ -139,7 +140,7 @@ export function OutlinePanel({ content, open, onToggle, onJump }: OutlinePanelPr
                   style={{
                     flex: 1,
                     minWidth: 0,
-                    fontSize: 11.5,
+                    fontSize: 12,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
@@ -148,7 +149,7 @@ export function OutlinePanel({ content, open, onToggle, onJump }: OutlinePanelPr
                 >
                   {e.title}
                 </span>
-                <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)', flexShrink: 0 }}>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
                   {e.words}
                 </span>
               </div>

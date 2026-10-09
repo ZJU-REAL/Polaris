@@ -56,7 +56,7 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
   const initMutation = useMutation({
     mutationFn: () => api.initializeManuscriptStructure(manuscript.id),
     onSuccess: (file) => {
-      toast(tr('已生成结构化的 draft.tex 并切换为编译主文件，原文件保留', 'Created a structured draft.tex and switched compile to it — your original file is kept'), 'ok');
+      toast(tr('已创建 draft.tex 并设为编译主文件', 'Created draft.tex and set it as the main file'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['manuscript-file'] });
       void queryClient.invalidateQueries({ queryKey: ['manuscript-file-raw'] });
       void queryClient.invalidateQueries({ queryKey: ['file-versions', manuscript.id] });
@@ -69,13 +69,13 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
       if (e instanceof ApiError && e.status === 422 && e.message.includes('MAIN_TEX_NO_DOCUMENT')) {
         toast(
           tr(
-            '主文件里没有 \\begin{document}…\\end{document}，请先选择正确的主文件',
-            'The main file has no \\begin{document}…\\end{document} — pick the correct main file first',
+            '主文件缺少 \\begin{document}，请先选择正确的主文件',
+            'The main file has no \\begin{document}. Choose the right main file first.',
           ),
           'error',
         );
       } else {
-        toast(`${tr('初始化失败：', 'Initialize failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('无法创建 draft.tex：', 'Couldn’t create draft.tex: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -87,7 +87,7 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
         ...(notes.trim() ? { notes: notes.trim() } : {}),
       }),
     onSuccess: () => {
-      toast(tr('AI 起草任务已启动，可在顶栏查看进度', 'AI drafting started — check progress in the top bar'), 'ok');
+      toast(tr('已开始起草，进度见顶栏', 'Drafting started. Track it in the top bar'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['manuscript', manuscript.id] });
       void queryClient.invalidateQueries({ queryKey: ['manuscripts'] });
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
@@ -95,9 +95,9 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
-        toast(tr('这篇稿子已经有一个进行中的 AI 起草任务了', 'This manuscript already has a drafting task in progress'), 'error');
+        toast(tr('这篇稿件正在起草中', 'This manuscript is already being drafted'), 'error');
       } else {
-        toast(`${tr('启动失败：', 'Failed to start: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('无法开始起草：', 'Couldn’t start drafting: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -122,12 +122,12 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
       title={
         <>
           <Icon name="sparkle" size={16} style={{ color: 'var(--accent)' }} />
-          {tr('AI 起草', 'AI draft')}
+          {tr('AI 起草', 'Draft with AI')}
         </>
       }
       sub={tr(
-        'AI 只会用事实包里的引用、图表和数字。',
-        'AI only uses the citations, figures and numbers in the fact pack.',
+        '只使用事实包中的引用、图表和数字。',
+        'Uses only the citations, figures and numbers in the fact pack.',
       )}
       footer={
         <>
@@ -150,7 +150,6 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
     >
       <div
         style={{
-          border: '0.5px solid var(--border)',
           borderRadius: 8,
           padding: '10px 12px',
           background: 'var(--surface-2)',
@@ -158,8 +157,8 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
         }}
       >
         <div className="row gap8" style={{ marginBottom: 6 }}>
-          <span style={{ fontSize: 12.5, fontWeight: 650 }}>
-            {tr('第一步 · 初始化结构', 'Step 1 · Initialize structure')}
+          <span style={{ fontSize: 13, fontWeight: 600 }}>
+            {tr('首次起草前', 'Before the first draft')}
           </span>
           <button
             className="btn btn-ghost sm"
@@ -170,36 +169,33 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
             {initMutation.isPending ? (
               <>
                 <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-                {tr('初始化中…', 'Initializing…')}
+                {tr('创建中…', 'Creating…')}
               </>
             ) : (
               <>
                 <Icon name="layers" size={13} />
-                {tr('初始化结构', 'Initialize structure')}
+                {tr('创建 draft.tex', 'Create draft.tex')}
               </>
             )}
           </button>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.6 }}>
           {tr(
-            '新建一个 draft.tex：照抄当前主文件的导言区，正文换成分节骨架，供 AI 逐节起草；同时把编译主文件切换成 draft.tex。原主文件保持不变。首次起草前做一次即可。',
-            'Creates a new draft.tex: copies the current main file’s preamble and replaces the body with a section skeleton for the AI to draft into, then switches the compile main file to draft.tex. Your original main file is left untouched. Do this once before the first draft.',
+            '新建带章节标题的 draft.tex 并设为编译主文件，原主文件不变。',
+            'Adds draft.tex with section headings and compiles from it. Your main file stays as it is.',
           )}
         </div>
       </div>
 
-      <FormField label={tr('写哪些节', 'Sections to write')}>
+      <FormField label={tr('章节', 'Sections')}>
         <div className="col gap8">
-          <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer' }}>
+          <label className="row gap8" style={{ fontSize: 13, cursor: 'pointer' }}>
             <input type="radio" checked={all} onChange={() => setAll(true)} />
-            {tr(
-              '全部节（引言 → 方法 → 实验设置 → 结果 → 结论 → 摘要 → 相关工作，最后整体编译）',
-              'All sections (intro → method → setup → results → conclusion → abstract → related work, then a full compile)',
-            )}
+            {tr('全部章节', 'All sections')}
           </label>
-          <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer' }}>
+          <label className="row gap8" style={{ fontSize: 13, cursor: 'pointer' }}>
             <input type="radio" checked={!all} onChange={() => setAll(false)} />
-            {tr('只写选中的节', 'Only the selected sections')}
+            {tr('选择章节', 'Choose sections')}
           </label>
           {!all && (
             <div className="row gap8 wrap" style={{ paddingLeft: 22 }}>
@@ -220,8 +216,7 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
       </FormField>
 
       <FormField
-        label={tr('备注（可选）', 'Notes (optional)')}
-        hint={tr('给 AI 的额外要求。', 'Extra instructions for the AI.')}
+        label={tr('额外要求（可选）', 'Instructions (optional)')}
       >
         <textarea
           className="textarea"
@@ -229,16 +224,16 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder={tr(
-            '如：重点突出方法的高效性，Related Work 里对比 XX 一系工作…',
-            'e.g. emphasize efficiency; compare against the XX line of work in Related Work…',
+            '例如：突出方法的效率，相关工作部分重点对比 XX 系列方法',
+            'e.g. Stress efficiency; compare with the XX line of work in related work',
           )}
         />
       </FormField>
 
-      <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.6 }}>
         {tr(
-          '起草时编辑器里会出现一个✨ AI光标，逐字把每一节写进正文、自动滚动跟随，你可以在旁边实时看着它写（也能随时在 AI 任务页取消）。每一节写完都会做真实性自检：引用必须在事实包文献里、图表只能用实验产出、正文数字必须能对上实验指标。',
-          'While drafting, a "✨ AI" cursor types each section into the manuscript character by character and auto-scrolls to follow — watch it write live (or cancel from the AI tasks page). Every finished section is fact-checked: citations must be in the fact pack, figures must come from experiment outputs, and numbers must match experiment metrics.',
+          '起草内容会实时出现在编辑器中，每节写完后核对引用、图表和数字的出处。',
+          'Text appears in the editor as it’s written. Each section’s citations, figures and numbers are checked against their sources.',
         )}
       </div>
     </Modal>
@@ -246,12 +241,12 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
     <ConfirmModal
       open={initConfirmOpen}
       onClose={() => setInitConfirmOpen(false)}
-      title={tr('生成 draft.tex', 'Create draft.tex')}
+      title={tr('创建 draft.tex？', 'Create draft.tex?')}
       message={tr(
-        '会新建一个 draft.tex（导言区照抄当前主文件，正文是分节骨架），并把编译主文件切换成它，用于分节 AI 起草。原文件不会被改动。继续？',
-        'This creates a new draft.tex (preamble copied from the current main file, body as a section skeleton) and switches the compile main file to it for section-by-section AI drafting. Your original file is left untouched. Continue?',
+        '之后将编译 draft.tex，当前主文件保持不变。',
+        'Compiling will switch to draft.tex. Your current main file is kept.',
       )}
-      confirmText={tr('生成 draft.tex', 'Create draft.tex')}
+      confirmText={tr('创建', 'Create')}
       busy={initMutation.isPending}
       onConfirm={() => initMutation.mutate()}
     />
