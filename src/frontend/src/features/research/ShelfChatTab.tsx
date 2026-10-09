@@ -17,15 +17,15 @@ import type { ChatMsg } from '../chat/types';
 
 const SUGGESTIONS: { zh: string; en: string }[] = [
   {
-    zh: '这些相关研究里，哪几篇和我这个课题最直接相关？为什么？',
+    zh: '哪几篇和我的课题最直接相关？为什么？',
     en: 'Which of these related papers matter most to my topic, and why?',
   },
   {
-    zh: '把这批相关研究的做法归归类，各自的思路差在哪？',
-    en: 'Group the approaches in this related work — how do their ideas differ?',
+    zh: '把这些论文的方法归类，它们的思路有什么不同？',
+    en: 'Group these papers by approach. How do their ideas differ?',
   },
   {
-    zh: '综合这些相关研究，还有哪些没被解决、值得我去做的问题？',
+    zh: '还有哪些没解决、值得我做的问题？',
     en: 'Across this related work, which open problems are worth pursuing?',
   },
 ];
@@ -61,7 +61,7 @@ export function ShelfChatTab({ pid }: ShelfChatTabProps) {
             }
           } else if (event === 'done') ctrl.onDone();
           else if (event === 'error') {
-            let detail = tr('服务端出错', 'Server error');
+            let detail = tr('本机引擎出错', 'The local engine hit an error');
             try {
               detail = (JSON.parse(dataStr) as { detail?: string }).detail ?? detail;
             } catch {
@@ -83,22 +83,22 @@ export function ShelfChatTab({ pid }: ShelfChatTabProps) {
       title={tr('相关研究对话', 'Related work chat')}
       contextKinds={['paper', 'idea', 'experiment', 'concept']}
       hint={tr(
-        '只回答本课题相关研究里这批论文的问题；[n] 是引用来源编号。',
-        'Answers stay within this topic’s related work; [n] marks a source number.',
+        '只根据相关研究中的论文回答，[n] 表示来源。',
+        'Answers use only your related work. [n] marks a source.',
       )}
       headerAction={<BuildIndexButton build={() => api.buildShelfIndex(pid)} />}
       emptyIcon="chat"
-      emptyTitle={tr('和本课题的相关研究对话', 'Chat with this topic’s related work')}
+      emptyTitle={tr('就相关研究提问', 'Ask about your related work')}
       emptyDesc={tr(
-        '范围锁定在你加进相关研究的这批论文。',
-        'Scoped to the papers you shelved as related work.',
+        '回答只基于你加入相关研究的论文。',
+        'Answers draw only on the papers you added to related work.',
       )}
       suggestions={SUGGESTIONS}
-      placeholder={tr('就本课题相关研究提问，或输入 / 放入上下文、@ 分享…', 'Ask about this related work, or type / for context, @ to share…')}
+      placeholder={tr('提问，或输入 / 添加上下文…', 'Ask a question, or type / to add context…')}
       renderAssistant={(m: ChatMsg) => (
         <Markdown
           source={m.content}
-          style={{ fontSize: 12.5 }}
+          style={{ fontSize: 13 }}
           renderCitation={citationRenderer(m.sources)}
           renderLibraryFigure={(paperId, index) => (
             <ChatFigure paperId={paperId} index={index} onOpenPaper={openPaper} />

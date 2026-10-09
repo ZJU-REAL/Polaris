@@ -69,7 +69,7 @@ export function WikiBadge({ hasWiki, compact }: { hasWiki: boolean; compact?: bo
         whiteSpace: 'nowrap',
       }}
     >
-      {hasWiki ? tr('已有解读', 'Has wiki') : tr('暂无解读', 'No wiki')}
+      {hasWiki ? tr('已有解读', 'Has summary') : tr('暂无解读', 'No summary')}
     </span>
   );
 }
@@ -117,7 +117,7 @@ function NoteEditor({
   const status = pending
     ? tr('保存中…', 'Saving…')
     : dirty
-      ? tr('停下来会自动保存', 'Auto-saves when you pause')
+      ? tr('停止输入后自动保存', 'Saves when you stop typing')
       : note
         ? tr('已保存', 'Saved')
         : '';
@@ -132,10 +132,10 @@ function NoteEditor({
       }}
     >
       <div className="row gap8">
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', letterSpacing: '0.04em' }}>
-          {tr('课题备注 · 为什么相关', 'Topic note · why relevant')}
+        <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', letterSpacing: '0.04em' }}>
+          {tr('相关原因', 'Why it’s relevant')}
         </span>
-        <span className="mono" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-4)', flexShrink: 0 }}>
+        <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
           {status}
         </span>
       </div>
@@ -143,7 +143,7 @@ function NoteEditor({
         value={draft}
         onChange={(e) => onChange(e.target.value)}
         onBlur={commit}
-        placeholder={tr('写一句为什么相关…', 'Write a line on why this matters…')}
+        placeholder={tr('例如：提供了我们要对比的基线', 'e.g. Provides the baseline we compare against')}
         style={{
           width: '100%',
           minHeight: 56,
@@ -154,7 +154,7 @@ function NoteEditor({
           background: 'transparent',
           resize: 'vertical',
           fontFamily: 'var(--sans)',
-          fontSize: 12.5,
+          fontSize: 13,
           lineHeight: 1.65,
           color: 'var(--text-2)',
         }}
@@ -172,7 +172,7 @@ function MetaItem({ label, children }: { label: string; children: React.ReactNod
       <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', width: 88, flexShrink: 0 }}>
         {label}
       </span>
-      <span style={{ fontSize: 12.5, color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>
+      <span style={{ fontSize: 13, color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>
         {children}
       </span>
     </div>
@@ -260,7 +260,7 @@ export function ShelfDetailPane({
   const relevance = paper?.relevance_score ?? null;
   const readingStatus: ReadingStatus = paper?.reading_status ?? 'unread';
 
-  const wikiLabel = tr('AI 图文介绍', 'AI intro');
+  const wikiLabel = tr('AI 解读', 'AI summary');
 
   return (
     <div className="scroll fadeup" key={item.paper_id} style={{ overflowY: 'auto', flex: 1, padding: '26px 32px 60px' }}>
@@ -277,7 +277,7 @@ export function ShelfDetailPane({
       {/* —— 标题 + 作者 + 机构（都可点：点了按它过滤书架）+ 相关度 —— */}
       <div className="row" style={{ alignItems: 'flex-start', gap: 20 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
+          <h1 style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
             {item.title}
           </h1>
           <AuthorLinks authors={item.authors} onFilter={onFilterAuthor} />
@@ -289,7 +289,7 @@ export function ShelfDetailPane({
       {/* —— 操作行 —— */}
       <div className="row gap8 wrap" style={{ marginTop: 14 }}>
         <button
-          className="btn btn-primary sm"
+          className="btn btn-soft sm"
           onClick={() => navigate(`/papers/${item.paper_id}/read`, { state: readerFrom(location, 'research') })}
         >
           <Icon name="file" size={13} />
@@ -298,7 +298,7 @@ export function ShelfDetailPane({
         {paper && item.wiki_content && (
           <button
             className="btn btn-soft sm"
-            title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
+            title={tr('全屏阅读解读，可导出 PDF', 'Read the summary full screen; export to PDF')}
             onClick={openReader}
           >
             <Icon name="book" size={13} />
@@ -308,20 +308,20 @@ export function ShelfDetailPane({
         {item.source_library_id ? (
           <button
             className="btn btn-ghost sm"
-            title={tr('打开这篇所在的方向文献库', 'Open the direction library this paper lives in')}
+            title={tr('打开这篇论文所在的文献库', 'Open the library this paper is in')}
             onClick={() =>
               navigate(libraryPath(item.source_library_id ?? '', `?paper=${item.paper_id}`))
             }
           >
             <Icon name="book" size={13} />
-            {tr('去文献库', 'Open library')}
+            {tr('打开文献库', 'Open library')}
           </button>
         ) : (
           // 手动添加、未纳入任何方向文献库：置灰不可点，hover 说明原因
-          <span title={tr('这篇是手动添加的，不在任何方向文献库里', 'Manually added — not in any direction library')}>
+          <span title={tr('手动添加的论文，不在任何文献库中', 'Added manually, so it isn’t in a library')}>
             <button className="btn btn-ghost sm" disabled style={{ opacity: 0.45, cursor: 'not-allowed' }}>
               <Icon name="book" size={13} />
-              {tr('去文献库', 'Open library')}
+              {tr('打开文献库', 'Open library')}
             </button>
           </span>
         )}
@@ -354,8 +354,8 @@ export function ShelfDetailPane({
           <button
             className="btn btn-ghost sm"
             title={tr(
-              '移出相关研究，放进回收站，之后可以召回（个人库收藏保留）',
-              'Remove from related work — goes to the trash and can be restored (kept in my library)',
+              '移入回收站，可随时恢复',
+              'Moves to the trash; you can restore it',
             )}
             disabled={removePending}
             onClick={onRemove}
@@ -367,7 +367,7 @@ export function ShelfDetailPane({
         ) : onAdd ? (
           <button
             className="btn btn-primary sm"
-            title={tr('把这篇加入相关研究（同时收藏进个人库）', 'Add to related work (also saved to my library)')}
+            title={tr('同时加入我的文献库', 'Also adds it to My library')}
             disabled={addPending}
             onClick={onAdd}
             style={{ marginLeft: 'auto' }}
@@ -421,7 +421,7 @@ export function ShelfDetailPane({
             color: 'var(--text)',
           }}
         >
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
             TL;DR
           </span>
           {tldr}
@@ -432,10 +432,10 @@ export function ShelfDetailPane({
           只是多一次点击。样式与「我的笔记」同款，默认收起。 */}
       <MetaFold label={tr('摘要', 'Abstract')}>
         {abstract ? (
-          <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>{abstract}</div>
+          <div style={{ fontSize: 13, lineHeight: 1.7 }}>{abstract}</div>
         ) : (
-          <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
-            {tr('这篇还没有摘要。', 'No abstract for this paper.')}
+          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+            {tr('这篇论文没有摘要。', 'No abstract for this paper.')}
           </p>
         )}
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '0.5px solid var(--border)' }}>
@@ -461,12 +461,12 @@ export function ShelfDetailPane({
                 background: 'transparent',
                 padding: 0,
                 cursor: 'pointer',
-                fontSize: 12.5,
+                fontSize: 13,
                 fontFamily: 'var(--sans)',
                 color: 'var(--accent-text)',
               }}
             >
-              {sourceLib ? sourceLib.name : tr('方向文献库', 'Direction library')}
+              {sourceLib ? sourceLib.name : tr('文献库', 'Library')}
             </button>
           ) : (
             tr('手动添加', 'Added manually')
@@ -501,7 +501,7 @@ export function ShelfDetailPane({
             className="row gap8"
             style={{ paddingBottom: 10, marginBottom: 16, borderBottom: '0.5px solid var(--border)' }}
           >
-            <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
               {wikiLabel}
             </span>
             <CompileBadge model={paper?.compiled_model} at={paper?.compiled_at} />
@@ -525,8 +525,8 @@ export function ShelfDetailPane({
             textAlign: 'center',
           }}
         >
-          <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
-            {tr('这篇还没有 AI 解读。', 'No AI wiki for this paper yet.')}
+          <div style={{ fontSize: 13, color: 'var(--text-3)', lineHeight: 1.6 }}>
+            {tr('这篇论文还没有解读。', 'No summary for this paper yet.')}
           </div>
         </div>
       )}

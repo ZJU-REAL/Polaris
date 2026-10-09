@@ -155,7 +155,7 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onCreateF
           style={{
             flex: 1,
             minWidth: 0,
-            fontSize: 11.5,
+            fontSize: 12,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -164,7 +164,7 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onCreateF
           {display}
         </span>
         {f.readonly ? (
-          <span title={tr('只读文件（模板样式 / 自动生成）', 'Read-only file (template style / auto-generated)')} style={{ color: 'var(--text-4)', display: 'flex' }}>
+          <span title={tr('只读', 'Read-only')} style={{ color: 'var(--text-3)', display: 'flex' }}>
             <LockIcon />
           </span>
         ) : (
@@ -197,8 +197,8 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onCreateF
         className="row"
         style={{ padding: '10px 12px 8px', justifyContent: 'space-between', flexShrink: 0 }}
       >
-        <span style={{ fontSize: 11, fontWeight: 650, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
-          {tr('文件', 'FILES')}
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
+          {tr('文件', 'Files')}
         </span>
         <span className="row gap6">
           <button
@@ -222,7 +222,7 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onCreateF
           <button
             className="icon-btn"
             style={{ width: 22, height: 22, borderRadius: 6 }}
-            title={tr('上传文件（含图片 / PDF）', 'Upload file (image / PDF)')}
+            title={tr('上传文件', 'Upload file')}
             disabled={busy}
             onClick={() => fileInputRef.current?.click()}
           >
@@ -246,8 +246,8 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onCreateF
           <input
             className="input mono"
             autoFocus
-            style={{ height: 28, fontSize: 11.5, width: '100%' }}
-            placeholder={tr('如 appendix.tex', 'e.g. appendix.tex')}
+            style={{ height: 28, fontSize: 12, width: '100%' }}
+            placeholder={tr('例如 appendix.tex', 'e.g. appendix.tex')}
             value={newPath}
             onChange={(e) => setNewPath(e.target.value)}
             onKeyDown={(e) => {
@@ -264,7 +264,7 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onCreateF
 
       <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '0 8px 10px' }}>
         {roots.length === 0 && groups.length === 0 && (
-          <div style={{ fontSize: 11.5, color: 'var(--text-4)', padding: '8px 6px' }}>{tr('还没有文件', 'No files yet')}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '8px 6px' }}>{tr('还没有文件', 'No files yet')}</div>
         )}
         {groups.map(({ dir, files: dirFiles }) => {
           const isCollapsed = collapsed.has(dir);
@@ -281,13 +281,13 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onCreateF
                   size={10}
                   style={{ transform: isCollapsed ? 'rotate(-90deg)' : 'none', transition: 'transform .12s', flexShrink: 0 }}
                 />
-                <span style={{ display: 'flex', color: 'var(--text-4)' }}>
+                <span style={{ display: 'flex', color: 'var(--text-3)' }}>
                   <FolderIcon />
                 </span>
-                <span className="mono" style={{ flex: 1, minWidth: 0, fontSize: 11.5, fontWeight: 600 }}>
+                <span className="mono" style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600 }}>
                   {dir}/
                 </span>
-                <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{dirFiles.length}</span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{dirFiles.length}</span>
               </div>
               {!isCollapsed && dirFiles.map((f) => <FileRow key={f.id} f={f} indent />)}
             </div>
@@ -303,8 +303,8 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onCreateF
         open={folderPromptOpen}
         onClose={() => setFolderPromptOpen(false)}
         title={tr('新建文件夹', 'New folder')}
-        label={tr('输入文件夹路径，例如 figures 或 sections/appendix', 'Enter a folder path, e.g. figures or sections/appendix')}
-        placeholder={tr('如 figures', 'e.g. figures')}
+        label={tr('文件夹路径', 'Folder path')}
+        placeholder={tr('例如 figures 或 sections/appendix', 'e.g. figures or sections/appendix')}
         submitText={tr('创建', 'Create')}
         mono
         busy={busy}
@@ -318,8 +318,8 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onCreateF
           open
           onClose={() => setRenameTarget(null)}
           title={tr('重命名文件', 'Rename file')}
-          label={`${tr('当前路径：', 'Current path: ')}${renameTarget.path}`}
-          placeholder={tr('新文件名（含路径）', 'New file name (with path)')}
+          label={tr(`新路径（当前：${renameTarget.path}）`, `New path (now ${renameTarget.path})`)}
+          placeholder={tr('例如 sections/intro.tex', 'e.g. sections/intro.tex')}
           initial={renameTarget.path}
           submitText={tr('重命名', 'Rename')}
           mono
@@ -334,13 +334,8 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onCreateF
         <ConfirmModal
           open
           onClose={() => setDeleteTarget(null)}
-          title={tr('删除文件', 'Delete file')}
-          message={
-            <>
-              {tr('确定删除', 'Delete')} <span className="mono">{deleteTarget.path}</span>
-              {tr('？删除后无法恢复（版本历史也会一并删除）。', '? This cannot be undone (its version history is deleted too).')}
-            </>
-          }
+          title={tr(`删除「${deleteTarget.path}」？`, `Delete “${deleteTarget.path}”?`)}
+          message={tr('文件和它的版本历史都会被删除，无法恢复。', 'The file and its version history are deleted for good.')}
           confirmText={tr('删除', 'Delete')}
           danger
           busy={busy}

@@ -23,17 +23,15 @@ export interface NewManuscriptModalProps {
   pid: string;
 }
 
-function sourceBadge(t: TemplateInfo): { label: string; color: string; bg: string } {
+function sourceLabel(t: TemplateInfo): string {
   switch (t.source) {
     case 'builtin':
-      return { label: tr('内置', 'Built-in'), color: 'var(--text-2)', bg: 'var(--surface-3)' };
+      return tr('内置', 'Built-in');
     case 'seeded':
-      return t.downloaded
-        ? { label: tr('官方', 'Official'), color: 'var(--accent-text)', bg: 'var(--accent-soft)' }
-        : { label: tr('官方 · 未下载', 'Official · not downloaded'), color: 'var(--text-2)', bg: 'var(--surface-3)' };
+      return t.downloaded ? tr('官方', 'Official') : tr('官方 · 选中后下载', 'Official · downloads when selected');
     case 'uploaded':
     default:
-      return { label: tr('自定义', 'Custom'), color: 'var(--text-2)', bg: 'var(--surface-3)' };
+      return tr('自定义', 'Custom');
   }
 }
 
@@ -45,7 +43,7 @@ function downloadLabel(p: TemplateDownloadProgress): string {
     case 'extracting':
       return tr('解压中…', 'Extracting…');
     case 'pending':
-      return tr('准备下载…', 'Preparing…');
+      return tr('准备下载…', 'Preparing download…');
     default:
       return p.detail || tr('处理中…', 'Working…');
   }
@@ -128,7 +126,7 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
       if (cancelled) return;
       setDownloadProgress(null);
       setDownloadKey(null);
-      toast(`${tr('模板下载失败：', 'Template download failed: ')}${detail}`, 'error');
+      toast(`${tr('模板下载失败：', 'Couldn’t download the template: ')}${detail}`, 'error');
     };
 
     setDownloadProgress({ key: downloadKey, name: '', phase: 'pending', percent: 0, detail: '', template_id: null, error: null });
@@ -172,12 +170,12 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
         ...(experimentId ? { experiment_id: experimentId } : {}),
       }),
     onSuccess: (m) => {
-      toast(tr('论文草稿已创建', 'Manuscript created'), 'ok');
+      toast(tr('已创建稿件', 'Manuscript created'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['manuscripts', pid] });
       onClose();
       navigate(`/writer/${m.id}`);
     },
-    onError: (e) => toast(`${tr('创建失败：', 'Create failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('创建失败：', 'Couldn’t create the manuscript: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // seed: 开头是未下载官方模板伪条目，下载完成前不能建稿
@@ -193,7 +191,7 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
       title={
         <>
           <Icon name="pen" size={16} style={{ color: 'var(--accent)' }} />
-          {tr('新建论文草稿', 'New manuscript')}
+          {tr('新建稿件', 'New manuscript')}
         </>
       }
       footer={
@@ -208,38 +206,38 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
             ) : (
               <>
                 <Icon name="plus" size={14} />
-                {tr('创建草稿', 'Create manuscript')}
+                {tr('创建', 'Create')}
               </>
             )}
           </button>
         </>
       }
     >
-      <FormField label={tr('论文标题', 'Title')}>
+      <FormField label={tr('标题', 'Title')}>
         <input
           className="input"
           autoFocus
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder={tr('论文工作标题（之后可以改）', 'Working title (you can change it later)')}
+          placeholder={tr('暂定标题，之后可修改', 'Working title, you can change it later')}
         />
       </FormField>
 
       <div className="field">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <label className="field-label" style={{ margin: 0 }}>{tr('论文模板', 'Template')}</label>
+          <label className="field-label" style={{ margin: 0 }}>{tr('模板', 'Template')}</label>
           <button className="btn btn-soft sm" onClick={() => setUploadOpen(true)}>
             <Icon name="plus" size={13} />
-            {tr('上传模板 zip', 'Upload zip')}
+            {tr('上传模板', 'Upload template')}
           </button>
         </div>
 
         {templatesQuery.isError ? (
-          <div className="field-error">{tr('无法加载模板列表（后端不可用或接口尚未就绪）。', 'Failed to load templates (backend unavailable or API not ready).')}</div>
+          <div className="field-error">{tr('无法加载模板，请确认本机引擎正在运行。', 'Couldn’t load templates. Make sure the local engine is running.')}</div>
         ) : templatesQuery.isLoading ? (
           <div className="field-hint">{tr('加载中…', 'Loading…')}</div>
         ) : templates.length === 0 ? (
-          <div className="field-hint">{tr('（暂无模板）', '(no templates)')}</div>
+          <div className="field-hint">{tr('还没有模板，可上传 zip 模板包。', 'No templates yet. Upload a template zip.')}</div>
         ) : (
           <div
             style={{
@@ -251,7 +249,6 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
           >
             {templates.map((t) => {
               const on = t.id === template;
-              const badge = sourceBadge(t);
               return (
                 <div
                   key={t.id}
@@ -277,7 +274,7 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
                   }}
                 >
                   <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
-                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 620, lineHeight: 1.3, color: 'var(--text-1)' }}>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, lineHeight: 1.3, color: 'var(--text-1)' }}>
                       {t.name}
                     </span>
                     {/* 始终占位，避免选中出现 ✓ 后标题被挤换行、卡片/弹窗变高 */}
@@ -286,29 +283,25 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
                     </span>
                   </div>
 
-                  <div className="row gap8 wrap" style={{ gap: 4 }}>
-                    <span className="pill sm" style={{ height: 16, fontSize: 9.5, padding: '0 6px', background: badge.bg, color: badge.color }}>
-                      {badge.label}
-                    </span>
-                    {t.page_limit != null && (
-                      <span className="pill sm" style={{ height: 16, fontSize: 9.5, padding: '0 6px', background: 'var(--surface-3)' }}>
-                        {tr(`≤${t.page_limit} 页`, `≤${t.page_limit} pp`)}
-                      </span>
-                    )}
-                    <span className="pill sm mono" style={{ height: 16, fontSize: 9.5, padding: '0 6px', background: 'var(--surface-3)' }}>
-                      {t.engine}
-                    </span>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.4 }}>
+                    {[
+                      sourceLabel(t),
+                      t.page_limit != null ? tr(`≤ ${t.page_limit} 页`, `≤ ${t.page_limit} pages`) : null,
+                      t.engine,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </div>
 
                   {t.description && (
-                    <div style={{ fontSize: 10.5, color: 'var(--text-3)', lineHeight: 1.4 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.4 }}>
                       {t.description}
                     </div>
                   )}
 
                   {t.unofficial && (
-                    <div style={{ fontSize: 10, color: 'var(--warn, var(--text-3))', lineHeight: 1.4 }}>
-                      {tr('简化样式，投稿前请换官方模板核对格式', 'Simplified styling — switch to the official template before submitting')}
+                    <div style={{ fontSize: 11, color: 'var(--warn, var(--text-3))', lineHeight: 1.4 }}>
+                      {tr('非官方简化版', 'Simplified, unofficial')}
                     </div>
                   )}
 
@@ -325,7 +318,7 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
                           }}
                         />
                       </div>
-                      <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 3, lineHeight: 1.3 }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3, lineHeight: 1.3 }}>
                         {downloadLabel(downloadProgress)}
                       </div>
                     </div>
@@ -339,8 +332,8 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
         {(isSeedSelected || selected?.unofficial) && (
           <div className="field-hint" style={{ marginTop: 6, color: isSeedSelected ? 'var(--accent-text, var(--accent))' : undefined }}>
             {isSeedSelected
-              ? tr('请先等待模板下载完成，再创建草稿。', 'Please wait for the template to finish downloading before creating a manuscript.')
-              : tr('该模板不是会议官方模板包，投稿前请换官方模板核对格式。', 'Not the official venue package — switch to the official template and check formatting before submitting.')}
+              ? tr('模板下载完成后即可创建。', 'You can create the manuscript once the template finishes downloading.')
+              : tr('投稿前请换成会议官方模板并核对格式。', 'Switch to the official venue template and check formatting before submitting.')}
           </div>
         )}
       </div>
@@ -349,12 +342,12 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
         <FormField
           label={tr('关联想法（可选）', 'Linked idea (optional)')}
           style={{ flex: 1, minWidth: 0 }}
-          hint={tr('仅列出已晋级的想法。', 'Only promoted ideas are listed.')}
+          hint={tr('只显示已晋级的想法', 'Promoted ideas only')}
         >
           <SelectMenu
             value={ideaId}
             options={[
-              { value: '', label: ideasQuery.isLoading ? tr('加载中…', 'Loading…') : tr('— 不关联 —', '— none —') },
+              { value: '', label: ideasQuery.isLoading ? tr('加载中…', 'Loading…') : tr('不关联', 'None') },
               ...ideas.map((i) => ({ value: i.id, label: i.title })),
             ]}
             onChange={setIdeaId}
@@ -363,12 +356,12 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
         <FormField
           label={tr('关联实验（可选）', 'Linked experiment (optional)')}
           style={{ flex: 1, minWidth: 0 }}
-          hint={tr('仅列出已完成的实验。', 'Only finished experiments are listed.')}
+          hint={tr('只显示已完成的实验', 'Finished experiments only')}
         >
           <SelectMenu
             value={experimentId}
             options={[
-              { value: '', label: expsQuery.isLoading ? tr('加载中…', 'Loading…') : tr('— 不关联 —', '— none —') },
+              { value: '', label: expsQuery.isLoading ? tr('加载中…', 'Loading…') : tr('不关联', 'None') },
               ...doneExps.map((x) => ({ value: x.id, label: x.idea_title })),
             ]}
             onChange={setExperimentId}

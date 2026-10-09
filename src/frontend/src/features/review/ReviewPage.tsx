@@ -32,11 +32,14 @@ import { classifyDebateAuthors, DebateBubble, DiscussionBubble } from './message
 
 type ReviewTab = 'leaderboard' | 'matches';
 
-const DEFAULT_PERSONAS: ReviewPersona[] = [
-  { name: '严谨方法论者', stance: '专挑方法与实验设计漏洞' },
-  { name: '前沿趋势派', stance: '关注新颖性与领域影响力上限' },
-  { name: '务实工程师', stance: '审视可行性与实现成本' },
-];
+/** 默认评审人设（渲染时求值，随语言切换）。 */
+function defaultPersonas(): ReviewPersona[] {
+  return [
+    { name: tr('方法论审稿人', 'Methods reviewer'), stance: tr('找方法和实验设计的漏洞', 'Looks for flaws in method and experiment design') },
+    { name: tr('前沿视角审稿人', 'Frontier reviewer'), stance: tr('看新颖性和潜在影响', 'Judges novelty and potential impact') },
+    { name: tr('工程审稿人', 'Engineering reviewer'), stance: tr('看可行性和实现成本', 'Judges feasibility and cost to build') },
+  ];
+}
 
 /* ---------------- 运行锦标赛 Modal ---------------- */
 
@@ -44,7 +47,7 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [rounds, setRounds] = useState(2);
-  const [personas, setPersonas] = useState<ReviewPersona[]>(DEFAULT_PERSONAS);
+  const [personas, setPersonas] = useState<ReviewPersona[]>(defaultPersonas);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -54,7 +57,7 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
         personas: personas.filter((p) => p.name.trim() !== ''),
       }),
     onSuccess: (v) => {
-      toast(tr('评审锦标赛已开始，跳转任务详情…', 'Review tournament started — opening task detail…'), 'ok');
+      toast(tr('已开始评审', 'Review started'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       onClose();
       navigate(`/voyages/${v.id}`);
@@ -62,12 +65,12 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
         toast(
-          tr('该项目已有一个 forge/review 任务在运行，请等待其完成。', 'This project already has a forge/review task running — wait for it to finish.'),
+          tr('已有想法生成或评审任务在运行，请等它完成', 'An idea generation or review task is already running. Wait for it to finish.'),
           'error',
         );
         void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       } else {
-        toast(`${tr('启动失败', 'Failed to start')}：${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('无法开始评审：', 'Couldn’t start the review: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -84,7 +87,7 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
       title={
         <>
           <Icon name="scale" size={16} style={{ color: 'var(--accent)' }} />
-          {tr('运行评审锦标赛', 'Run review tournament')}
+          {tr('评审想法', 'Review ideas')}
         </>
       }
       footer={
@@ -99,7 +102,7 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
             ) : (
               <>
                 <Icon name="play" size={14} />
-                {tr('开始锦标赛', 'Start tournament')}
+                {tr('开始评审', 'Start review')}
               </>
             )}
           </button>
@@ -107,9 +110,9 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
       }
     >
       <KnobRange
-        label={tr('辩论轮数', 'Debate rounds')}
-        en="rounds"
-        hint={tr('每对想法的正反辩论轮数。', 'Rounds of pro/con debate per pair of ideas.')}
+        label="辩论轮数"
+        en="Debate rounds"
+        hint={tr('每两个想法之间辩论几轮', 'How many rounds each pair of ideas debates')}
         value={rounds}
         min={1}
         max={5}
@@ -117,9 +120,8 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
         onChange={setRounds}
       />
       <FormField
-        label={tr('评审人设', 'Reviewer personas')}
-        en="personas"
-        hint={tr('每个人设是一位 AI 评审员，默认三位可直接编辑。', 'Each persona is one AI reviewer; the three defaults are editable.')}
+        label={tr('AI 审稿人', 'AI reviewers')}
+        hint={tr('每行一位审稿人，可修改或增删', 'One reviewer per row. Edit, add or remove.')}
       >
         <div className="col gap8">
           {personas.map((p, i) => (
@@ -134,7 +136,7 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
               <input
                 className="input"
                 style={{ flex: 1 }}
-                placeholder={tr('立场', 'Stance')}
+                placeholder={tr('关注点', 'Focus')}
                 value={p.stance}
                 onChange={(e) => setPersona(i, { stance: e.target.value })}
               />
@@ -153,14 +155,14 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
             onClick={() => setPersonas((ps) => [...ps, { name: '', stance: '' }])}
           >
             <Icon name="plus" size={13} />
-            {tr('添加人设', 'Add persona')}
+            {tr('添加审稿人', 'Add reviewer')}
           </button>
         </div>
       </FormField>
-      <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.6 }}>
         {tr(
-          '对全部候选与评审中的想法进行配对辩论；讨论区中的人工评论会提供给相关 AI 评审员参考。',
-          'All candidate and under-review ideas debate in pairs; human comments from the discussion are shared with the relevant AI reviewers.',
+          '所有候选和评审中的想法两两辩论，你在讨论区的评论也会交给审稿人参考。',
+          'All candidate and in-review ideas debate in pairs. Reviewers also see your comments in the discussion.',
         )}
       </div>
     </Modal>
@@ -200,22 +202,22 @@ function LeaderboardTab({
   const promoteMutation = useMutation({
     mutationFn: (ideaId: string) => api.promoteIdea(ideaId),
     onSuccess: () => {
-      toast(tr('已提交晋级审批，等待人工审批', 'Promotion approval created — awaiting human approval'), 'ok');
+      toast(tr('已提交晋级审批', 'Sent for promotion approval'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['gates'] });
       void queryClient.invalidateQueries({ queryKey: ['leaderboard', pid] });
       void queryClient.invalidateQueries({ queryKey: ['ideas'] });
     },
-    onError: (e) => toast(`${tr('晋级失败', 'Promotion failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('无法晋级：', 'Couldn’t promote: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
-  if (loading) return <div className="empty" style={{ padding: 40 }}>{tr('加载排行榜…', 'Loading leaderboard…')}</div>;
+  if (loading) return <div className="empty" style={{ padding: 40 }}>{tr('加载中…', 'Loading…')}</div>;
   if (error) {
     return (
       <EmptyState
         compact
         icon="x"
-        title={tr('无法加载排行榜', 'Failed to load leaderboard')}
-        desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or the API is not ready yet.')}
+        title={tr('无法加载排行榜', 'Couldn’t load the leaderboard')}
+        desc={tr('请确认本机引擎正在运行，然后重试。', 'Make sure the local engine is running, then retry.')}
         action={<button className="btn btn-soft sm" onClick={refetch}>{tr('重试', 'Retry')}</button>}
       />
     );
@@ -224,12 +226,12 @@ function LeaderboardTab({
     return (
       <EmptyState
         icon="chart"
-        title={tr('排行榜为空', 'Leaderboard is empty')}
-        desc={tr('先在想法生成页生成候选想法，再运行一次评审。', 'Generate candidate ideas on the Idea Forge page first, then run a review.')}
+        title={tr('还没有评审过的想法', 'No reviewed ideas yet')}
+        desc={tr('先生成想法，再开始评审。', 'Generate some ideas, then run a review.')}
         action={
           <button className="btn btn-ghost" onClick={() => navigate(topicPath(pid, 'forge'))}>
             <Icon name="bulb" size={14} />
-            {tr('前往想法生成', 'Go to Idea Forge')}
+            {tr('去生成想法', 'Generate ideas')}
           </button>
         }
       />
@@ -247,8 +249,8 @@ function LeaderboardTab({
             gap: 12,
             padding: '10px 18px',
             borderBottom: '0.5px solid var(--border)',
-            fontSize: 10.5,
-            fontWeight: 650,
+            fontSize: 11,
+            fontWeight: 600,
             color: 'var(--text-3)',
             textTransform: 'uppercase',
             letterSpacing: '0.04em',
@@ -257,9 +259,9 @@ function LeaderboardTab({
           <span>#</span>
           <span>{tr('想法', 'Idea')}</span>
           <span style={{ textAlign: 'right' }}>Elo</span>
-          <span>{tr('四维 rubric', 'Rubric (4 dims)')}</span>
-          <span style={{ textAlign: 'right' }}>{tr('对局', 'Matches')}</span>
-          <span style={{ textAlign: 'right' }}>{tr('胜场', 'Wins')}</span>
+          <span>{tr('四项评分', 'Rubric scores')}</span>
+          <span style={{ textAlign: 'right' }}>{tr('场次', 'Matches')}</span>
+          <span style={{ textAlign: 'right' }}>{tr('胜', 'Wins')}</span>
           <span>{tr('状态', 'Status')}</span>
           <span />
         </div>
@@ -281,7 +283,7 @@ function LeaderboardTab({
             >
               <span
                 className="mono"
-                style={{ fontSize: 14, fontWeight: 700, color: i < 3 ? 'var(--accent-text)' : 'var(--text-3)' }}
+                style={{ fontSize: 13, fontWeight: 600, color: i < 3 ? 'var(--accent-text)' : 'var(--text-3)' }}
               >
                 {i + 1}
               </span>
@@ -310,12 +312,12 @@ function LeaderboardTab({
                   {r.summary}
                 </div>
               </div>
-              <span className="mono" style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--accent-text)', textAlign: 'right' }}>
+              <span className="mono" style={{ fontSize: 15, fontWeight: 600, color: 'var(--accent-text)', textAlign: 'right' }}>
                 {Math.round(r.elo_rating)}
               </span>
               <MiniScoreBars scores={r.scores} />
-              <span className="mono" style={{ fontSize: 12.5, textAlign: 'right' }}>{r.matches}</span>
-              <span className="mono" style={{ fontSize: 12.5, textAlign: 'right', color: 'var(--ok-tx)' }}>{r.wins}</span>
+              <span className="mono" style={{ fontSize: 13, textAlign: 'right' }}>{r.matches}</span>
+              <span className="mono" style={{ fontSize: 13, textAlign: 'right', color: 'var(--ok-tx)' }}>{r.wins}</span>
               <StatusPill status={r.status} sm />
               <div className="row gap6" style={{ justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
                 <button
@@ -328,7 +330,7 @@ function LeaderboardTab({
                 </button>
                 {promotable && (
                   <button
-                    className="btn btn-primary sm"
+                    className="btn btn-soft sm"
                     disabled={running || promoteMutation.isPending}
                     onClick={() => promoteMutation.mutate(r.id)}
                   >
@@ -338,7 +340,7 @@ function LeaderboardTab({
                 {r.status === 'promoted' && (
                   <button
                     className="btn btn-soft sm"
-                    title={tr('从该想法发起实验', 'Start an experiment from this idea')}
+                    title={tr('用这个想法新建实验', 'Start an experiment from this idea')}
                     onClick={() => navigate(topicPath(pid, `experiment?new=${r.id}`))}
                   >
                     <Icon name="flask" size={12} />
@@ -366,7 +368,7 @@ function matchMeta(s: ReviewSessionRead, ideaId: string, titleOf: (id: string) =
   const won = winnerId !== null && winnerId === ideaId;
   const decided = winnerId !== null && winnerId !== undefined;
   return {
-    oppTitle: oppId ? titleOf(oppId) : tr('未知对手', 'Unknown opponent'),
+    oppTitle: oppId ? titleOf(oppId) : tr('未知想法', 'Unknown idea'),
     won,
     decided,
   };
@@ -385,7 +387,7 @@ function MatchesTab({
 }) {
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
 
-  const titleOf = (id: string) => rows.find((r) => r.id === id)?.title ?? `${id.slice(0, 8)}…`;
+  const titleOf = (id: string) => rows.find((r) => r.id === id)?.title ?? tr('已删除的想法', 'Deleted idea');
 
   const sessionsQuery = useQuery({
     queryKey: ['idea-sessions', ideaId],
@@ -410,12 +412,12 @@ function MatchesTab({
     <div style={{ padding: '16px 18px' }}>
       {/* idea 选择 */}
       <div className="row gap10" style={{ marginBottom: 16 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)', flexShrink: 0 }}>
-          {tr('选择想法', 'Pick an idea')}
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', flexShrink: 0 }}>
+          {tr('想法', 'Idea')}
         </span>
         <select
           className="input"
-          style={{ maxWidth: 480 }}
+          style={{ flex: '0 1 480px', minWidth: 0 }}
           value={ideaId ?? ''}
           onChange={(e) => {
             setSelectedSession(null);
@@ -423,13 +425,13 @@ function MatchesTab({
           }}
         >
           <option value="" disabled>
-            {rowsError ? tr('（排行榜不可用）', '(leaderboard unavailable)') : tr('— 从排行榜选择 —', '— pick from the leaderboard —')}
+            {rowsError ? tr('无法加载想法', 'Couldn’t load ideas') : tr('选择想法', 'Choose an idea')}
           </option>
           {rows.map((r) => (
             <option key={r.id} value={r.id}>
               {tr(
                 `${r.title}（Elo ${Math.round(r.elo_rating)} · ${r.matches} 场）`,
-                `${r.title} (Elo ${Math.round(r.elo_rating)} · ${r.matches} matches)`,
+                `${r.title} (Elo ${Math.round(r.elo_rating)} · ${r.matches} ${r.matches === 1 ? 'match' : 'matches'})`,
               )}
             </option>
           ))}
@@ -440,27 +442,27 @@ function MatchesTab({
         <EmptyState
           compact
           icon="scale"
-          title={tr('选择一个想法', 'Pick an idea')}
+          title={tr('选择一个想法查看它的辩论', 'Choose an idea to see its debates')}
         />
       ) : sessionsQuery.isLoading ? (
-        <div className="empty" style={{ padding: 30 }}>{tr('加载场次…', 'Loading matches…')}</div>
+        <div className="empty" style={{ padding: 30 }}>{tr('加载中…', 'Loading…')}</div>
       ) : sessionsQuery.isError ? (
         <EmptyState
           compact
           icon="x"
-          title={tr('无法加载辩论场次', 'Failed to load debate matches')}
-          desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or the API is not ready yet.')}
+          title={tr('无法加载辩论', 'Couldn’t load debates')}
+          desc={tr('请确认本机引擎正在运行。', 'Make sure the local engine is running.')}
         />
       ) : matches.length === 0 ? (
         <EmptyState
           compact
           icon="scale"
-          title={tr('暂无对局记录', 'No matches yet')}
+          title={tr('这个想法还没参加过辩论', 'This idea hasn’t debated yet')}
         />
       ) : (
-        <div className="row gap16" style={{ alignItems: 'flex-start' }}>
-          {/* 场次列表 */}
-          <div className="col gap8" style={{ width: 300, flexShrink: 0 }}>
+        <div className="row gap16" style={{ alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          {/* 场次列表（窄屏时换到记录上方） */}
+          <div className="col gap8" style={{ flex: '1 1 260px', maxWidth: 320, minWidth: 0 }}>
             {matches.map((s) => {
               const meta = matchMeta(s, ideaId, titleOf);
               const active = s.id === activeSession?.id;
@@ -479,19 +481,21 @@ function MatchesTab({
                 >
                   <div className="row gap8" style={{ marginBottom: 5 }}>
                     {meta.decided ? (
-                      <span
-                        className="pill sm"
-                        style={{
-                          background: meta.won ? 'var(--ok-bg)' : 'var(--danger-bg)',
-                          color: meta.won ? 'var(--ok-tx)' : 'var(--danger-tx)',
-                        }}
-                      >
-                        {meta.won ? 'WIN' : 'LOSS'}
+                      <span className="row gap6" style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                        <span
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            background: meta.won ? 'var(--ok)' : 'var(--danger)',
+                          }}
+                        />
+                        {meta.won ? tr('胜', 'Won') : tr('负', 'Lost')}
                       </span>
                     ) : (
                       <StatusPill status={s.status} sm />
                     )}
-                    <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto' }}>
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 'auto' }}>
                       {fmtTime(s.created_at)}
                     </span>
                   </div>
@@ -505,15 +509,15 @@ function MatchesTab({
           </div>
 
           {/* 逐轮记录 */}
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ flex: '999 1 360px', minWidth: 0 }}>
             {!activeSession ? (
-              <EmptyState compact icon="scale" title={tr('选择一场辩论', 'Pick a debate')} />
+              <EmptyState compact icon="scale" title={tr('选择一场辩论', 'Choose a debate')} />
             ) : messagesQuery.isLoading ? (
-              <div className="empty" style={{ padding: 30 }}>{tr('加载辩论记录…', 'Loading debate transcript…')}</div>
+              <div className="empty" style={{ padding: 30 }}>{tr('加载中…', 'Loading…')}</div>
             ) : messagesQuery.isError ? (
-              <EmptyState compact icon="x" title={tr('无法加载辩论记录', 'Failed to load debate transcript')} />
+              <EmptyState compact icon="x" title={tr('无法加载辩论内容', 'Couldn’t load this debate')} />
             ) : messages.length === 0 ? (
-              <EmptyState compact icon="scale" title={tr('该场辩论暂无发言', 'No messages in this debate yet')} />
+              <EmptyState compact icon="scale" title={tr('这场辩论还没有发言', 'No messages in this debate yet')} />
             ) : (
               <div>
                 {messages.map((m) =>
@@ -591,14 +595,14 @@ export function ReviewPage() {
   const retryMutation = useMutation({
     mutationFn: () => api.retryFailedTournamentMatches(pid!),
     onSuccess: (voyage) => {
-      toast(tr('失败对局补赛已开始', 'Failed-match retry started'), 'ok');
+      toast(tr('已开始重试', 'Retry started'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['latest-tournament', pid] });
       void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       navigate(`/voyages/${voyage.id}`);
     },
     onError: (e) =>
       toast(
-        `${tr('补赛启动失败', 'Failed to start retry')}：${e instanceof Error ? e.message : String(e)}`,
+        `${tr('无法重试：', 'Couldn’t retry: ')}${e instanceof Error ? e.message : String(e)}`,
         'error',
       ),
   });
@@ -612,8 +616,8 @@ export function ReviewPage() {
           currentProject
             ? undefined
             : projectsLoading
-              ? tr('加载课题…', 'Loading topics…')
-              : tr('选择一个课题', 'Pick a topic')
+              ? tr('加载中…', 'Loading…')
+              : tr('请先选择课题', 'Choose a topic first')
         }
       />
 
@@ -624,15 +628,12 @@ export function ReviewPage() {
           style={{ marginBottom: 16, borderColor: 'var(--accent-soft-2)', background: 'var(--accent-soft)' }}
         >
           <div className="row gap10">
-            <span className="pill" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-              <span className="dot pulse" />
-              {tr('运行中', 'Running')}
+            <span className="pulse" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--ok)', flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>
+              {tr('想法生成或评审正在进行', 'Idea generation or review in progress')}
             </span>
-            <span style={{ fontSize: 13.5, fontWeight: 650 }}>
-              {tr('forge/review 任务进行中 — 点击查看任务实时进度', 'A forge/review task is running — click to watch live progress')}
-            </span>
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
-              voyage {runningVoyage.slice(0, 8)}…
+            <span style={{ fontSize: 12, color: 'var(--accent-text)', marginLeft: 'auto' }}>
+              {tr('查看进度', 'View progress')}
             </span>
             <Icon name="arrow" size={14} style={{ color: 'var(--accent-text)' }} />
           </div>
@@ -646,10 +647,10 @@ export function ReviewPage() {
         >
           <div className="row gap10">
             <Icon name="x" size={15} style={{ color: 'var(--warn)' }} />
-            <span style={{ fontSize: 13, fontWeight: 650 }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>
               {tr(
-                `最新一轮部分完成：成功 ${latestTournament.completed}/${latestTournament.planned}，${latestTournament.failed} 场待补赛`,
-                `Latest round partially completed: ${latestTournament.completed}/${latestTournament.planned} succeeded; ${latestTournament.failed} need retry`,
+                `上次评审有 ${latestTournament.failed} 场辩论没有完成（共 ${latestTournament.planned} 场）`,
+                `${latestTournament.failed} of ${latestTournament.planned} debates in the last review didn’t finish`,
               )}
             </span>
             {latestTournament.can_retry && (
@@ -661,8 +662,8 @@ export function ReviewPage() {
               >
                 <Icon name="refresh" size={13} />
                 {tr(
-                  `补跑失败对局（${latestTournament.failed}）`,
-                  `Retry failed matches (${latestTournament.failed})`,
+                  '重试未完成的辩论',
+                  'Retry unfinished debates',
                 )}
               </button>
             )}
@@ -688,7 +689,7 @@ export function ReviewPage() {
             ) : (
               <>
                 <Icon name="play" size={13} />
-                {tr('运行锦标赛', 'Run tournament')}
+                {tr('开始评审', 'Run review')}
               </>
             )}
           </button>
@@ -697,7 +698,7 @@ export function ReviewPage() {
       <div className="card" style={{ overflow: 'hidden', minHeight: 320 }}>
         {!pid ? (
           <div className="empty" style={{ padding: 60 }}>
-            {projectsLoading ? tr('加载课题…', 'Loading topics…') : tr('请先选择课题', 'Pick a topic first')}
+            {projectsLoading ? tr('加载中…', 'Loading…') : tr('请先选择课题', 'Choose a topic first')}
           </div>
         ) : tab === 'leaderboard' ? (
           <LeaderboardTab

@@ -83,15 +83,15 @@ function scoredToShelf(p: PaperRead & { score?: number | null }): ShelfItemRead 
 
 // 模块级常量不调 tr()：保留 zh/en 字段，渲染处再 tr
 const SORTS: { v: ShelfSort; zh: string; en: string }[] = [
-  { v: 'added', zh: '按添加时间', en: 'By added' },
-  { v: 'year', zh: '按年份', en: 'By year' },
-  { v: 'relevance', zh: '按相关度', en: 'By relevance' },
-  { v: 'title', zh: '按标题', en: 'By title' },
+  { v: 'added', zh: '按添加时间', en: 'Date added' },
+  { v: 'year', zh: '按年份', en: 'Year' },
+  { v: 'relevance', zh: '按相关度', en: 'Relevance' },
+  { v: 'title', zh: '按标题', en: 'Title' },
 ];
 const FILTERS: { v: ShelfFilter; zh: string; en: string }[] = [
   { v: 'all', zh: '全部状态', en: 'All statuses' },
-  { v: 'has_wiki', zh: '已有解读', en: 'Has wiki' },
-  { v: 'no_wiki', zh: '暂无解读', en: 'No wiki' },
+  { v: 'has_wiki', zh: '已有解读', en: 'Has summary' },
+  { v: 'no_wiki', zh: '暂无解读', en: 'No summary' },
 ];
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -143,7 +143,7 @@ function ShelfRow({
           checked={checked}
           onClick={(e) => e.stopPropagation()}
           onChange={onToggleCheck}
-          title={tr('选中后可批量移出 / 导出引用', 'Select for bulk remove / citation export')}
+          title={tr('选择', 'Select')}
           style={{
             width: 13,
             height: 13,
@@ -157,7 +157,7 @@ function ShelfRow({
         <span
           className="mono"
           style={{
-            fontSize: 10.5,
+            fontSize: 11,
             color: active ? 'var(--accent-text)' : 'var(--text-3)',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
@@ -167,7 +167,7 @@ function ShelfRow({
           {item.arxiv_id ?? item.venue ?? '—'}
         </span>
         {item.year !== null && (
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', flexShrink: 0 }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
             {item.year}
           </span>
         )}
@@ -181,7 +181,7 @@ function ShelfRow({
         <div
           title={authors}
           style={{
-            fontSize: 11.5,
+            fontSize: 12,
             color: 'var(--text-3)',
             marginTop: 3,
             whiteSpace: 'nowrap',
@@ -197,12 +197,12 @@ function ShelfRow({
       {/* 备注摘要一行：写过备注才显示 */}
       {item.note && (
         <div className="row gap6" style={{ marginTop: 5, alignItems: 'flex-start' }}>
-          <Icon name="pen" size={11} style={{ marginTop: 2, flexShrink: 0, color: 'var(--text-4)' }} />
+          <Icon name="pen" size={11} style={{ marginTop: 2, flexShrink: 0, color: 'var(--text-3)' }} />
           <span
             style={{
               flex: 1,
               minWidth: 0,
-              fontSize: 11.5,
+              fontSize: 12,
               color: 'var(--text-3)',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
@@ -243,7 +243,7 @@ function LinkedLibrariesRow({
   return (
     <div
       className="row gap8"
-      style={{ marginTop: 12, flexShrink: 0, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}
+      style={{ marginTop: 12, flexShrink: 0, flexWrap: 'wrap', alignItems: 'center', fontSize: 13 }}
     >
       <span className="row gap6" style={{ color: 'var(--text-3)', flexShrink: 0 }}>
         <Icon name="book" size={13} style={{ color: 'var(--accent)' }} />
@@ -252,11 +252,11 @@ function LinkedLibrariesRow({
       {libs.length === 0 ? (
         <>
           <span style={{ color: 'var(--text-3)' }}>
-            {tr('还没关联，先关联一个再挑论文。', 'None yet — link one to pick papers from.')}
+            {tr('还没有关联文献库', 'None linked yet')}
           </span>
           <button className="btn btn-ghost sm" onClick={() => onNavigate(`/projects/${pid}`)}>
             <Icon name="link" size={12} />
-            {tr('去关联', 'Link a library')}
+            {tr('关联文献库', 'Link a library')}
           </button>
         </>
       ) : (
@@ -272,7 +272,7 @@ function LinkedLibrariesRow({
               {lib.name}
             </span>
             <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
-              {tr(`${lib.paper_count} 篇`, `${lib.paper_count}`)}
+              {tr(`${lib.paper_count} 篇`, `${lib.paper_count} ${lib.paper_count === 1 ? 'paper' : 'papers'}`)}
             </span>
           </button>
         ))
@@ -305,28 +305,28 @@ function ShelfTrashModal({ pid, open, onClose }: { pid: string; open: boolean; o
   const restoreMutation = useMutation({
     mutationFn: (paperId: string) => api.restoreShelfItem(pid, paperId),
     onSuccess: (item) => {
-      toast(`${tr('已召回：', 'Restored: ')}${item.title.slice(0, 30)}`, 'ok');
+      toast(`${tr('已恢复：', 'Restored: ')}${item.title.slice(0, 30)}`, 'ok');
       invalidate();
     },
-    onError: (e) => toast(`${tr('召回失败：', 'Restore failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('恢复失败：', 'Couldn’t restore: ')}${errText(e)}`, 'error'),
   });
 
   const purgeMutation = useMutation({
     mutationFn: (paperId: string) => api.removeFromShelf(pid, paperId, { hard: true }),
     onSuccess: () => {
-      toast(tr('已彻底删除', 'Permanently deleted'), 'ok');
+      toast(tr('已永久删除', 'Deleted permanently'), 'ok');
       invalidate();
     },
-    onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败：', 'Couldn’t delete: ')}${errText(e)}`, 'error'),
   });
 
   const emptyMutation = useMutation({
     mutationFn: () => api.emptyShelfTrash(pid),
-    onSuccess: (res) => {
-      toast(tr(`回收站已清空（${res.deleted} 篇）`, `Trash emptied (${res.deleted} papers)`), 'ok');
+    onSuccess: () => {
+      toast(tr('已清空回收站', 'Emptied trash'), 'ok');
       invalidate();
     },
-    onError: (e) => toast(`${tr('清空失败：', 'Empty failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('清空失败：', 'Couldn’t empty the trash: ')}${errText(e)}`, 'error'),
   });
 
   const items = useMemo<TrashItemView[]>(
@@ -339,8 +339,8 @@ function ShelfTrashModal({ pid, open, onClose }: { pid: string; open: boolean; o
           year: item.year,
           title: item.title,
           aside: (
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-              {tr(`${fmtRelative(item.trashed_at)} 移入`, `trashed ${fmtRelative(item.trashed_at)}`)}
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+              {tr(`${fmtRelative(item.trashed_at)}删除`, `Removed ${fmtRelative(item.trashed_at)}`)}
             </span>
           ),
           desc: item.tldr ?? (authors || null),
@@ -354,10 +354,7 @@ function ShelfTrashModal({ pid, open, onClose }: { pid: string; open: boolean; o
     <TrashModal
       open={open}
       onClose={onClose}
-      sub={tr(
-        '个人库里的收藏不受影响',
-        'Your saved copies in my library are untouched',
-      )}
+      sub={tr('我的文献库中的论文不受影响', 'Papers in My library are kept')}
       items={items}
       total={trashQuery.data?.total}
       loading={trashQuery.isLoading}
@@ -368,12 +365,12 @@ function ShelfTrashModal({ pid, open, onClose }: { pid: string; open: boolean; o
       onEmpty={() => emptyMutation.mutate()}
       emptyWarning={(n) =>
         tr(
-          `将彻底删除回收站里的全部 ${n} 篇，无法恢复（个人库收藏不受影响）`,
-          `This permanently deletes all ${n} papers in the trash — no undo (your saved copies stay)`,
+          `回收站中的 ${n} 篇论文将被永久删除，我的文献库不受影响。`,
+          `${n} ${n === 1 ? 'paper' : 'papers'} will be deleted for good. My library isn’t affected.`,
         )
       }
-      restoreHint={tr('召回到相关研究', 'Restore to related work')}
-      purgeHint={tr('彻底删除，无法再召回（个人库收藏不受影响）', 'Delete forever — cannot be restored (saved copies stay)')}
+      restoreHint={tr('恢复到相关研究', 'Restore to related work')}
+      purgeHint={tr('永久删除，不影响我的文献库', 'Delete for good. My library isn’t affected.')}
     />
   );
 }
@@ -552,9 +549,9 @@ export function ResearchPage() {
     libs.length === 1 && firstLib ? libraryPath(firstLib.id) : libs.length > 1 ? `/projects/${pid}` : '/libraries';
   const libEntryLabel =
     libs.length === 1
-      ? tr('去文献库', 'Open library')
+      ? tr('打开文献库', 'Open library')
       : libs.length > 1
-        ? tr('管理关联库', 'Linked libraries')
+        ? tr('管理关联文献库', 'Manage linked libraries')
         : tr('浏览全部文献库', 'Browse libraries');
 
   const data = shelfQuery.data;
@@ -593,7 +590,7 @@ export function ResearchPage() {
       setSelId(item.paper_id);
       invalidate();
     },
-    onError: (e) => toast(`${tr('添加失败：', 'Failed to add: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('添加失败：', 'Couldn’t add: ')}${errText(e)}`, 'error'),
   });
 
   const importMutation = useMutation({
@@ -605,29 +602,29 @@ export function ResearchPage() {
         // 还需后处理：弹进度弹窗替代成功 toast，避免重复打扰
         setProgress({ taskId: item.task_id, title: item.title });
       } else {
-        toast(tr('已添加到相关研究', 'Added to related work'), 'ok');
+        toast(tr('已加入相关研究', 'Added to related work'), 'ok');
       }
     },
-    onError: (e) => toast(`${tr('添加失败：', 'Failed to add: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('添加失败：', 'Couldn’t add: ')}${errText(e)}`, 'error'),
   });
 
   const noteMutation = useMutation({
     mutationFn: ({ paperId, note }: { paperId: string; note: string | null }) =>
       api.updateShelfNote(pid, paperId, note),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['shelf', pid] }),
-    onError: (e) => toast(`${tr('备注保存失败：', 'Failed to save note: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('备注保存失败：', 'Couldn’t save the note: ')}${errText(e)}`, 'error'),
   });
 
   // 移出 = 软删：条目进回收站，可召回；个人库收藏不动
   const removeMutation = useMutation({
     mutationFn: (paperId: string) => api.removeFromShelf(pid, paperId),
     onSuccess: (_d, paperId) => {
-      toast(tr('已移入回收站，可以召回（个人库收藏保留）', 'Moved to trash — you can restore it (still saved in my library)'), 'ok');
+      toast(tr('已移入回收站', 'Moved to trash'), 'ok');
       setSelId((old) => (old === paperId ? null : old));
       invalidate();
       void queryClient.invalidateQueries({ queryKey: ['shelf-trash', pid] });
     },
-    onError: (e) => toast(`${tr('移除失败：', 'Failed to remove: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('移出失败：', 'Couldn’t remove: ')}${errText(e)}`, 'error'),
   });
 
   // 多选批量移出：后端没有批量端点，按选中集逐篇调（同样是软删，落回收站）
@@ -639,8 +636,8 @@ export function ResearchPage() {
     onSuccess: (n, paperIds) => {
       toast(
         tr(
-          `已把 ${n} 篇移入回收站，可以召回（个人库收藏保留）`,
-          `Moved ${n} papers to trash — restorable (saved copies stay)`,
+          `已将 ${n} 篇移入回收站`,
+          `Moved ${n} ${n === 1 ? 'paper' : 'papers'} to trash`,
         ),
         'ok',
       );
@@ -650,7 +647,7 @@ export function ResearchPage() {
       invalidate();
       void queryClient.invalidateQueries({ queryKey: ['shelf-trash', pid] });
     },
-    onError: (e) => toast(`${tr('移除失败：', 'Failed to remove: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('移出失败：', 'Couldn’t remove: ')}${errText(e)}`, 'error'),
   });
 
   // 多选导出：把勾选的 paper_id 子集导出引用（course 作用域，复用文献库同一端点）
@@ -658,9 +655,9 @@ export function ResearchPage() {
     mutationFn: (format: CitationFormat) => api.downloadCitations(pid, { format, ids: [...checkedIds] }),
     onSuccess: (blob, format) => {
       saveBlob(blob, format === 'bibtex' ? 'polaris-selected.bib' : 'polaris-selected.json');
-      toast(tr(`已导出 ${checkedIds.size} 篇`, `Exported ${checkedIds.size} papers`), 'ok');
+      toast(tr(`已导出 ${checkedIds.size} 篇`, `Exported ${checkedIds.size} ${checkedIds.size === 1 ? 'paper' : 'papers'}`), 'ok');
     },
-    onError: (e) => toast(`${tr('导出失败：', 'Export failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('导出失败：', 'Couldn’t export: ')}${errText(e)}`, 'error'),
   });
 
   const toggleCheck = (paperId: string) =>
@@ -674,12 +671,12 @@ export function ResearchPage() {
   const countText = semantic
     ? semQuery.data === undefined
       ? ''
-      : tr(`语义命中 ${semItems.length} 篇`, `${semItems.length} semantic matches`)
+      : tr(`找到 ${semItems.length} 篇`, `${semItems.length} ${semItems.length === 1 ? 'match' : 'matches'}`)
     : data === undefined
       ? ''
       : filter === 'all'
-        ? tr(`共 ${data.total} 篇相关研究`, `${data.total} related papers`)
-        : tr(`筛出 ${visible.length} 篇 · 共 ${data.total} 篇`, `${visible.length} shown · ${data.total} total`);
+        ? tr(`共 ${data.total} 篇`, `${data.total} ${data.total === 1 ? 'paper' : 'papers'}`)
+        : tr(`显示 ${visible.length} 篇，共 ${data.total} 篇`, `${visible.length} of ${data.total} papers`);
 
   // 语义态置灰高级检索 / 排序 / 状态过滤（这些只作用于关键词书架查询）
   const filterDisabled = semantic ? { opacity: 0.45, pointerEvents: 'none' as const } : undefined;
@@ -706,7 +703,7 @@ export function ResearchPage() {
             onClick={() => setAddOpen(true)}
           >
             <Icon name="plus" size={13} />
-            {tr('添加文献', 'Add paper')}
+            {tr('添加论文', 'Add paper')}
           </button>
         )}
       </div>
@@ -730,23 +727,20 @@ export function ResearchPage() {
                   onChange={setQInput}
                   placeholder={
                     semanticOn
-                      ? tr('语义检索（自然语言描述）…', 'Semantic search (natural language)…')
-                      : tr('搜索标题 / 作者…', 'Search title / authors…')
+                      ? tr('用一句话描述要找的内容…', 'Describe what you’re looking for…')
+                      : tr('搜索标题或作者…', 'Search titles or authors…')
                   }
                 />
                 <SemanticSwitch
                   checked={semanticOn}
                   onChange={setSemanticOn}
-                  title={tr('打开后用自然语言在课题语料里语义召回', 'Semantic recall over the topic corpus')}
+                  title={tr('按含义搜索课题中的论文', 'Search this topic’s papers by meaning')}
                 />
                 <AdvancedToggle
                   open={advOpen}
                   active={advActive}
                   onToggle={() => setAdvOpen((o) => !o)}
-                  title={tr(
-                    '高级检索：作者 / 机构 / 年份 / 我的标签 / 阅读状态 / 星标',
-                    'Advanced search: author / affiliation / year / my tags / reading status / starred',
-                  )}
+                  title={tr('高级搜索', 'Advanced search')}
                 />
               </div>
 
@@ -757,13 +751,13 @@ export function ResearchPage() {
                     <FilterInput
                       value={author}
                       onChange={setAuthor}
-                      placeholder={tr('作者姓名…', 'Author name…')}
+                      placeholder={tr('作者', 'Author')}
                     />
                     <FilterInput
                       value={affiliation}
                       onChange={setAffiliation}
-                      placeholder={tr('发表机构…', 'Affiliation…')}
-                      title={tr('需要论文元数据带有机构信息', 'Needs affiliation metadata')}
+                      placeholder={tr('机构', 'Affiliation')}
+                      title={tr('仅匹配带有机构信息的论文', 'Only matches papers with affiliation data')}
                     />
                   </div>
                   <YearRangeField
@@ -777,7 +771,7 @@ export function ResearchPage() {
                   <ReadingStatusField value={readingStatus} onChange={setReadingStatus} />
                   <label
                     className="row gap6"
-                    style={{ fontSize: 11.5, color: 'var(--text-2)', cursor: 'pointer', alignItems: 'center' }}
+                    style={{ fontSize: 12, color: 'var(--text-2)', cursor: 'pointer', alignItems: 'center' }}
                   >
                     <input type="checkbox" checked={starred} onChange={(e) => setStarred(e.target.checked)} />
                     {tr('只看星标', 'Starred only')}
@@ -802,7 +796,7 @@ export function ResearchPage() {
                   style={{ height: 30, fontSize: 12 }}
                 />
               </div>
-              <div className="mono" style={{ marginTop: 8, fontSize: 10.5, color: 'var(--text-3)' }}>
+              <div className="mono" style={{ marginTop: 8, fontSize: 11, color: 'var(--text-3)' }}>
                 {countText}
               </div>
               {semFallback && (
@@ -817,7 +811,7 @@ export function ResearchPage() {
                     lineHeight: 1.5,
                   }}
                 >
-                  {tr('语义检索暂不可用，已回退为关键词匹配。', 'Semantic search unavailable — fell back to keyword matching.')}
+                  {tr('语义搜索暂不可用，已改用关键词搜索。', 'Semantic search isn’t available, so keyword search was used.')}
                 </div>
               )}
             </div>
@@ -836,11 +830,11 @@ export function ResearchPage() {
                   <EmptyState
                     compact
                     icon="x"
-                    title={tr('语义检索失败', 'Semantic search failed')}
-                    desc={tr('后端暂时不可用，稍后再试或改用关键词。', 'Backend unavailable — retry later or switch to keyword.')}
+                    title={tr('语义搜索失败', 'Semantic search failed')}
+                    desc={tr('请稍后重试，或改用关键词搜索。', 'Try again later, or use keyword search.')}
                     action={
                       <button className="btn btn-soft sm" onClick={() => setSemanticOn(false)}>
-                        {tr('改用关键词', 'Use keyword')}
+                        {tr('改用关键词', 'Use keywords')}
                       </button>
                     }
                   />
@@ -848,8 +842,8 @@ export function ResearchPage() {
                   <EmptyState
                     compact
                     icon="search"
-                    title={tr('没有语义匹配的论文', 'No semantic matches')}
-                    desc={tr('换个说法，或改用关键词搜索。', 'Rephrase the query, or switch to keyword search.')}
+                    title={tr('没有找到相关论文', 'No matching papers')}
+                    desc={tr('换个说法，或改用关键词搜索。', 'Try different wording, or use keyword search.')}
                   />
                 ) : (
                   semItems.map((item) => (
@@ -874,8 +868,8 @@ export function ResearchPage() {
                 <EmptyState
                   compact
                   icon="x"
-                  title={tr('加载不出相关研究', 'Cannot load related work')}
-                  desc={tr('后端暂时不可用，稍后再试。', 'The backend is unavailable — try again later.')}
+                  title={tr('无法加载相关研究', 'Couldn’t load related work')}
+                  desc={tr('请确认本机引擎正在运行，然后重试。', 'Make sure the local engine is running, then retry.')}
                   action={
                     <button className="btn btn-soft sm" onClick={() => void shelfQuery.refetch()}>
                       {tr('重试', 'Retry')}
@@ -888,7 +882,7 @@ export function ResearchPage() {
                     compact
                     icon="search"
                     title={tr('没有匹配的论文', 'No matching papers')}
-                    desc={tr('换个关键词或放宽高级检索条件。', 'Try another keyword or loosen the filters.')}
+                    desc={tr('换个关键词，或放宽筛选条件。', 'Try another keyword or loosen the filters.')}
                     action={
                       <button
                         className="btn btn-soft sm"
@@ -912,10 +906,10 @@ export function ResearchPage() {
                 <EmptyState
                   compact
                   icon="search"
-                  title={tr('没有这个状态的论文', 'No papers in this status')}
+                  title={tr('没有符合筛选的论文', 'No papers match this filter')}
                   action={
                     <button className="btn btn-soft sm" onClick={() => setFilter('all')}>
-                      {tr('清除过滤', 'Clear filter')}
+                      {tr('清除筛选', 'Clear filter')}
                     </button>
                   }
                 />
@@ -947,7 +941,7 @@ export function ResearchPage() {
               >
                 <button className="btn btn-ghost sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
                   <Icon name="chevron" size={12} style={{ transform: 'rotate(180deg)' }} />
-                  {tr('上一页', 'Prev')}
+                  {tr('上一页', 'Previous')}
                 </button>
                 <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
                   {tr(`第 ${page} / ${totalPages} 页`, `Page ${page} / ${totalPages}`)}
@@ -969,7 +963,7 @@ export function ResearchPage() {
             >
               <button
                 className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
-                title={tr('开启后列表出现复选框，可批量移出 / 导出引用', 'Show checkboxes for bulk remove / citation export')}
+                title={tr('选择多篇论文移出或导出引用', 'Select papers to remove or export citations')}
                 onClick={() => {
                   setSelectMode((m) => !m);
                   setCheckedIds(new Set());
@@ -978,19 +972,19 @@ export function ResearchPage() {
                 <Icon name="check" size={13} />
                 {selectMode
                   ? tr(`已选 ${checkedIds.size} 篇`, `${checkedIds.size} selected`)
-                  : tr('多选', 'Select')}
+                  : tr('选择', 'Select')}
               </button>
               {selectMode && (
                 <>
                   <button
                     className="btn btn-ghost sm"
                     style={{ color: 'var(--danger-tx)' }}
-                    title={tr('移入回收站（可召回，个人库收藏保留）', 'Move to trash (restorable, saved copies stay)')}
+                    title={tr('移入回收站', 'Move to trash')}
                     disabled={checkedIds.size === 0 || bulkRemoveMutation.isPending}
                     onClick={() => bulkRemoveMutation.mutate([...checkedIds])}
                   >
                     <Icon name="x" size={12} />
-                    {tr('删除', 'Delete')}
+                    {tr('移出', 'Remove')}
                   </button>
                   <ExportDropdown
                     sm
@@ -1005,7 +999,7 @@ export function ResearchPage() {
               <button
                 className="btn btn-ghost sm"
                 style={{ marginLeft: 'auto' }}
-                title={tr('回收站：移出的论文可以召回或彻底删除', 'Trash: removed papers — restore or delete forever')}
+                title={tr('移出的论文可在这里恢复', 'Restore removed papers from here')}
                 onClick={() => setTrashOpen(true)}
               >
                 <Icon name="trash" size={13} />
@@ -1035,28 +1029,22 @@ export function ResearchPage() {
               <div style={{ margin: 'auto' }}>
                 <EmptyState
                   icon="pin"
-                  title={tr('从文献库挑几篇开始', 'Start by picking a few papers')}
+                  title={tr('还没有相关研究', 'No related work yet')}
                   desc={tr(
-                    '把课题直接依赖的论文放进来，写一句为什么相关。',
-                    'Shelve the papers this topic builds on, and note why each matters.',
+                    '添加这个课题直接依赖的论文，并写下相关原因。',
+                    'Add the papers this topic builds on and note why each matters.',
                   )}
                   action={
-                    <div className="row gap10" style={{ justifyContent: 'center' }}>
-                      <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
-                        <Icon name="plus" size={13} />
-                        {tr('添加文献', 'Add paper')}
-                      </button>
-                      <button className="btn btn-soft sm" onClick={() => navigate(libEntryHref)}>
-                        <Icon name="book" size={13} />
-                        {libEntryLabel}
-                      </button>
-                    </div>
+                    <button className="btn btn-soft sm" onClick={() => navigate(libEntryHref)}>
+                      <Icon name="book" size={13} />
+                      {libEntryLabel}
+                    </button>
                   }
                 />
               </div>
             ) : (
               <div className="empty" style={{ margin: 'auto' }}>
-                {tr('选择论文查看详情', 'Select a paper to view details')}
+                {tr('选择论文查看详情', 'Select a paper to see details')}
               </div>
             )}
           </div>

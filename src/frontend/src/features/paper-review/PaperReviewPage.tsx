@@ -39,27 +39,51 @@ import { DiscussionBubble } from '../review/messages';
 
 /* ---------------- 文案与配色 ---------------- */
 
-const DEFAULT_REVIEW_PERSONAS: ReviewPersona[] = [
-  { name: '苛刻方法论者', stance: '专挑方法和实验设计的漏洞，标准从严' },
-  { name: '建设性领域专家', stance: '熟悉领域现状，指出问题的同时给出改进建议' },
-  { name: '严格实验复现者', stance: '关注实验细节和可复现性，逐个核对数字与设置' },
-];
+/** 默认审稿人（渲染时求值，随语言切换）。 */
+function defaultReviewPersonas(): ReviewPersona[] {
+  return [
+    { name: tr('严格的方法审稿人', 'Strict methods reviewer'), stance: tr('从严挑方法和实验设计的漏洞', 'Holds method and experiment design to a high bar') },
+    { name: tr('领域专家', 'Domain expert'), stance: tr('指出问题并给出改进建议', 'Points out problems and suggests fixes') },
+    { name: tr('复现审稿人', 'Reproducibility reviewer'), stance: tr('逐项核对实验细节、数字和设置', 'Checks experiment details, numbers and settings one by one') },
+  ];
+}
 
 interface PillMeta {
   zh: string;
   en?: string;
   bg: string;
   tx: string;
+  tone?: Tone;
+}
+
+type Tone = 'ok' | 'warn' | 'danger';
+
+/** 状态：8px 圆点 + 文字（不用彩色胶囊）。 */
+function StatusText({ tone, children }: { tone: Tone | undefined; children: React.ReactNode }) {
+  return (
+    <span className="row gap6" style={{ fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+      <span
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          flexShrink: 0,
+          background: tone ? `var(--${tone})` : 'var(--text-4)',
+        }}
+      />
+      {children}
+    </span>
+  );
 }
 
 const DECISION_META: Record<string, PillMeta> = {
-  accept: { zh: '建议接收', en: 'Accept', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)' },
-  borderline: { zh: '边缘', en: 'Borderline', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
-  reject: { zh: '建议拒稿', en: 'Reject', bg: 'var(--danger-bg)', tx: 'var(--danger-tx)' },
+  accept: { zh: '建议接收', en: 'Accept', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)', tone: 'ok' },
+  borderline: { zh: '边缘', en: 'Borderline', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)', tone: 'warn' },
+  reject: { zh: '建议拒稿', en: 'Reject', bg: 'var(--danger-bg)', tx: 'var(--danger-tx)', tone: 'danger' },
 };
 
 const EXISTENCE_META: Record<string, PillMeta> = {
-  exact: { zh: '找到了', en: 'Found', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)' },
+  exact: { zh: '已找到', en: 'Found', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)' },
   minor: { zh: '基本匹配', en: 'Close match', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
   fabricated: { zh: '疑似编造', en: 'Possibly fabricated', bg: 'var(--danger-bg)', tx: 'var(--danger-tx)' },
 };
@@ -72,23 +96,23 @@ const SUPPORT_META: Record<string, PillMeta> = {
 };
 
 const SOURCE_TEXT: Record<string, { zh: string; en?: string }> = {
-  library: { zh: '本项目文献库', en: 'Project library' },
+  library: { zh: '课题文献库', en: 'Topic library' },
   s2: { zh: 'Semantic Scholar' },
   openalex: { zh: 'OpenAlex' },
-  none: { zh: '哪里都没找到', en: 'Not found anywhere' },
+  none: { zh: '未找到', en: 'Not found' },
 };
 
 const KIND_TEXT: Record<string, { zh: string; en?: string }> = {
-  number_mismatch: { zh: '数字对不上', en: 'Number mismatch' },
-  unsupported_claim: { zh: '说法缺依据', en: 'Unsupported claim' },
+  number_mismatch: { zh: '数字不一致', en: 'Number mismatch' },
+  unsupported_claim: { zh: '缺少依据', en: 'Unsupported claim' },
   missing_figure: { zh: '图表缺失', en: 'Missing figure' },
   other: { zh: '其他', en: 'Other' },
 };
 
 const META_DIMS = [
-  { key: 'soundness', zh: '严谨程度', en: 'Soundness' },
-  { key: 'presentation', zh: '表达清晰', en: 'Presentation' },
-  { key: 'contribution', zh: '贡献大小', en: 'Contribution' },
+  { key: 'soundness', zh: '严谨性', en: 'Soundness' },
+  { key: 'presentation', zh: '表达', en: 'Presentation' },
+  { key: 'contribution', zh: '贡献', en: 'Contribution' },
 ] as const;
 
 function dimColor(v: number): string {
@@ -141,12 +165,12 @@ function StartReviewModal({
   pid: string;
 }) {
   const queryClient = useQueryClient();
-  const [personas, setPersonas] = useState<ReviewPersona[]>(DEFAULT_REVIEW_PERSONAS);
+  const [personas, setPersonas] = useState<ReviewPersona[]>(defaultReviewPersonas);
 
   const mutation = useMutation({
     mutationFn: () => api.startManuscriptReview(msId, personas.filter((p) => p.name.trim() !== '')),
     onSuccess: () => {
-      toast(tr('同行评审已开始', 'Peer review started'), 'ok');
+      toast(tr('已开始同行评审', 'Peer review started'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['voyages', pid] });
       void queryClient.invalidateQueries({ queryKey: ['manuscript', msId] });
       onClose();
@@ -155,18 +179,18 @@ function StartReviewModal({
       if (e instanceof ApiError && e.status === 409) {
         if (e.message.includes('COMPILE_REQUIRED')) {
           toast(
-            tr('稿件要先编译成功一次才能发起评审（去写作页按 ⌘S 编译）', 'The manuscript must compile successfully once before review (press ⌘S on the Writer page)'),
+            tr('请先成功编译稿件，可在编辑器中按 ⌘S', 'Compile the manuscript first. Press ⌘S in the editor.'),
             'error',
           );
         } else {
           toast(
-            tr('这篇稿件已有一轮评审在进行中，等它跑完再发起新一轮。', 'A review round is already running for this manuscript — wait for it to finish first.'),
+            tr('这篇稿件正在评审中，请等它完成', 'This manuscript is already being reviewed. Wait for it to finish.'),
             'error',
           );
           void queryClient.invalidateQueries({ queryKey: ['voyages', pid] });
         }
       } else {
-        toast(`${tr('发起失败', 'Failed to start')}：${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('无法开始评审：', 'Couldn’t start the review: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -206,12 +230,8 @@ function StartReviewModal({
       }
     >
       <FormField
-        label={tr('评审员人设', 'Reviewer personas')}
-        en="personas"
-        hint={tr(
-          '每个人设是一位独立的 AI 评审员，默认三位可直接编辑或增删。',
-          'Each persona is an independent AI reviewer; edit, add, or remove the three defaults directly.',
-        )}
+        label={tr('AI 审稿人', 'AI reviewers')}
+        hint={tr('每行一位审稿人，可修改或增删', 'One reviewer per row. Edit, add or remove.')}
       >
         <div className="col gap8">
           {personas.map((p, i) => (
@@ -219,14 +239,14 @@ function StartReviewModal({
               <input
                 className="input"
                 style={{ width: 160, flexShrink: 0 }}
-                placeholder={tr('名字', 'Name')}
+                placeholder={tr('名称', 'Name')}
                 value={p.name}
                 onChange={(e) => setPersona(i, { name: e.target.value })}
               />
               <input
                 className="input"
                 style={{ flex: 1 }}
-                placeholder={tr('立场', 'Stance')}
+                placeholder={tr('关注点', 'Focus')}
                 value={p.stance}
                 onChange={(e) => setPersona(i, { stance: e.target.value })}
               />
@@ -245,14 +265,14 @@ function StartReviewModal({
             onClick={() => setPersonas((ps) => [...ps, { name: '', stance: '' }])}
           >
             <Icon name="plus" size={13} />
-            {tr('添加人设', 'Add persona')}
+            {tr('添加审稿人', 'Add reviewer')}
           </button>
         </div>
       </FormField>
-      <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.6 }}>
         {tr(
-          '评审通过（总评 ≥ 6 且没有编造引用）后才能申请投稿；未通过时，问题清单会自动写进事实包，供下一轮修订参考。',
-          'Submission requires a passed review (rating ≥ 6 and no fabricated citations); if it fails, the issue list is written into the fact pack for the next revision.',
+          '总评不低于 6 分且没有疑似编造的引用即为通过，通过后才能申请投稿。',
+          'A review passes with a rating of 6 or higher and no suspect citations. You can request submission once it passes.',
         )}
       </div>
     </Modal>
@@ -282,9 +302,9 @@ function DimBar({ zh, en, value }: { zh: string; en: string; value: number | nul
           />
         ))}
       </div>
-      <span className="mono" style={{ width: 44, textAlign: 'right', fontWeight: 700, fontSize: 12.5 }}>
+      <span className="mono" style={{ width: 44, textAlign: 'right', fontWeight: 600, fontSize: 13 }}>
         {v ?? '—'}
-        <span style={{ color: 'var(--text-4)', fontWeight: 400 }}> /4</span>
+        <span style={{ color: 'var(--text-3)', fontWeight: 400 }}> /4</span>
       </span>
     </div>
   );
@@ -309,16 +329,11 @@ function MetaOverviewCard({
     <div className="card card-pad" style={{ marginBottom: 16 }}>
       <div className="row" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
         <span className="section-h">
-          <Icon name="shield" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('评审总览', 'Meta review')}
+          {tr('评审结论', 'Summary')}
         </span>
-        {guardrail && (
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-            {tr(
-              `意见可靠性自动校验${guardrail.passed === false ? '未全部通过' : '通过'}`,
-              `Reliability check ${guardrail.passed === false ? 'not fully passed' : 'passed'}`,
-            )}
-            {guardrail.regenerated ? tr(` · 重写 ${guardrail.regenerated} 次`, ` · ${guardrail.regenerated} rewrites`) : ''}
+        {guardrail?.passed === false && (
+          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+            {tr('部分审稿意见不可靠，未计入总评', 'Some reviews were unreliable and left out of the rating')}
           </span>
         )}
       </div>
@@ -336,18 +351,15 @@ function MetaOverviewCard({
             background: 'var(--surface-2)',
           }}
         >
-          <div className="mono" style={{ fontSize: 42, fontWeight: 750, lineHeight: 1, color: 'var(--accent-text)' }}>
+          <div className="mono" style={{ fontSize: 42, fontWeight: 600, lineHeight: 1, color: 'var(--accent-text)' }}>
             {rating != null ? rating : '—'}
-            <span style={{ fontSize: 15, color: 'var(--text-4)', fontWeight: 500 }}> /10</span>
+            <span style={{ fontSize: 15, color: 'var(--text-3)', fontWeight: 500 }}> /10</span>
           </div>
-          <div style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
-            {tr('总评 rating（三位评审员聚合）', 'Overall rating (aggregated from three reviewers)')}
+          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
+            {tr('总评', 'Overall rating')}
           </div>
           {decision && (
-            <span className="pill" style={{ background: decision.bg, color: decision.tx }}>
-              <span className="dot" />
-              {tr(decision.zh, decision.en)}
-            </span>
+            <StatusText tone={decision.tone}>{tr(decision.zh, decision.en)}</StatusText>
           )}
         </div>
         {/* 三维度条形 1-4 */}
@@ -357,17 +369,17 @@ function MetaOverviewCard({
           ))}
           <div className="row gap8" style={{ marginTop: 4, flexWrap: 'wrap' }}>
             {ratings.length > 0 && (
-              <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
                 {tr(
-                  `各评审员总评：${ratings.join(' / ')} · 取中位数，跑偏和低把握的意见降权`,
-                  `Reviewer ratings: ${ratings.join(' / ')} · median taken; off-track and low-confidence opinions are down-weighted`,
+                  `各审稿人评分：${ratings.join(' / ')}，取中位数`,
+                  `Reviewer ratings: ${ratings.join(' / ')} (median used)`,
                 )}
               </span>
             )}
             {fabricated > 0 && (
-              <span className="pill sm" style={{ background: 'var(--danger-bg)', color: 'var(--danger-tx)' }}>
-                {tr(`有 ${fabricated} 条疑似编造引用，结论强制不通过`, `${fabricated} possibly fabricated citations — verdict forced to fail`)}
-              </span>
+              <StatusText tone="danger">
+                {tr(`${fabricated} 条引用疑似编造，本轮不通过`, `${fabricated} suspect ${fabricated === 1 ? 'citation' : 'citations'}, so this review fails`)}
+              </StatusText>
             )}
           </div>
         </div>
@@ -389,9 +401,9 @@ function MiniScale({ zh, value, max }: { zh: string; value: number | undefined; 
   return (
     <div style={{ flex: 1, minWidth: 0 }} title={`${zh}: ${v ?? '—'} / ${max}`}>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 3 }}>
-        <span style={{ fontSize: 10, color: 'var(--text-3)' }}>{zh}</span>
-        <span className="mono" style={{ fontSize: 10, fontWeight: 700 }}>
-          {v ?? '—'}<span style={{ color: 'var(--text-4)', fontWeight: 400 }}>/{max}</span>
+        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{zh}</span>
+        <span className="mono" style={{ fontSize: 11, fontWeight: 600 }}>
+          {v ?? '—'}<span style={{ color: 'var(--text-3)', fontWeight: 400 }}>/{max}</span>
         </span>
       </div>
       <div className="bar" style={{ height: 5 }}>
@@ -401,11 +413,11 @@ function MiniScale({ zh, value, max }: { zh: string; value: number | undefined; 
   );
 }
 
-function OpinionZone({ title, items, bg, tx }: { title: string; items: string[] | undefined; bg: string; tx: string }) {
+function OpinionZone({ title, items, tx }: { title: string; items: string[] | undefined; tx: string }) {
   if (!items || items.length === 0) return null;
   return (
-    <div style={{ background: bg, borderRadius: 9, padding: '8px 12px', marginTop: 8 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: tx, marginBottom: 4 }}>{title}</div>
+    <div style={{ marginTop: 10 }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: tx, marginBottom: 4 }}>{title}</div>
       <ul style={{ margin: 0, paddingLeft: 16 }}>
         {items.map((s, i) => (
           <li key={i} style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--text-2)', marginBottom: 3 }}>{s}</li>
@@ -429,29 +441,22 @@ function ReviewerCard({ msg }: { msg: ReviewMessageRead }) {
       }}
     >
       <div className="row gap8" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
-        <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-          <Icon name="users" size={12} />
-          {msg.author_name}
-        </span>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{msg.author_name}</span>
         {op && typeof op.confidence === 'number' && (
           <span
             className="mono"
-            style={{ fontSize: 10.5, color: 'var(--text-3)' }}
-            title={tr('评审员对自己判断的把握程度', "How confident the reviewer is in their own judgment")}
+            style={{ fontSize: 11, color: 'var(--text-3)' }}
+            title={tr('审稿人对自己判断的信心', 'How sure the reviewer is of this review')}
           >
-            {tr('把握', 'Confidence')} {op.confidence}/5
+            {tr('信心', 'Confidence')} {op.confidence}/5
           </span>
         )}
         {unreliable && (
           <span
-            className="pill sm"
-            style={{ background: 'var(--surface-3)', color: 'var(--text-3)', marginLeft: 'auto' }}
-            title={tr(
-              '这份意见没通过可靠性自动校验（内容不够具体或与论文对不上），已灰显且不计入汇总分数',
-              'This opinion failed the automatic reliability check (too vague or inconsistent with the paper); it is dimmed and excluded from the aggregate score',
-            )}
+            style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 'auto' }}
+            title={tr('内容不够具体，或与论文不符', 'Too vague, or doesn’t match the paper')}
           >
-            {tr('未通过可靠性校验 · 不计入汇总', 'Failed reliability check · excluded from aggregate')}
+            {tr('不可靠，未计入总评', 'Unreliable, not counted')}
           </span>
         )}
       </div>
@@ -463,12 +468,12 @@ function ReviewerCard({ msg }: { msg: ReviewMessageRead }) {
             <MiniScale zh={tr('贡献', 'Contribution')} value={op.contribution} max={4} />
             <MiniScale zh={tr('总评', 'Rating')} value={op.rating} max={10} />
           </div>
-          <OpinionZone title={tr('优点', 'Strengths')} items={op.strengths} bg="var(--ok-bg)" tx="var(--ok-tx)" />
-          <OpinionZone title={tr('缺点', 'Weaknesses')} items={op.weaknesses} bg="var(--danger-bg)" tx="var(--danger-tx)" />
-          <OpinionZone title={tr('提问', 'Questions')} items={op.questions} bg="var(--warn-bg)" tx="var(--warn-tx)" />
+          <OpinionZone title={tr('优点', 'Strengths')} items={op.strengths} tx="var(--ok-tx)" />
+          <OpinionZone title={tr('缺点', 'Weaknesses')} items={op.weaknesses} tx="var(--danger-tx)" />
+          <OpinionZone title={tr('提问', 'Questions')} items={op.questions} tx="var(--warn-tx)" />
         </>
       ) : (
-        <Markdown source={msg.content} style={{ fontSize: 12.5 }} />
+        <Markdown source={msg.content} style={{ fontSize: 13 }} />
       )}
     </div>
   );
@@ -492,13 +497,13 @@ function CitationRow({ item }: { item: CitationCheckItem }) {
         padding: '9px 18px',
         borderBottom: '0.5px solid var(--border)',
       }}
-      title={item.context_snippet ? `${tr('引用语境', 'Citation context')}：${item.context_snippet}` : undefined}
+      title={item.context_snippet ? `${tr('引用上下文：', 'Context: ')}${item.context_snippet}` : undefined}
     >
-      <span className="mono" style={{ fontSize: 11.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <span className="mono" style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {item.bibkey}
       </span>
       <span className="pill sm" style={{ background: ex.bg, color: ex.tx, justifySelf: 'start' }}>{tr(ex.zh, ex.en)}</span>
-      <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{src ? tr(src.zh, src.en) : item.source ?? '—'}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{src ? tr(src.zh, src.en) : item.source ?? '—'}</span>
       {sp ? (
         <span className="pill sm" style={{ background: sp.bg, color: sp.tx, justifySelf: 'start' }}>{tr(sp.zh, sp.en)}</span>
       ) : (
@@ -506,14 +511,14 @@ function CitationRow({ item }: { item: CitationCheckItem }) {
       )}
       <span
         style={{
-          fontSize: 11.5,
+          fontSize: 12,
           color: 'var(--text-2)',
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
         }}
       >
-        {item.matched_title ?? <span className="muted">{tr('（没匹配到论文）', '(no paper matched)')}</span>}
+        {item.matched_title ?? <span className="muted">{tr('未匹配到论文', 'No match')}</span>}
       </span>
     </div>
   );
@@ -528,35 +533,33 @@ function CitationCard({ check }: { check: CitationCheck | null }) {
     <div className="card" style={{ marginBottom: 16, overflow: 'hidden' }}>
       <div className="card-pad row gap10" style={{ paddingBottom: 12, flexWrap: 'wrap' }}>
         <span className="section-h">
-          <Icon name="link" size={15} style={{ color: 'var(--accent)' }} />
           {tr('引用核验', 'Citation check')}
         </span>
         <span className="row gap8" style={{ marginLeft: 'auto', flexWrap: 'wrap' }}>
           <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-            {tr(`${total} 条引用`, `${total} citations`)}
+            {tr(`${total} 条引用`, `${total} ${total === 1 ? 'citation' : 'citations'}`)}
           </span>
           {fabricated > 0 ? (
-            <span className="pill sm" style={{ background: 'var(--danger-bg)', color: 'var(--danger-tx)' }}>
-              <Icon name="bell" size={11} />
-              {tr(`${fabricated} 条疑似编造`, `${fabricated} possibly fabricated`)}
-            </span>
+            <StatusText tone="danger">
+              {tr(`${fabricated} 条疑似编造`, `${fabricated} suspect`)}
+            </StatusText>
           ) : (
             items.length > 0 && (
-              <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-                {tr('没有编造引用', 'No fabricated citations')}
-              </span>
+              <StatusText tone="ok">
+                {tr('没有疑似编造', 'None suspect')}
+              </StatusText>
             )
           )}
           {unsupported > 0 && (
-            <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
-              {tr(`${unsupported} 条不支撑论点`, `${unsupported} do not support the claim`)}
-            </span>
+            <StatusText tone="warn">
+              {tr(`${unsupported} 条不支撑论点`, `${unsupported} unsupported`)}
+            </StatusText>
           )}
         </span>
       </div>
       {items.length === 0 ? (
         <div className="empty" style={{ padding: 24, fontSize: 12 }}>
-          {tr('这轮评审没有返回引用核验明细。', 'This review round returned no citation check details.')}
+          {tr('本轮没有引用核验结果。', 'No citation check results for this round.')}
         </div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
@@ -569,18 +572,18 @@ function CitationCard({ check }: { check: CitationCheck | null }) {
                 padding: '8px 18px',
                 borderTop: '0.5px solid var(--border)',
                 borderBottom: '0.5px solid var(--border)',
-                fontSize: 10.5,
-                fontWeight: 650,
+                fontSize: 11,
+                fontWeight: 600,
                 color: 'var(--text-3)',
                 textTransform: 'uppercase',
                 letterSpacing: '0.04em',
               }}
             >
-              <span>bibkey</span>
-              <span>{tr('存在性', 'Existence')}</span>
-              <span>{tr('匹配来源', 'Source')}</span>
-              <span>{tr('支撑性', 'Support')}</span>
-              <span>{tr('匹配到的论文（悬停行可看引用语境）', 'Matched paper (hover a row for citation context)')}</span>
+              <span>{tr('引用键', 'Bib key')}</span>
+              <span>{tr('是否存在', 'Exists')}</span>
+              <span>{tr('来源', 'Source')}</span>
+              <span>{tr('是否支撑', 'Support')}</span>
+              <span>{tr('匹配到的论文', 'Matched paper')}</span>
             </div>
             {items.map((it, i) => (
               <CitationRow key={`${it.bibkey}-${i}`} item={it} />
@@ -606,10 +609,10 @@ function FactRow({ item, msId, files }: { item: FactCheckItem; msId: string; fil
         className="row gap8"
         onClick={() => hasEvidence && setOpen((o) => !o)}
         style={{ padding: '9px 18px', alignItems: 'flex-start', cursor: hasEvidence ? 'pointer' : 'default' }}
-        title={hasEvidence ? tr('点击展开/收起依据', 'Click to expand/collapse evidence') : undefined}
+        title={hasEvidence ? tr('展开或收起依据', 'Show or hide evidence') : undefined}
       >
         <span
-          title={major ? tr('严重问题：必须修', 'Major issue: must fix') : tr('小问题：建议修', 'Minor issue: should fix')}
+          title={major ? tr('严重：必须修改', 'Major: must fix') : tr('轻微：建议修改', 'Minor: worth fixing')}
           style={{
             width: 16,
             height: 16,
@@ -621,8 +624,8 @@ function FactRow({ item, msId, files }: { item: FactCheckItem; msId: string; fil
             justifyContent: 'center',
             background: major ? 'var(--danger-bg)' : 'var(--warn-bg)',
             color: major ? 'var(--danger-tx)' : 'var(--warn-tx)',
-            fontSize: 10,
-            fontWeight: 800,
+            fontSize: 11,
+            fontWeight: 600,
             lineHeight: 1,
           }}
         >
@@ -636,22 +639,22 @@ function FactRow({ item, msId, files }: { item: FactCheckItem; msId: string; fil
                   to={`/writer/${msId}?goto=${encodeURIComponent(loc)}`}
                   className="mono"
                   onClick={(e) => e.stopPropagation()}
-                  title={tr('在写作编辑器里打开对应位置', 'Open this location in the writer editor')}
-                  style={{ fontSize: 10.5, color: 'var(--accent-text)' }}
+                  title={tr('在编辑器中打开', 'Open in editor')}
+                  style={{ fontSize: 11, color: 'var(--accent-text)' }}
                 >
                   {loc} ↗
                 </Link>
               ) : (
-                <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{loc}</span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{loc}</span>
               ))}
             {item.kind && (
-              <span className="pill sm" style={{ height: 16, fontSize: 9.5, padding: '0 6px' }}>
+              <span className="pill sm" style={{ height: 16, fontSize: 11, padding: '0 6px' }}>
                 {KIND_TEXT[item.kind] ? tr(KIND_TEXT[item.kind]!.zh, KIND_TEXT[item.kind]!.en) : item.kind}
               </span>
             )}
           </div>
           <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.55, marginTop: 2, overflowWrap: 'break-word' }}>
-            {item.issue ?? tr('（未说明问题）', '(no issue description)')}
+            {item.issue ?? tr('未说明', 'No description')}
           </div>
           {open && hasEvidence && (
             <div
@@ -676,7 +679,7 @@ function FactRow({ item, msId, files }: { item: FactCheckItem; msId: string; fil
           <Icon
             name="chevDown"
             size={13}
-            style={{ color: 'var(--text-4)', flexShrink: 0, marginTop: 3, transform: open ? 'rotate(180deg)' : 'none' }}
+            style={{ color: 'var(--text-3)', flexShrink: 0, marginTop: 3, transform: open ? 'rotate(180deg)' : 'none' }}
           />
         )}
       </div>
@@ -699,30 +702,29 @@ function FactCheckCard({
     <div className="card" style={{ marginBottom: 16, overflow: 'hidden' }}>
       <div className="card-pad row gap10" style={{ paddingBottom: 12 }}>
         <span className="section-h">
-          <Icon name="search" size={15} style={{ color: 'var(--accent)' }} />
           {tr('查错清单', 'Fact check')}
         </span>
         <span className="row gap8" style={{ marginLeft: 'auto' }}>
           {major > 0 && (
-            <span className="pill sm" style={{ background: 'var(--danger-bg)', color: 'var(--danger-tx)' }}>
-              {tr(`${major} 个严重`, `${major} major`)}
-            </span>
+            <StatusText tone="danger">
+              {tr(`${major} 个严重问题`, `${major} major`)}
+            </StatusText>
           )}
           {minor > 0 && (
-            <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
-              {tr(`${minor} 个轻微`, `${minor} minor`)}
-            </span>
+            <StatusText tone="warn">
+              {tr(`${minor} 个轻微问题`, `${minor} minor`)}
+            </StatusText>
           )}
           {items.length === 0 && (
-            <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-              {tr('没查出问题', 'No issues found')}
-            </span>
+            <StatusText tone="ok">
+              {tr('没有发现问题', 'No issues found')}
+            </StatusText>
           )}
         </span>
       </div>
       {items.length === 0 ? (
         <div className="empty" style={{ padding: 24, fontSize: 12 }}>
-          {tr('数字、说法和图表引用都核对过，没有发现问题。', 'Numbers, claims, and figure references were all checked — no issues found.')}
+          {tr('数字、论述和图表引用均已核对。', 'Numbers, claims and figure references all check out.')}
         </div>
       ) : (
         <div style={{ borderTop: '0.5px solid var(--border)' }}>
@@ -768,7 +770,7 @@ function ReviewDiscussion({ sessionId }: { sessionId: string }) {
         old === undefined ? [msg] : old.some((m) => m.id === msg.id) ? old : [...old, msg],
       );
     },
-    onError: (e) => toast(`${tr('发送失败', 'Failed to send')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('发送失败：', 'Couldn’t send: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   function send() {
@@ -781,40 +783,27 @@ function ReviewDiscussion({ sessionId }: { sessionId: string }) {
     <div className="card" style={{ marginBottom: 16, overflow: 'hidden' }}>
       <div className="card-pad row" style={{ paddingBottom: 12, justifyContent: 'space-between' }}>
         <span className="section-h">
-          <Icon name="users" size={15} style={{ color: 'var(--accent)' }} />
           {tr('讨论区', 'Discussion')}
         </span>
         {messages.length > 0 && (
           <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-            {tr(`${messages.length} 条`, `${messages.length} messages`)}
+            {tr(`${messages.length} 条`, `${messages.length} ${messages.length === 1 ? 'message' : 'messages'}`)}
           </span>
         )}
       </div>
-      <div
-        className="row gap8"
-        style={{
-          margin: '0 22px 12px',
-          padding: '8px 12px',
-          borderRadius: 9,
-          background: 'var(--accent-soft)',
-          fontSize: 11.5,
-          color: 'var(--accent-text)',
-          lineHeight: 1.5,
-        }}
-      >
-        <Icon name="sparkle" size={13} style={{ flexShrink: 0 }} />
-        {tr('你的评论会记录在这轮评审里，修订和下一轮评审都能参考', 'Your comments are kept with this review round, for revisions and the next round')}
+      <div style={{ margin: '-6px 22px 12px', fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
+        {tr('修订和下一轮评审时会参考这里的评论。', 'Your comments here inform revisions and the next review.')}
       </div>
       <div ref={listRef} className="scroll" style={{ maxHeight: 340, overflowY: 'auto', padding: '4px 22px 8px' }}>
         {messagesQuery.isLoading ? (
-          <div className="empty" style={{ padding: 24 }}>{tr('加载讨论…', 'Loading discussion…')}</div>
+          <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
         ) : messagesQuery.isError ? (
           <div className="empty" style={{ padding: 24 }}>
-            {tr('无法加载讨论区（后端不可用或接口未就绪）', 'Failed to load the discussion (backend unavailable or API not ready)')}
+            {tr('无法加载讨论，请确认本机引擎正在运行', 'Couldn’t load the discussion. Make sure the local engine is running.')}
           </div>
         ) : messages.length === 0 ? (
           <div className="empty" style={{ padding: 24 }}>
-            {tr('还没有讨论', 'No discussion yet')}
+            {tr('还没有评论', 'No comments yet')}
           </div>
         ) : (
           messages.map((m) => <DiscussionBubble key={m.id} msg={m} />)
@@ -824,7 +813,7 @@ function ReviewDiscussion({ sessionId }: { sessionId: string }) {
         <textarea
           className="textarea"
           rows={2}
-          placeholder={tr('写下你的看法…（Enter 发送，Shift+Enter 换行）', 'Write your thoughts… (Enter to send, Shift+Enter for a new line)')}
+          placeholder={tr('写评论，Enter 发送，Shift Enter 换行', 'Write a comment. Enter to send, Shift Enter for a new line')}
           value={draft}
           disabled={sendMutation.isPending}
           onChange={(e) => setDraft(e.target.value)}
@@ -972,7 +961,7 @@ export function PaperReviewPage() {
   const submitMutation = useMutation({
     mutationFn: () => api.submitManuscript(msId!),
     onSuccess: () => {
-      toast(tr('已提交投稿审批，人工批准后标记为已投稿', 'Submission approval created — the manuscript is marked submitted once approved'), 'ok');
+      toast(tr('已提交投稿审批', 'Sent for submission approval'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['manuscript', msId] });
       void queryClient.invalidateQueries({ queryKey: ['manuscripts'] });
       void queryClient.invalidateQueries({ queryKey: ['gates'] });
@@ -980,14 +969,14 @@ export function PaperReviewPage() {
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
         if (e.message.includes('REVIEW_REQUIRED')) {
-          toast(tr('要先通过同行评审（总评 ≥ 6 且无编造引用）才能投稿', 'Peer review must pass first (rating ≥ 6, no fabricated citations)'), 'error');
+          toast(tr('请先通过同行评审再投稿', 'Pass peer review before submitting'), 'error');
         } else if (e.message.includes('COMPILE_REQUIRED')) {
-          toast(tr('要先编译成功一次才能投稿（去写作页按 ⌘S 编译）', 'Compile successfully once before submitting (press ⌘S on the Writer page)'), 'error');
+          toast(tr('请先成功编译稿件，可在编辑器中按 ⌘S', 'Compile the manuscript first. Press ⌘S in the editor.'), 'error');
         } else {
-          toast(`${tr('投稿失败', 'Submission failed')}：${e.message}`, 'error');
+          toast(`${tr('无法投稿：', 'Couldn’t submit: ')}${e.message}`, 'error');
         }
       } else {
-        toast(`${tr('投稿失败', 'Submission failed')}：${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('无法投稿：', 'Couldn’t submit: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -995,7 +984,7 @@ export function PaperReviewPage() {
   function onRevise() {
     if (!msId) return;
     if (!reviewPassed) {
-      toast(tr('修订说明已加入事实包，AI 起草/修订时会自动参考', 'Revision notes were added to the fact pack; AI drafting and revision will use them automatically'), 'info');
+      toast(tr('修改建议已在事实包中', 'Suggested fixes are in the fact pack'), 'info');
     }
     navigate(`/writer/${msId}`);
   }
@@ -1013,8 +1002,8 @@ export function PaperReviewPage() {
           currentProject
             ? undefined
             : projectsLoading
-              ? tr('加载课题…', 'Loading topics…')
-              : tr('选择一个课题', 'Pick a topic')
+              ? tr('加载中…', 'Loading…')
+              : tr('请先选择课题', 'Choose a topic first')
         }
       />
 
@@ -1022,7 +1011,7 @@ export function PaperReviewPage() {
       <div className="row page-tabs" style={{ marginBottom: 14 }}>
         <Segmented<ReviewTab>
           options={[
-            { v: 'opinions', label: tr('评审意见', 'Opinions') },
+            { v: 'opinions', label: tr('审稿意见', 'Reviews') },
             { v: 'checks', label: tr('核对', 'Checks') },
           ]}
           value={tab}
@@ -1030,14 +1019,14 @@ export function PaperReviewPage() {
         />
         <div style={{ marginLeft: 'auto' }}>
           <button
-            className="btn btn-primary sm"
+            className={`btn sm ${reviewPassed ? 'btn-soft' : 'btn-primary'}`}
             disabled={!msId || !!runningReview}
             title={
               !msId
-                ? tr('先选择一篇稿件', 'Pick a manuscript first')
+                ? tr('请先选择稿件', 'Choose a manuscript first')
                 : runningReview
-                  ? tr('已有评审任务在进行中', 'A review task is already running')
-                  : tr('发起一轮同行评审', 'Start a peer review round')
+                  ? tr('评审正在进行', 'A review is in progress')
+                  : tr('开始新一轮同行评审', 'Start a new round of peer review')
             }
             onClick={() => setModalOpen(true)}
           >
@@ -1058,12 +1047,12 @@ export function PaperReviewPage() {
 
       {/* —— 稿件 + 评审轮次选择 —— */}
       <div className="card card-pad row gap10" style={{ marginBottom: 16, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)', flexShrink: 0 }}>
-          {tr('选择稿件', 'Pick a manuscript')}
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', flexShrink: 0 }}>
+          {tr('稿件', 'Manuscript')}
         </span>
         <select
           className="input"
-          style={{ maxWidth: 420 }}
+          style={{ flex: '0 1 420px', minWidth: 0 }}
           value={msId ?? ''}
           disabled={reviewable.length === 0}
           onChange={(e) => {
@@ -1073,10 +1062,10 @@ export function PaperReviewPage() {
         >
           <option value="" disabled>
             {manuscriptsQuery.isLoading
-              ? tr('加载稿件…', 'Loading manuscripts…')
+              ? tr('加载中…', 'Loading…')
               : manuscriptsQuery.isError
-                ? tr('（稿件列表不可用）', '(manuscript list unavailable)')
-                : tr('— 选择稿件 —', '— pick a manuscript —')}
+                ? tr('无法加载稿件', 'Couldn’t load manuscripts')
+                : tr('选择稿件', 'Choose a manuscript')}
           </option>
           {reviewable.map((m) => (
             <option key={m.id} value={m.id}>
@@ -1088,13 +1077,13 @@ export function PaperReviewPage() {
           ))}
         </select>
         {msId && (
-          <Link to={`/writer/${msId}`} className="mono" style={{ fontSize: 11, color: 'var(--accent-text)' }}>
-            {tr('在编辑器打开', 'Open in editor')} ↗
+          <Link to={`/writer/${msId}`} style={{ fontSize: 12, color: 'var(--accent-text)', whiteSpace: 'nowrap' }}>
+            {tr('在编辑器中打开', 'Open in editor')}
           </Link>
         )}
         {reviews.length > 0 && (
           <span className="row gap8" style={{ marginLeft: 'auto' }}>
-            <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>{tr('评审轮次', 'Review round')}</span>
+            <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>{tr('轮次', 'Round')}</span>
             <select
               className="input"
               style={{ width: 220 }}
@@ -1120,15 +1109,12 @@ export function PaperReviewPage() {
           style={{ marginBottom: 16, borderColor: 'var(--accent-soft-2)', background: 'var(--accent-soft)' }}
         >
           <div className="row gap10">
-            <span className="pill" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-              <span className="dot pulse" />
-              {tr('评审中', 'Reviewing')}
+            <span className="pulse" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--ok)', flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>
+              {tr('同行评审进行中', 'Peer review in progress')}
             </span>
-            <span style={{ fontSize: 13.5, fontWeight: 650 }}>
-              {tr('同行评审进行中 — 点击看实时进度', 'Peer review in progress — click for live progress')}
-            </span>
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
-              {tr('任务', 'task')} {runningReview.id.slice(0, 8)}…
+            <span style={{ fontSize: 12, color: 'var(--accent-text)', marginLeft: 'auto' }}>
+              {tr('查看进度', 'View progress')}
             </span>
             <Icon name="arrow" size={14} style={{ color: 'var(--accent-text)' }} />
           </div>
@@ -1139,22 +1125,19 @@ export function PaperReviewPage() {
       {!pid ? (
         <div className="card">
           <div className="empty" style={{ padding: 60 }}>
-            {projectsLoading ? tr('加载课题…', 'Loading topics…') : tr('请先选择课题', 'Pick a topic first')}
+            {projectsLoading ? tr('加载中…', 'Loading…') : tr('请先选择课题', 'Choose a topic first')}
           </div>
         </div>
       ) : noManuscripts ? (
         <div className="card">
           <EmptyState
             icon="pen"
-            title={tr('还没有可评审的稿件', 'No reviewable manuscripts yet')}
-            desc={tr(
-              '同行评审只对编译成功的稿件开放。',
-              'Peer review only works on successfully compiled manuscripts.',
-            )}
+            title={tr('还没有可评审的稿件', 'No manuscripts to review yet')}
+            desc={tr('稿件编译成功后即可评审。', 'A manuscript can be reviewed once it compiles.')}
             action={
               <button className="btn btn-ghost" onClick={() => navigate(topicPath(pid, 'writer'))}>
                 <Icon name="pen" size={14} />
-                {tr('去写论文', 'Go write the paper')}
+                {tr('前往论文撰写', 'Open Paper Writer')}
               </button>
             }
           />
@@ -1164,8 +1147,8 @@ export function PaperReviewPage() {
           <EmptyState
             compact
             icon="x"
-            title={tr('无法加载稿件列表', 'Failed to load manuscripts')}
-            desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or the API is not ready yet.')}
+            title={tr('无法加载稿件', 'Couldn’t load manuscripts')}
+            desc={tr('请确认本机引擎正在运行，然后重试。', 'Make sure the local engine is running, then retry.')}
             action={
               <button className="btn btn-soft sm" onClick={() => void manuscriptsQuery.refetch()}>{tr('重试', 'Retry')}</button>
             }
@@ -1173,19 +1156,19 @@ export function PaperReviewPage() {
         </div>
       ) : !msId ? (
         <div className="card">
-          <div className="empty" style={{ padding: 60 }}>{tr('加载稿件…', 'Loading manuscripts…')}</div>
+          <div className="empty" style={{ padding: 60 }}>{tr('加载中…', 'Loading…')}</div>
         </div>
       ) : reviewsQuery.isLoading ? (
         <div className="card">
-          <div className="empty" style={{ padding: 60 }}>{tr('加载评审记录…', 'Loading review history…')}</div>
+          <div className="empty" style={{ padding: 60 }}>{tr('加载中…', 'Loading…')}</div>
         </div>
       ) : reviewsQuery.isError ? (
         <div className="card">
           <EmptyState
             compact
             icon="x"
-            title={tr('无法加载评审记录', 'Failed to load review history')}
-            desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or the API is not ready yet.')}
+            title={tr('无法加载评审记录', 'Couldn’t load reviews')}
+            desc={tr('请确认本机引擎正在运行，然后重试。', 'Make sure the local engine is running, then retry.')}
             action={<button className="btn btn-soft sm" onClick={() => void reviewsQuery.refetch()}>{tr('重试', 'Retry')}</button>}
           />
         </div>
@@ -1193,13 +1176,13 @@ export function PaperReviewPage() {
         <div className="card">
           <EmptyState
             icon="shield"
-            title={tr('这篇稿件还没评审过', 'This manuscript has not been reviewed yet')}
+            title={tr('这篇稿件还没有评审', 'This manuscript hasn’t been reviewed yet')}
             desc={tr(
-              '自动核验引用与数字，再由三位 AI 评审员打分，汇总出接收/拒稿建议。',
-              'Citations and numbers are checked automatically, then three AI reviewers score the paper and the results are aggregated into an accept/reject recommendation.',
+              'AI 审稿人会核对引用和数字、打分，并给出接收或拒稿建议。',
+              'AI reviewers check citations and numbers, score the paper and suggest accept or reject.',
             )}
             action={
-              <button className="btn btn-primary" disabled={!!runningReview} onClick={() => setModalOpen(true)}>
+              <button className="btn btn-soft" disabled={!!runningReview} onClick={() => setModalOpen(true)}>
                 <Icon name="shield" size={14} />
                 {tr('发起同行评审', 'Start peer review')}
               </button>
@@ -1222,8 +1205,7 @@ export function PaperReviewPage() {
           <div style={{ marginBottom: 16 }}>
             <div className="row" style={{ marginBottom: 10, justifyContent: 'space-between' }}>
               <span className="section-h">
-                <Icon name="users" size={15} style={{ color: 'var(--accent)' }} />
-                {tr('评审员意见', 'Reviewer opinions')}
+                {tr('审稿意见', 'Reviews')}
               </span>
               {roundNo > 0 && (
                 <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
@@ -1233,17 +1215,17 @@ export function PaperReviewPage() {
             </div>
             {messagesQuery.isLoading ? (
               <div className="card">
-                <div className="empty" style={{ padding: 30 }}>{tr('加载评审员意见…', 'Loading reviewer opinions…')}</div>
+                <div className="empty" style={{ padding: 30 }}>{tr('加载中…', 'Loading…')}</div>
               </div>
             ) : messagesQuery.isError ? (
               <div className="card">
                 <div className="empty" style={{ padding: 30 }}>
-                  {tr('无法加载评审员意见（后端不可用或接口未就绪）', 'Failed to load reviewer opinions (backend unavailable or API not ready)')}
+                  {tr('无法加载审稿意见，请确认本机引擎正在运行', 'Couldn’t load reviews. Make sure the local engine is running.')}
                 </div>
               </div>
             ) : reviewerCards.length === 0 ? (
               <div className="card">
-                <div className="empty" style={{ padding: 30 }}>{tr('这轮评审还没有评审员意见。', 'No reviewer opinions in this round yet.')}</div>
+                <div className="empty" style={{ padding: 30 }}>{tr('本轮还没有审稿意见。', 'No reviews in this round yet.')}</div>
               </div>
             ) : (
               <div
@@ -1278,25 +1260,23 @@ export function PaperReviewPage() {
 
           {/* 底部操作 */}
           <div className="card card-pad row gap10" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
-            <div className="row gap8" style={{ fontSize: 12.5, color: 'var(--text-2)', minWidth: 0 }}>
+            <div className="row gap8" style={{ fontSize: 13, color: 'var(--text-2)', minWidth: 0 }}>
               {reviewPassed ? (
                 <>
-                  <span className="pill" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-                    <Icon name="check" size={12} />
+                  <StatusText tone="ok">
                     {tr('评审已通过', 'Review passed')}
-                  </span>
-                  <span>{tr('可以申请投稿，或继续修订打磨。', 'You can request submission, or keep revising and polishing.')}</span>
+                  </StatusText>
+                  <span>{tr('可以申请投稿，或继续修订。', 'Request submission, or keep revising.')}</span>
                 </>
               ) : (
                 <>
-                  <span className="pill" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
-                    <Icon name="bell" size={12} />
-                    {tr('评审未通过', 'Review not passed')}
-                  </span>
+                  <StatusText tone="warn">
+                    {tr('评审未通过', 'Review didn’t pass')}
+                  </StatusText>
                   <span>
                     {tr(
-                      '缺点和查错清单已自动写成修订说明、加入事实包；修订后可再发起一轮评审。',
-                      'Weaknesses and the issue list were written into revision notes in the fact pack; revise and run another round.',
+                      '修改建议已加入事实包，修订后可再评审一轮。',
+                      'Suggested fixes were added to the fact pack. Revise, then review again.',
                     )}
                   </span>
                 </>
@@ -1308,12 +1288,12 @@ export function PaperReviewPage() {
                 {tr('去修订', 'Revise')}
               </button>
               <button
-                className="btn btn-primary"
+                className={`btn ${reviewPassed ? 'btn-primary' : 'btn-soft'}`}
                 disabled={!reviewPassed || submitMutation.isPending}
                 title={
                   reviewPassed
-                    ? tr('发起投稿审批', 'Request submission approval')
-                    : tr('要先通过同行评审（总评 ≥ 6 且无编造引用）才能投稿', 'Peer review must pass first (rating ≥ 6, no fabricated citations)')
+                    ? tr('提交投稿审批', 'Request submission approval')
+                    : tr('通过同行评审后才能投稿', 'Pass peer review before submitting')
                 }
                 onClick={() => submitMutation.mutate()}
               >
