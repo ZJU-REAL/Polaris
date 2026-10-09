@@ -88,12 +88,98 @@ async def test_unknown_option_is_rejected(tmp_path):
 async def test_write_needs_a_fresh_grant(tmp_path):
     """ask 下一次「允许」只换一次写；没批准过的写被拒。"""
     client = AcpClient(_spec(), root=str(tmp_path))
-    assert not client._may_write("s1")
-    client._write_grants["s1"] = 1
-    assert client._may_write("s1")
-    assert not client._may_write("s1")
+    target = (tmp_path / "a.txt").resolve()
+    assert not client._may_write("s1", target)
+    client._write_grants["s1"] = [acp_client._WriteGrant("t1", None)]
+    assert client._may_write("s1", target)
+    assert not client._may_write("s1", target)
     client._always_write.add("s1")
-    assert client._may_write("s1")
+    assert client._may_write("s1", target)
+
+
+async def _ask_session(tmp_path) -> tuple[AcpClient, str]:
+    client = AcpClient(_spec(), root=str(tmp_path))
+    await client.start()
+    return client, await client.new_session(str(tmp_path))
+
+
+async def _grant(client: AcpClient, sid: str, tool: dict) -> None:
+    """模拟 agent 发来一次 edit 权限请求、用户点了允许。"""
+    client._sinks[sid] = asyncio.Queue()
+    params = {
+        "sessionId": sid,
+        "toolCall": {"kind": "edit", **tool},
+        "options": [{"optionId": "yes", "name": "Allow", "kind": "allow_once"}],
+    }
+    asking = asyncio.create_task(client._on_request("session/request_permission", params))
+    for _ in range(100):
+        if client.pending_asks(sid):
+            break
+        await asyncio.sleep(0.01)
+    assert client.answer_permission(client.pending_asks(sid)[0], "yes")
+    await asking
+
+
+async def _write(client: AcpClient, sid: str, path: str) -> bool:
+    from app.services.acp.connection import RpcMethodError
+
+    params = {"sessionId": sid, "path": path, "content": "x"}
+    try:
+        await client._on_request("fs/write_text_file", params)
+    except RpcMethodError:
+        return False
+    return True
+
+
+async def test_a_grant_only_covers_the_file_it_named(tmp_path):
+    """批准「改 a.txt」不能拿去改 b.txt；越界的写不消耗批准。"""
+    client, sid = await _ask_session(tmp_path)
+    try:
+        await _grant(
+            client,
+            sid,
+            {"toolCallId": "e1", "title": "Edit a.txt", "rawInput": {"file_path": "a.txt"}},
+        )
+        assert not await _write(client, sid, str(tmp_path / "b.txt"))
+        # 越界：路径先被钉住，批准还在
+        assert not await _write(client, sid, "/etc/evil.txt")
+        assert await _write(client, sid, str(tmp_path / "a.txt"))
+        assert not await _write(client, sid, str(tmp_path / "a.txt"))  # 一次批准一次写
+        # ACP 的 locations 也算数
+        await _grant(
+            client, sid, {"toolCallId": "e2", "locations": [{"path": str(tmp_path / "c.txt")}]}
+        )
+        assert await _write(client, sid, str(tmp_path / "c.txt"))
+    finally:
+        await client.close()
+    assert not (tmp_path / "b.txt").exists()
+
+
+async def test_unused_grants_expire_with_their_tool_call_and_the_turn(tmp_path):
+    client, sid = await _ask_session(tmp_path)
+    try:
+        await _grant(client, sid, {"toolCallId": "e1", "title": "Edit"})
+        # 那次工具调用结束了：批准作废，不能挪给后面的写
+        await client._on_notification(
+            "session/update",
+            {
+                "sessionId": sid,
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "e1",
+                    "status": "completed",
+                },
+            },
+        )
+        assert not await _write(client, sid, str(tmp_path / "a.txt"))
+
+        # 一轮结束：没用掉的批准不带进下一轮
+        await _grant(client, sid, {"toolCallId": "e2", "title": "Edit"})
+        assert client._write_grants[sid]
+        _ = [e async for e in client.prompt(sid, "hello")]
+        assert not await _write(client, sid, str(tmp_path / "a.txt"))
+    finally:
+        await client.close()
 
 
 # ---------------------------------------------------------------- 经助手接口

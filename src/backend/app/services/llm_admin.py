@@ -159,8 +159,13 @@ async def replace_routes(session: AsyncSession, items: Sequence[RouteItem]) -> S
             raise InvalidRouteError(f"duplicate stage: {item.stage}")
         seen.add(item.stage)
         if item.acp_agent_id is not None:
-            # 外部 agent（#840）
+            # 外部 agent（#840）。能力型环节（向量、重排）它产不出来——路由器也从不让
+            # agent 接管这两个环节，显式配上只会让检索在运行时才失败
+            from app.core.llm.router import _CAPABILITY_STAGES
             from app.models.acp_agent import AcpAgent
+
+            if item.stage in _CAPABILITY_STAGES:
+                raise InvalidRouteError(f"an agent cannot serve the {item.stage} stage")
 
             agent = await session.get(AcpAgent, item.acp_agent_id)
             if agent is None:
@@ -281,7 +286,9 @@ async def test_agent(agent: Any, model: str = "") -> tuple[bool, int, str | None
     from app.core.llm.router import _acp_target
     from app.services.acp.registry import explain_failure
 
-    provider = AcpLLMProvider(_acp_target(agent), timeout=120.0)
+    # strict：路由上填的模型 agent 不认时，测试连接要明说（并列出能选的），而不是
+    # 悄悄用默认模型答一句 OK、让人以为配对了
+    provider = AcpLLMProvider(_acp_target(agent), timeout=120.0, strict_model=True)
     t0 = time.monotonic()
     try:
         result = await provider.complete(

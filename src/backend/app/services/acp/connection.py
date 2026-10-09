@@ -80,7 +80,10 @@ class AcpConnection:
         self._inbound: set[asyncio.Task[None]] = set()
         self._stderr: deque[str] = deque(maxlen=STDERR_TAIL)
         self._write_lock = asyncio.Lock()
+        #: 连接不再可用（读循环结束、或已开始关闭）。``alive`` 看它
         self._closed = False
+        #: 关闭流程只跑一次，且跑在自己的任务里：调用方被取消时它照样跑完（见 close）
+        self._close_task: asyncio.Task[None] | None = None
 
     # ---------------------------------------------------------------- 生命周期
 
@@ -116,10 +119,18 @@ class AcpConnection:
         )
 
     async def close(self, *, grace: float = 2.0) -> None:
-        """关 stdin 让 agent 自己退出；等不到就 terminate，再等不到就 kill。"""
-        if self._closed:
-            return
-        self._closed = True
+        """关 stdin 让 agent 自己退出；等不到就 terminate，再等不到就 kill。
+
+        关闭跑在独立任务里、调用方只是 shield 着等它：调用方此刻常常处在取消态（断线、
+        Starlette/anyio 的取消域会在每个 await 上反复投递取消），直接 await 的话
+        收尾会在 terminate/kill 之前就被打断，留下一个没人管的进程。被取消时取消照常
+        往上抛，关闭在后台跑完。"""
+        if self._close_task is None:
+            self._closed = True
+            self._close_task = asyncio.ensure_future(self._shutdown(grace))
+        await asyncio.shield(self._close_task)
+
+    async def _shutdown(self, grace: float) -> None:
         proc = self._proc
         if proc is not None and proc.returncode is None:
             with contextlib.suppress(Exception):
@@ -135,8 +146,11 @@ class AcpConnection:
                     self._signal_group(proc, "kill")
                     with contextlib.suppress(Exception):
                         await proc.wait()
+        if proc is not None:
+            # 主进程退了，它拉起的孙进程（node、MCP 服务器）可能还在同一个进程组里
+            self._signal_group(proc, "kill")
         for task in (self._reader, self._stderr_reader, *self._inbound):
-            if task is not None and not task.done():
+            if task is not None and not task.done() and task is not asyncio.current_task():
                 task.cancel()
         self._fail_pending(AcpError("closed", "connection closed"))
 
@@ -216,9 +230,23 @@ class AcpConnection:
             # 在 finally 里 await 它会让取消永远完不成——事件循环关闭时就卡死在这里
             self._fail_pending(AcpError("closed", "connection closed"))
             raise
-        # stdout 关了 = 进程在退出；等它真退出好拿到退出码，但别无限等
+        # 读不下去了（stdout 关了，或者一行超限、帧边界乱了）：这条连接就此作废。
+        # 先标记关闭——否则 alive 还是真，池子会把它当活进程继续派活；再等进程退出好
+        # 拿到退出码（别无限等），等不到就连同进程组一起收掉；最后让在等回应的请求失败。
+        self._closed = True
+        proc = self._proc
         with contextlib.suppress(Exception):
-            await asyncio.wait_for(self._proc.wait(), timeout=5.0)
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
+        self._signal_group(proc, "kill")
+        # 超限退出时管道里还压着没读的数据：读到 EOF 为止丢掉，管道才会关上（否则
+        # 子进程传输层一直挂着，直到被垃圾回收）
+        with contextlib.suppress(Exception):
+            async with asyncio.timeout(2.0):
+                while await stdout.read(1 << 16):
+                    pass
+        if proc.returncode is None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
         self._fail_pending(AcpError("not-running", self._exit_reason()))
 
     async def _read_stderr(self) -> None:
@@ -239,6 +267,14 @@ class AcpConnection:
         if method is None:
             # 我们发出的请求的回应
             fut = self._pending.get(msg_id) if isinstance(msg_id, int) else None
+            if fut is None and msg_id is None and "error" in message:
+                # "id": null 的错误：agent 认不出是哪个请求（解析失败、请求不合法）。
+                # 丢掉它的话，那个请求的调用方会一直等下去。最可能的肇事者是**最近发出**
+                # 的那个——这类错误是收到就回的，而还在跑的长请求（session/prompt）
+                # 早已被 agent 认领。
+                live = [(rid, f) for rid, f in self._pending.items() if not f.done()]
+                if live:
+                    fut = max(live, key=lambda item: item[0])[1]
             if fut is None or fut.done():
                 return
             if "error" in message:

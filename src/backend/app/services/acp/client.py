@@ -30,7 +30,8 @@ agent 想执行写文件、跑命令这类动作前会发 ``session/request_perm
 我们声明自己能代读代写文件（``fs.readTextFile`` / ``fs.writeTextFile``），这样支持它
 的 agent 会把文件操作交给我们，而我们把路径钉死在会话的工作目录里：解析成真实路径
 之后必须仍在根目录下，``..``、符号链接都绕不出去。写文件还要求策略允许改动
-（``auto``，或 ``ask`` 下用户刚批准过一次改动）。Agentero 不做这层校验；我们跑在
+（``auto``，或 ``ask`` 下用户刚批准过一次改动——批准绑在那次工具调用和它说要改的
+文件上，这一轮用不上就作废）。Agentero 不做这层校验；我们跑在
 服务器上，必须做。
 """
 
@@ -225,8 +226,9 @@ class AcpClient:
         self._sinks: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         #: ask 策略下等用户回答的请求：request_id → (会话号, future, 允许的选项 id)
         self._asks: dict[str, tuple[str, asyncio.Future[dict[str, Any]], set[str]]] = {}
-        #: 用户批准过的改动：会话号 → 还能写几次；「总是允许」记进 _always_write
-        self._write_grants: dict[str, int] = {}
+        #: 用户批准过的改动：会话号 → 还没用掉的批准（每个绑着那次工具调用和它要改的
+        #: 文件）；「总是允许」记进 _always_write
+        self._write_grants: dict[str, list[_WriteGrant]] = {}
         self._always_write: set[str] = set()
         env = {**inherited_env(), **spec.env}
         env["PATH"] = augmented_path(env.get("PATH", ""))
@@ -302,11 +304,13 @@ class AcpClient:
     ) -> None:
         """续上一个旧会话。agent 会把历史作为 session/update 回放——那些不是这一轮的内容，
         这里不设接收队列，回放自然被丢掉。"""
-        await self._conn.request(
+        result = await self._conn.request(
             "session/load",
             {"sessionId": session_id, "cwd": cwd, "mcpServers": list(mcp_servers or [])},
             timeout=SESSION_TIMEOUT,
         )
+        # 续上的会话也可能报可选模型；不报就别留着别的会话的旧清单
+        self.last_session = dict(result) if isinstance(result, dict) else {}
 
     async def prompt(
         self,
@@ -339,11 +343,17 @@ class AcpClient:
         try:
             while True:
                 getter = asyncio.create_task(queue.get())
-                done, _ = await asyncio.wait({getter, request}, return_when=asyncio.FIRST_COMPLETED)
+                try:
+                    done, _ = await asyncio.wait(
+                        {getter, request}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                finally:
+                    # 等的时候被取消（断线）：别把一个 queue.get() 任务孤零零留在循环里
+                    if not getter.done():
+                        getter.cancel()
                 if getter in done:
                     yield getter.result()
                     continue
-                getter.cancel()
                 # 回应到了：先把已经排队的更新吐完，顺序才对
                 while not queue.empty():
                     yield queue.get_nowait()
@@ -355,6 +365,8 @@ class AcpClient:
                 return
         finally:
             self._sinks.pop(session_id, None)
+            # 这一轮里批准了却没用上的写：不带到下一轮（下一轮的改动得重新问）
+            self._write_grants.pop(session_id, None)
             # 这一轮结束了还没回答的权限请求：一律按取消回给 agent（协议要求取消时如此）
             self._settle_asks(session_id, {"outcome": "cancelled"})
             if not request.done():
@@ -398,8 +410,16 @@ class AcpClient:
     async def _on_notification(self, method: str, params: dict[str, Any]) -> None:
         if method != "session/update":
             return
-        sink = self._sinks.get(str(params.get("sessionId") or ""))
+        session_id = str(params.get("sessionId") or "")
+        sink = self._sinks.get(session_id)
         update = params.get("update")
+        if (
+            isinstance(update, dict)
+            and update.get("sessionUpdate") == "tool_call_update"
+            and update.get("status") in ("completed", "failed")
+        ):
+            # 那次工具调用结束了：给它的批准没用上也作废，不能挪给别的调用
+            self._drop_grants(session_id, str(update.get("toolCallId") or ""))
         if sink is None or not isinstance(update, dict):
             return
         event = normalize_update(update)
@@ -424,7 +444,12 @@ class AcpClient:
                 if chosen == "allow_always":
                     self._always_write.add(session_id)
                 else:
-                    self._write_grants[session_id] = self._write_grants.get(session_id, 0) + 1
+                    self._write_grants.setdefault(session_id, []).append(
+                        _WriteGrant(
+                            tool_call_id=str(tool.get("toolCallId") or ""),
+                            paths=_tool_paths(self.root, tool),
+                        )
+                    )
             if sink is not None:
                 sink.put_nowait(
                     {
@@ -454,27 +479,38 @@ class AcpClient:
                 text = "".join(lines[start:end])
             return {"content": text}
         if method == "fs/write_text_file":
-            if not self._may_write(str(params.get("sessionId") or "")):
-                raise RpcMethodError(-32000, "writing files is not permitted for this agent")
+            # 先钉路径再看批准：越界的写本来就不会发生，不该白白用掉用户的一次批准
             target = contained_path(self.root, str(params.get("path") or ""))
+            if not self._may_write(str(params.get("sessionId") or ""), target):
+                raise RpcMethodError(-32000, "writing files is not permitted for this agent")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(str(params.get("content") or ""), encoding="utf-8")
             return None
         raise RpcMethodError(-32601, f"method not supported: {method}")
 
-    def _may_write(self, session_id: str) -> bool:
+    def _may_write(self, session_id: str, target: Path) -> bool:
         if self.spec.permission_policy == "auto":
             return True
         if self.spec.permission_policy != "ask":
             return False
         if session_id in self._always_write:
             return True
-        # 一次批准换一次写：agent 拿着一次「允许」不能顺手把整个目录都改了
-        left = self._write_grants.get(session_id, 0)
-        if left <= 0:
+        # 一次批准换一次写，而且只换**批准时说的那个文件**：agent 拿着一次「允许改
+        # notes.md」不能顺手去改别的文件。agent 批准时没说改哪个文件的，才退回到
+        # 「这一轮里的任意一次写」。点名的批准优先用，没点名的留给说不清的那次。
+        grants = self._write_grants.get(session_id) or []
+        match = next((g for g in grants if g.paths is not None and target in g.paths), None)
+        if match is None:
+            match = next((g for g in grants if g.paths is None), None)
+        if match is None:
             return False
-        self._write_grants[session_id] = left - 1
+        grants.remove(match)
         return True
+
+    def _drop_grants(self, session_id: str, tool_call_id: str) -> None:
+        grants = self._write_grants.get(session_id)
+        if grants and tool_call_id:
+            grants[:] = [g for g in grants if g.tool_call_id != tool_call_id]
 
     async def _ask_user(
         self,
@@ -523,6 +559,38 @@ class AcpClient:
         finally:
             self._asks.pop(request_id, None)
         return outcome, request_id
+
+
+@dataclass(slots=True, frozen=True)
+class _WriteGrant:
+    """用户批准过的一次改动。"""
+
+    #: 批准的是哪次工具调用；那次调用结束，批准跟着作废
+    tool_call_id: str
+    #: 那次调用说要改的文件（已解析成真实路径）；None = agent 没说
+    paths: frozenset[Path] | None
+
+
+#: 工具输入里常见的「改哪个文件」字段（Claude Code 用 file_path，别家用 path…）
+_PATH_KEYS = ("file_path", "filePath", "path", "notebook_path", "target_file")
+
+
+def _tool_paths(root: str, tool: dict[str, Any]) -> frozenset[Path] | None:
+    """权限请求里这次工具调用要碰的文件：ACP 的 ``locations`` 加上 rawInput 里的路径。"""
+    raw: list[str] = []
+    for loc in tool.get("locations") or []:
+        if isinstance(loc, dict) and isinstance(loc.get("path"), str):
+            raw.append(loc["path"])
+    raw_input = tool.get("rawInput")
+    if isinstance(raw_input, dict):
+        raw.extend(raw_input[k] for k in _PATH_KEYS if isinstance(raw_input.get(k), str))
+    paths: set[Path] = set()
+    for item in raw:
+        if not item:
+            continue
+        with contextlib.suppress(OSError, ValueError):
+            paths.add(Path(item if os.path.isabs(item) else os.path.join(root, item)).resolve())
+    return frozenset(paths) if paths else None
 
 
 def _option_kind(params: dict[str, Any], option_id: Any) -> str:

@@ -77,8 +77,26 @@ class AcpTarget:
     command: str
     args: tuple[str, ...] = ()
     env: tuple[tuple[str, str], ...] = ()
-    #: 配置版本（行的 updated_at）：配置改了，池子要换新进程
+    #: 拉起方式的指纹（command/args/env 的哈希，见 config_version）。不用行的 updated_at：
+    #: 探测会写回 last_probe，updated_at 跟着变，于是两份缓存里的 target 互不相等，
+    #: 进程池被来回换掉
     version: str = ""
+
+    @property
+    def config(self) -> tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]:
+        """决定进程怎么拉起的那几项；它们不变，常驻进程就还能用。"""
+        return (self.command, self.args, self.env)
+
+
+def config_version(
+    command: str, args: Sequence[str], env: Sequence[tuple[str, str]] | dict[str, str]
+) -> str:
+    import hashlib
+    import json
+
+    items = sorted(env.items()) if isinstance(env, dict) else sorted(env)
+    raw = json.dumps([command, list(args), items], ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 def render_prompt(messages: Sequence[Message], image_note: str = "") -> str:
@@ -145,13 +163,26 @@ class _Worker:
 
 
 class AgentProcessPool:
-    """一个 agent 的常驻进程组。"""
+    """一个 agent 的常驻进程组。
 
-    def __init__(self, target: AcpTarget, concurrency: int | None = None) -> None:
+    配置一改，``pool_for`` 就换一个新池子、把旧的 close 掉。旧池子里此刻正在答题的
+    进程不在 ``_idle`` 里，close 收不到它们——所以池子关了之后，答完的进程不再放回，
+    直接关掉（``_closed``）。新旧池子共用同一个信号量（按 agent），换池子那一会儿
+    进程总数也不超上限。
+    """
+
+    def __init__(
+        self,
+        target: AcpTarget,
+        concurrency: int | None = None,
+        *,
+        semaphore: asyncio.Semaphore | None = None,
+    ) -> None:
         self.target = target
         limit = DEFAULT_CONCURRENCY if concurrency is None else concurrency
-        self._sem = asyncio.Semaphore(max(1, limit))
+        self._sem = semaphore or asyncio.Semaphore(max(1, limit))
         self._idle: list[_Worker] = []
+        self._closed = False
 
     @contextlib.asynccontextmanager
     async def worker(self) -> AsyncIterator[_Worker]:
@@ -164,8 +195,8 @@ class AgentProcessPool:
             finally:
                 w.uses += 1
                 w.last_used = time.monotonic()
-                # 出过错的进程不放回：它可能停在一个半截的状态里
-                if ok and w.client.alive and w.uses < MAX_USES_PER_PROCESS:
+                # 出过错的进程不放回：它可能停在一个半截的状态里；池子已经关了的也不放回
+                if ok and not self._closed and w.client.alive and w.uses < MAX_USES_PER_PROCESS:
                     self._idle.append(w)
                 else:
                     await w.close()
@@ -196,21 +227,36 @@ class AgentProcessPool:
         self._idle = keep
 
     async def close(self) -> None:
+        self._closed = True
         idle, self._idle = self._idle, []
         for w in idle:
             await w.close()
 
 
 _pools: dict[str, AgentProcessPool] = {}
+#: 每个 agent 一个并发上限，跨池子的新旧两代共用（见 AgentProcessPool）
+_sems: dict[str, asyncio.Semaphore] = {}
+#: 换池子时在后台关旧池子的任务：留强引用，免得半路被回收
+_closing: set[asyncio.Future[None]] = set()
+
+
+def _close_later(pool: AgentProcessPool) -> None:
+    task = asyncio.ensure_future(pool.close())
+    _closing.add(task)
+    task.add_done_callback(_closing.discard)
 
 
 def pool_for(target: AcpTarget) -> AgentProcessPool:
     pool = _pools.get(target.agent_id)
-    if pool is None or pool.target != target:
-        # 配置变了（命令、参数、env）：旧池子里的进程是按旧配置拉起的
+    if pool is None or pool.target.config != target.config:
+        # 配置变了（命令、参数、env）：旧池子里的进程是按旧配置拉起的。只改了名字
+        # 之类不影响拉起方式的，不换
         if pool is not None:
-            asyncio.ensure_future(pool.close())
-        pool = AgentProcessPool(target)
+            _close_later(pool)
+        sem = _sems.get(target.agent_id)
+        if sem is None:
+            sem = _sems[target.agent_id] = asyncio.Semaphore(max(1, DEFAULT_CONCURRENCY))
+        pool = AgentProcessPool(target, semaphore=sem)
         _pools[target.agent_id] = pool
     return pool
 
@@ -224,6 +270,7 @@ async def forget_agent(agent_id: str) -> None:
 async def shutdown_pools() -> None:
     pools = list(_pools.values())
     _pools.clear()
+    _sems.clear()
     for pool in pools:
         await pool.close()
 
@@ -233,10 +280,15 @@ class AcpLLMProvider(LLMProvider):
 
     name = "acp"
 
-    def __init__(self, target: AcpTarget, *, timeout: float = 300.0) -> None:
+    def __init__(
+        self, target: AcpTarget, *, timeout: float = 300.0, strict_model: bool = False
+    ) -> None:
         self.target = target
         #: 单次回答的上限。agent 会自己思考一阵，比直连 API 慢，给足余量
         self.timeout = max(timeout, 180.0)
+        #: 路由上填的模型 agent 不认时：True 报错（「测试连接」要说清楚），False 记一条
+        #: 警告、用 agent 的默认模型照答（不为一个拼错的模型名停掉整条流水线）
+        self.strict_model = strict_model
 
     async def _events(
         self,
@@ -251,8 +303,16 @@ class AcpLLMProvider(LLMProvider):
         attached = _collect_images(messages, images)
         async with pool.worker() as w:
             sid = await w.client.new_session(w.root)
-            if model:
-                await w.client.set_model(sid, model)
+            if model and not await w.client.set_model(sid, model):
+                offered = w.client.available_models()
+                if self.strict_model:
+                    raise AcpError("unknown-model", unknown_model_message(model, offered))
+                logger.warning(
+                    "ACP agent %s 不认模型 %r，用它的默认模型作答（可选：%s）",
+                    self.target.name,
+                    model,
+                    ", ".join(offered) or "agent 不支持选模型",
+                )
             note = ""
             if attached and not w.client.info.prompt_image:
                 note = (
@@ -352,6 +412,12 @@ class AcpLLMProvider(LLMProvider):
         yield StreamDone(finish_reason=_finish_reason(stop))
 
 
+def unknown_model_message(model: str, offered: Sequence[str]) -> str:
+    if not offered:
+        return f"this agent does not let callers choose a model, so {model!r} cannot be applied"
+    return f"the agent does not offer the model {model!r}; available: {', '.join(offered)}"
+
+
 def _finish_reason(stop: str) -> str:
     return {"end_turn": "stop", "max_tokens": "max_tokens", "cancelled": "cancelled"}.get(
         stop, stop
@@ -362,6 +428,7 @@ __all__ = [
     "AcpLLMProvider",
     "AcpTarget",
     "AgentProcessPool",
+    "config_version",
     "forget_agent",
     "pool_for",
     "render_prompt",

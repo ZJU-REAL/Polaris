@@ -58,8 +58,9 @@ async def resolve_agent(session: AsyncSession, backend: str) -> AcpAgent | None:
     return None
 
 
-async def agent_for_polaris_turn(session: AsyncSession, user: User) -> AcpAgent | None:
-    """「Polaris」大脑这一轮实际会落在哪个外部 agent 上（没有就 None，走原生循环）。
+async def agent_for_polaris_turn(session: AsyncSession, user: User) -> tuple[AcpAgent, str] | None:
+    """「Polaris」大脑这一轮实际会落在哪个外部 agent 上，以及路由上填的模型
+    （没有就 None，走原生循环）。
 
     看的是助手环节（agent）的路由：显式指向 agent，或没配模型 API、由 agent 接管。
     """
@@ -72,7 +73,9 @@ async def agent_for_polaris_turn(session: AsyncSession, user: User) -> AcpAgent 
     if route.acp is None:
         return None
     row = await session.get(AcpAgent, uuid.UUID(route.acp.agent_id))
-    return row if row is not None and row.enabled else None
+    if row is None or not row.enabled:
+        return None
+    return row, route.model or ""
 
 
 def live_session(conversation_id: uuid.UUID):  # noqa: ANN201 — LiveSession | None
@@ -141,6 +144,9 @@ async def run_turn(
     page_context: str,
     resume_session_id: str | None,
     server_port: int | None,
+    unseen: list[Message] | None = None,
+    instructions: str = "",
+    model: str = "",
 ) -> AsyncIterator[ChatEvent]:
     loop = AcpChatLoop(pool=get_pool(), mcp_factory=polaris_mcp_factory(user.id, server_port))
     req = AcpTurnRequest(
@@ -153,6 +159,9 @@ async def run_turn(
         resume_session_id=resume_session_id,
         page_context=page_context,
         history=history,
+        unseen=list(unseen or []),
+        instructions=instructions,
+        model=model,
     )
     agent_id = str(agent.id)
     try:
