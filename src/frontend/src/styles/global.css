@@ -1118,25 +1118,29 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 .chat-row { display: flex; margin-bottom: 12px; }
 .chat-row.user { justify-content: flex-end; }
 .chat-row.ai { justify-content: flex-start; }
+/* 与助手面板同一口径：用户的话是靠右的浅灰气泡，回答不加气泡、直接是正文 */
 .chat-bubble-user {
-  max-width: 82%; padding: 8px 12px; border-radius: 13px 13px 4px 13px;
-  background: var(--accent); color: var(--on-accent); font-size: 13px; line-height: 1.6;
-  white-space: pre-wrap; overflow-wrap: break-word;
+  max-width: 85%; padding: 8px 12px; border-radius: var(--radius-lg);
+  background: var(--surface-3); color: var(--text); font-size: var(--fs-body); line-height: var(--lh-body);
+  white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .chat-bubble-ai {
-  max-width: 88%; min-width: 0; padding: 9px 13px; border-radius: 13px 13px 13px 4px;
-  background: var(--surface); border: 0.5px solid var(--border); font-size: 13px;
-  box-shadow: var(--shadow-card);
+  width: 100%; min-width: 0; font-size: var(--fs-body); line-height: 1.7; color: var(--text);
 }
 .chat-bubble-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .chat-meta-chip {
   display: inline-flex; align-items: center; gap: 3px; max-width: 180px;
-  padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 500;
-  background: rgba(255, 255, 255, 0.18); color: var(--on-accent);
+  padding: 1px 6px; border-radius: 5px; font-size: var(--fs-caption); font-weight: 500;
+  background: var(--surface); color: var(--text-2); border: 0.5px solid var(--border);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.chat-meta-chip.share { background: rgba(255, 255, 255, 0.28); font-weight: 600; }
-.chat-reco-label { font-style: italic; opacity: 0.92; }
+.chat-meta-chip.share { color: var(--text); }
+.chat-reco-label { font-style: italic; color: var(--text-2); }
+/* 对话区顶部的一行说明：小号、次要色，不抢正文 */
+.chat-hint {
+  flex-shrink: 0; padding: 6px 16px; font-size: var(--fs-sm); line-height: var(--lh-body);
+  color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* —— 输入区 —— */
 .chat-composer { flex-shrink: 0; border-top: 0.5px solid var(--border); padding: 10px 14px; position: relative; }
@@ -1690,21 +1694,13 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
    主区变窄时（多半是 PolarisBuddy 拉开了，而不是窗口变小）
    ============================================================ */
 @container mainarea (max-width: 1180px) {
-  /* 文献工作台按真实内容区宽度重排。视口仍宽但侧栏或 Buddy 占位时，
-     继续保留左右双栏会把详情标题和导航标签压成逐字换行。 */
-  .literature-workspace-card .split { flex-direction: column; }
-  .literature-workspace-card .split > .split-list {
-    width: 100%; max-height: 44vh; flex-shrink: 0;
-    border-right: 0; border-bottom: 0.5px solid var(--border);
-  }
-  .literature-workspace-tabs {
-    flex-wrap: nowrap; min-width: 0; overflow-x: auto;
-    -webkit-overflow-scrolling: touch; scrollbar-width: none;
-  }
-  .literature-workspace-tabs::-webkit-scrollbar,
+  /* 文献工作台的标签栏：主区变窄时只让标签条在剩余宽度里横向滚动，
+     右侧操作（添加论文、导出等）不进滚动区、不收缩，始终完整可见。 */
+  .literature-workspace-tabs { flex-wrap: nowrap; min-width: 0; }
+  .literature-workspace-tabs > :not(.segmented) { flex-shrink: 0; }
   .literature-workspace-tabs .segmented::-webkit-scrollbar { display: none; }
   .literature-workspace-tabs .segmented {
-    max-width: 100%; overflow-x: auto; flex-shrink: 0;
+    flex: 0 1 auto; min-width: 0; max-width: 100%; overflow-x: auto;
     -webkit-overflow-scrolling: touch; scrollbar-width: none;
   }
   .literature-workspace-tabs .segmented > button {
@@ -1730,6 +1726,14 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   .page-head { flex-direction: column; align-items: stretch; gap: 12px; }
   .page-head-actions { margin-left: 0; flex-wrap: wrap; }
   .page { padding-left: 20px; padding-right: 20px; }
+  /* 文献工作台按真实内容区宽度重排，断点与「每日新论文」一致：1440 窗口（主区约 1170px）
+     保持左右双栏；侧栏或 Buddy 占位把主区压到 900px 以下时，再上下堆叠，
+     否则详情标题和导航标签会被压成逐字换行。 */
+  .literature-workspace-card .split { flex-direction: column; }
+  .literature-workspace-card .split > .split-list {
+    width: 100%; max-height: 44vh; flex-shrink: 0;
+    border-right: 0; border-bottom: 0.5px solid var(--border);
+  }
 }
 @container mainarea (max-width: 460px) {
   /* 再窄就一列（三张卡各需 ~132px）。低于它文字必然逐字换行，不如排成一列 */

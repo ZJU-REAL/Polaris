@@ -118,10 +118,10 @@ export function Section({ title, children }: { title: ReactNode; children: React
 export function MetaItem({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="row" style={{ gap: 12, padding: '4px 0', alignItems: 'flex-start' }}>
-      <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', width: 88, flexShrink: 0 }}>
+      <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-3)', width: 88, flexShrink: 0, lineHeight: 'var(--lh-body)' }}>
         {label}
       </span>
-      <span style={{ fontSize: 12.5, color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>
+      <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word', lineHeight: 'var(--lh-body)' }}>
         {children}
       </span>
     </div>

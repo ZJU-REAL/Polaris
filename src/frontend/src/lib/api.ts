@@ -3207,11 +3207,6 @@ export interface DailyLiker {
   has_avatar: boolean;
 }
 
-/** 完整点赞名单里的一行（点赞时间倒序）。 */
-export interface DailyLikerFull extends DailyLiker {
-  liked_at: string;
-}
-
 /** 点/取消赞后的汇总（幂等返回，供乐观更新对账）。 */
 export interface DailyLikeState {
   entry_id: string;
@@ -3513,9 +3508,6 @@ export const api = {
   },
   updateMe(input: { display_name?: string }): Promise<UserRead> {
     return requestJson<UserRead>('/users/me', 'PATCH', input);
-  },
-  setUsername(username: string): Promise<UserRead> {
-    return requestJson<UserRead>('/users/me/username', 'PATCH', { username });
   },
   uploadAvatar(file: File): Promise<UserRead> {
     const form = new FormData();
@@ -5473,10 +5465,6 @@ export const api = {
   },
   unlikeDailyPaper(entryId: string): Promise<DailyLikeState> {
     return request<DailyLikeState>(`/daily/papers/${entryId}/like`, { method: 'DELETE' });
-  },
-  /** 完整点赞名单（点赞时间倒序）。 */
-  listDailyLikers(entryId: string): Promise<DailyLikerFull[]> {
-    return request<DailyLikerFull[]>(`/daily/papers/${entryId}/likers`);
   },
   /** 我赞过的（随池内过期一起消失）。 */
   listMyDailyLiked(opts: { page?: number; size?: number } = {}): Promise<DailyPage> {

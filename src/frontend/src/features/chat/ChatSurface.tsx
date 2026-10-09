@@ -327,7 +327,7 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
           {cfg.headerAction}
         </div>
 
-        <div className="chat-hint">{cfg.hint}</div>
+        <div className="chat-hint" title={typeof cfg.hint === 'string' ? cfg.hint : undefined}>{cfg.hint}</div>
 
         <div ref={scrollRef} className="chat-msgs scroll" onScroll={onMsgsScroll}>
           {activeMsgs.length === 0 ? (

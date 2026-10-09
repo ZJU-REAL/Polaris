@@ -110,8 +110,7 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
       }
     >
       <KnobRange
-        label="辩论轮数"
-        en="Debate rounds"
+        label={tr('辩论轮数', 'Debate rounds')}
         hint={tr('每两个想法之间辩论几轮', 'How many rounds each pair of ideas debates')}
         value={rounds}
         min={1}
