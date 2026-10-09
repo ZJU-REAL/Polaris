@@ -13,7 +13,6 @@
 
 import asyncio
 import datetime as dt
-import json
 import logging
 import re
 import uuid
@@ -21,8 +20,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import (
-    Date,
-    Float,
     String,
     case,
     cast,
@@ -31,7 +28,6 @@ from sqlalchemy import (
     literal,
     or_,
     select,
-    text,
 )
 from sqlalchemy import (
     false as sa_false,
@@ -1115,53 +1111,12 @@ async def _relevance_page(
     公式与 daily_relevance.fused_score 一致：recency 按保留窗口线性归一，
     权重 RELEVANCE_WEIGHT 给相关性、其余给新近度；平分时新日期在前。
 
-    postgres 在 SQL 里算（窗口内几千条、每条要对若干个 1024 维质心做余弦，把向量
-    搬出来在 Python 算每次请求要传几十 MB）；其余方言（测试的 sqlite）把筛选后的行
-    全取出来在 Python 打分排序——那种部署数据量本来就小。两条路径必须同公式。
+    把筛选后的行全取出来在 Python 打分排序（本地单用户的池只有几千条）。
     """
     from app.services import daily_relevance
 
     today = _today_utc()
     window = await get_retention_days(session)
-    weight = daily_relevance.RELEVANCE_WEIGHT
-
-    if session.get_bind().dialect.name == "postgresql":
-        from pgvector.sqlalchemy import Vector as PgVector
-
-        space = await active_space(session)
-        join_vec = space is not None and any(a.centroid is not None for a in anchors)
-        if join_vec:
-            stmt = stmt.outerjoin(
-                PaperVector,
-                (PaperVector.paper_id == Paper.id) & (PaperVector.space == space.key),
-            )
-        score_exprs: list[Any] = []
-        for anchor in anchors:
-            kw_expr = None
-            if anchor.keywords:
-                hits = [
-                    Paper.title.ilike(f"%{kw}%") | Paper.abstract.ilike(f"%{kw}%")
-                    for kw in anchor.keywords
-                ]
-                kw_expr = case((or_(*hits), daily_relevance.KEYWORD_HIT_SCORE), else_=0.0)
-            if anchor.centroid is not None and join_vec:
-                cos = 1.0 - PaperVector.embedding.op("<=>", return_type=Float)(
-                    cast(literal(anchor.centroid, PgVector()), PgVector())
-                )
-                # 论文缺向量（嵌入失败的兜底）→ 该锚点退回关键词，与 anchor_score 同口径
-                score_exprs.append(func.coalesce(cos, kw_expr if kw_expr is not None else 0.0))
-            elif kw_expr is not None:
-                score_exprs.append(kw_expr)
-        # 余弦可为负；Python 侧只保留正分（负相关不该把论文压到窗口底），SQL 用 0 兜底对齐
-        rel = func.greatest(0.0, *score_exprs) if score_exprs else literal(0.0)
-        days = cast(literal(today, Date()) - DailyFeedEntry.feed_date, Float)
-        recency = func.greatest(0.0, 1.0 - days / float(window))
-        fused = (1.0 - weight) * recency + weight * rel
-        stmt = stmt.order_by(
-            fused.desc(), DailyFeedEntry.feed_date.desc(), DailyFeedEntry.created_at.desc()
-        )
-        stmt = stmt.offset((page - 1) * size).limit(size)
-        return list((await session.execute(stmt)).all())
 
     rows = list((await session.execute(stmt)).all())
     scores = await daily_relevance.relevance_for_papers(session, [p for _, p in rows], anchors)
@@ -1214,7 +1169,7 @@ async def semantic_search_daily(
     collected: bool = False,
     terms: list[str] | None = None,
 ) -> list[tuple[DailyFeedEntry, Paper, float]]:
-    """池内向量检索（余弦）：postgres 上 pgvector 在 SQL 里排，其余方言 Python 侧打分。
+    """池内向量检索（余弦，Python 侧打分，services/vector_search.py）。
 
     只召回**在给定空间下**已有向量的池论文，所以结果可能不全，调用方需要如实告知
     前端。筛选条件与关键词列表一致（日期/分类/公告类型/作者/机构）。
@@ -1222,107 +1177,6 @@ async def semantic_search_daily(
     """
     if terms is not None and not terms:
         return []
-    if not vector_search.uses_pgvector(session):
-        return await _semantic_search_daily_in_python(
-            session,
-            query_vector=query_vector,
-            space=space,
-            limit=limit,
-            date=date,
-            category=category,
-            announce=announce,
-            author=author,
-            affiliation=affiliation,
-            library_id=library_id,
-            collected=collected,
-            terms=terms,
-        )
-    where = ["v.space = :space"]
-    params: dict[str, Any] = {
-        "qv": json.dumps(query_vector),
-        "k": limit,
-        "space": space.key,
-    }
-    if date is not None:
-        where.append("e.feed_date = :feed_date")
-        params["feed_date"] = date
-    if announce in ("new", "cross"):
-        where.append("e.announce_type = :announce")
-        params["announce"] = announce
-    if terms is not None:
-        # 与关键词列表同一条口径：语义检索只过滤到 category 这一层的话，
-        # 搜一下就能把整池（别人订的领域）翻出来
-        if not terms:
-            return []
-        ors = []
-        for i, term in enumerate(terms):
-            ors.append(f"(e.primary_category = :term{i} OR CAST(e.categories AS text) LIKE :tl{i})")
-            params[f"term{i}"] = term
-            params[f"tl{i}"] = f'%"{term}"%'
-        where.append("(" + " OR ".join(ors) + ")")
-    if category:
-        where.append(
-            "(e.primary_category = :category OR CAST(e.categories AS text) LIKE :category_like)"
-        )
-        params["category"] = category
-        params["category_like"] = f'%"{category}"%'
-    if author:
-        where.append("CAST(p.authors AS text) ILIKE :author_like")
-        params["author_like"] = f"%{author}%"
-    if affiliation:
-        where.append("CAST(p.affiliations AS text) ILIKE :affiliation_like")
-        params["affiliation_like"] = f"%{affiliation}%"
-    if library_id is not None:
-        from app.services.papers import PAPER_STATUS_GROUPS
-
-        where.append(
-            "EXISTS (SELECT 1 FROM library_papers lp WHERE lp.paper_id = p.id "
-            "AND lp.library_id = :library_id "
-            "AND lp.status = ANY(CAST(:lib_statuses AS varchar[])))"
-        )
-        params["library_id"] = str(library_id)
-        params["lib_statuses"] = list(PAPER_STATUS_GROUPS["library"])
-    if collected:
-        from app.services.papers import PAPER_STATUS_GROUPS
-
-        where.append(
-            "EXISTS (SELECT 1 FROM library_papers lpc WHERE lpc.paper_id = p.id "
-            "AND lpc.status = ANY(CAST(:collected_statuses AS varchar[])))"
-        )
-        params["collected_statuses"] = list(PAPER_STATUS_GROUPS["library"])
-    rows = (
-        await session.execute(
-            text(
-                "SELECT e.id AS entry_id, 1 - (v.embedding <=> CAST(:qv AS vector)) AS score "
-                "FROM daily_feed_entries e "
-                "JOIN papers p ON p.id = e.paper_id "
-                "JOIN paper_vectors v ON v.paper_id = p.id "
-                f"WHERE {' AND '.join(where)} "
-                "ORDER BY score DESC "
-                "LIMIT :k"
-            ),
-            params,
-        )
-    ).all()
-    return await _daily_rows_for_scores(session, [(row.entry_id, float(row.score)) for row in rows])
-
-
-async def _semantic_search_daily_in_python(
-    session: AsyncSession,
-    *,
-    query_vector: list[float],
-    space: EmbeddingSpace,
-    limit: int,
-    date: dt.date | None,
-    category: str | None,
-    announce: str | None,
-    author: str | None,
-    affiliation: str | None,
-    library_id: uuid.UUID | None,
-    collected: bool,
-    terms: list[str] | None,
-) -> list[tuple[DailyFeedEntry, Paper, float]]:
-    """没有 pgvector 时的同口径实现：筛选条件逐条对应上面那条 SQL。"""
     from app.services.papers import PAPER_STATUS_GROUPS
 
     stmt = (

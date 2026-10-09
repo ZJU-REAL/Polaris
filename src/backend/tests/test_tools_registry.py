@@ -9,8 +9,6 @@ from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
 from app.models.idea import Idea
-from app.services import chunks as chunks_service
-from app.services import papers as papers_service
 from app.tools import ToolContext
 from tests.conftest import add_concept, add_paper
 
@@ -127,10 +125,6 @@ async def test_search_tools_fall_back_when_embedding_is_down(client, monkeypatch
         )
         await session.commit()
 
-    # 假装向量检索可用（sqlite 本来会直接走关键词，测不到降级路径）
-    monkeypatch.setattr(papers_service, "semantic_search_supported", lambda session: True)
-    monkeypatch.setattr(chunks_service, "chunk_vector_search_supported", lambda session: True)
-
     async def _embedding_down(*args, **kwargs):
         raise RuntimeError("openai_compat 请求 embeddings 重试 4 次后仍失败")
 
@@ -152,8 +146,6 @@ async def test_search_tools_fall_back_when_embedding_is_down(client, monkeypatch
 async def test_search_chunks_keyword_mode_skips_embedding(client, monkeypatch):
     """mode=keyword 时压根不碰 embedding —— 自检就是靠这个保持便宜、确定。"""
     project_id = await _project(client, email="chunks-keyword@example.com")
-
-    monkeypatch.setattr(chunks_service, "chunk_vector_search_supported", lambda session: True)
 
     async def _must_not_be_called(*args, **kwargs):
         raise AssertionError("mode=keyword 不该调用 embedding")

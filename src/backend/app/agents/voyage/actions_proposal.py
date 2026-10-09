@@ -759,8 +759,8 @@ async def proposal_experiments(ctx: ActionContext, params: dict[str, Any]) -> di
 async def _internal_similar(ctx: ActionContext, query_text: str) -> list[dict[str, Any]]:
     """库内相似论文：向量余弦 top-k；向量不可用降级关键词检索。
 
-    交给 semantic_search_papers 在库里排：postgres 上是 pgvector，SQLite 上按库圈定
-    候选后在 Python 侧打分（services/vector_search.py），两边同口径。
+    交给 semantic_search_papers 在库里排：按库圈定候选后在 Python 侧打分
+    （services/vector_search.py）。
     """
     from app.services.papers import semantic_search_papers
 

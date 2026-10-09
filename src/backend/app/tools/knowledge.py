@@ -12,10 +12,10 @@ from app.models.paper import Paper, PaperChunk
 from app.services import chunks as chunks_service
 from app.services import graph as graph_service
 from app.services import search as search_service
+from app.services import vector_search
 from app.services.embedding import embed_query
 from app.services.evidence import (
     FulltextChunkHit,
-    fulltext_vector_search_supported,
     keyword_search_current_fulltext,
     semantic_search_current_fulltext,
     sentence_evidence_for_chunks,
@@ -54,14 +54,10 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
         fulltext_rows: list[FulltextChunkHit] = []
         rows: list[tuple[PaperChunk, float]] = []
         used_mode = "keyword"
-        if (
-            mode == "semantic"
-            and library_ids
-            and (
-                fulltext_vector_search_supported(session)
-                or chunks_service.chunk_vector_search_supported(session)
-            )
-        ):
+        # 两路段落检索各记一份：跨很多库时会先按论文级向量收窄（vector_search.budgeted_search）
+        fulltext_stats = vector_search.SearchStats()
+        chunk_stats = vector_search.SearchStats()
+        if mode == "semantic" and library_ids:
             try:
                 vector, space = await embed_query(
                     session,
@@ -81,6 +77,7 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
                         query_vector=vector,
                         space_key=space.key,
                         limit=k,
+                        stats=fulltext_stats,
                     )
                 except Exception:  # noqa: BLE001 — 版本化索引失败时保留旧索引兜底
                     fulltext_rows = []
@@ -92,6 +89,7 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
                             query_vector=vector,
                             space=space,
                             limit=k,
+                            stats=chunk_stats,
                         )
                 except Exception:  # noqa: BLE001 — 旧索引失败不丢弃已命中的版本化全文
                     rows = []
@@ -123,7 +121,7 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
             )
             titles = {pid: title for pid, title in title_rows}
 
-    return {
+    result: dict[str, Any] = {
         "mode": used_mode,
         "chunks": [
             {
@@ -148,6 +146,18 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
             for c, score in rows
         ],
     }
+    narrowed = [
+        s.narrowed_to_papers
+        for s in (fulltext_stats, chunk_stats)
+        if s.narrowed_to_papers is not None
+    ]
+    if used_mode == "semantic" and narrowed:
+        # 如实说明：段落只在论文级最相关的那些论文里排，没有逐段扫全部语料
+        result["narrowed_to_papers"] = max(narrowed)
+        result["note"] = (
+            f"范围内段落太多，先按论文相关度挑出 {max(narrowed)} 篇，只在这些论文的段落里检索"
+        )
+    return result
 
 
 @tool(

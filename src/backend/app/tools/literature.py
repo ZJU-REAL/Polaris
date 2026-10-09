@@ -82,7 +82,7 @@ async def search_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
     async with get_sessionmaker()() as session:
         rows: list[tuple[Paper, float]] = []
         used_mode = "keyword"
-        if mode == "semantic" and papers_service.semantic_search_supported(session):
+        if mode == "semantic":
             try:
                 vector, space = await embed_query(
                     session,

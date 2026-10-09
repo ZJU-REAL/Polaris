@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     inline_max_voyages: int = 8
     inline_max_jobs: int = 6
 
+    # 语义检索在 Python 侧打分（services/vector_search.py），一次扫的行数要有上限。
+    # 段落/全文检索的候选行超过这个数（典型：全局助手跨全部文献库搜段落）时，先用
+    # 论文级向量挑出最相关的 vector_search_narrow_papers 篇，再只在这些论文里搜段落。
+    vector_search_row_budget: int = 20000
+    vector_search_narrow_papers: int = 200
+
     # ---- LLM providers ----
     # 服务商与密钥在管理页配置、存 DB（services/llm_admin.py）；这里只有 openai_compat
     # 路由未填 base_url 时的兜底地址。密钥类环境变量从未有读取点，已删（#629）。

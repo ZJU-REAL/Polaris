@@ -7,7 +7,6 @@ P4 起 ``papers`` 是全局内容池：方向维度的归属/判断（status、�
 """
 
 import asyncio
-import json
 import logging
 import shutil
 import uuid
@@ -16,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Select, and_, cast, delete, exists, false, func, insert, or_, select, text
+from sqlalchemy import Select, and_, cast, delete, exists, false, func, insert, or_, select
 from sqlalchemy import Text as SAText
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -491,10 +490,7 @@ async def get_paper_for_user(
     无库论文也可读（见 :func:`_pool_paper_view`）。
     """
     stmt = (
-        library_paper_stmt()
-        .where(Paper.id == paper_id)
-        .order_by(LibraryPaper.created_at)
-        .limit(1)
+        library_paper_stmt().where(Paper.id == paper_id).order_by(LibraryPaper.created_at).limit(1)
     )
     if with_concepts:
         stmt = stmt.options(selectinload(Paper.concepts))
@@ -1309,17 +1305,6 @@ async def keyword_search_concepts(
     return [(c, 1.0) for c in (await session.execute(stmt)).scalars().all()]
 
 
-def semantic_search_supported(session: AsyncSession) -> bool:
-    """语义检索在这个数据库上可用吗。
-
-    postgres 走 pgvector；SQLite 等没有向量算子的库在 Python 侧打分
-    （services/vector_search.py），两边过滤与排序口径一致，所以一律可用。
-    保留这个函数是给调用方一个统一的判断点（以及测试里打桩）。
-    """
-    del session
-    return True
-
-
 async def semantic_search_papers(
     session: AsyncSession,
     *,
@@ -1331,62 +1316,33 @@ async def semantic_search_papers(
     space: EmbeddingSpace,
     limit: int,
 ) -> list[tuple[PaperView, float]]:
-    """余弦检索：postgres 上 pgvector 在 SQL 里排，其余方言在 Python 侧打分。
+    """余弦检索（Python 侧打分，services/vector_search.py）。
 
     只跟 ``space`` 这一个向量空间里的论文比较——别的空间的向量出自别的模型，
-    余弦值没有可比性。
+    余弦值没有可比性。候选是激活空间里、关联库内「库内状态」的论文：回收站
+    （excluded）和未筛选的候选（candidate）与关键词检索同口径排除；IN 子查询让
+    命中多个库的论文只算一次。
     """
     library_ids = await _read_library_ids(
         session, project_id=project_id, library_id=library_id, library_ids=library_ids
     )
     if not library_ids:
         return []
-    if not vector_search.uses_pgvector(session):
-        from app.models.vectors import PaperVector
+    from app.models.vectors import PaperVector
 
-        # 与下面的 SQL 同口径：激活空间 + 库成员（状态分组）；IN 子查询天然去重
-        candidates = select(
-            PaperVector.paper_id, vector_search.raw_embedding(PaperVector.embedding)
-        ).where(
-            PaperVector.space == space.key,
-            PaperVector.paper_id.in_(
-                select(LibraryPaper.paper_id).where(
-                    LibraryPaper.library_id.in_(library_ids),
-                    LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
-                )
-            ),
-        )
-        hits = await vector_search.search_statement(session, candidates, query_vector, limit)
-        return await _paper_views_for_scores(session, library_ids, project_id, hits)
-    qv = json.dumps(query_vector)
-    # DISTINCT p.id：一篇论文命中多个关联库时只召回一次（分数不受成员行影响）。
-    # status 过滤与 keyword_search_papers 对齐：回收站（excluded）和未筛选的候选
-    # （candidate）都不该出现在检索结果里——删掉的论文又被搜出来，比搜不到更难理解。
-    rows = (
-        await session.execute(
-            text(
-                "SELECT DISTINCT p.id, 1 - (v.embedding <=> CAST(:qv AS vector)) AS score "
-                "FROM paper_vectors v "
-                "JOIN papers p ON p.id = v.paper_id "
-                "JOIN library_papers lp ON lp.paper_id = p.id "
-                "AND lp.library_id = ANY(CAST(:libs AS uuid[])) "
-                "WHERE v.space = :space "
-                "AND lp.status = ANY(CAST(:statuses AS varchar[])) "
-                "ORDER BY score DESC "
-                "LIMIT :k"
-            ),
-            {
-                "qv": qv,
-                "libs": [str(lid) for lid in library_ids],
-                "k": limit,
-                "space": space.key,
-                "statuses": list(PAPER_STATUS_GROUPS["library"]),
-            },
-        )
-    ).all()
-    return await _paper_views_for_scores(
-        session, library_ids, project_id, [(row.id, float(row.score)) for row in rows]
+    candidates = select(
+        PaperVector.paper_id, vector_search.raw_embedding(PaperVector.embedding)
+    ).where(
+        PaperVector.space == space.key,
+        PaperVector.paper_id.in_(
+            select(LibraryPaper.paper_id).where(
+                LibraryPaper.library_id.in_(library_ids),
+                LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+            )
+        ),
     )
+    hits = await vector_search.search_statement(session, candidates, query_vector, limit)
+    return await _paper_views_for_scores(session, library_ids, project_id, hits)
 
 
 async def _paper_views_for_scores(

@@ -80,15 +80,15 @@ async def test_keyword_chunk_search_skips_the_recycle_bin(client):
 
 
 def test_vector_search_paths_filter_the_recycle_bin():
-    """postgres 分支是 pgvector 裸 SQL，sqlite 测试库跑不到，这里做源码级守卫。
+    """源码级守卫（端到端验证在 test_sqlite_vector_search.py）。
 
     删掉任一处过滤，这条会失败——比没有守卫强，但它确实不是端到端验证。
     """
     paper_sql = inspect.getsource(papers_service.semantic_search_papers)
-    assert "lp.status = ANY" in paper_sql, "库论文向量检索漏了回收站过滤"
+    assert 'PAPER_STATUS_GROUPS["library"]' in paper_sql, "库论文向量检索漏了回收站过滤"
 
     chunk_sql = inspect.getsource(chunks_service.semantic_search_chunks)
-    assert "lp.status = ANY" in chunk_sql, "分块向量检索漏了回收站过滤"
+    assert 'PAPER_STATUS_GROUPS["library"]' in chunk_sql, "分块向量检索漏了回收站过滤"
 
     personal = inspect.getsource(user_library_service.semantic_saved_entries)
     assert "trashed_at.is_(None)" in personal, "个人库向量检索漏了回收站过滤"

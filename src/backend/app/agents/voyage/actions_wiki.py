@@ -348,8 +348,7 @@ async def _rank_feed_by_similarity(
     只跟激活空间下的论文向量比：方向向量与论文向量必须出自同一个模型，否则这个粗排
     就是在按噪声挑论文，而且不会有任何报错。
 
-    在 Python 里算余弦而不是走 pgvector：每日池只有几百行，跨 sqlite/postgres 一致，
-    测试路径不用特判。
+    直接在 Python 里算余弦：每日池只有几百行，不需要走 services/vector_search.py。
     """
     if not direction.strip():
         return papers[:limit], False
