@@ -1,5 +1,6 @@
 """FastAPI 应用工厂。"""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -11,7 +12,7 @@ from app import __version__
 from app.api.router import api_router
 from app.api.ws import router as ws_router
 from app.core.config import get_settings
-from app.core.db import create_all, dispose_engine, get_sessionmaker
+from app.core.db import create_all, dispose_engine, drain_side_writes, get_sessionmaker
 from app.core.llm.router import LLMNotConfiguredError
 from app.core.redis import close_redis
 from app.mcp import mcp_router
@@ -43,6 +44,11 @@ async def lifespan(app: FastAPI):
     # 学科包：把抽取 schema 的注册缝接到磁盘（内置包 + <data_dir>/disciplines）。
     # 纯文件读取、不碰数据库，所以不跟着上面的 DB 种子一起 try
     load_disciplines()
+    # 上一次进程被杀时写到一半的「进行中」行：标失败、清暂存（#850）。此刻还没有任何
+    # 后台任务在跑，所以凡是「进行中」的都是孤儿
+    from app.services.startup_recovery import recover_interrupted_work
+
+    await recover_interrupted_work()
     # AI 起草流式镜像订阅（worker 发布 → 写活跃 CRDT 房间；连不上 redis 自动放弃）
     get_crdt_stream_subscriber().start()
     # 定时任务由引擎进程自己跑（#842）
@@ -53,6 +59,14 @@ async def lifespan(app: FastAPI):
     from app.core.scheduler import stop_engine_scheduler
 
     await stop_engine_scheduler()
+    # 进程内后台任务：先取消并等它们收尾，再关数据库——否则它们会往已 dispose 的
+    # engine 里写（#850）。被打断的航程下次启动由 reconcile_stuck_voyages 续跑
+    from app.core.queue import shutdown_task_queue
+    from app.services.paper_enrich import cancel_all_tasks
+
+    await asyncio.gather(shutdown_task_queue(), cancel_all_tasks())
+    # 转到后台的记账/日志写入：落完盘再关库
+    await drain_side_writes()
     # 外部 agent 子进程（#836）：随服务一起收掉，别留孤儿进程继续烧额度
     from app.core.llm.acp import shutdown_pools
     from app.services.acp.pool import shutdown_pool

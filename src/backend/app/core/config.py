@@ -51,14 +51,23 @@ class Settings(BaseSettings):
     # ---- Database / Cache ----
     # SQLite（桌面引导方会传入 userData 下的路径）
     database_url: str = "sqlite+aiosqlite:///./polaris_dev.db"
-    # 连接池要装得下 worker 的并发：max_jobs(10) 个 voyage × 每个 voyage 的打分并发
-    # (_LLM_CONCURRENCY=5)，每篇论文各开一个 session，再加上引擎自己记步骤/检查点的那条。
-    # SQLAlchemy 默认 5+10=15，实测在生产上被打满：50 个协程抢 15 个连接，多数等满 30s
-    # 超时、该篇打分失败、状态停在 candidate——库里那 2400 多条「从没打过分」的候选就是
-    # 这么攒出来的。Postgres 侧 max_connections=100，这个额度装得下。
+    # 连接池要装得下进程内任务的并发：最多 inline_max_voyages 条航程同时跑，每条航程的
+    # 打分并发（_LLM_CONCURRENCY=5）每篇论文各开一个 session，再加上引擎自己记步骤/检查点
+    # 的那条，以及 HTTP 请求。SQLAlchemy 默认 5+10=15，在 ARQ 时代（max_jobs=10）实测被
+    # 打满：多数协程等满 30s 超时、该篇打分失败、状态停在 candidate。SQLite 开了 WAL，
+    # 多连接并发读不互斥，写入由 busy_timeout 排队（core/db.py）。
     db_pool_size: int = 20
     db_max_overflow: int = 50
     db_pool_timeout: int = 30
+    # SQLite 写锁的等待上限（毫秒）：写入撞上别的连接在写时排队等，而不是立刻
+    # 报 "database is locked"。
+    sqlite_busy_timeout_ms: int = 30_000
+
+    # ---- 进程内任务队列（core/queue.py） ----
+    # 航程与其它后台任务（导入、导出、翻译、解析……）各自的并发上限。航程常常一跑几小时
+    # （实验轮询），单独一个池子，免得几条长实验把短任务全部挡在门外。
+    inline_max_voyages: int = 8
+    inline_max_jobs: int = 6
 
     # ---- LLM providers ----
     # 服务商与密钥在管理页配置、存 DB（services/llm_admin.py）；这里只有 openai_compat

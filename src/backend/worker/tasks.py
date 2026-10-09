@@ -1,4 +1,4 @@
-"""ARQ 任务。
+"""后台任务：由进程内任务队列（app/core/queue.py）在引擎进程里作为 asyncio 任务执行。
 
 - M1：Voyage 引擎驱动任务（run/resume）
 - M2：每日文献增量 ingest（cron，见 worker/settings.py）
@@ -69,27 +69,30 @@ async def resume_voyage(ctx: dict[str, Any], run_id: str) -> None:
     await _make_engine().resume(uuid.UUID(run_id))
 
 
-RECONCILE_DEDUP_WINDOW_SECONDS = 900  # 同一 voyage 15 分钟内只入队一次 resume
 RECONCILE_STALE_MINUTES = 30  # 周期回收：终端无动静超过这个时长才算僵死
 
 
-def _reconcile_job_id(vid: object, now: float) -> str:
-    """时间分桶的去重键。arq 对已有同 id 的任务（排队/在跑/**结果保留期内**）会静默
-    去重——keep_result 默认 1 小时，固定 id 意味着重启后的对账 enqueue 可能被一小时前
-    的旧结果吞掉（线上实测：voyage 卡 verifying 45 分钟无人认领）。分桶让去重只在
-    短窗口内生效。"""
-    return f"reconcile-resume-{vid}-{int(now // RECONCILE_DEDUP_WINDOW_SECONDS)}"
+async def _enqueue_reclaim(ctx: dict[str, Any], vid: object) -> bool:
+    """把一条无人驱动的在途航程重新排上 resume；已有驱动者在跑（或在排队）就跳过。
+
+    任务 id 与 API 入队的是同一个（voyage_job_id）：内联队列的去重因此能认出来，
+    ``_if_idle`` 再保证撞上在途驱动者时直接丢弃，而不是排成它收尾后的续跑——
+    以前对账用按时间分桶的 id，跑着的长实验每 15 分钟会被多塞一个驱动者（#850）。"""
+    from app.core.queue import voyage_job_id
+
+    job_id = voyage_job_id(vid)
+    is_running = getattr(ctx["redis"], "is_running", None)
+    if is_running is not None and is_running(job_id):
+        return False
+    await ctx["redis"].enqueue_job("resume_voyage", str(vid), _job_id=job_id, _if_idle=True)
+    return True
 
 
 async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
-    """worker 启动对账：认领无人执行的在途航程（见 IN_FLIGHT_STATUSES）。
+    """启动对账：认领无人执行的在途航程（见 IN_FLIGHT_STATUSES）。
 
-    被 SIGTERM/超时打断的 ARQ 任务按任务年龄指数延迟重试，长航程会被晾数小时
-    （实测：远端 run.sh 已 exit=0，平台侧 50 分钟无人收尾）。启动时把在途
-    状态的 voyage 重新入队 resume——引擎幂等（setup/run 都会重挂在跑的远端进程，
-    checkpoint 断点恢复）。"""
-    import time
-
+    进程被杀时在跑的航程停在在途状态、再没人推进。启动时把它们重新入队 resume——
+    引擎幂等（setup/run 都会重挂在跑的远端进程，checkpoint 断点恢复）。"""
     from sqlalchemy import select
 
     from app.models.voyage import IN_FLIGHT_STATUSES, VoyageRun
@@ -98,19 +101,14 @@ async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
         ids = (
             (
                 await session.execute(
-                    select(VoyageRun.id).where(
-                        VoyageRun.status.in_(tuple(IN_FLIGHT_STATUSES))
-                    )
+                    select(VoyageRun.id).where(VoyageRun.status.in_(tuple(IN_FLIGHT_STATUSES)))
                 )
             )
             .scalars()
             .all()
         )
-    now = time.time()
     for vid in ids:
-        await ctx["redis"].enqueue_job(
-            "resume_voyage", str(vid), _job_id=_reconcile_job_id(vid, now)
-        )
+        await _enqueue_reclaim(ctx, vid)
 
 
 async def reconcile_stale_voyages(
@@ -118,12 +116,14 @@ async def reconcile_stale_voyages(
 ) -> None:
     """周期回收（cron）：在途但终端长时间无动静的 voyage 重新入队 resume。
 
-    启动对账只救 worker 重启这一种孤儿；任务在运行中途丢失（LLM 调用悬死后被杀、
-    ARQ 指数延迟重试晾着）产生的僵死靠这里兜底。判据保守：距最后一条终端日志
-    （无日志则取创建时间）超过 ``stale_minutes`` 才认领——活着的长步骤会持续产生
-    日志/轮询输出，短暂静默不会被误抢；引擎本身幂等，偶发的并发 resume 可容忍
-    （arq 中断重试与启动对账本就可能重叠，线上已验证无碍）。"""
-    import time
+    启动对账只救重启这一种孤儿；驱动任务在运行中途意外退出、却没把航程落到终态或
+    暂停态产生的僵死靠这里兜底。判据有二，缺一不可：
+
+    - 本进程里没有这条航程的驱动任务（在跑或排队等名额）——这是真正的存活判据。
+      长实验轮询几个小时不写终端日志是常态，光看日志会把活着的航程判死、再塞一个
+      驱动者进去（#850）；
+    - 距最后一条终端日志（无日志则取创建时间）超过 ``stale_minutes``：给刚入队、
+      刚收尾的航程留出余量。"""
     from datetime import timedelta
 
     from sqlalchemy import func as sa_func
@@ -161,12 +161,9 @@ async def reconcile_stale_voyages(
         )
     if not ids:
         return
-    logger.warning("reclaiming %d stale in-flight voyage(s): %s", len(ids), ids)
-    now = time.time()
-    for vid in ids:
-        await ctx["redis"].enqueue_job(
-            "resume_voyage", str(vid), _job_id=_reconcile_job_id(vid, now)
-        )
+    reclaimed = [vid for vid in ids if await _enqueue_reclaim(ctx, vid)]
+    if reclaimed:
+        logger.warning("reclaiming %d stale in-flight voyage(s): %s", len(reclaimed), reclaimed)
 
 
 async def watch_unanswered_managed_commands(ctx: dict[str, Any]) -> int:

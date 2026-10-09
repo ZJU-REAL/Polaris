@@ -252,6 +252,19 @@ def _cleanup_staged(bib_path: Path) -> None:
         logger.warning("failed to clean staged zotero import dir: %s", staged_dir)
 
 
+def _load_bib_entries(bib_path: Path) -> list[dict[str, Any]]:
+    return parse_zotero_bib(bib_path.read_text(encoding="utf-8-sig"))
+
+
+def _open_attachments(zip_path: str) -> tuple[zipfile.ZipFile, ZipAttachmentIndex]:
+    zf = zipfile.ZipFile(zip_path)
+    try:
+        return zf, ZipAttachmentIndex(zf)
+    except BaseException:
+        zf.close()
+        raise
+
+
 async def run_zotero_import(
     redis: Redis,
     *,
@@ -284,7 +297,9 @@ async def run_zotero_import(
 
     try:
         try:
-            entries = parse_zotero_bib(Path(bib_path).read_text(encoding="utf-8-sig"))
+            # 读盘 + 解析大 .bib、打开附件包建索引、解压附件都是同步活：放线程里，
+            # 别冻住整个引擎的事件循环（#850）
+            entries = await asyncio.to_thread(_load_bib_entries, Path(bib_path))
         except (OSError, ParseFailedError) as e:
             await publish_paper_task_event(bus, task_id, "error", {"message": str(e)})
             return totals
@@ -292,8 +307,7 @@ async def run_zotero_import(
         attachments: ZipAttachmentIndex | None = None
         if zip_path:
             try:
-                zf = zipfile.ZipFile(zip_path)
-                attachments = ZipAttachmentIndex(zf)
+                zf, attachments = await asyncio.to_thread(_open_attachments, zip_path)
             except (OSError, zipfile.BadZipFile):
                 # 附件包坏了不拦导入本身：条目照进，只是都不带 PDF
                 logger.warning("zotero attachment zip unusable: %s", zip_path, exc_info=True)
@@ -376,7 +390,11 @@ async def run_zotero_import(
                             paper_id, title = paper.id, paper.title
                             # 挂附件走 PDF 上传的同一入口（校验 + 全文 + 分块 + 向量），
                             # 失败不推翻导入：论文已在库里，只是没带上 PDF
-                            content = attachments.find(fields) if attachments else None
+                            content = (
+                                await asyncio.to_thread(attachments.find, fields)
+                                if attachments
+                                else None
+                            )
                             if content is not None and not paper.pdf_path:
                                 try:
                                     await papers_service.upload_pdf(
@@ -465,4 +483,4 @@ async def run_zotero_import(
     finally:
         if zf is not None:
             zf.close()
-        _cleanup_staged(Path(bib_path))
+        await asyncio.to_thread(_cleanup_staged, Path(bib_path))

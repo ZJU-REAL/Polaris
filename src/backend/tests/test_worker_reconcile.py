@@ -58,8 +58,9 @@ async def test_reconcile_enqueues_only_executing(client):
     await reconcile_stuck_voyages({"redis": redis})
 
     assert [(f, a[0]) for f, a, _k in redis.jobs] == [("resume_voyage", str(v_exec))]
-    # 去重键按时间分桶：固定 id 会被 arq 的结果保留期（1h）静默吞掉入队
-    assert redis.jobs[0][2]["_job_id"].startswith(f"reconcile-resume-{v_exec}-")
+    # 与 API 入队同一个任务 id：内联队列的去重才认得出在途驱动者（#850）
+    assert redis.jobs[0][2]["_job_id"] == f"voyage-{v_exec}"
+    assert redis.jobs[0][2]["_if_idle"] is True
 
 
 async def test_stale_reclaim_only_grabs_quiet_voyages(client):
