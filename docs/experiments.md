@@ -194,9 +194,10 @@ follow.
 
 Experiments are built to survive infrastructure trouble; from your point of view:
 
-- **Backend restarts don't lose runs.** All state (plan, checkpoint, code files, metrics, memory) is
-  persisted per step. A worker cron reconciles in-flight tasks every 10 minutes and re-queues any
-  run whose worker died mid-step.
+- **Restarts don't lose runs.** All state (plan, checkpoint, code files, metrics, memory) is
+  persisted per step. When the app starts again it re-queues every run that was still in flight,
+  and while it runs, the engine scheduler checks every 10 minutes for runs that went silent
+  mid-step and re-queues them.
 - **Remote processes are reattached, not restarted.** Training and install processes run detached
   under `nohup`, with their exit code and log persisted on the server. After a restart the poller
   finds the previous round still marked running and **re-attaches to the same PID** — it does not

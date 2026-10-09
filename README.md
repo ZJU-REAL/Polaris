@@ -12,7 +12,6 @@
   <a href="http://101.37.174.109:8080"><img src="https://img.shields.io/badge/Live_Demo-online-2ea44f?style=flat-square&logo=rocket&logoColor=white" alt="Live Demo"></a>
   <a href="https://github.com/ZJU-REAL/Polaris/releases/latest"><img src="https://img.shields.io/github/v/release/ZJU-REAL/Polaris?style=flat-square&color=7438F0&label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square" alt="License: Apache 2.0"></a>
-  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker Compose">
   <a href="docs/assets/wechat-group-qr.jpg"><img src="https://img.shields.io/badge/WeChat-join_group-07C160?style=flat-square&logo=wechat&logoColor=white" alt="Join the WeChat group"></a>
 </p>
 
@@ -26,11 +25,11 @@
 
 ---
 
-Polaris runs the entire research lifecycle as a single web application: literature survey, idea
-generation, idea review, experiment building on real GPU servers, LaTeX paper writing, and paper
-review. It is built for a research lab, with multi-user access, RBAC, and invite-code registration, and
-it treats every long task as a **Voyage**: a persisted, resumable, human-gated agent run that can span
-hours or days without losing state.
+Polaris runs the entire research lifecycle in one desktop app: literature survey, idea generation,
+idea review, experiment building on real GPU servers, LaTeX paper writing, and paper review. It is
+built for one researcher on their own computer — everything runs locally, with no server to set up —
+and it treats every long task as a **Voyage**: a persisted, resumable, human-gated agent run that can
+span hours or days without losing state.
 
 > [!NOTE]
 > Polaris is not a chatbot wrapper. The heavy lifting (crawling, parsing, deduplication, metric parsing,
@@ -46,7 +45,8 @@ https://github.com/user-attachments/assets/388972c1-7ffa-45f2-94c4-07f388379ba2
 
 ### Try it live
 
-A guest account on a running instance, for looking around: sign in at
+A guest account on an older, frozen web instance, for looking around (new releases are desktop-only):
+sign in at
 <http://101.37.174.109:8080> with the username `guest` and the password `zjuguest123`.
 
 **The account is for demonstration only: it is read-only and cannot call any model.** It reaches every
@@ -83,11 +83,11 @@ flowchart LR
 
 | Stage | What Polaris actually does |
 | --- | --- |
-| **Literature** | The Research Wiki ingests papers from OpenAlex, Semantic Scholar, and arXiv. Cold start snowballs citations from anchor papers and scores relevance against the **direction library's** inclusion config — statement, goals, scope and exclusions, written through a structured AI interview — then extracts full text (PyMuPDF) and compiles a cross-linked wiki page (TL;DR, method, reusable ideas, concept backlinks). There is **one wiki per paper, shared platform-wide**: the compile prompt carries no library statement or rubric, so the same paper never reads differently depending on where you opened it, and a concept is promoted only once two papers cite it. New arXiv work arrives through the daily feed, the single entry point libraries sync from; incremental sync with watermark resume, pgvector semantic search, research digests, and Obsidian vault sync. |
+| **Literature** | The Research Wiki ingests papers from OpenAlex, Semantic Scholar, and arXiv. Cold start snowballs citations from anchor papers and scores relevance against the **direction library's** inclusion config — statement, goals, scope and exclusions, written through a structured AI interview — then extracts full text (PyMuPDF) and compiles a cross-linked wiki page (TL;DR, method, reusable ideas, concept backlinks). There is **one wiki per paper, shared platform-wide**: the compile prompt carries no library statement or rubric, so the same paper never reads differently depending on where you opened it, and a concept is promoted only once two papers cite it. New arXiv work arrives through the daily feed, the single entry point libraries sync from; incremental sync with watermark resume, research digests, and Obsidian vault sync. |
 | **Idea** | Idea Forge runs multi-signal gap analysis over the knowledge base (concept co-occurrence holes, extracted paper limitations, trend velocity, survey gaps) to drive retrieval-planned idea generation. Ideas are scored on four axes (novelty, feasibility, operability, impact), deduplicated semantically, and funneled to a candidate pool. A deep Research Proposal builder then hardens the winner with a plan-execute-verify loop. |
 | **Idea Review** | Configurable-persona reviewer agents debate pairwise; a judge produces an Elo tournament ranking. Lab members join the discussion live over WebSocket, and their comments enter the agent context as first-class input. |
 | **Experiment** | The Experiment Lab uses per-user, Fernet-encrypted SSH credentials to reach the lab's GPU servers. An experiment Voyage asks intake questions first, plans the study, passes a compute-budget check, writes code, runs a smoke test, launches runs with streamed logs and live metric curves, then auto-iterates: parse metrics, reflect, then improve, debug, or stop — repairing failures under a **time** budget rather than a fixed retry count. It keeps a file-based memory it reads and writes across steps, and when it is genuinely stuck it **asks the user** instead of failing. A console gives each run a task map and a terminal you can talk to mid-stream. Figures are generated and VLM-checked. |
-| **Paper Writing** | The Paper Writer opens a multi-file LaTeX project (NeurIPS, ICLR, ACL templates) with a CodeMirror 6 editor, real-time collaborative editing (CRDT), and server-side tectonic compilation to a live PDF preview. An agent drafts section by section, but experiment numbers may only come from real `ExperimentRun` metrics and citations must map to real knowledge-base entries. One click refreshes the references and wires the bibliography into the main TeX file. |
+| **Paper Writing** | The Paper Writer opens a multi-file LaTeX project (NeurIPS, ICLR, ACL templates) with a CodeMirror 6 editor, real-time collaborative editing (CRDT), and local tectonic compilation to a live PDF preview. An agent drafts section by section, but experiment numbers may only come from real `ExperimentRun` metrics and citations must map to real knowledge-base entries. One click refreshes the references and wires the bibliography into the main TeX file. |
 | **Paper Review** | Line-by-line citation verification (existence: exact, minor, or fabricated; support: supported, partial, or unsupported) plus deterministic fact-checking of every number against the experiment record, then multi-perspective top-venue reviewer agents and a meta-review. A fabricated citation forces a non-pass. |
 
 ## The Voyage agent core
@@ -103,8 +103,8 @@ auditable run driven by a persisted three-part loop.
 | **Sextant** | Self-verification. Checks each step against structured acceptance criteria (exit code, artifact exists, schema valid, metric threshold, count, LLM rubric). Deterministic checks run first; failures feed diagnostics back to Navigator, and repeated failure escalates to a human gate. |
 
 > [!IMPORTANT]
-> A Voyage is backed by a persistent state machine (`planning -> executing -> verifying -> ...`). If a
-> worker crashes mid-run, the Voyage resumes from its last checkpoint after a health check. Budgets are
+> A Voyage is backed by a persistent state machine (`planning -> executing -> verifying -> ...`). If the
+> app quits or crashes mid-run, the Voyage resumes from its last checkpoint after a health check. Budgets are
 > attached to the run and auto-pause it when exceeded; every plan, action, and verdict is retained and
 > replayable in the UI.
 
@@ -135,7 +135,7 @@ plan-execute-verify loop) activates only for open-ended kinds such as experiment
   budget caps (total, per-run, concurrency). A run keeps a file-based memory across steps, repairs
   itself under a time budget, and pauses to **ask you a question** rather than dying; its console shows
   a task map and a terminal you can talk to while it runs.
-- **Paper Writer.** Online multi-file LaTeX with collaborative CRDT editing and server-side tectonic
+- **Paper Writer.** Online multi-file LaTeX with collaborative CRDT editing and local tectonic
   compilation; agent drafting bound to real metrics and real citations, plus one-click reference
   refresh wired into the main TeX file.
 - **Paper Review with citation verification.** Existence and support are checked per citation against the
@@ -160,32 +160,30 @@ plan-execute-verify loop) activates only for open-ended kinds such as experiment
   try-it playground. Project-isolated and strictly read-only.
 - **Real-time everywhere.** SSE for agent streaming and Voyage progress; WebSocket for review
   discussions, approval notifications, experiment log tracking, and collaborative editing.
-- **Multi-user and RBAC.** JWT auth (fastapi-users), invite-code registration, role-based access, and
-  per-call token/cost accounting attributed to user, project, and voyage. Library and paper views are
-  counted into a 7-day heat list, so the lab can see what people are actually reading.
-- **LLM abstraction and model routing.** All model calls go through one layer; a DB-backed routing table
-  maps each research stage to a provider, a model, and a reasoning-effort level (cheap models for
-  scoring, strong models for debate and drafting). Admins set the global routes and users may override
-  their own. The built-in fake provider is structurally disabled in production — setting the flag by
-  mistake cannot turn it on.
+- **Cost accounting.** Per-call token/cost accounting attributed to project and voyage, so you can see
+  what each task spent.
+- **Agent backends and model routing.** The easiest way to give Polaris a model is an agent you already
+  use — Claude Code, Codex, Gemini CLI and other [ACP](docs/agents.md) agents answer model calls with no
+  API key. Model APIs (OpenAI-compatible, OpenAI Responses, Anthropic) are optional. All model calls go
+  through one layer; a DB-backed routing table maps each research stage to an agent or a model and a
+  reasoning-effort level (cheap models for scoring, strong models for debate and drafting). The built-in
+  fake provider is strictly opt-in and never turned on by the product.
 
 ## Tech stack
 
 | Layer | Technology |
 | --- | --- |
+| Desktop | Electron shell (macOS / Windows / Linux) that loads the web bundle over an `app://` protocol and starts the local engine |
 | Frontend | React 18 + TypeScript 5 + Vite 5, TanStack Query for all server state, CodeMirror 6, Yjs (CRDT), react-pdf, KaTeX |
-| Desktop | Electron shell (macOS / Windows / Linux) that reuses the web bundle over an `app://` protocol; all heavy state stays on the remote server |
-| Backend | FastAPI (fully async) + SQLAlchemy 2 + Alembic + fastapi-users (JWT) |
-| Task queue | ARQ (Redis broker); every long task runs off the request thread |
-| Data | PostgreSQL 16 with pgvector (embedding spaces isolated per model, so vectors never mix) + Redis 7 |
+| Engine | One local process: FastAPI (fully async) + SQLAlchemy 2 + Alembic, with an in-process task queue and scheduler |
+| Data | SQLite, plus a data folder for PDFs, exports and experiment logs — all inside the app's user-data directory |
 | Remote execution | asyncssh to GPU servers; SSH keys encrypted at rest with Fernet |
-| LaTeX | tectonic, server-side, with a cached macro volume |
-| LLM | Multi-provider abstraction (OpenAI-compatible and Anthropic) with a DB model-routing table |
-| Deployment | Docker Compose (postgres, redis, api, worker, frontend) |
+| LaTeX | tectonic, or TeX Live through latexmk — whichever is installed on your computer |
+| Models | Agent backends over ACP (Claude Code, Codex, Gemini CLI, …) or model APIs (OpenAI-compatible, OpenAI Responses, Anthropic), with a DB model-routing table |
 
-## Desktop client
+## Install
 
-Polaris ships as a desktop app for macOS, Windows, and Linux. **Download the installer from
+Polaris is a desktop app for macOS, Windows, and Linux. **Download the installer from
 [Releases](https://github.com/ZJU-REAL/Polaris/releases/latest)** — `.dmg` / `.zip` (macOS, universal),
 `.exe` / portable `.zip` (Windows), `.AppImage` / `.deb` (Linux), built by CI on every `v*` tag. The
 app checks for updates and applies them without a restart where it can.
@@ -195,86 +193,62 @@ safe to run: on macOS `xattr -dr com.apple.quarantine /Applications/Polaris.app`
 Open); on Windows choose More info → Run anyway past SmartScreen; on Linux the AppImage needs
 `libnss3 libgtk-3-0 libasound2`, and `--no-sandbox` under Ubuntu 24.04+ AppArmor.
 
-Since **v0.4.0** the app is an offline, single-machine build: it ships its own Python backend and
-bootstraps it on first launch (SQLite, no Docker, no login, no server address). The first launch
-downloads a Python toolchain and dependencies, which can take a few minutes; later launches start
-immediately. If the local engine cannot start, the app falls back to asking for a Polaris server
-address, which is also how you connect to a shared multi-user server.
+The app runs everything on your computer: it ships its own Python engine and sets it up on first
+launch (SQLite, no Docker, no login, no server address). The first launch downloads a Python
+toolchain and dependencies, which can take a few minutes; later launches start immediately.
+
+Then give Polaris a model in **Settings → Models & agents**. The easiest way is an agent you already
+use: install and sign in to Claude Code, Codex, or Gemini CLI on the same computer, add it under
+**Agent backends**, and it answers every model call with no API key — see
+[Agent backends](docs/agents.md). Model APIs are optional; add one if you also want embeddings and
+reranking.
 
 > [!NOTE]
-> **v0.3.x and earlier** are remote-only shells: they always ask for a server address on first run.
-> They cannot update themselves into the local-engine build — download a v0.4.0+ installer from
+> **v0.3.x and earlier** are remote-only shells that ask for a server address on first run. They
+> cannot update themselves into the local build — download a current installer from
 > [Releases](https://github.com/ZJU-REAL/Polaris/releases/latest) and install it over the old one.
 
-To build it yourself:
+## Development
+
+Run the pieces from source:
 
 ```bash
-make desktop-deps           # install the shell's dependencies (once)
-make desktop-dev            # build the frontend and run the shell (app:// protocol)
-make desktop-dist           # package an unsigned installer for the current platform
-```
-
-See [docs/desktop.md](docs/desktop.md) for the process model, the IPC contract, and packaging notes.
-
-## Quick start
-
-> [!TIP]
-> Docker Compose is the recommended way to run Polaris, in development and in production. It needs only
-> Docker and Docker Compose installed, with no local Python, Node, or database. See
-> [docs/deployment.md](docs/deployment.md) for production deployment.
-
-```bash
-cp .env.example .env        # set provider keys and secrets
-make dev                    # full stack via docker compose, hot reload
+make venv                   # one-time: create src/backend/.venv and install dependencies
+make backend-dev            # the engine on :8000 (SQLite, in-process queue and scheduler)
+make frontend-dev           # the frontend dev server on :5173
 ```
 
 - Frontend: <http://localhost:5173>
-- Backend API docs: <http://localhost:8000/docs>
+- Engine API docs: <http://localhost:8000/docs>
 
-Local development without Docker (falls back to SQLite):
+The desktop shell:
 
 ```bash
-make backend-dev            # venv + uvicorn on :8000
-make frontend-dev           # npm install + vite dev on :5173
+make desktop-deps           # install workspace dependencies (once)
+make desktop-dev            # build the frontend and run the shell (app:// protocol)
+make desktop-dist           # package an unsigned installer for the current platform
 ```
 
 Common tasks:
 
 ```bash
 make migrate                # alembic upgrade head
-make test                   # backend pytest + frontend build
+make test                   # backend pytest + frontend tests and build
 make lint                   # ruff check + tsc --noEmit
+make help                   # list every target
 ```
 
-## Docker deployment
-
-Deploy from pre-built images on Docker Hub (`tricktreat/polaris-{api,worker,frontend}`, published by
-CI on every `v*` tag) — no local build needed:
-
-```bash
-cp .env.example .env        # set POLARIS_ENV=prod, POLARIS_IMAGE_TAG, secrets, and an LLM key
-docker compose --env-file .env -f docker/docker-compose.yml pull
-docker compose --env-file .env -f docker/docker-compose.yml up -d
-docker compose -f docker/docker-compose.yml exec api alembic upgrade head   # required on first run
-```
-
-The frontend is served at `http://<host>:8080`. The `worker` container is required (it runs all long
-tasks), and the first-run migration is mandatory (Postgres tables are not auto-created). Pass
-`--env-file .env` so Compose reads `POLARIS_IMAGE_TAG` (default `latest`) / `POLARIS_IMAGE_PREFIX`
-(default `tricktreat`) from the repo-root `.env`.
-
-For building locally instead, bind mounts, backups, and restricted networks, see
-[docs/deployment.md](docs/deployment.md).
+See [docs/development.md](docs/development.md) and [docs/desktop.md](docs/desktop.md).
 
 ## Documentation
 
 Full documentation lives in [docs/](docs/):
 
-- [Getting started](docs/getting-started.md): install, configure, and run Polaris
+- [Getting started](docs/getting-started.md): install the app, give it a model, and start a first library
+- [Agent backends](docs/agents.md): use Claude Code, Codex, and other ACP agents as Polaris's model
 - [Architecture](docs/architecture.md): system design and the Voyage agent core
 - [Concepts](docs/concepts.md): the research pipeline, Voyage, skills, and MCP tools
-- [Deployment](docs/deployment.md): production deployment with Docker Compose
-- [Desktop](docs/desktop.md): the Electron shell — process model, IPC contract, and packaging
+- [Desktop](docs/desktop.md): the Electron shell — process model, local engine, IPC contract, and packaging
 - [Configuration](docs/configuration.md): environment variables and settings
 - [Development](docs/development.md): local workflow and conventions
 
@@ -282,17 +256,18 @@ Full documentation lives in [docs/](docs/):
 
 ```text
 src/
-  backend/       FastAPI app (package: app) and ARQ worker (package: worker)
+  backend/       the engine: FastAPI app (package: app) and long-task functions (package: worker)
     app/
       api/         thin routers
       services/    business logic (ingest, wiki, ideas, review, experiments, manuscripts, ...)
       models/      SQLAlchemy models
       agents/voyage/  the Voyage engine (navigator, helm, sextant, tool loop, per-domain actions)
-      core/        config, db, queue (ARQ), events (SSE), llm/ abstraction
+      core/        config, db, in-process queue and scheduler, events (SSE), llm/ abstraction
       tools/, mcp/ read-only tool registry and the external MCP server
   frontend/      React + Vite (src/features/ has one folder per product area)
-  desktop/       Electron shell that wraps the web bundle (macOS / Windows / Linux)
-docker/          Dockerfiles and compose (base, dev override, prod overlay)
+  desktop/       Electron shell that wraps the web bundle and starts the engine
+  kernel/        plugin runtime mounted in the desktop shell
+docker/          dev/test engine image only (desktop smoke/e2e, golden recording) — not a deployment
 docs/            English project documentation
 ```
 
@@ -301,7 +276,7 @@ docs/            English project documentation
 - **Strict layering.** Thin routers call services; services hold the business logic and never import the
   web framework; models sit underneath.
 - **Deterministic vs. judgemental split.** Deterministic work (crawling, parsing, dedup) is plain code or
-  worker tasks; only judgement calls reach an LLM.
+  background tasks; only judgement calls reach an LLM.
 - **One LLM boundary.** All model calls go through a single abstraction layer, and model choice comes from
   a database routing table rather than being hard-coded.
 

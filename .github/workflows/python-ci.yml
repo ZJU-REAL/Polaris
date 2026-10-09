@@ -1,6 +1,6 @@
 # 后端全量 pytest 闸门（#728，堵住 #581「失败长期滞留 main」的口子）+ ruff 闸门（#746）。
-# 套件在 desktop 档位自足：conftest 自带 SQLite(aiosqlite) + fakeredis 与全部
-# POLARIS_* 环境变量，不需要 postgres/redis 服务容器。
+# 套件自足（与引擎同一种单进程形态，#842）：conftest 自带 SQLite(aiosqlite) + fakeredis
+# 与全部 POLARIS_* 环境变量，不需要任何服务容器。
 # docker_integration 用例（要真 docker + 镜像）由 pyproject 的 addopts 默认 deselect。
 #
 # ruff 单开一个 job 而不是塞进 pytest 的步骤里：lint 几秒出结果、套件二十多分钟，

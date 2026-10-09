@@ -12,7 +12,7 @@ authorized DeepSeek Harness profile can expose `remember`, which writes only to
 the current user's assistant memory, and only once that user has turned Buddy
 memory on — the same opt-in the in-app tool surface requires. Starting an
 ingest, forging ideas, launching an experiment, approving a gate, and drafting a
-paper remain web-only.
+paper remain in-app only.
 
 ---
 
@@ -23,9 +23,10 @@ supports the scoped profiles described below.
 
 ### Streamable HTTP (recommended)
 
-One endpoint, `POST /mcp`, authenticated with your normal platform token — the same bearer token the
-web app uses. Get yours from **Settings → MCP**, which shows the endpoint URL, your token, and a
-ready-made config block to copy.
+One endpoint, `POST /mcp` on the app's local engine (by default `http://127.0.0.1:18080/mcp`),
+authenticated with your session token — the same bearer token the app uses. Get yours from
+**Settings → MCP**, which shows the endpoint URL, your token, and a ready-made config block to copy.
+The engine only runs while the app is open.
 
 **Claude Code** — add it to `.mcp.json` in your project (or run `claude mcp add`):
 
@@ -34,7 +35,7 @@ ready-made config block to copy.
   "mcpServers": {
     "polaris": {
       "type": "http",
-      "url": "https://polaris.example.edu/mcp",
+      "url": "http://127.0.0.1:18080/mcp",
       "headers": { "Authorization": "Bearer <YOUR_TOKEN>" }
     }
   }
@@ -47,7 +48,7 @@ ready-made config block to copy.
 
 ```toml
 [mcp_servers.polaris]
-url = "https://polaris.example.edu/mcp"
+url = "http://127.0.0.1:18080/mcp"
 http_headers = { Authorization = "Bearer <YOUR_TOKEN>" }
 ```
 
@@ -56,18 +57,21 @@ If it does not, use the stdio transport below.
 ### stdio
 
 `python -m app.mcp` speaks JSON-RPC over stdin/stdout. It talks to the database directly, so it has
-to run where the backend's environment is available — in practice inside the API container or a
-checkout with the same `.env`. The user is taken from an environment variable rather than a token,
-because a local process is treated as trusted:
+to run with the engine's Python environment and be pointed at the same SQLite database — for the
+desktop app, the venv and `polaris.db` under `<userData>/engine/` (see
+[where the data lives](desktop.md#where-the-data-lives)); for a source checkout, `src/backend/.venv`
+and its `.env`. The user is taken from an environment variable rather than a token, because a local
+process is treated as trusted:
 
 ```toml
 [mcp_servers.polaris]
-command = "docker"
-args = ["exec", "-i", "-w", "/srv/backend", "polaris-api-1", "python", "-m", "app.mcp"]
-env = { POLARIS_MCP_USER_EMAIL = "you@example.edu" }
+command = "<userData>/engine/venv/bin/python"   # Windows: <userData>\engine\venv\Scripts\python.exe
+args = ["-m", "app.mcp"]
+env = { POLARIS_DATABASE_URL = "sqlite+aiosqlite:///<userData>/engine/polaris.db", POLARIS_DATA_DIR = "<userData>/engine/data", POLARIS_MCP_USER_EMAIL = "local@polaris.desktop" }
 ```
 
-`POLARIS_MCP_USER_EMAIL` must be a registered user; every call runs as that user.
+`POLARIS_MCP_USER_EMAIL` must be an existing user; every call runs as that user. On the desktop app
+that is the local user, `local@polaris.desktop`.
 
 ### Scoping and permissions
 
@@ -83,7 +87,7 @@ belonging to another topic is reported as not found, even when you can access
 it through another topic. Library visibility follows the platform's existing
 rules: your own personal libraries plus every shared library, and nothing more.
 
-You can also find a topic ID in the web app's URL: `/t/<topic-id>`.
+You can also find a topic ID in the app's URL: `/t/<topic-id>`.
 
 ---
 
@@ -184,8 +188,8 @@ Figure download URLs are signed bearer links. They expire after 15 minutes by
 default, and the download endpoint checks that the user who created the link
 can still access the paper. The image bytes don't enter the MCP response or the
 model context. HTTP figure links always use the same origin as the MCP endpoint:
-for example, `https://polaris.example.edu/mcp` returns a link under
-`https://polaris.example.edu/api/`. Download the URL when you need the actual
+for example, `http://127.0.0.1:18080/mcp` returns a link under
+`http://127.0.0.1:18080/api/`. Download the URL when you need the actual
 file.
 
 ### Outside the library
@@ -205,7 +209,7 @@ third-party APIs, so they are slower and subject to rate limits.
 | `list_gates` | Human approval checkpoints — idea promotion, compute budget, paper submission — with the task each one blocks. |
 
 Approving a gate is deliberately **not** exposed: an agent can see that work is waiting on a
-decision and tell you, but the decision stays with a person in the web app.
+decision and tell you, but the decision stays with a person in the app.
 
 ### Corpus
 
@@ -277,7 +281,7 @@ get_paper_citation paper_id=…       → the BibTeX entry for what you write
 list_tasks status="paused"          → what is stuck
 get_task task_id=…                  → blocked_on tells you which gate, last_error why it failed
 read_task_logs task_id=… level="error"
-list_gates                          → then go approve it in the web app
+list_gates                          → then go approve it in the app
 ```
 
 **Write about an experiment without making numbers up**
@@ -310,7 +314,7 @@ get_fact_pack manuscript_id=…                       → the sanctioned facts f
 
 ## 5. Checking the connection
 
-**Settings → MCP** in the web app is the control room:
+**Settings → MCP** in the app is the control room:
 
 - **Tool catalog** — every tool, its arguments, and whether it reaches the network.
 - **Self-check** — pick a topic and run the whole catalog against its real data. Each tool comes

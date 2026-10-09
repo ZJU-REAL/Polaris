@@ -22,8 +22,8 @@ A manuscript is a self-contained LaTeX project inside a topic: a file tree of `.
   automatically and binary assets are stored as read-only files.
 
 Each manuscript has a **main file** (the compile entry point) and a **compiler** — `tectonic` by
-default (always available in the Docker image), with `pdflatex` / `xelatex` / `lualatex` offered when
-TeX Live's `latexmk` is installed on the server. Both are switchable in the editor top bar,
+default (it must be installed and on your `PATH`), with `pdflatex` / `xelatex` / `lualatex` offered when
+TeX Live's `latexmk` is installed on your computer. Both are switchable in the editor top bar,
 Overleaf-style.
 
 <!-- screenshot: New manuscript modal with the template picker showing built-in, official and custom templates -->

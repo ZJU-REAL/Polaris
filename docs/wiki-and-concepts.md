@@ -196,7 +196,7 @@ The pipeline is built so that a partial failure degrades the output instead of l
 - **One paper of a batch fails.** Each paper is compiled in its own session with its own commit and
   its own `try`; the failure is collected into the step observation's `failed` list and the run
   continues (`actions_wiki.py:881-892`). `CancelledError` is re-raised rather than swallowed, so a
-  killed worker resumes at the checkpoint instead of marking papers as failed.
+  killed run resumes at the checkpoint instead of marking papers as failed.
 - **Affiliation extraction rides along.** When the `affiliations.extraction_mode` preference (stored on the deployment owner, #737) is
   `on_compile` and the paper has no affiliations yet, the compile prompt asks for an author↔institution
   block after the article. The block is **stripped from the body whether or not it parses**
@@ -614,17 +614,17 @@ compiled paper *with its full wiki markdown* and builds several dicts over it
 kilobytes of markdown each this is tens of megabytes per call — acceptable, but not something to
 scale another order of magnitude without changing.
 
-**SQLite and PostgreSQL are not equivalent here.** Tests run on SQLite (`tests/conftest.py:15`),
-production on PostgreSQL.
+**SQLite quirks.** Both the tests (`tests/conftest.py:15`) and the desktop app's engine run on
+SQLite; older server instances ran on PostgreSQL.
 - `Concept.name.in_(all_names)` is a bind parameter per name. Older SQLite builds cap variables at
-  999; a library with more distinct concept names than that would fail in tests while working in
-  production (PostgreSQL's limit is 65535).
+  999; a library with more distinct concept names than that would fail there (PostgreSQL's limit is
+  65535).
 - `ILIKE` on PostgreSQL does Unicode-aware case folding; SQLAlchemy's `ilike` on SQLite becomes
   `LIKE`, which only folds ASCII. Irrelevant for CJK names, relevant for accented Latin ones.
 - The concept migration uses `batch_alter_table` to drop `library_id`, because SQLite cannot drop a
   column in place.
-- Semantic paper search ranks in pgvector on PostgreSQL and in Python on SQLite
-  (`services/vector_search.py`) with the same results. Concept search is keyword-only on both.
+- Semantic paper search scores stored vectors in Python (`services/vector_search.py`).
+  Concept search is keyword-only.
 
 **Truncation is invisible.** The body is cut at 24000 characters with no marker and no warning in the
 response; a long paper is compiled from its first ~24k characters. Similarly, definition batches are

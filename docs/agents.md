@@ -40,12 +40,9 @@ with its own command, arguments and environment variables.
 
 ## Set it up
 
-1. Install the agent and sign in **on the machine that runs Polaris** (your
-   computer for the desktop app; the server for a self-hosted deployment). The
-   stock Docker `api` image has no Node.js, so on a Docker deployment the agents
-   have to be added to a derived image; the desktop app uses whatever is
-   installed on your computer.
-2. Open **Settings → Agent backends**. Installed agents are marked; pick one and
+1. Install the agent and sign in **on the same computer as the Polaris app**.
+   The app's engine uses whatever is installed there.
+2. Open **Settings → Models & agents** and go to **Agent backends**. Installed agents are marked; pick one and
    click **Add**.
 3. Click **Check connection**. Polaris starts the agent, completes the handshake and shows
    what it reported: name, version, whether it can resume sessions and whether
@@ -54,9 +51,8 @@ with its own command, arguments and environment variables.
 4. In the assistant panel, choose the agent from the backend picker. The choice
    is remembered per conversation; switch back to **Polaris** at any time.
 
-Only the platform owner can register agents, because registering one lets the
-server run that command. Other accounts on the same server can use an agent
-only if the owner marks it **shared** — it spends the owner's subscription.
+Only the owner — on the desktop app, you — can register agents, because
+registering one lets Polaris run that command on your computer.
 
 ## The agent as Polaris's model
 
@@ -67,8 +63,7 @@ now. The rules:
    or at an agent.
 2. Otherwise it follows the `default` route, which can also point at an agent.
    Use **Use as default model** on an agent to set it.
-3. With no `default` route at all, the first enabled agent answers. For other
-   accounts on the same server, only agents marked **shared** count.
+3. With no `default` route at all, the first enabled agent answers.
 
 Every model call runs in a fresh agent session, so earlier calls never colour
 later ones. The session:
@@ -95,9 +90,8 @@ Differences from a model API:
 - An experiment's `eval_model` option, which gives experiment code on another
   machine its own model access, needs a model API.
 
-The API server and the background worker each keep their own small pool of
-agent processes, so on a server deployment the agent must be installed and
-signed in for the user that runs both.
+The engine keeps a small pool of agent processes for model calls, so the
+agent must stay installed and signed in for your user account.
 
 ## What the agent may do
 
@@ -123,7 +117,7 @@ writes files through Polaris, the path must stay inside that directory —
 (one approval allows one write; "always allow" covers the rest of the session). Commands the agent runs with its own tools are governed by
 the agent's own sandbox, so keep **Allow automatically** for agents you trust.
 
-The agent process does not inherit the server's environment. It gets the
+The agent process does not inherit the engine's environment. It gets the
 basics it needs (`PATH`, `HOME`, locale, proxy settings) plus the variables you
 set on the agent — never database URLs, encryption keys or provider API keys.
 

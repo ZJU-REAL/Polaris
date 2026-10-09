@@ -5,9 +5,8 @@ researchers, desktop first. It runs the entire research lifecycle in one applica
 survey, idea generation, idea review, experiments on real GPU servers, LaTeX paper writing, and
 paper review. Each stage produces durable artifacts that the next stage consumes — so you can go
 from "new direction" to "reviewed draft" without stitching together notebooks, chat windows, and
-shell sessions. The [desktop app](desktop.md) is a self-contained offline build with its own local
-backend (no account, no server to set up); the same codebase also deploys as a multi-user web
-server for a group.
+shell sessions. Polaris is a [desktop app](desktop.md): a self-contained offline build with its own
+local engine (no account, no server to set up).
 
 <video controls src="./assets/polaris-demo.mp4" poster="./assets/polaris-demo-cover.jpg"></video>
 
@@ -15,25 +14,27 @@ server for a group.
 
 **Deterministic heavy lifting, LLM judgement calls.** The expensive mechanical work — crawling,
 parsing, deduplication, watermark-based incremental sync, metric parsing, citation matching — is
-ordinary code running in a worker. LLMs are reserved for the decisions that actually need judgement:
+ordinary code running as background tasks. LLMs are reserved for the decisions that actually need judgement:
 relevance scoring, synthesis, drafting, and review. Guardrails live in code, not prompts: experiment
 numbers may only come from real run metrics, and citations must map to real knowledge-base entries.
 This split keeps runs cheap, reproducible, and auditable.
 
 **Every long task is a Voyage.** Research tasks are long-running by nature — a cold-start
 literature backfill takes hours, an experiment runs for days. Polaris treats every such task as a
-**Voyage**: a persisted, resumable, human-gated agent run backed by a state machine. If a worker
-dies mid-run, the run resumes from its last checkpoint. Budgets auto-pause it when exceeded, steps
+**Voyage**: a persisted, resumable, human-gated agent run backed by a state machine. If the app
+quits or crashes mid-run, the run resumes from its last checkpoint. Budgets auto-pause it when exceeded, steps
 that need a human create an approval gate, and when the agent is genuinely stuck it asks you a
 question instead of failing. Every plan, action, and verdict is retained and replayable in the UI.
 The full loop — Navigator plans, Helm executes, Sextant verifies — is explained in
 [Core concepts](concepts.md) and, at implementation depth, in [The task system](task-system.md).
 
-**Built for individual researchers.** On the desktop app there is no login at all — the machine's
-owner is the only user and their own admin. On a server deployment, registration is gated by a
-deployment-level invite code. Either way, every account gets per-user encrypted SSH credentials,
-per-call token and cost accounting attributed to user, project, and run, and its own libraries
-(share one by flipping it public, with optional monthly AI budgets).
+**Built for individual researchers.** There is no login at all — the computer's owner is the only
+user and their own admin. You get encrypted SSH credentials, per-call token and cost accounting
+attributed to project and run, and your own libraries (with optional monthly AI budgets).
+
+**Bring your own agent.** The easiest way to give Polaris a model is an agent you already use:
+Claude Code, Codex, Gemini CLI and other ACP agents answer model calls with no API key, and can also
+drive the assistant. Model APIs are optional. See [Agent backends](agents.md).
 
 ## The pipeline, stage by stage
 
@@ -47,7 +48,7 @@ flowchart LR
 
 | Stage | What Polaris does | Guide |
 | --- | --- | --- |
-| **Literature** | The Research Wiki ingests papers from OpenAlex, Semantic Scholar, and arXiv, scores relevance against each direction library's inclusion config, extracts full text and figures, and compiles a cross-linked wiki page per paper — one wiki per paper, shared platform-wide. A daily arXiv feed keeps libraries current; pgvector powers semantic search. | [Literature guide](literature.md) |
+| **Literature** | The Research Wiki ingests papers from OpenAlex, Semantic Scholar, and arXiv, scores relevance against each direction library's inclusion config, extracts full text and figures, and compiles a cross-linked wiki page per paper — one wiki per paper, shared platform-wide. A daily arXiv feed keeps libraries current. | [Literature guide](literature.md) |
 | **Idea** | Idea Forge runs multi-signal gap analysis over the knowledge base (concept co-occurrence holes, paper limitations, trend velocity), generates ideas with retrieval-planned prompts, scores them on four axes, deduplicates semantically, and hardens the winner into a full research proposal. | [Ideas guide](ideas.md) |
 | **Idea review** | Configurable-persona reviewer agents debate ideas pairwise; a judge produces an Elo tournament ranking. Lab members join the discussion live, and their comments enter the agent context as first-class input. Promotion to experiment passes a human gate. | [Ideas guide](ideas.md) |
 | **Experiment** | The Experiment Lab reaches your lab's GPU servers over per-user encrypted SSH. An experiment run plans the study (optionally pausing at a compute-budget approval if you ask for one), writes code, smoke-tests it, launches runs with streamed logs and live metric curves, then iterates on the results — and pauses to ask you a question when it is stuck. | [Experiments guide](experiments.md) |
@@ -94,12 +95,12 @@ looks like; to do real work, [run your own instance](getting-started.md).
 
 | If you want to… | Read |
 | --- | --- |
-| Install and run Polaris | [Getting started](getting-started.md) |
+| Install the app and give it a model | [Getting started](getting-started.md) |
 | Understand the mental model (pipeline, Voyages, skills, tools) | [Core concepts](concepts.md) |
 | See how the system is put together | [Architecture](architecture.md) |
 | Configure environment variables and model routing | [Configuration](configuration.md) |
-| Deploy for your lab | [Deployment](deployment.md) |
-| Install the desktop client | [Desktop](desktop.md) |
+| Use Claude Code or another agent as the model | [Agent backends](agents.md) |
+| Understand how the desktop app runs its engine | [Desktop](desktop.md) |
 | Extend the desktop app with plugins | [Plugins](plugins.md) |
 
 > [!TIP]

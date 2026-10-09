@@ -1,6 +1,6 @@
 # Polaris 中文文档
 
-Polaris 是一个面向个人研究者的开源自主科学发现（Deep Research）平台，桌面优先：文献调研、想法生成、想法评审、自动实验、论文写作、论文评审六个阶段在同一个应用里完成。桌面版自带本地后端，免登录、单机离线可用；同一代码库也可部署为多用户的 Web 服务。每个长任务都是一次可恢复、可审计的 Voyage 运行。
+Polaris 是一个面向个人研究者的开源自主科学发现（Deep Research）平台，桌面优先：文献调研、想法生成、想法评审、自动实验、论文写作、论文评审六个阶段在同一个应用里完成。它是一个桌面应用，自带本地引擎，免登录、单机离线可用，不需要架服务器。每个长任务都是一次可恢复、可审计的 Voyage 运行。
 
 ::: tip 中文文档正在建设中
 目前已提供本导览与[快速上手](getting-started.md)的中文版本，其余篇目请先阅读英文文档，我们会逐篇补齐中文翻译。
@@ -10,10 +10,10 @@ Polaris 是一个面向个人研究者的开源自主科学发现（Deep Researc
 
 | 想做什么 | 去哪里 |
 | --- | --- |
-| 用 Docker 把平台跑起来 | [快速上手](getting-started.md)（中文） |
+| 安装桌面应用并配好模型 | [快速上手](getting-started.md)（中文） |
 | 了解平台整体是什么、能做什么 | [Introduction](../../docs/index.md)（英文） |
 | 配置模型、密钥与各项服务 | [Configuration](../../docs/configuration.md)（英文） |
-| 部署到服务器 | [Deployment](../../docs/deployment.md)（英文） |
+| 用 Claude Code 等智能体当模型 | [Agent backends](../../docs/agents.md)（英文） |
 
 ## 六个阶段的使用指南（英文）
 

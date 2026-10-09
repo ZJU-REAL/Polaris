@@ -34,7 +34,7 @@ body:
         - skills
         - llm routing / usage
         - auth / users
-        - infra / deploy
+        - desktop app / build / CI
         - docs
         - other / not sure
     validations:

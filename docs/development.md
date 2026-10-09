@@ -1,14 +1,19 @@
 # Development
 
-This is the practical guide for working on Polaris locally. For first-time setup, see
+This is the practical guide for working on Polaris from source. To install and use the app, see
 [Getting Started](getting-started.md); for the design behind the code, see
 [Architecture](architecture.md).
+
+Polaris ships only as the desktop app, whose local engine is a single process: FastAPI with SQLite,
+an in-process task queue, an in-process Redis stand-in, and an in-process scheduler. Running from
+source is the same engine, so you need no Docker, database server, or broker — just Python 3.12+,
+Node.js 18+, and pnpm.
 
 ## Repository layout
 
 ```text
 src/
-  backend/           FastAPI app + ARQ worker (Python 3.12)
+  backend/           the engine (Python 3.12)
     app/
       api/           thin FastAPI routers (no business logic)
       services/      business logic (ingest, wiki, ideas, review, experiments, manuscripts, skills, ...)
@@ -16,54 +21,47 @@ src/
       schemas/       Pydantic v2 request/response models
       agents/
         voyage/      the Voyage engine: navigator, helm, sextant, checks, tool_loop, per-domain actions
-      core/          config, db, redis, queue (ARQ), events (SSE), security (Fernet), llm/ abstraction
+      core/          config, db, redis (in-process stand-in), queue, scheduler, events (SSE),
+                     security (Fernet), llm/ abstraction
       tools/         read-only tool registry (shared by the agent loop and the MCP server)
       mcp/           external MCP server (Streamable HTTP and stdio)
-    worker/          ARQ worker
+    worker/          tasks.py: the long-task functions the in-process queue and scheduler run
     tests/
   frontend/          React 18 + TypeScript 5 + Vite 5
     src/features/    one folder per product area: wiki, reading, forge, review, experiment,
                      writer, paper-review, voyages, skills, mcp, settings, ...
-docker/              Dockerfiles and compose (base, dev overlay, prod overlay), nginx config
+  desktop/           Electron shell: window, app:// protocol, engine bootstrap, packaging
+  kernel/            plugin kernel mounted in the shell (starts the engine via legacy-engine)
+docker/              dev/test engine image only (Dockerfile.api + Dockerfile.texbase) — not a deployment
 docs/                this documentation
 ```
 
-## Running the stack
-
-The fastest way to run everything with hot reload is Docker:
-
-```bash
-make dev     # full stack via docker compose (dev overlay), hot reload
-make logs    # tail all services
-make down    # stop and remove containers
-```
-
-- Frontend: <http://localhost:5173>
-- Backend API docs: <http://localhost:8000/docs>
-
-## Running backend or frontend standalone
-
-For focused work you can run each side without Docker. The backend falls back to SQLite when
-`POLARIS_DATABASE_URL` is not pointed at Postgres, so no external database is required.
+## Running from source
 
 ```bash
 make venv          # one-time: create src/backend/.venv and install deps (editable, with dev extras)
-make backend-dev   # uvicorn app.main:app --reload --port 8000
-make frontend-dev  # pnpm install # npm install && vite dev on :5173# npm install && vite dev on :5173 vite dev on :5173
+make backend-dev   # the engine: uvicorn app.main:app --reload --port 8000
+make frontend-dev  # pnpm install && vite dev on :5173
 ```
 
-> [!NOTE]
-> Under the dev overlay, the worker uses `arq --watch`, which only reloads the settings module.
-> Modules already imported under `app/` are not refreshed, so run `docker compose restart worker`
-> after editing worker code.
+- Frontend: <http://localhost:5173>
+- Engine API docs: <http://localhost:8000/docs>
+
+The engine started this way uses `polaris_dev.db` (SQLite) and `./data` in `src/backend/`, creates
+its tables on startup, and runs the same scheduler as the desktop app. To override settings, copy
+`.env.example` to `src/backend/.env` (see [Configuration](configuration.md)).
+
+To work on the desktop shell, see [Desktop](desktop.md#developing-and-packaging):
+`make desktop-dev` builds the frontend and starts the shell. In development the shell starts no
+engine unless you set `POLARIS_DESKTOP_ENGINE`.
 
 ## Migrations, tests, and linting
 
 ```bash
 make migrate   # cd src/backend && alembic upgrade head (uses the local venv)
-make test      # backend pytest + frontend build
+make test      # backend pytest + frontend tests and build
 make lint      # ruff check (backend) + tsc --noEmit (frontend and desktop)
-make build     # build production images
+make help      # list every target
 ```
 
 Two backend test suites deserve a special mention: the **golden transcripts** under
@@ -71,6 +69,20 @@ Two backend test suites deserve a special mention: the **golden transcripts** un
 If one fails on your branch, read [the golden policy](golden-policy.md) before touching anything —
 re-recording (`make golden-record`) is only legitimate for an intentional, human-reviewed wire
 change.
+
+### The engine image for tests
+
+`docker/` holds one image, built with `make engine-image` and tagged `polaris-api-test:local`. It is
+the engine with TeX preinstalled, used for:
+
+- `make golden-record`, which records inside a throwaway container;
+- the desktop smoke and E2E groups that run the engine in Docker
+  (`POLARIS_SMOKE_ENGINE=1` / `POLARIS_E2E_ENGINE=1`, with
+  `POLARIS_DESKTOP_ENGINE=docker:polaris-api-test:local:<absolute path to src/backend>`).
+
+It is not a way to deploy Polaris. On networks that cannot reach GitHub, apt, or PyPI directly, pass
+the mirror arguments listed in [Configuration](configuration.md#engine-image-build-arguments-dev-and-tests),
+e.g. `GITHUB_PROXY=https://gh-proxy.com/ APT_MIRROR=repo.huaweicloud.com make engine-image`.
 
 ## Layering convention
 
@@ -82,8 +94,9 @@ The backend follows one strict rule, and reviews enforce it:
 - **All LLM calls go through `app/core/llm/`.** No direct provider SDK imports in business code; model
   choice comes from the DB routing table.
 - **Deterministic vs. judgemental split.** Crawling, parsing, deduplication, and watermark logic are
-  ordinary code or worker tasks; only judgement calls (scoring, synthesis, generation) reach an LLM.
-- **Long tasks go through the ARQ worker**, never in the request thread. Complex multi-step tasks use
+  ordinary code or background tasks; only judgement calls (scoring, synthesis, generation) reach an LLM.
+- **Long tasks go through the task queue** (`app/core/queue.py`, in-process), never in the request
+  handler; periodic work goes in the engine scheduler (`app/core/scheduler.py`). Complex multi-step tasks use
   the Voyage engine (Navigator plans, Helm executes, Sextant verifies) with a persistent state
   machine; nodes that need a human create a gate and pause until approved.
 - **Secrets are encrypted at rest** with Fernet (`app/core/security.py`); no secrets in logs; every
@@ -131,7 +144,8 @@ The full rules live in the project's Git workflow guide; the essentials:
 - **Commits, PRs, and issues are in English.** Use conventional commits
   (`feat/fix/chore/docs/refactor(scope): ...`). File the issue first and link the PR with
   `Closes #N`.
-- **Production deploys only from `origin/main`,** never from a local branch.
+- **Releases are cut only from `origin/main`** (a `v*` tag builds the desktop installers), never
+  from a local branch.
 
 ## The MCP tools during development
 

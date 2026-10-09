@@ -1,137 +1,71 @@
 # 快速上手
 
-这篇指南带你把 Polaris 的**服务器（Web）形态**在自己的机器上跑起来，并完成第一次登录。推荐走 Docker 路线，除 Docker 外无需安装任何东西；如果只做后端或前端开发，也有免 Docker 的本地路线。生产部署见 [Deployment](../../docs/deployment.md)（英文），完整环境变量参考见 [Configuration](../../docs/configuration.md)（英文）。
+Polaris 是一个桌面应用。所有东西都在你自己的电脑上运行——一个本地引擎加一个 SQLite 数据库——所以不用架服务器、不用注册账号，首次启动前也什么都不用配。这篇指南带你从安装应用一路走到建好第一个文献库。想参与开发 Polaris 本身，见 [Development](../../docs/development.md)（英文）；引擎读取的环境变量见 [Configuration](../../docs/configuration.md)（英文）。
 
-> [!TIP]
-> 只想在自己的电脑上用 Polaris？[桌面版](../../docs/desktop.md)（英文）才是零配置路线：安装包自带本地后端（SQLite，不需要 Docker 和任何外部服务），首次启动自动装好环境，免登录开箱即用。本地引擎要求 **v0.4.0 及以上**，v0.3.x 的安装包仍会要求填服务器地址。本篇针对的是多用户的服务器形态。
+## 1. 安装应用
 
-## 环境自检
+到 [Releases](https://github.com/ZJU-REAL/Polaris/releases/latest) 下载对应平台的安装包：
 
-Docker 路线（推荐）需要：
-
-- **Docker Engine 24+** 和 **Docker Compose v2**（`docker compose` 子命令，不是旧的 `docker-compose` 二进制）。用 `docker --version` 和 `docker compose version` 确认。
-- **空闲端口**：`5173`（Vite 开发服务器）、`8000`（API，可用 `POLARIS_API_PORT` 改）、`8080`（生产模式的 nginx 前端，可用 `POLARIS_FRONTEND_PORT` 改）。
-- **磁盘**：镜像比较大，仅共享的 TeX 基础镜像（tectonic + TeX Live + 中日韩字体）就有数 GB。镜像加数据卷预留约 20 GB。
-- **内存**：完整栈要跑五个服务（Postgres、Redis、API、worker、前端），8 GB 起步比较从容。
-- **网络**：首次构建要从 GitHub 下载 tectonic 二进制和字体包，还要装 apt 包和 pip 依赖。如果网络访问这些源不畅，见 [Deployment](../../docs/deployment.md#restricted-networks) 的镜像构建参数，以及下方[常见首跑报错](#常见首跑报错)第一行。
-
-免 Docker 路线还需要：
-
-- Python 3.12 及以上
-- Node.js 18 及以上（含 npm）
-
-> [!TIP]
-> Docker 路线不需要本地装 Python、Node、PostgreSQL 或 Redis，数据库和缓存都在容器里，且支持热重载。
-
-## 1. 克隆仓库
-
-```bash
-git clone https://github.com/ZJU-REAL/Polaris.git polaris
-cd polaris
-```
-
-## 2. 配置 `.env`
-
-复制示例文件，改你需要的值：
-
-```bash
-cp .env.example .env
-```
-
-第一次正式运行前，至少设置这几项：
-
-| 键 | 作用 |
+| 平台 | 文件 |
 | --- | --- |
-| `POLARIS_SECRET_KEY` | 签发 JWT 登录令牌。用 `openssl rand -hex 32` 生成一个。 |
-| `POLARIS_ENCRYPTION_KEY` | 加密 SSH 凭据的 Fernet 密钥。用 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 生成。开发环境可以留**空**（会从 secret key 派生），但不要保留模板里的占位符：它不是合法的 Fernet 密钥，保存 SSH 凭据会失败。 |
-| `POLARIS_INVITE_CODE` | 注册用的邀请码，默认 `polaris-lab`。 |
+| macOS（universal） | `.dmg` 或 `.zip` |
+| Windows | `.exe` 安装包或便携版 `.zip` |
+| Linux | `.AppImage` 或 `.deb` |
 
-常见的可选项：`POLARIS_S2_API_KEY`（Semantic Scholar，更高的速率限额）和 `POLARIS_OUTBOUND_PROXY`（直连 arXiv / Semantic Scholar / OpenAlex 不稳定时使用；在 Docker 内用 `http://host.docker.internal:<端口>`）。完整参考见 [Configuration](../../docs/configuration.md)。
+这些构建**既未签名也未公证**，所以每个平台都要先告诉系统一次它是安全的：
+
+- **macOS**：执行 `xattr -dr com.apple.quarantine /Applications/Polaris.app`，或右键应用选「打开」。
+- **Windows**：在 SmartScreen 提示里选「更多信息 → 仍要运行」（便携版 zip 不会弹这个提示）。
+- **Linux**：AppImage 需要 `libnss3 libgtk-3-0 libasound2`；在 Ubuntu 24.04+ 的 AppArmor 限制下要加 `--no-sandbox` 启动。
 
 > [!NOTE]
-> 模型服务商、密钥和模型路由表都在登录后的管理页里配置（存数据库），不走 `.env`。
+> v0.3.9 及更早的版本只是连接远程服务器的外壳，一定会要求填服务器地址，也没法自己更新成本地版。请下载当前版本直接覆盖安装。
 
-## 3. 启动完整栈（Docker）
+## 2. 首次启动
 
-```bash
-make dev
-```
+首次启动时应用会装好自己的引擎：把 Python 工具链和引擎依赖下载到它自己的数据目录里，然后启动引擎、打开主窗口。进度页会显示每一步。这可能需要几分钟；之后启动会跳过这一步，直接打开。
 
-首次运行会做两件重活：先构建共享的 TeX 基础镜像（`make texbase`，之后有缓存，只有 `docker/Dockerfile.texbase` 变了才重建），然后构建并启动所有服务：带 pgvector 的 PostgreSQL、Redis、API、ARQ worker 和前端，源码以 bind-mount 挂载并支持热重载。
+不需要登录：你是唯一的用户，应用里的一切都归你。你的数据——SQLite 数据库、PDF、导出文件、实验日志——都在应用的用户数据目录里，见 [Where the data lives](../../docs/desktop.md#where-the-data-lives)（英文）。
 
-**然后执行数据库迁移**（必需：Postgres 的表不会自动创建，只有免 Docker 的 SQLite 路线才会在启动时建表）：
+应用会检查更新（设置 → 关于），能不重装就直接应用。
 
-```bash
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml \
-  exec api alembic upgrade head
-```
+## 3. 给 Polaris 配一个模型
 
-启动完成后：
+打开 **设置 → 模型与智能体**（`/settings?tab=llm`）。在有可用模型之前，AI 功能会返回 `LLM_NOT_CONFIGURED`。
 
-- 前端：<http://localhost:5173>
-- 后端 API 文档（OpenAPI / Swagger UI）：<http://localhost:8000/docs>
+- **最省事：智能体后端。** 如果你已经在用 Claude Code、Codex 或 Gemini CLI，在同一台电脑上装好并登录，然后在 **智能体后端** 里添加它，点 **检查连接**。没配模型 API 时，第一个启用的智能体会回答所有模型调用——不需要 API key。见 [Agent backends](../../docs/agents.md)（英文）。
+- **可选：模型 API。** 添加一个提供商（OpenAI 兼容、OpenAI Responses 或 Anthropic）并填入密钥，再在路由表里把各科研阶段映射过去。向量嵌入和重排只能来自模型 API；没有的话，检索会退回关键词匹配。
 
-看日志、停服务：
+<!-- screenshot: Settings → Models & agents, the model routing table -->
 
-```bash
-make logs    # 跟踪所有服务日志
-make down    # 停止并移除容器
-```
+## 4. 在应用里接着做
 
-## 4. 第一次登录
+按顺序来，每一步都为下一步铺路。
 
-1. 打开前端 <http://localhost:5173>。
-2. 用 `POLARIS_INVITE_CODE` 里的邀请码注册（默认 `polaris-lab`）。没有配置 SMTP 时，注册不需要邮箱验证码。
+1. **连接一台 SSH 服务器**（实验阶段需要）——**设置 → SSH 凭据**（`/settings?tab=ssh`）。添加主机和密钥，然后点 **测试连接**；凭据会加密保存。实验策略（命令白名单/黑名单、预算）在 **设置 → 实验** 里。
+2. **建第一个方向文献库**——打开 **文献库**（`/libraries`）新建一个。一场结构化的 AI 访谈会帮你写出收录配置（方向陈述、目标、范围、排除项），运行摄入就会构建语料：候选检索、引用滚雪球、相关性打分、全文抽取和 wiki 编译，整个过程是一个可恢复的任务。
+3. **建课题并关联文献库**——新建一个课题（`/projects/new`），再把一个或多个方向文献库关联上去。课题本身不存论文，它的语料就是所关联文献库的并集。之后按流水线一阶段一阶段往下走——见 [Core concepts](../../docs/concepts.md)（英文）。
+4. **可选：配置每日新论文**——**设置 → 每日论文** 里设置订阅的分类和每天抓取的时间。引擎每隔几分钟检查一次是否到点，所以只有应用开着的时候才会更新。
+5. **可选：打开 PolarisBuddy 的工具循环**——应用内助手的多轮工具循环默认关闭（它每一轮都要重发历史和工具 schema，比一次性对话贵得多）。开关是环境变量 `POLARIS_CHAT_AGENT_ENABLED=1`；引擎会继承应用的环境变量，所以在终端里带上这个变量启动应用即可。
 
-## 5. 登录后做什么
+> [!WARNING]
+> 实验模块会通过 SSH 连接真实的 GPU 服务器并在上面运行生成的代码。每条远程命令都来自固定的模板白名单并写入审计日志，创建实验时也可以要求显式的算力预算审批——但你仍然应该只把 Polaris 指向你自己控制的机器，并定期查看审计日志。
 
-按顺序做，每一步为下一步铺路。
-
-1. **配置模型服务商和路由**：进入 **设置 → 模型与路由**（`/settings?tab=llm`）。在这里添加服务商（含密钥）、列出模型，并编辑模型路由表（把每个研究阶段映射到服务商、模型和可选的推理力度）。在至少一条路由可用之前，AI 功能会返回 `LLM_NOT_CONFIGURED`。
-2. **连接 SSH 服务器**（实验阶段需要）：**Settings → SSH credentials**（`/settings?tab=ssh`）。添加主机和密钥，然后点 **Test connection**；凭据用 Fernet 密钥加密存储。实验策略（命令允许/拒绝列表、预算）在 **设置 → 实验设置**。
-3. **创建第一个方向文献库**：进入 **Libraries**（`/libraries`）创建。结构化的 AI 访谈会帮你写好收录配置（陈述、目标、范围、排除项），运行收录后会构建语料：候选检索、引文滚雪球、相关性打分、全文抽取和 wiki 编译，整个过程是一个可恢复的任务。
-4. **创建课题并关联文献库**：新建课题（`/projects/new`），再关联一个或多个方向文献库。课题本身不持有论文，语料是所关联文献库的并集。之后就可以按阶段推进流水线，见 [The Voyage agent core](../../docs/concepts.md)。
-5. **可选：启用 PolarisBuddy**：应用内助手的多轮工具循环默认关闭（每轮都重发历史和工具定义，比单轮聊天费钱）。在 `.env` 里设 `POLARIS_CHAT_AGENT_ENABLED=1` 并重启即可启用。
-6. **可选：配置每日论文订阅**：**设置 → 每日论文** 设置订阅分类和每日抓取时间。
-
-<!-- screenshot: 设置 → 模型与路由，模型路由表 -->
-
-## 常见首跑报错
+## 常见首跑问题
 
 | 现象 | 原因与解决 |
 | --- | --- |
-| `make dev` 在构建 `polaris-texbase` 时失败（GitHub 下载卡住或 apt 很慢） | TeX 基础镜像要从 GitHub 下载 tectonic 二进制和中日韩字体包，还有一次大的 apt 安装。受限网络下传镜像参数：`GITHUB_PROXY=https://gh-proxy.com/ APT_MIRROR=repo.huaweicloud.com make texbase`，然后重跑 `make dev`。PyPI 慢就给 compose 构建传 `PIP_INDEX_URL`。见 [Deployment](../../docs/deployment.md#restricted-networks)。 |
-| 启动时报 `port is already allocated` | 5173、8000 或 8080 被占用。设置 `POLARIS_API_PORT` / `POLARIS_FRONTEND_PORT` 并传给 compose（export 出来，或用 `--env-file .env` 跑 compose：Makefile 不会传它，而 compose 的变量插值读的是 compose 文件旁边的 `.env`，不是仓库根目录的）。开发覆盖层里 5173 是固定的。 |
-| API 起来了但每个页面都报错，日志里有 `relation "..." does not exist` | 没跑迁移。执行第 3 步里的 `alembic upgrade head`。之后每次更新带来新迁移时也要再跑。 |
-| AI 功能返回 `LLM_NOT_CONFIGURED`（HTTP 503） | 还没有配置模型服务商，或路由表里没有可用路由。在 **设置 → 模型与路由** 里配置服务商和路由。 |
-| 保存 SSH 凭据时报和 Fernet 有关的服务器错误 | `POLARIS_ENCRYPTION_KEY` 还是 `.env.example` 里的占位符，不是合法的 Fernet 密钥。设一个真密钥（见第 2 步），或在开发环境留空。注意之后再换密钥会导致已存的凭据无法解密。 |
-| 文献收录什么都搜不到 / arXiv、Semantic Scholar、OpenAlex 超时 | 你的网络直连这些文献 API 不通或不稳。设置 `POLARIS_OUTBOUND_PROXY`（例如 Docker 宿主机上的代理 `http://host.docker.internal:7897`）并重启。 |
-| 改了 worker 代码但行为没变 | 开发覆盖层里 worker 的 `arq --watch` 只会重载配置模块。执行 `docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml restart worker`。 |
-
-## 免 Docker 本地路线
-
-只做后端或前端开发时可以分别直接跑。`POLARIS_DATABASE_URL` 不指向 Postgres 时，后端会退回本地 SQLite 数据库（并在启动时建表），快速上手不需要外部数据库。
-
-后端（首次 `make venv` 会创建虚拟环境，然后在 8000 端口跑 uvicorn）：
-
-```bash
-make venv          # 一次性：创建 src/backend/.venv 并安装依赖
-make backend-dev   # uvicorn app.main:app --reload --port 8000
-```
-
-前端（安装依赖并在 5173 端口跑 Vite 开发服务器）：
-
-```bash
-make frontend-dev  # npm install && npm run dev
-```
-
-> [!WARNING]
-> Experiment Lab 会通过 SSH 连接真实的 GPU 服务器并在上面运行生成的代码。远程写入有人工审批和命令允许/拒绝列表把关，但仍建议只把 Polaris 指向你自己掌控的机器，并留意审计日志。
+| 进度页停在 `python` 或 `install` | 首次启动要下载 Python 工具链和依赖包。检查网络（或代理）后重启应用，安装会干净地从头再来。 |
+| macOS 提示应用「已损坏」或无法打开 | 未签名构建带着隔离标记。执行 `xattr -dr com.apple.quarantine /Applications/Polaris.app`。 |
+| AI 功能返回 `LLM_NOT_CONFIGURED`（HTTP 503） | 没有启用的智能体后端，也没有可用的模型 API 路由。到 **设置 → 模型与智能体** 添加一个智能体或模型 API。 |
+| 智能体后端 **检查连接** 失败 | 这台电脑上没装这个智能体，或者没登录。错误信息会写明要执行的安装或登录命令。 |
+| 文献摄入什么都找不到 / arXiv、Semantic Scholar 或 OpenAlex 超时 | 你的网络直连文献 API 被挡或不稳定。为文献 API 设置出站代理（见 [Configuration](../../docs/configuration.md)，英文）。 |
+| LaTeX 编译提示编译器未安装 | 稿件用你电脑上装的 `tectonic`（或经 `latexmk` 调用的 TeX Live）编译。装好其中一个，并确认它在 `PATH` 里。 |
 
 ## 下一步
 
-- [中文导览](index.md)：各阶段能做什么，以及各篇指南的入口。
-- [Introduction](../../docs/index.md)（英文）：完整的平台介绍。
-- [Configuration](../../docs/configuration.md)（英文）：完整环境变量参考。
-- [Development](../../docs/development.md)（英文）：本地开发流程、迁移、测试与 Git 约定。
-- [Deployment](../../docs/deployment.md)（英文）：生产部署。
+- [Introduction](../../docs/index.md)（英文）：每个流水线阶段做什么，并链接到各阶段的使用指南。
+- [Core concepts](../../docs/concepts.md)（英文）：流水线、Voyage、技能与 MCP 工具。
+- [Agent backends](../../docs/agents.md)（英文）：把 Claude Code 等智能体当作 Polaris 的模型。
+- [Desktop app](../../docs/desktop.md)（英文）：应用如何启动引擎，数据放在哪里。
+- [Development](../../docs/development.md)（英文）：从源码运行 Polaris、迁移、测试与 Git 约定。

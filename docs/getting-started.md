@@ -1,173 +1,86 @@
 # Getting started
 
-This guide gets the **server (web) form** of Polaris running on your machine and through your
-first login. The recommended path uses Docker and needs nothing else installed. A no-Docker local
-path is also documented for focused backend or frontend development. For production deployment,
-see [Deployment](deployment.md); for the full environment variable reference, see
-[Configuration](configuration.md).
+Polaris is a desktop app. It runs everything on your own computer — a local engine with a SQLite
+database — so there is no server to set up, no account to create, and nothing to configure before
+the first launch. This guide takes you from installing the app to your first literature library.
+For working on Polaris itself, see [Development](development.md); for the environment variables the
+engine reads, see [Configuration](configuration.md).
 
-> [!TIP]
-> Just want Polaris on your own machine? The [desktop app](desktop.md) is the zero-setup path: it
-> ships its own local backend (SQLite, no Docker, no external services) and bootstraps it on first
-> launch — there is no login and nothing to configure. The local engine needs **v0.4.0 or later**;
-> v0.3.x installers still ask for a server address. This guide is for the multi-user server form.
+## 1. Install the app
 
-## Prerequisites check
+Download the installer for your platform from
+[Releases](https://github.com/ZJU-REAL/Polaris/releases/latest):
 
-The Docker path (recommended) needs:
-
-- **Docker Engine 24+** and **Docker Compose v2** (the `docker compose` subcommand, not the legacy
-  `docker-compose` binary). Check with `docker --version` and `docker compose version`.
-- **Free host ports**: `5173` (Vite dev server), `8000` (API, configurable via `POLARIS_API_PORT`),
-  and `8080` (nginx frontend in production mode, configurable via `POLARIS_FRONTEND_PORT`).
-- **Disk**: the images are large — the shared TeX base image alone (tectonic + TeX Live + CJK
-  fonts) is several GB. Budget roughly 20 GB for images plus data volumes.
-- **RAM**: the full stack runs five services (Postgres, Redis, API, worker, frontend); 8 GB is a
-  comfortable minimum.
-- **Network**: the first build downloads the tectonic binary and a font pack from GitHub, apt
-  packages, and pip wheels. On networks that cannot reach these directly, see the mirror build
-  arguments in [Deployment](deployment.md#restricted-networks) and the first row of
-  [common first-run errors](#common-first-run-errors) below.
-
-The no-Docker path additionally needs:
-
-- Python 3.12 or newer
-- Node.js 18 or newer (with npm)
-
-> [!TIP]
-> The Docker path needs no local Python, Node, PostgreSQL, or Redis. Everything, including the
-> database and cache, runs in containers with hot reload.
-
-## 1. Clone
-
-```bash
-git clone https://github.com/ZJU-REAL/Polaris.git polaris
-cd polaris
-```
-
-## 2. Configure `.env`
-
-Copy the example file and edit the values you need:
-
-```bash
-cp .env.example .env
-```
-
-At minimum, set the following before your first real run:
-
-| Key | Why |
+| Platform | Files |
 | --- | --- |
-| `POLARIS_SECRET_KEY` | Signs JWT auth tokens. Generate one with `openssl rand -hex 32`. |
-| `POLARIS_ENCRYPTION_KEY` | Fernet key that encrypts SSH credentials at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. In dev you may leave it **empty** (a key is derived from the secret key), but do not leave the template placeholder in place — it is not a valid Fernet key and saving an SSH credential will fail. |
-| `POLARIS_INVITE_CODE` | The invite code required to register. Defaults to `polaris-lab`. |
+| macOS (universal) | `.dmg` or `.zip` |
+| Windows | `.exe` installer or portable `.zip` |
+| Linux | `.AppImage` or `.deb` |
 
-Optional but commonly set: `POLARIS_S2_API_KEY` (Semantic Scholar, higher rate limits) and
-`POLARIS_OUTBOUND_PROXY` (for reaching arXiv / Semantic Scholar / OpenAlex when direct access is
-unreliable; from inside Docker use `http://host.docker.internal:<port>`). See
-[Configuration](configuration.md) for the full reference.
+The builds are **neither signed nor notarized**, so each platform needs to be told once that the app
+is safe to run:
+
+- **macOS**: run `xattr -dr com.apple.quarantine /Applications/Polaris.app`, or right-click the app
+  and choose Open.
+- **Windows**: at the SmartScreen prompt choose More info → Run anyway (the portable zip skips this
+  prompt).
+- **Linux**: the AppImage needs `libnss3 libgtk-3-0 libasound2`; under Ubuntu 24.04+ AppArmor
+  restrictions start it with `--no-sandbox`.
 
 > [!NOTE]
-> LLM provider keys and the model routing table can also be edited later from the admin panel in
-> the running app. The `.env` values are just the initial seed.
+> Releases up to v0.3.9 are remote-only shells that always ask for a server address, and they cannot
+> update themselves into the local build. Install a current release over the old app.
 
-## 3. Run the full stack (Docker)
+## 2. First launch
 
-```bash
-make dev
-```
+On first launch the app sets up its engine: it downloads a Python toolchain and the engine's
+dependencies into its own data folder, then starts the engine and opens the main window. A progress
+page shows each step. This can take a few minutes; later launches skip it and start right away.
 
-The first run does two heavy things: it builds the shared TeX base image (`make texbase`, cached
-afterwards and only rebuilt when `docker/Dockerfile.texbase` changes), then builds and starts every
-service — PostgreSQL with pgvector, Redis, the API, the ARQ worker, and the frontend — with hot
-reload and source bind-mounts.
+There is no sign-in: you are the only user and the owner of everything in the app. Your data —
+the SQLite database, PDFs, exports, experiment logs — lives in the app's user-data folder; see
+[where the data lives](desktop.md#where-the-data-lives).
 
-**Then apply the database migrations** (required: Postgres tables are not auto-created; only the
-no-Docker SQLite path creates its schema on startup):
+The app checks for updates (Settings → About) and applies them without a reinstall where it can.
 
-```bash
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml \
-  exec api alembic upgrade head
-```
+## 3. Give Polaris a model
 
-Once it is up:
+Go to **Settings → Models & agents** (`/settings?tab=llm`). Until a model is available, AI features
+return `LLM_NOT_CONFIGURED`.
 
-- Frontend: <http://localhost:5173>
-- Backend API docs (OpenAPI / Swagger UI): <http://localhost:8000/docs>
-
-To follow logs or stop the stack:
-
-```bash
-make logs    # tail all services
-make down    # stop and remove containers
-```
-
-## 4. First login
-
-1. Open the frontend at <http://localhost:5173>.
-2. Register a user with the invite code from `POLARIS_INVITE_CODE` (default `polaris-lab`). If you
-   have not configured SMTP, registration asks for no email verification code.
-
-## 5. What to do after first login
-
-Work through these in order; each unlocks the next.
-
-1. **Give Polaris a model** — go to **Settings → Models & agents** (`/settings?tab=llm`).
-   The simplest way is an agent you already use: add Claude Code, Codex or Gemini CLI under
-   **Agent backends** (installed and signed in on the machine that runs Polaris) and it answers
-   every model call — no API key needed; see [Agent backends](./agents.md). Alternatively, or in
-   addition, add model API providers with their keys and map research stages to them in the
-   routing table; embeddings and rerank need a model API. Until an agent or a route is available,
-   AI features return `LLM_NOT_CONFIGURED`.
-2. **Connect an SSH server** (needed for the experiment stage) — **Settings → SSH credentials**
-   (`/settings?tab=ssh`). Add a host and key, then use **Test connection**; credentials are
-   encrypted at rest with the Fernet key. Admin-side experiment policy (command allow/deny lists,
-   budgets) lives under **Settings → Experiments**.
-3. **Create your first direction library** — go to **Libraries** (`/libraries`) and create one. A
-   structured AI interview helps you write the inclusion config (statement, goals, scope,
-   exclusions), and running the ingest builds the corpus: candidate search, citation snowballing,
-   relevance scoring, full-text extraction, and wiki compilation, all as one resumable task.
-4. **Create a topic and link libraries** — create a project (`/projects/new`), then link one or
-   more direction libraries to it. A topic holds no papers of its own; its corpus is the union of
-   the libraries linked to it. From there, work through the pipeline stage by stage — see
-   [Core concepts](concepts.md).
-5. **Optional: enable PolarisBuddy** — the in-app assistant's multi-turn tool loop is off by
-   default (it re-sends history and tool schemas every round, so it costs more than one-shot
-   chat). Set `POLARIS_CHAT_AGENT_ENABLED=1` in `.env` and restart to enable it.
-6. **Optional: configure the daily feed** — **Settings → Daily papers** sets the subscribed
-   categories and the daily fetch time.
+- **Easiest: an agent backend.** If you already use Claude Code, Codex, or Gemini CLI, install it
+  and sign in on the same computer, then add it under **Agent backends** and click
+  **Check connection**. With no model API configured, the first enabled agent answers every model
+  call — no API key needed. See [Agent backends](agents.md).
+- **Optional: a model API.** Add a provider (OpenAI-compatible, OpenAI Responses, or Anthropic) with
+  its key and map research stages to it in the routing table. Embeddings and reranking can only come
+  from a model API; without one, search falls back to keyword matching.
 
 <!-- screenshot: Settings → Models & agents, the model routing table -->
 
-## Common first-run errors
+## 4. Next steps in the app
 
-| Symptom | Cause and fix |
-| --- | --- |
-| `make dev` fails while building `polaris-texbase` (GitHub download stalls or apt is slow) | The TeX base image downloads the tectonic binary and a CJK font pack from GitHub and runs a large apt install. On restricted networks pass mirrors: `GITHUB_PROXY=https://gh-proxy.com/ APT_MIRROR=repo.huaweicloud.com make texbase`, then re-run `make dev`. For slow PyPI, pass `PIP_INDEX_URL` to the compose build. See [Deployment](deployment.md#restricted-networks). |
-| `port is already allocated` on startup | Another service holds 5173, 8000, or 8080. Set `POLARIS_API_PORT` / `POLARIS_FRONTEND_PORT` and pass them to compose (export them, or run compose with `--env-file .env` — the Makefile does not pass it, and compose interpolation reads `.env` next to the compose file, not the repo root). Port 5173 is fixed in the dev overlay. |
-| API is up but every page errors; logs show `relation "..." does not exist` | Migrations were not applied. Run the `alembic upgrade head` command from step 3. Needed again after any update that ships new migrations. |
-| AI features return `LLM_NOT_CONFIGURED` (HTTP 503) | No agent backend is enabled and no model API route is usable. Add an agent or a model API in **Settings → Models & agents**. |
-| Saving an SSH credential fails with a server error mentioning Fernet | `POLARIS_ENCRYPTION_KEY` still holds the `.env.example` placeholder, which is not a valid Fernet key. Set a real key (see step 2) or leave it empty in dev. Note that changing the key later makes previously stored credentials undecryptable. |
-| Literature ingest finds nothing / arXiv, Semantic Scholar, or OpenAlex time out | Direct access to the literature APIs is blocked or flaky on your network. Set `POLARIS_OUTBOUND_PROXY` (e.g. `http://host.docker.internal:7897` for a proxy on the Docker host) and restart. |
-| You edited worker code but behavior did not change | Under the dev overlay the worker's `arq --watch` only reloads the settings module. Run `docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml restart worker`. |
+Work through these in order; each unlocks the next.
 
-## No-Docker local path
-
-For focused backend or frontend work you can run each side directly. The backend falls back to a
-local SQLite database when `POLARIS_DATABASE_URL` is not set to Postgres (and creates its tables on
-startup), so no external database is required for a quick start.
-
-Backend (creates a virtualenv on first `make venv`, then runs uvicorn on port 8000):
-
-```bash
-make venv          # one-time: create src/backend/.venv and install deps
-make backend-dev   # uvicorn app.main:app --reload --port 8000
-```
-
-Frontend (installs deps and runs the Vite dev server on port 5173):
-
-```bash
-make frontend-dev  # npm install && npm run dev
-```
+1. **Connect an SSH server** (needed for the experiment stage) — **Settings → SSH credentials**
+   (`/settings?tab=ssh`). Add a host and key, then use **Test connection**; credentials are
+   encrypted at rest. Experiment policy (command allow/deny lists, budgets) lives under
+   **Settings → Experiments**.
+2. **Create your first direction library** — go to **Libraries** (`/libraries`) and create one. A
+   structured AI interview helps you write the inclusion config (statement, goals, scope,
+   exclusions), and running the ingest builds the corpus: candidate search, citation snowballing,
+   relevance scoring, full-text extraction, and wiki compilation, all as one resumable task.
+3. **Create a topic and link libraries** — create a project (`/projects/new`), then link one or
+   more direction libraries to it. A topic holds no papers of its own; its corpus is the union of
+   the libraries linked to it. From there, work through the pipeline stage by stage — see
+   [Core concepts](concepts.md).
+4. **Optional: configure the daily feed** — **Settings → Daily papers** sets the subscribed
+   categories and the daily fetch time. The engine checks every few minutes whether the fetch is
+   due, so the feed only updates while the app is running.
+5. **Optional: enable PolarisBuddy's tool loop** — the in-app assistant's multi-turn tool loop is
+   off by default (it re-sends history and tool schemas every round, so it costs more than one-shot
+   chat). It is switched on by the environment variable `POLARIS_CHAT_AGENT_ENABLED=1`; the engine
+   inherits the app's environment, so start the app from a terminal with that variable set.
 
 > [!WARNING]
 > The Experiment Lab connects to real GPU servers over SSH and runs generated code there. Every
@@ -175,10 +88,22 @@ make frontend-dev  # npm install && npm run dev
 > experiment can be created with an explicit compute-budget approval — but you should still point
 > Polaris only at machines you control and review the audit log.
 
+## Common first-run problems
+
+| Symptom | Cause and fix |
+| --- | --- |
+| The progress page stops at `python` or `install` | The first launch downloads a Python toolchain and packages. Check the network (or proxy) and restart the app; the setup starts over cleanly. |
+| macOS says the app is "damaged" or cannot be opened | Quarantine flag on an unsigned build. Run `xattr -dr com.apple.quarantine /Applications/Polaris.app`. |
+| AI features return `LLM_NOT_CONFIGURED` (HTTP 503) | No agent backend is enabled and no model API route is usable. Add an agent or a model API in **Settings → Models & agents**. |
+| An agent backend fails **Check connection** | The agent is not installed or not signed in on this computer. The error message names the install or sign-in command to run. |
+| Literature ingest finds nothing / arXiv, Semantic Scholar, or OpenAlex time out | Direct access to the literature APIs is blocked or flaky on your network. Set an outbound proxy for literature APIs (see [Configuration](configuration.md)). |
+| LaTeX compile says the compiler is not installed | Manuscripts compile with `tectonic` (or TeX Live through `latexmk`) installed on your computer. Install one and make sure it is on your `PATH`. |
+
 ## Next steps
 
 - [Introduction](index.md): what each pipeline stage does, with links to the per-stage guides.
 - [Core concepts](concepts.md): the pipeline, Voyages, skills, and the MCP tools.
-- [Configuration](configuration.md): full environment variable reference.
-- [Development](development.md): local workflow, migrations, tests, and the Git conventions.
-- [Deployment](deployment.md): running Polaris in production.
+- [Agent backends](agents.md): using Claude Code and other agents as Polaris's model.
+- [Desktop app](desktop.md): how the app starts its engine, and where your data lives.
+- [Development](development.md): running Polaris from source, migrations, tests, and the Git
+  conventions.

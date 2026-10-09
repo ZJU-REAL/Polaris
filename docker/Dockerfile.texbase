@@ -1,5 +1,5 @@
 # 共享 TeX 基础镜像（polaris-texbase）：python:3.12-slim + tectonic + TeX Live + 中文字体。
-# api / worker 均 FROM 本镜像，TeX 栈只装一次；本镜像仅在本文件变更时重建。
+# Dockerfile.api（开发/测试用引擎镜像）FROM 本镜像，TeX 栈只装一次；本镜像仅在本文件变更时重建。
 #
 # 构建（在仓库任意位置）：make texbase
 # 等价于：docker build -f docker/Dockerfile.texbase -t polaris-texbase:latest docker/
@@ -8,7 +8,7 @@
 #   GITHUB_PROXY  GitHub 下载加速前缀（如 https://gh-proxy.com/ 或指向本地镜像的
 #                 http://172.17.0.1:8899/），只作用于 assets 阶段，改动不会炸掉 TeX 层缓存
 #   APT_MIRROR    Debian 镜像主机名（如 repo.huaweicloud.com / mirrors.tuna.tsinghua.edu.cn）；
-#                 注意：替换会保留在镜像内，派生镜像（worker 的 LibreOffice 层）同样走该源
+#                 注意：替换会保留在镜像内，派生镜像同样走该源
 
 # ---- assets：远程资产下载（tectonic 二进制 + 中文字体包），与 apt 层隔离 ----
 FROM python:3.12-slim AS assets

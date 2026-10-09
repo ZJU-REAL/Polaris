@@ -13,7 +13,8 @@ Sextant), see [Core Concepts](concepts.md#the-voyage-long-running-agent).
 - Engine and agents: `src/backend/app/agents/voyage/`
 - Business logic and visibility: `src/backend/app/services/voyages.py`
 - HTTP API: `src/backend/app/api/voyages.py` (mounted under `/api`)
-- Worker and schedules: `src/backend/worker/tasks.py`, `src/backend/worker/settings.py`
+- Long-task functions and schedules: `src/backend/worker/tasks.py`, `src/backend/app/core/queue.py`
+  (in-process task queue), `src/backend/app/core/scheduler.py` (periodic jobs)
 - UI: `src/frontend/src/features/voyages/`, plus the topic Tasks tab and the Library Tasks page
 
 ---
@@ -34,7 +35,7 @@ One row per task.
 | `kind` | What sort of task this is (`wiki_ingest`, `experiment`, `daily_feed_sync`, …). Everything else — run mode, task level, starting plan, done criteria — is derived from it. See [§1.3](#13-the-kind-catalogue). |
 | `mode` | `pipeline` \| `template` \| `loop`. Not chosen by the user or the LLM: the engine recomputes it from `kind` via `mode_for_kind()` on the first drive and overwrites whatever is stored (this is also how runs created before the field existed get fixed up). |
 | `goal` | Human-readable one-liner shown in the list ("文献调研增量更新：`<library>`"). Also fed to the LLM as `{goal}` in prompt templates. |
-| `status` | Run state, see [§1.2](#12-the-run-state-machine). Indexed — the worker's startup reconcile scans it. |
+| `status` | Run state, see [§1.2](#12-the-run-state-machine). Indexed — the engine's startup reconcile scans it. |
 | `plan` | JSON snapshot of the current step list. **Derived, not authoritative**: the real plan is the `voyage_steps` rows, and `_regen_plan_snapshot()` rebuilds this from them after every plan change. It exists so the API and the progress bar have something cheap to read. |
 | `cursor` | Index of the current step within the active (non-obsolete) step list. Rewritten on every loop iteration; used for the "step 3 of 7" display. |
 | `plan_iteration` | Incremented every time the plan is edited (replanning, signal-driven edit, budget cut). Each step records which iteration created it. |
@@ -44,7 +45,7 @@ One row per task.
 | `usage` | Running token totals `{prompt_tokens, completion_tokens, total_tokens}`. |
 | `project_id` | Owning topic, nullable. `ON DELETE CASCADE`. |
 | `library_id` | Owning literature library, nullable. `ON DELETE SET NULL`. |
-| `created_by` | User who started it; `NULL` for cron-created runs. `ON DELETE SET NULL`. |
+| `created_by` | User who started it; `NULL` for runs started by a scheduled job. `ON DELETE SET NULL`. |
 
 `project_id` and `library_id` are the two scope columns, and **both can be null at once**. That
 combination means "platform-level task" — today only `daily_feed_sync`, which belongs to the whole
@@ -132,7 +133,7 @@ answer) rather than declaring failure.
 | --- | --- | --- | --- | --- |
 | `wiki_bootstrap` | pipeline | library | `wiki_plan()` (7 steps) | `POST /projects/{id}/ingest` or `POST /libraries/{id}/ingest/run` with `mode=bootstrap` |
 | `wiki_ingest` | pipeline | library | `wiki_plan()` (7 steps) | same two endpoints with `mode=incremental`; also enqueued once per day by the daily feed run's `daily.sync_libraries` step |
-| `daily_feed_sync` | pipeline | library (platform-level) | `daily_feed_plan()` (5 steps) | the daily checkpoint cron (probes for the day's arXiv batch from an admin-configurable start time), or `POST /daily/refresh` (admin only) |
+| `daily_feed_sync` | pipeline | library (platform-level) | `daily_feed_plan()` (5 steps) | the daily checkpoint job (probes for the day's arXiv batch from an admin-configurable start time), or `POST /daily/refresh` (admin only) |
 | `idea_forge` | pipeline | topic | `forge_plan()` (7 steps) | `POST /projects/{id}/forge` |
 | `idea_review` | pipeline | topic | `review_plan()` (2 steps, expands at runtime) | `POST /projects/{id}/review/tournament` |
 | `idea_proposal` | template | topic | `proposal_plan()` (8–9 steps) | `POST /projects/{id}/ideas/deep` |
@@ -214,7 +215,7 @@ leak into topic task lists. `kind` is stable across that migration, so it is the
 `LIBRARY_TASK_KINDS` in `src/frontend/src/features/voyages/VoyagesPage.tsx`.
 
 `daily_feed_sync` is the extreme case: it is a library-level kind that has *no* library either. Both
-scope columns are null because the daily feed is shared by the whole deployment.
+scope columns are null because the daily feed is shared by every account.
 
 ---
 
@@ -321,11 +322,11 @@ failed-or-cancelled.
 ### 4.1 The execution chain
 
 ```text
-domain endpoint or cron
+domain endpoint or scheduled job
    │  builds the VoyageRun row (kind, goal, checkpoint["params"], budget, scope ids)
-   │  enqueues ARQ job "run_voyage" with the run id
+   │  enqueues task "run_voyage" with the run id on the in-process queue
    ▼
-worker: run_voyage  ──>  VoyageEngine.run(run_id)  ──>  _drive()
+background task: run_voyage  ──>  VoyageEngine.run(run_id)  ──>  _drive()
    │
    ├─ align run.mode with mode_for_kind(kind)
    ├─ snapshot the topic's enabled skills into checkpoint["skills"] (once per run)
@@ -359,7 +360,7 @@ The three agents:
   free-text acceptance criterion judged by an LLM, and finally "there was output and no criterion,
   so pass". LLM judging retries up to 3 times on unparseable JSON, then fails with a clear reason.
 
-The engine is a plain async loop inside one ARQ job. A `requires_gate` step ends the job; approval
+The engine is a plain async loop inside one background job. A `requires_gate` step ends the job; approval
 enqueues a new one. Because everything the loop needs is in the database, the job can also just die
 and be picked up later ([§4.8](#48-scheduled-triggers-and-recovery)).
 
@@ -514,8 +515,8 @@ opted-in token budget is an ordinary run budget and hits the wrap-up path above.
 
 ### 4.6 Progress, events and logs
 
-Everything the engine publishes goes to the Redis channel `voyage:{run_id}:events` and is forwarded
-verbatim by `GET /voyages/{id}/events` as SSE. The stream replays the current status first, sends a
+Everything the engine publishes goes to the channel `voyage:{run_id}:events` on the in-process
+Redis stand-in and is forwarded verbatim by `GET /voyages/{id}/events` as SSE. The stream replays the current status first, sends a
 `: ping` comment every 15 s, and closes as soon as a terminal status goes by. A run that is already
 terminal when you connect gets one status frame and then the stream ends.
 
@@ -537,7 +538,7 @@ the full output is stored.
 Run status changes are additionally published to the owner's notification channel
 (`notify:user:{user_id}`) as `voyage.status`, and gate creation as `gate.created`. Channels are
 per-user (#721), so library-scoped runs with no originating topic are delivered too; only runs
-without an owner (e.g. cron-initiated) skip this silently.
+without an owner (e.g. started by a scheduled job) skip this silently.
 
 The task detail endpoint also exposes two derived views built from the checkpoint: `skills` (which
 skill versions this run snapshotted) and `plan_history` (every plan change, in plain language). By
@@ -554,7 +555,7 @@ default the detail response hides `obsolete` steps; pass `include_obsolete=true`
 2. **`on_failure: "fail"`** — the step declared that blind retries are pointless. The run no longer
    goes straight to `failed`: it raises an **ask** (`fatal_step`) and waits in `paused_ask` for a
    person to decide — retry, change course, or abort (abort is what produces `failed`). Unattended
-   runs (`created_by` is null, i.e. cron-created) have nobody to answer, so they degrade to the old
+   runs (`created_by` is null, i.e. started by a scheduled job) have nobody to answer, so they degrade to the old
    `paused_error` semantics. Every step in `paper_writing`, `paper_review` and `presentation` sets
    this flag, as does `experiment.smoke` (which already runs its own internal LLM repair loop, so a
    failure there means the generated code is fundamentally broken and burning GPU time on a rerun
@@ -585,18 +586,23 @@ passed steps can be neither edited nor obsoleted.
 
 ### 4.8 Scheduled triggers and recovery
 
-`src/backend/worker/settings.py` registers three cron jobs — but none of them is a fixed "run at
-HH:MM" trigger anymore. arq fixes cron times at worker startup, and the fetch time is an
-editable preference (`daily.sync_time` on the deployment owner, Settings → Daily papers), so the crons run as cheap
-**checkpoints** that decide for themselves whether it is time to act. All times are **UTC**.
+The engine scheduler (`src/backend/app/core/scheduler.py`) runs the periodic jobs inside the engine
+process, so they run only while the app is open. Each job is a loop on a fixed interval that starts a
+short while after the engine comes up; none of them is a fixed "run at HH:MM" trigger. The fetch time
+is an editable preference (`daily.sync_time` on the owner, Settings → Daily papers), so the jobs run as
+cheap **checkpoints** that decide for themselves whether it is time to act. All times are **UTC**. A
+job never overlaps itself (a tick is skipped while the previous run is still going), and a failure is
+logged without stopping its loop.
 
 | Cadence | Job | What it does |
 | --- | --- | --- |
-| every 15 min (:00/:15/:30/:45) | `daily_feed_sync` | From the configured start time (default 01:30 UTC), probes whether arXiv has published **today's** batch; only then creates one `daily_feed_sync` task and enqueues it. arXiv's actual publish time drifts, and betting on a fixed hour loses as "fetched yesterday's batch, deduped to zero, reported success" — so the probe compares batch dates instead. Probing has an attempt cap (then falls back to an hourly recheck), runs at most once per day, and is globally single-flight. |
-| every 15 min (:00/:15/:30/:45) | `daily_publication_match` | Runs publication matching (new papers → name+affiliation hits for users who opted in) once per day, 150 minutes after the configured fetch time — derived from the same setting, so the two cannot drift apart. |
-| every 10 min (:05/:15/…/:55) | `reconcile_stale_voyages` | Re-enqueues `resume_voyage` for in-flight runs whose terminal has been silent for 30+ minutes. The startup reconcile below only rescues orphans of a worker restart; runs lost mid-flight (a hung LLM call killed, ARQ's exponential retry backoff) are caught here. The criterion is conservative — live long steps keep producing log lines — and the engine is idempotent, so an occasional concurrent resume is harmless. |
+| every 15 min | `daily_feed_sync` | From the configured start time (default 01:30 UTC), probes whether arXiv has published **today's** batch; only then creates one `daily_feed_sync` task and enqueues it. arXiv's actual publish time drifts, and betting on a fixed hour loses as "fetched yesterday's batch, deduped to zero, reported success" — so the probe compares batch dates instead. Probing has an attempt cap (then falls back to an hourly recheck), runs at most once per day, and is globally single-flight. |
+| every 15 min | `daily_publication_match` | Runs publication matching (new papers → name+affiliation hits for users who opted in) once per day, 150 minutes after the configured fetch time — derived from the same setting, so the two cannot drift apart. |
+| every 5 min | `dispatch_literature_discovery_schedules` | Starts the scheduled literature-discovery runs that are due. |
+| every 10 min | `reconcile_stale_voyages` | Re-enqueues `resume_voyage` for in-flight runs whose terminal has been silent for 30+ minutes. The startup reconcile below only rescues runs left behind by a crash or quit; runs lost mid-flight (a hung LLM call killed) are caught here. The criterion is conservative — live long steps keep producing log lines — and the engine is idempotent, so an occasional concurrent resume is harmless. |
+| every 5 min | `watch_unanswered_managed_commands` | Watchdog for remote commands that are waiting on an answer nobody gave. |
 
-Library incremental sync (`daily_wiki_ingest`) is **not** on the cron anymore: it is enqueued by
+Library incremental sync (`daily_wiki_ingest`) is **not** a scheduled job: it is enqueued by
 the daily feed run's final `daily.sync_libraries` step, once the pool is actually refreshed —
 scheduling it at a fixed later hour meant betting the fetch had finished, and losing that bet
 synced every library against a stale pool. It runs at most once per day, and each library is
@@ -605,14 +611,14 @@ libraries queued after it.
 
 Two more operational details:
 
-- **Job timeout.** `run_voyage` and `resume_voyage` get a 12-hour timeout; everything else keeps
-  ARQ's 1-hour default. The default was actively harmful: a GPU training round legitimately runs for
-  hours, ARQ would kill the polling job, then retry it with an exponential backoff keyed on job age,
-  and the run would sit idle for hours. The in-run budget is the real guard, not the job timeout.
-- **Startup reconcile.** `reconcile_stuck_voyages` runs `on_startup`: every run still marked
-  `executing` is re-enqueued as `resume_voyage`, deduplicated by a fixed `_job_id`. This is the net
-  under a worker that was killed mid-run. It is safe because the engine is idempotent — steps
-  re-attach to work that is still running, and the checkpoint restores the rest.
+- **No job timeout.** Jobs on the in-process queue run as ordinary background tasks with no
+  timeout of their own: a GPU training round legitimately runs for hours. The in-run budget is the
+  real guard.
+- **Startup reconcile.** `reconcile_stuck_voyages` runs once when the engine starts, in the
+  background so it cannot hold up startup: every run still marked `executing` is re-enqueued as
+  `resume_voyage`, deduplicated by a fixed `_job_id`. This is the net under an engine that was
+  killed or closed mid-run. It is safe because the engine is idempotent — steps re-attach to work
+  that is still running, and the checkpoint restores the rest.
 
 ---
 
@@ -669,7 +675,7 @@ someone into a 404.
 
 ### 5.2 Daily new papers — `daily_feed_sync`
 
-**Trigger.** The 15-minute checkpoint cron, once it probes that today's arXiv batch is actually
+**Trigger.** The 15-minute checkpoint job, once it probes that today's arXiv batch is actually
 out (see [§4.8](#48-scheduled-triggers-and-recovery)) — or an admin hitting `POST /daily/refresh`.
 `create_daily_feed_voyage()` is single-flight globally (`409 DAILY_FEED_RUNNING` if one is already
 running — deliberately stricter than a per-day job id, so a failed run can be retried immediately
@@ -691,11 +697,11 @@ Handing the fetched entries forward through the checkpoint rather than re-fetchi
 just an optimisation: re-querying arXiv could return a different result set, and step 2's dedup keys
 would no longer correspond to what step 1 reported.
 
-**Why it went into the task system at all.** These four things used to run as a bare worker function
+**Why it went into the task system at all.** These four things used to run as a bare background function
 where failures were swallowed. As a task they get a plan, per-step status, a terminal, an entry in
 the list, and a retry button. The direct function `sync_daily_feed()` still exists in
 `app/services/daily_feed.py` for scripts and tests, and shares the same step functions, but nothing
-in production calls it.
+in the app calls it.
 
 **Visibility.** Both scope ids are null, so it shows up in the Library Tasks page's
 "other tasks" group — visible to every logged-in user since the admin-only rule went away with

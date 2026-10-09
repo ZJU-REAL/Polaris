@@ -1,15 +1,26 @@
 # Configuration
 
-Polaris is configured through environment variables, read from `.env` at the repository root. Copy
-the template and edit it:
+Most of Polaris is configured inside the app (Settings) and stored in its database. A small set of
+values are environment variables read by the engine at startup. You rarely need them: the desktop
+app starts its engine with working defaults and sets the database path and data folder itself.
 
-```bash
-cp .env.example .env
-```
+Where the engine gets its environment:
 
-Application settings use the `POLARIS_` prefix (parsed by pydantic-settings). A few variables consumed
-directly by the Postgres container image or by the Docker build do not use that prefix; they are
-noted below.
+- **Desktop app.** The engine inherits the app's environment. To set a variable, start the app from
+  a terminal with that variable set (for example `POLARIS_OUTBOUND_PROXY=http://127.0.0.1:7897`
+  before the app's command).
+- **Running from source** (`make backend-dev`). The engine also reads a `.env` file from its working
+  directory, `src/backend/`. Copy the repo-root template there and uncomment what you need:
+
+  ```bash
+  cp .env.example src/backend/.env
+  ```
+
+Application settings use the `POLARIS_` prefix (parsed by pydantic-settings).
+
+The engine is one local process with a **SQLite** database, an in-process task queue, and an
+in-process scheduler. It needs no external database, cache, or queue service, and there are no
+settings for them.
 
 ## Configuration layering (#737)
 
@@ -18,14 +29,14 @@ this and when can it change".
 
 | Layer | Owner | What belongs here | Examples |
 | --- | --- | --- | --- |
-| Environment (`.env` / `POLARIS_*`) | The person deploying | **Deployment facts**: values that describe the machine and its surroundings, fixed before the process starts and identical for every user of the deployment. | database/redis URLs, secret keys, SMTP, data dir, proxies |
+| Environment (`POLARIS_*`) | Whoever starts the engine | **Machine facts**: values that describe the computer and its surroundings, fixed before the process starts. | database path, secret keys, data dir, proxies |
 | Kernel config tree + kernel KV (desktop SQLite) | The kernel | **Plugin composition and kernel behavior**: which plugins are loaded, their config, and settings that change what the kernel itself does. | plugin entries/enable state, plugin install records, market index endpoint (`PluginMetaStore` key `market:endpoint`) |
-| Electron store (`userData/config.json`) | The desktop shell | **Shell-only preferences**: things only the window chrome cares about, meaningless to the kernel or backend. | window bounds/maximized state, server URL |
-| Database | The application | **User and domain state**. Two sub-homes: *preferences* go to `users.settings` namespaced keys. Deployment-level ones sit on the owner (earliest active user; the desktop's single user is the owner) and are read/written through `app/services/owner_settings.py`; ones that are genuinely per person — the daily subscription since #806 — sit on each user's own row and are read for whoever is asking, with no fallback to the owner (falling back is how a new user would inherit the first user's fields); *platform-operational state* stays in `system_settings`. | owner-held preferences: `daily.sync_time`, `daily.retention_days`, `daily.sync_scope`, `tts.admin`, `affiliations.extraction_mode`; per-user preferences (same column, each user's own row): `daily.categories`, `daily.subscriptions`, `onboarding.dismissed`; operational: probe state, `claim_today` markers, relevance-anchor caches, active embedding space, LLM call-log switch, watchdog cap, experiment host facts, literature/document-processing docs (user-tunable fields share one atomic document with encrypted credential pools, so they conservatively stay put) |
+| Electron store (`userData/config.json`) | The desktop shell | **Shell-only preferences**: things only the window chrome cares about, meaningless to the kernel or backend. | window bounds/maximized state |
+| Database | The application | **User and domain state**. Two sub-homes: *preferences* go to `users.settings` namespaced keys. Owner-level ones sit on the owner (the earliest active user — on the desktop, you) and are read/written through `app/services/owner_settings.py`; per-person ones — the daily subscription since #806 — sit on each user's own row and are read for whoever is asking, with no fallback to the owner; *platform-operational state* stays in `system_settings`. | owner-held preferences: `daily.sync_time`, `daily.retention_days`, `daily.sync_scope`, `tts.admin`, `affiliations.extraction_mode`; per-user preferences (same column, each user's own row): `daily.categories`, `daily.subscriptions`, `onboarding.dismissed`; operational: probe state, `claim_today` markers, relevance-anchor caches, active embedding space, LLM call-log switch, watchdog cap, experiment host facts, literature/document-processing docs (user-tunable fields share one atomic document with encrypted credential pools, so they conservatively stay put) |
 
 Placement test, in order:
 
-1. Known before the process starts, per-machine, same for everyone? → environment.
+1. Known before the process starts, per-machine? → environment.
 2. Does it configure what the kernel loads or how the kernel behaves? → kernel tree/KV.
 3. Does only the desktop window chrome care? → electron store.
 4. Is it someone's preference? → `users.settings` (owner-scoped, namespaced key). Is it machine
@@ -42,26 +53,22 @@ upgrading.
 
 | Variable | Purpose | Default / example |
 | --- | --- | --- |
-| `POLARIS_ENV` | Runtime environment. `prod` forces safe defaults (the fake LLM fallback is structurally disabled, CORS is restricted). | `dev` (or `prod`) |
-| `POLARIS_SECRET_KEY` | Signs JWT auth tokens. Generate with `openssl rand -hex 32`. | `change-me-random-64-chars` |
-| `POLARIS_ENCRYPTION_KEY` | Fernet key that encrypts SSH credentials at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Empty in dev derives a key from the secret key; set it explicitly for production. Do not leave the template placeholder — it is not a valid Fernet key. | `change-me-fernet-key` |
-| `POLARIS_INVITE_CODE` | The invite code required to register (the in-app registration-code system was removed in #585). | `polaris-lab` |
-| `POLARIS_SESSION_LIFETIME_SECONDS` | Login session lifetime in seconds. There is no refresh-token mechanism, so the default is long. | `2592000` (30 days) |
-| `POLARIS_CORS_ORIGINS` | Extra allowed cross-origin frontend origins in `prod`, comma-separated. Only needed when the frontend is served from a different domain than the API; the web production path (nginx same-origin reverse proxy) does not need it, and the desktop client's `app://polaris` origin is always whitelisted. | (empty), e.g. `https://polaris.example.edu` |
-| `POLARIS_ACP_LLM_CONCURRENCY` | How many model calls one agent backend answers at once (each is a separate agent process). See [Agent backends](./agents.md). | `4` |
-| `POLARIS_LLM_FAKE_FALLBACK` | Fall back to the built-in fake LLM provider when no route is configured (key-less demos and tests only). Strictly opt-in: off unless explicitly set to `1`, in every profile and environment, and never set by the product itself. When off, AI features return `LLM_NOT_CONFIGURED` instead of fabricated content. | (unset) |
+| `POLARIS_ENV` | Runtime environment. `prod` requires an explicit `POLARIS_ENCRYPTION_KEY` and limits cross-origin requests to the desktop app's `app://polaris` origin. | `dev` (or `prod`) |
+| `POLARIS_SECRET_KEY` | Signs the local session tokens. Generate with `openssl rand -hex 32`. | `dev-only-secret-key-change-me` |
+| `POLARIS_ENCRYPTION_KEY` | Fernet key that encrypts SSH credentials at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Empty derives a key from the secret key (not allowed with `POLARIS_ENV=prod`). Do not set a placeholder — it is not a valid Fernet key — and note that changing the key later makes stored credentials undecryptable. | (empty) |
+| `POLARIS_SESSION_LIFETIME_SECONDS` | Session lifetime in seconds. There is no refresh-token mechanism, so the default is long. | `2592000` (30 days) |
+| `POLARIS_ACP_LLM_CONCURRENCY` | How many model calls one agent backend answers at once (each is a separate agent process). Read from the process environment only, not from `.env`. See [Agent backends](./agents.md). | `4` |
+| `POLARIS_LLM_FAKE_FALLBACK` | Fall back to the built-in fake LLM provider when no route is configured (key-less demos and tests only). Strictly opt-in: off unless explicitly set to `1`, and never set by the product itself. When off, AI features return `LLM_NOT_CONFIGURED` instead of fabricated content. | (unset) |
 | `POLARIS_CHAT_AGENT_ENABLED` | Enable PolarisBuddy's multi-turn tool loop. Off by default because each round re-sends the conversation history and tool schemas, which costs far more than one-shot chat. | (unset), set `1` to enable |
-| `POLARIS_GITHUB_REPO` | Upstream `owner/name` repository of this deployment. Currently unread by the backend (feedback opens a pre-filled GitHub new-issue page straight from the frontend); kept for future server-side features that need to know the upstream repo. | `ZJU-REAL/Polaris` |
-| `POLARIS_PUBLIC_BASE_URL` | Public server root used to build stdio MCP download links. HTTP MCP always reuses the origin of its current `/mcp` request and ignores this setting. | (empty), for example, `https://polaris.example.edu` |
+| `POLARIS_GITHUB_REPO` | Upstream `owner/name` repository. Currently unread by the backend (feedback opens a pre-filled GitHub new-issue page straight from the frontend). | `ZJU-REAL/Polaris` |
+| `POLARIS_PUBLIC_BASE_URL` | Engine root used to build stdio MCP download links. HTTP MCP always reuses the origin of its current `/mcp` request and ignores this setting. | (empty), for example, `http://127.0.0.1:8000` |
 | `POLARIS_MCP_DOWNLOAD_LINK_TTL_SECONDS` | Lifetime of signed paper-figure download links, in seconds. Values are limited to 60 seconds through 24 hours. | `900` |
-| `POLARIS_DATABASE_URL` | Async SQLAlchemy database URL. Falls back to local SQLite when unset, which enables a no-Docker quick start; production uses Postgres with asyncpg. | `postgresql+asyncpg://polaris:polaris@postgres:5432/polaris` (default when unset: `sqlite+aiosqlite:///./polaris_dev.db`) |
-| `POLARIS_DB_POOL_SIZE` / `POLARIS_DB_MAX_OVERFLOW` / `POLARIS_DB_POOL_TIMEOUT` | SQLAlchemy connection pool sizing. The defaults are tuned for the worker's concurrency (parallel scoring sessions per voyage); shrink them only if your Postgres `max_connections` is low. | `20` / `50` / `30` |
-| `POLARIS_REDIS_URL` | Redis URL for the ARQ broker and cache. | `redis://redis:6379/0` (local default `redis://localhost:6379/0`) |
-| `POLARIS_OPENAI_COMPAT_BASE_URL` | Fallback base URL for OpenAI-compatible model routes that leave `base_url` empty. Providers and API keys themselves are configured in-app (Settings → Models & agents) and stored in the database. | `https://api.deepseek.com/v1` |
+| `POLARIS_DATABASE_URL` | SQLite database URL (SQLite is the only supported database). The desktop app always sets it to `polaris.db` in its user-data folder; when running from source it defaults to a file in the working directory. | `sqlite+aiosqlite:///./polaris_dev.db` |
+| `POLARIS_OPENAI_COMPAT_BASE_URL` | Fallback base URL for OpenAI-compatible model routes that leave `base_url` empty. Agent backends, providers, and API keys themselves are configured in-app (Settings → Models & agents) and stored in the database. | `https://api.deepseek.com/v1` |
 | `POLARIS_S2_API_KEY` | Semantic Scholar API key. Optional; without it rate limits are stricter. | (empty) |
 | `POLARIS_OPENALEX_MAILTO` | Contact email for the OpenAlex polite pool. | `polaris@example.org` |
-| `POLARIS_DATA_DIR` | Directory for PDFs and generated artifacts. In containers this is set to `/srv/data` and bind-mounted; keep it out of the code tree. | `./data` (containers: `/srv/data`) |
-| `POLARIS_OUTBOUND_PROXY` | HTTP proxy for outbound literature API calls (arXiv, Semantic Scholar, OpenAlex) when direct access is unreliable. Not used for LLM or internal traffic. From inside Docker, reach a host proxy via `host.docker.internal`. | (empty), e.g. `http://host.docker.internal:7897` |
+| `POLARIS_DATA_DIR` | Folder for PDFs, exports, experiment logs, and the file projection. The desktop app sets it to `engine/data/` in its user-data folder unless you set it yourself; relative paths are resolved once at startup. | `./data` |
+| `POLARIS_OUTBOUND_PROXY` | HTTP proxy for outbound literature API calls (arXiv, Semantic Scholar, OpenAlex) when direct access is unreliable. Not used for model or internal traffic. | (empty), e.g. `http://127.0.0.1:7897` |
 | `POLARIS_PIP_INDEX_URL` | Optional pip mirror used on the remote experiment servers. | (empty), e.g. `https://pypi.tuna.tsinghua.edu.cn/simple` |
 
 Speech settings aren't environment variables. Configure the external endpoint,
@@ -69,62 +76,19 @@ model, voice, speed, and per-segment limit under **Manage > LLM admin > Speech
 model**. Polaris stores the configuration in the database.
 
 > [!NOTE]
-> LLM provider keys are the initial seed. The provider keys and the model routing table can also be
-> managed from the admin panel once the app is running.
+> Agent backends, model providers, their keys, and the model routing table are all managed in the
+> app under **Settings → Models & agents**, not through environment variables.
 
-## Email (`POLARIS_SMTP_*`)
+## Engine image build arguments (dev and tests)
 
-Email powers registration verification codes and password reset. **Leaving `POLARIS_SMTP_HOST`
-empty disables email entirely**: registration asks for no verification code and the login page
-hides "forgot password" (the frontend reads `/api/auth/capabilities`). Configure it only if you
-want those flows.
+Only for building the engine image used by the desktop smoke/E2E tests and golden recording
+(`make engine-image`, see [Development](development.md)). Pass them on the `make` command line.
 
 | Variable | Purpose | Default / example |
 | --- | --- | --- |
-| `POLARIS_SMTP_HOST` | SMTP server hostname. Empty disables email. | (empty), e.g. `smtp.zju.edu.cn` |
-| `POLARIS_SMTP_PORT` | SMTP port. | `465` (ZJU mail uses `994`) |
-| `POLARIS_SMTP_SECURITY` | `ssl` = TLS from the start (465/994), `starttls` = plain connection upgraded (587/25), `none` = unencrypted (intranet debugging only). | `ssl` |
-| `POLARIS_SMTP_USER` | Login account. | (empty) |
-| `POLARIS_SMTP_PASSWORD` | The mailbox's app password / authorization code — not the login password. | (empty) |
-| `POLARIS_SMTP_FROM` | Sender address; falls back to `POLARIS_SMTP_USER` when empty. | (empty) |
-| `POLARIS_SMTP_FROM_NAME` | Sender display name. | `Polaris` |
-| `POLARIS_SMTP_TIMEOUT` | Send timeout in seconds. | `20` |
-
-## Compose interpolation variables (repo-root `.env`, no prefix parsing)
-
-These are read by Docker Compose itself (variable interpolation in `docker/docker-compose.yml`),
-not by the application. Compose looks for the interpolation `.env` next to the compose file by
-default, so pass `--env-file .env` from the repo root (or export the variables) for them to take
-effect — see the note in [Deployment](deployment.md#deploy-from-published-images-no-build).
-
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `POLARIS_API_PORT` | Host port for the API service. | `8000` |
-| `POLARIS_FRONTEND_PORT` | Host port for the nginx frontend. | `8080` |
-| `POLARIS_IMAGE_PREFIX` | Registry namespace for the `polaris-{api,worker,frontend}` images (both the local build tag and the pull source). | `tricktreat` |
-| `POLARIS_IMAGE_TAG` | Image tag to build or pull. | `latest` |
-
-## Postgres container variables (no prefix)
-
-These are read by the `pgvector/pgvector` image to initialize the database, and must match the
-credentials in `POLARIS_DATABASE_URL`.
-
-| Variable | Purpose | Default / example |
-| --- | --- | --- |
-| `POSTGRES_USER` | Database superuser created on first init. | `polaris` |
-| `POSTGRES_PASSWORD` | Password for that user. | `polaris` |
-| `POSTGRES_DB` | Database name created on first init. | `polaris` |
-
-## Build-time and deployment variables
-
-Set these when invoking Docker Compose (not in `.env`); see [Deployment](deployment.md).
-
-| Variable | Purpose | Default / example |
-| --- | --- | --- |
-| `GITHUB_PROXY` | Build arg (`make texbase` only): prefix to accelerate the TeX base image's GitHub downloads (tectonic binary, CJK font pack) on networks that cannot reach GitHub directly. | (empty), e.g. `https://gh-proxy.com/` |
-| `APT_MIRROR` | Build arg (`make texbase` only): Debian mirror hostname for the TeX base image's apt installs. | (empty), e.g. `repo.huaweicloud.com` |
-| `PIP_INDEX_URL` | Build arg: alternate PyPI mirror for the image build. | (empty), e.g. `https://pypi.tuna.tsinghua.edu.cn/simple` |
-| `DEV_SRC` | Dev overlay only: source directory to bind-mount, so you can preview a branch from a dedicated worktree without touching `main`. | `..` (repo root) |
+| `GITHUB_PROXY` | Prefix to accelerate the TeX base image's GitHub downloads (tectonic binary, CJK font pack) on networks that cannot reach GitHub directly. | (empty), e.g. `https://gh-proxy.com/` |
+| `APT_MIRROR` | Debian mirror hostname for the TeX base image's apt installs. | (empty), e.g. `repo.huaweicloud.com` |
+| `PIP_INDEX_URL` | Alternate PyPI mirror for the engine image build. | (empty), e.g. `https://pypi.tuna.tsinghua.edu.cn/simple` |
 
 ## MCP stdio variable
 
@@ -139,8 +103,8 @@ table when you need figure tools to return absolute download URLs.
 
 ## Model routing
 
-Beyond the provider keys above, Polaris routes each research stage to a specific provider and model
-through a DB-backed routing table, editable from the admin panel. This lets cheap models handle
+Polaris routes each research stage to an agent backend or a specific provider and model through a
+DB-backed routing table, editable under Settings → Models & agents. This lets cheap models handle
 scoring while strong models handle idea debate and paper drafting. All calls go through the single
 `app/core/llm/` abstraction; see [Architecture](architecture.md#the-llm-abstraction-and-model-routing).
 

@@ -47,18 +47,17 @@ One feature = one branch = one worktree = one PR.
 
 ## Local preview without touching `main`
 
-The docker dev stack mounts source via `DEV_SRC` (defaults to the main
-checkout). To preview a branch, point `DEV_SRC` at a worktree:
+Everything runs from source with no Docker: to preview a branch, run it from its
+own worktree.
 
 ```bash
-DEV_SRC=../wt/dev docker compose \
-  -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d
+make venv && make backend-dev      # the engine on :8000, from this worktree
+make frontend-dev                  # the frontend on :5173
 ```
 
-Container `node_modules` is an anonymous volume, so preview worktrees don't need
-a local `pnpm install`. See [`docs/development.md`](docs/development.md) for the details.
+See [`docs/development.md`](docs/development.md) for the details.
 
-## Deployment
+## Releases
 
-Production deploys **only from `origin/main`** — never from a local
-branch.
+Polaris ships as the desktop app only. Releases are cut **only from
+`origin/main`** (a `v*` tag builds the installers) — never from a local branch.

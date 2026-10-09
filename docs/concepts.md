@@ -6,7 +6,7 @@ shoulder. An agent built as "a loop over an LLM in one process" cannot survive t
 restarts, the context window fills, the human goes home, the GPU box drops the SSH connection.
 
 Polaris's answer is its central abstraction: every complex task runs as a **Voyage** — a persisted,
-resumable, auditable agent run backed by a state machine in Postgres. The UI calls these *Tasks*; the
+resumable, auditable agent run backed by a state machine in the database. The UI calls these *Tasks*; the
 code and this document call them voyages. This page explains the design. For the
 implementation-level reference (tables, permissions, the action registry, worked examples), see
 [The task system](task-system.md); for where the engine sits in the overall system, see
@@ -16,12 +16,13 @@ implementation-level reference (tables, permissions, the action registry, worked
 
 The design starts from one observation: **everything the agent needs to continue must live outside
 the process**. So a voyage persists its goal, its plan, the current step, every observation and
-verdict, its token usage, and a checkpoint of working state. The process driving it — an ARQ worker
-job — is disposable. Kill it at any point and another worker picks the run up where it stopped.
+verdict, its token usage, and a checkpoint of working state. The task driving it — a background job
+on the engine's in-process queue — is disposable. Kill it at any point (or quit the app) and the run
+is picked up where it stopped.
 
 That persistence buys the four properties research automation actually needs:
 
-1. **Resumability.** A crashed worker, a dropped SSH connection, a stuck LLM call — the run resumes
+1. **Resumability.** A crashed or closed app, a dropped SSH connection, a stuck LLM call — the run resumes
    from its last committed state instead of starting over.
 2. **Human-in-the-loop.** The state machine has first-class paused states: waiting for an approval,
    waiting for an answer to a question the agent asked. Pausing costs nothing; a run can wait for
@@ -229,7 +230,7 @@ gates then only appear where an approval *is* the action, such as idea promotion
 submission.
 
 A step that declares `requires_gate` stops the run before executing: the engine creates the gate,
-sets the run to `paused_gate`, and **ends its worker job** — a paused voyage consumes nothing while
+sets the run to `paused_gate`, and **ends its background job** — a paused voyage consumes nothing while
 it waits. Topic members see the pending gate in the workspace and get a WebSocket notification.
 Approving enqueues a resume and the run continues from exactly that step; rejecting sets the run to
 `failed`. Gate decisions also carry domain side effects — approving `idea_promotion` flips the idea's
@@ -289,13 +290,13 @@ progress, not on attempts**:
 
 The engine assumes it will be killed and designs backwards from that:
 
-- **Startup reconcile.** When the worker boots, every run still marked as in-flight (statuses that
-  mean "a worker should be driving this" — the paused states are excluded, since they wait for
-  humans, not workers) is re-enqueued for resume, with time-bucketed deduplication so restarts do
+- **Startup reconcile.** When the engine starts, every run still marked as in-flight (statuses that
+  mean "a job should be driving this" — the paused states are excluded, since they wait for
+  humans, not jobs) is re-enqueued for resume, with time-bucketed deduplication so restarts do
   not double-drive a run.
-- **Stale-run sweep.** A cron periodically reclaims in-flight runs whose terminal has been silent
-  too long — the net under jobs lost mid-run (an LLM call that hung until the job was killed, ARQ's
-  exponential backoff leaving a run orphaned for hours). Live long steps keep producing log lines,
+- **Stale-run sweep.** The engine scheduler periodically reclaims in-flight runs whose terminal has
+  been silent too long — the net under jobs lost mid-run (an LLM call that hung until the job was
+  killed). Live long steps keep producing log lines,
   so brief silence is never misread as death.
 - **Resume semantics.** Resuming resets failed and running steps back to pending with a fresh
   attempt counter (their history is already archived per attempt) and drives on. Passed steps are
@@ -305,7 +306,7 @@ The engine assumes it will be killed and designs backwards from that:
   pid, log, and exit code persisted on the remote filesystem). A resumed or reconnected run
   **re-attaches to the process that is still running** instead of launching a second one, and
   transient SSH drops during polling reconnect with backoff rather than failing the experiment. A
-  training job survives the platform restarting under it.
+  training job survives Polaris restarting under it.
 
 All of this is safe because the engine is idempotent: steps carry their own status, the checkpoint
 carries the data, and the deterministic branch tables do not duplicate steps on replay.
@@ -327,8 +328,8 @@ from distilled memory rather than from replaying weeks of raw logs.
 
 A voyage is watchable at three zoom levels:
 
-- **The live event stream.** Everything the engine does is published to a per-run Redis channel and
-  forwarded as SSE: status changes, full step snapshots, structured log lines, and token-by-token
+- **The live event stream.** Everything the engine does is published to a per-run channel on the
+  engine's in-process event bus and forwarded as SSE: status changes, full step snapshots, structured log lines, and token-by-token
   LLM output. The stream replays the current status on connect and closes itself after a terminal
   status.
 - **The persisted terminal.** Log lines and complete model outputs are also written to the database
@@ -353,4 +354,4 @@ paused run does not wait unnoticed.
 - [Skills](skills.md) — how skill snapshots feed voyage prompts, and workflow skills as custom plans.
 - [PolarisBuddy](buddy.md) — the same Navigator / Helm / Sextant split, scaled down to a
   conversation.
-- [Architecture](architecture.md) — where the engine, worker, and event bus sit in the system.
+- [Architecture](architecture.md) — where the engine, task queue, and event bus sit in the system.
