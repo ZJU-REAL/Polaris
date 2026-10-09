@@ -13,7 +13,7 @@ html { zoom: 1.1; }
 
 /* —— 桌面端（macOS）标题栏留白 ——
    外壳用 titleBarStyle: hiddenInset，系统把红黄绿三个交通灯直接叠在内容区
-   左上角，而页面从 y=0 开始画，侧栏品牌标与登录页品牌标会被压在下面。
+   左上角，而页面从 y=0 开始画，侧栏品牌标与桌面端独立页面的品牌标会被压在下面。
    这里给顶部留一条带子，由 main.tsx 在桌面端给 <html> 打 data-desktop-platform。
 
    注意 html{zoom:1.1}：这里写的 px 会被放大 1.1 倍，而交通灯按窗口点定位、
@@ -79,7 +79,7 @@ html { zoom: 1.1; }
 :root[data-desktop-platform='win32'] .paper-reader-topbar {
   padding-right: calc(18px + var(--winctl-w));
 }
-/* 登录页与桌面端独立页面右上角的语言切换同理 */
+/* 桌面端独立页面右上角的语言切换同理 */
 :root[data-desktop-platform='win32'] .auth-lang { right: calc(20px + var(--winctl-w)); }
 
 /* 拖拽区两平台共用：顶栏没有系统标题栏可抓，得自己声明 */
@@ -268,7 +268,7 @@ input {
 /* 头像中心对齐图标轨道：7.5(这里) + 0.5(trigger 边框) + 8(trigger padding) + 17(头像半径) = 33px */
 .sb-foot { padding: 8px 7.5px; border-top: 0.5px solid var(--border-2); }
 
-/* —— 用户菜单（点头像弹出 设置 / 邀请 / 退出） —— */
+/* —— 用户菜单（点头像弹出 关于 / 设置） —— */
 .user-menu-root { position: relative; }
 .user-trigger {
   display: flex; align-items: center; gap: 9px; width: 100%;
@@ -969,80 +969,6 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 }
 .auth-card-title { font-size: 21px; font-weight: 700; color: var(--text-1); text-align: center; }
 .auth-card-sub { font-size: 12.5px; color: var(--text-3); text-align: center; margin: 5px 0 18px; }
-
-/* 注册两步指示器 */
-.auth-steps { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; padding: 0 4px; }
-.auth-step {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 12px; font-weight: 500; color: var(--text-4); white-space: nowrap;
-}
-.auth-step .dot {
-  width: 19px; height: 19px; border-radius: 50%; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 600;
-  background: var(--surface-3); color: var(--text-3);
-  transition: background 0.15s, color 0.15s;
-}
-.auth-step.active { color: var(--text-1); font-weight: 600; }
-.auth-step.active .dot { background: var(--accent); color: #fff; }
-.auth-step.done { color: var(--text-2); }
-.auth-step.done .dot { background: var(--accent-soft-2); color: var(--accent); }
-.auth-step-line { flex: 1; height: 1px; background: var(--border-2); }
-.auth-step2-account {
-  font-size: 12.5px; color: var(--text-3); margin-bottom: 14px;
-  background: var(--accent-soft-row); border-radius: 8px; padding: 8px 12px;
-}
-.auth-step2-account b { color: var(--text-1); font-weight: 600; }
-
-/* 验证码：输入框 + 获取按钮 */
-.auth-code-row { display: flex; gap: 8px; }
-.auth-code-row .auth-input { flex: 1; min-width: 0; letter-spacing: 0.18em; }
-.auth-code-row .btn { height: 38px; flex-shrink: 0; white-space: nowrap; min-width: 92px; justify-content: center; }
-
-/* 记住密码 / 忘记密码 */
-.auth-options {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; margin: -4px 0 14px;
-}
-.auth-check {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12.5px; color: var(--text-2); cursor: pointer; user-select: none;
-}
-.auth-check input { width: 13px; height: 13px; accent-color: var(--accent); cursor: pointer; }
-.auth-link {
-  background: none; border: 0; padding: 0; cursor: pointer;
-  font-size: 12.5px; color: var(--accent);
-}
-.auth-link:hover { text-decoration: underline; }
-
-/* 密码强度条（三级） */
-.pwd-meter { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
-.pwd-meter-bars { display: flex; gap: 5px; flex: 1; }
-.pwd-meter-bars i {
-  height: 5px; flex: 1; border-radius: 999px;
-  background: var(--border-2); transition: background 0.2s;
-}
-.pwd-meter.lv1 .pwd-meter-bars i:nth-child(1) { background: var(--danger); }
-.pwd-meter.lv2 .pwd-meter-bars i:nth-child(-n+2) { background: var(--warn); }
-.pwd-meter.lv3 .pwd-meter-bars i:nth-child(-n+3) { background: var(--ok); }
-.pwd-meter-label { font-size: 11.5px; font-weight: 600; min-width: 2.5em; text-align: right; }
-.pwd-meter.lv1 .pwd-meter-label { color: var(--danger-tx); }
-.pwd-meter.lv2 .pwd-meter-label { color: var(--warn-tx); }
-.pwd-meter.lv3 .pwd-meter-label { color: var(--ok-tx); }
-.pwd-hint { font-size: 11px; margin-top: 5px; transition: color 0.15s; }
-.auth-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-.auth-field label { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
-.auth-field label .en { color: var(--text-4); font-weight: 400; margin-left: 5px; font-size: 11.5px; }
-.auth-input {
-  height: 38px; padding: 0 12px; border-radius: 8px;
-  border: 1px solid var(--border-2); background: var(--surface-2);
-  font-size: 13.5px; outline: none; transition: border-color 0.12s, box-shadow 0.12s;
-}
-.auth-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--surface); }
-.auth-error {
-  background: var(--danger-bg); color: var(--danger-tx);
-  font-size: 12.5px; border-radius: 8px; padding: 9px 12px; margin-bottom: 14px; line-height: 1.5;
-}
 
 /* ============================================================
    Chat surface（文献对话 / AI 伴读共享对话框）

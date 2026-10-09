@@ -81,11 +81,8 @@ async def test_initialize_and_tools_list(client):
 
 
 async def test_list_accessible_projects_without_project_id(client):
-    """发现工具按当前认证用户隔离，无需预先知道 project_id。"""
-    # 首个注册用户会自动成为平台管理员（可见全部课题），先建自举账号。
-    await _setup(client, email="project-list-admin@example.com")
+    """发现工具列出当前用户的课题，无需预先知道 project_id。"""
     project_a, headers_a = await _setup(client, email="project-list-a@example.com")
-    project_b, _ = await _setup(client, email="project-list-b@example.com")
 
     resp = await client.post(
         "/mcp",
@@ -103,8 +100,7 @@ async def test_list_accessible_projects_without_project_id(client):
     assert result["isError"] is False
     payload = json.loads(result["content"][0]["text"])
     ids = {project["project_id"] for project in payload["projects"]}
-    assert project_a in ids
-    assert project_b not in ids
+    assert ids == {project_a}
     assert payload["total_count"] == 1
     assert payload["has_more"] is False
 
@@ -171,29 +167,6 @@ async def test_tools_call_missing_project_id(client):
     assert result["isError"] is True
     assert "project_id" in result["content"][0]["text"]
     assert "list_accessible_projects" in result["content"][0]["text"]
-
-
-async def test_tools_call_cross_project_denied(client):
-    """B 用户拿 A 项目 id 调用 → 非成员，视为项目不存在。"""
-    project_a, _ = await _setup(client, email="owner-a@example.com")
-    _, headers_b = await _setup(client, email="owner-b@example.com")
-
-    resp = await client.post(
-        "/mcp",
-        json={
-            "jsonrpc": "2.0",
-            "id": 5,
-            "method": "tools/call",
-            "params": {
-                "name": "search_papers",
-                "arguments": {"project_id": project_a, "query": "retrieval"},
-            },
-        },
-        headers=headers_b,
-    )
-    result = resp.json()["result"]
-    assert result["isError"] is True
-    assert "无权访问" in result["content"][0]["text"]
 
 
 async def test_catalog_endpoint(client):
@@ -275,22 +248,6 @@ async def test_invoke_unknown_tool_and_auth(client):
     assert resp.status_code == 401
 
 
-async def test_invoke_cross_project_denied(client):
-    """试运行同样过成员校验：拿别人的课题 id 一律当作不存在。"""
-    project_a, _ = await _setup(client, email="invoke-a@example.com")
-    _, headers_b = await _setup(client, email="invoke-b@example.com")
-
-    resp = await client.post(
-        "/api/mcp/tools/search_papers/invoke",
-        json={"project_id": project_a, "arguments": {"query": "retrieval"}},
-        headers=headers_b,
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["is_error"] is True
-    assert "无权访问" in body["content"][0]["text"]
-
-
 async def test_selfcheck(client):
     """POST /api/mcp/selfcheck：把工具跑一遍，报告哪些还能用、哪些已失效。"""
     project_id, headers = await _setup(client, email="selfcheck@example.com")
@@ -319,10 +276,9 @@ async def test_selfcheck(client):
     assert by_name["get_paper_figure"]["status"] == "skipped"
 
 
-async def test_selfcheck_names_and_cross_project(client):
-    """names 过滤只跑指定工具；非成员课题直接 404（报告里带样本 id，不能泄露）。"""
+async def test_selfcheck_names_filter(client):
+    """names 过滤只跑指定工具。"""
     project_a, headers_a = await _setup(client, email="sc-a@example.com")
-    _, headers_b = await _setup(client, email="sc-b@example.com")
 
     resp = await client.post(
         "/api/mcp/selfcheck",
@@ -331,13 +287,6 @@ async def test_selfcheck_names_and_cross_project(client):
     )
     assert resp.status_code == 200, resp.text
     assert [r["name"] for r in resp.json()["results"]] == ["list_concepts"]
-
-    resp = await client.post(
-        "/api/mcp/selfcheck",
-        json={"project_id": project_a, "names": ["list_concepts"]},
-        headers=headers_b,
-    )
-    assert resp.status_code == 404, resp.text
 
 
 async def test_unknown_method(client):

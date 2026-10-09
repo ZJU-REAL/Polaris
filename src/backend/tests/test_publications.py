@@ -137,20 +137,6 @@ async def test_match_idempotent_and_respects_rejected(client):
     assert resp.json()["total"] == 0
 
 
-async def test_match_only_scans_member_projects(client):
-    headers_a = await _login(client, email="owner@example.com")
-    project_a = await _make_project(client, headers_a, "theirs")
-    await _make_paper(
-        project_a, title="Their Paper", authors=[{"name": "Wei Zhang"}], status="included"
-    )
-
-    headers_b = await _login(client, email="me@example.com")
-    await _bind(client, headers_b)
-    uid = await _my_id(client, headers_b)
-    async with get_sessionmaker()() as session:
-        assert await publications_service.match_from_library(session, user_id=uid) == 0
-
-
 async def test_daily_match_targets_auto_sync_profiles(client):
     headers = await _login(client)
     await _bind(client, headers)
@@ -169,7 +155,7 @@ async def test_daily_match_targets_auto_sync_profiles(client):
         assert await publications_service.profiles_for_daily_match(session) == []
 
 
-async def test_confirm_flow_and_permissions(client):
+async def test_confirm_flow(client):
     headers = await _login(client)
     # 手动补录 bibtex（离线）→ 直接 confirmed
     bibtex = """@inproceedings{zhang2025agents,
@@ -196,13 +182,6 @@ async def test_confirm_flow_and_permissions(client):
         "/api/me/publications", json={"doi": "10.9/x", "arxiv_id": "2401.1"}, headers=headers
     )
     assert resp.status_code == 422
-
-    # 别人看不到、也改不动我的记录
-    other = await _login(client, email="other@example.com")
-    resp = await client.get("/api/me/publications?status=confirmed", headers=other)
-    assert resp.json()["total"] == 0
-    resp = await client.post(f"/api/me/publications/{pub['id']}/confirm", headers=other)
-    assert resp.status_code == 404
 
 
 async def test_scan_endpoint_requires_binding_and_enqueues(client, queue_stub):

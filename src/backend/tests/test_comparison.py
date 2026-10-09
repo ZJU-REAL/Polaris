@@ -258,36 +258,6 @@ async def test_comparison_endpoint(client):
     assert anon.status_code == 401
 
 
-async def test_comparison_endpoint_personal_library_hidden(client):
-    owner = await register_and_login(client, email="cmpowner@example.com")
-    owner_headers = {"Authorization": f"Bearer {owner}"}
-    resp = await client.post(
-        "/api/libraries",
-        json={"name": "私人对比库", "statement": "只给自己看的方向"},
-        headers=owner_headers,
-    )
-    assert resp.status_code == 201, resp.text
-    lib_id = resp.json()["id"]
-
-    fake_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
-    # 创建者可达（论文不存在 → 404 PAPER_NOT_FOUND，但库本身可见）
-    resp = await client.post(
-        f"/api/libraries/{lib_id}/comparison", json={"paper_ids": fake_ids}, headers=owner_headers
-    )
-    assert resp.status_code == 404
-    assert resp.json()["detail"] == "PAPER_NOT_FOUND"
-
-    # 他人不可见：按库不存在处理（LIBRARY_NOT_FOUND，不泄漏个人库存在性）
-    other = await register_and_login(client, email="cmpother@example.com")
-    resp = await client.post(
-        f"/api/libraries/{lib_id}/comparison",
-        json={"paper_ids": fake_ids},
-        headers={"Authorization": f"Bearer {other}"},
-    )
-    assert resp.status_code == 404
-    assert resp.json()["detail"] == "LIBRARY_NOT_FOUND"
-
-
 # ---- 对比表与缺口台账按库的学科走（#790）----
 
 

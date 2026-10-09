@@ -113,7 +113,7 @@ export function handleAppProtocol(): void {
     const isFile = existsSync(filePath) && statSync(filePath).isFile();
     if (!isFile) {
       // SPA fallback：带扩展名的当作真实资源缺失（404），其余交给前端路由。
-      // 这样 createBrowserRouter 与 api.ts 的 location.assign('/login') 原样可用。
+      // 这样 createBrowserRouter 的前端路由（深链、整页刷新）原样可用。
       if (extname(pathname)) return new Response('Not Found', { status: 404 });
       filePath = join(root, 'index.html');
       if (!existsSync(filePath)) {

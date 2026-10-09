@@ -9,6 +9,7 @@ from PIL import Image
 from sqlalchemy import select
 
 import app.tools as tools
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
 from app.models.user import User
@@ -231,7 +232,7 @@ async def test_mcp_get_figure_returns_download_link(client):
 
     async with get_sessionmaker()() as session:
         user = (
-            await session.execute(select(User).where(User.email == "fig4@example.com"))
+            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         user.is_active = False
         await session.commit()

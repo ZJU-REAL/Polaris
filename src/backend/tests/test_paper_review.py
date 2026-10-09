@@ -31,7 +31,7 @@ from app.services import paper_review as pr
 from app.services.latex_compile import TectonicRun
 from app.services.literature.openalex import OpenAlexClient
 from app.services.literature.semantic_scholar import SemanticScholarClient
-from tests.conftest import RecordingBus, register_and_login
+from tests.conftest import RecordingBus
 from tests.test_manuscripts import (
     _create_manuscript,
     _seed_experiment,
@@ -599,11 +599,3 @@ async def test_reviews_history_and_session_permissions(client, bus_recorder):
     )
     assert resp.status_code == 201
     assert resp.json()["author_type"] == "human"
-
-    # 非成员 404（不泄露存在性）
-    outsider = await register_and_login(client, email="mallory@example.com")
-    outsider_headers = {"Authorization": f"Bearer {outsider}"}
-    resp = await client.get(f"/api/sessions/{sid}/messages", headers=outsider_headers)
-    assert resp.status_code == 404
-    resp = await client.get(f"/api/manuscripts/{ms_id}/reviews", headers=outsider_headers)
-    assert resp.status_code == 404

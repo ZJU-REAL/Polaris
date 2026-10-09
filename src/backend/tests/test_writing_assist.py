@@ -131,17 +131,3 @@ async def test_assist_endpoint_validation(client):
     )
     assert resp.status_code == 422
     assert resp.json()["detail"] == "ASSIST_BEFORE_REQUIRED"
-
-
-async def test_assist_endpoint_requires_membership(client):
-    project_id, headers = await _setup_project(client)
-    resp = await _create_manuscript(client, headers, project_id)
-    ms_id = resp.json()["id"]
-
-    _, other_headers = await _setup_project(client, email="mallory@example.com")
-    resp = await client.post(
-        f"/api/manuscripts/{ms_id}/assist",
-        json={"mode": "polish", "text": "hello"},
-        headers=other_headers,
-    )
-    assert resp.status_code == 404

@@ -52,8 +52,7 @@ sign in at
 **The account is for demonstration only: it is read-only and cannot call any model.** It reaches every
 screen, the admin views included, but nothing it does changes state — creating, editing, deleting and
 uploading are all refused, and no LLM call will run, whether from chat, compilation or the assistant.
-Lab members' details and the registration codes are hidden from it as well. It is there to show what
-the platform looks like, not to do work on it.
+It is there to show what the platform looks like, not to do work on it.
 
 ## The research pipeline
 

@@ -127,19 +127,6 @@ async def test_the_answer_is_persisted_and_replayed_next_turn(client, agent_on):
     assert len(resp.json()) == 4
 
 
-async def test_someone_elses_conversation_is_not_readable(client, agent_on):
-    """别人的会话既读不到消息，也不能往里发。"""
-    owner = await _headers(client, "agent-owner@example.com")
-    other = await _headers(client, "agent-other@example.com")
-    conv_id = (await client.post("/api/chat/conversations", json={}, headers=owner)).json()["id"]
-
-    resp = await client.get(f"/api/chat/conversations/{conv_id}/messages", headers=other)
-    assert resp.status_code == 404
-
-    resp = await client.get("/api/chat/conversations", headers=other)
-    assert conv_id not in {c["id"] for c in resp.json()}
-
-
 async def test_conversations_are_listed_newest_first(client, agent_on):
     headers = await _headers(client, "agent-list@example.com")
     ids = []
@@ -287,32 +274,6 @@ async def test_the_assistant_searches_across_libraries_without_a_project(client,
     )
 
 
-async def test_someone_elses_project_id_is_rejected_everywhere(client, agent_on):
-    """带别人的 project_id 一律 404——建会话和跑轮次两个口都要挡。
-
-    这是比随机 UUID 更严重的洞：不挡的话，助手会拿着别人的课题作用域去检索
-    **别人的语料**。MCP 那侧一直有成员校验，这个端点此前漏了。
-    """
-    owner = await _headers(client, "agent-authz-owner@example.com")
-    intruder = await _headers(client, "agent-authz-intruder@example.com")
-    project_id = await _project_with_paper(client, owner, "Secret Corpus Paper")
-
-    # 建会话时就挡
-    resp = await client.post(
-        "/api/chat/conversations", json={"project_id": project_id}, headers=intruder
-    )
-    assert resp.status_code == 404
-
-    # 跑轮次时显式传也挡
-    conv_id = (await client.post("/api/chat/conversations", json={}, headers=intruder)).json()["id"]
-    resp = await client.post(
-        f"/api/chat/conversations/{conv_id}/turn",
-        json={"question": "hi", "project_id": project_id},
-        headers=intruder,
-    )
-    assert resp.status_code == 404
-
-
 async def test_the_resolved_project_sticks_to_the_conversation(client, agent_on):
     """解析出的课题存回会话：第二轮不用再传，也不再走解析。"""
     headers = await _headers(client, "agent-scope-stick@example.com")
@@ -388,25 +349,6 @@ async def test_conversations_can_be_renamed_and_deleted(client, agent_on):
     ).status_code == 204
     rows = (await client.get("/api/chat/conversations", headers=headers)).json()
     assert conv["id"] not in {r["id"] for r in rows}
-
-
-async def test_someone_elses_conversation_is_404_not_403(client, agent_on):
-    """别人的对话一律 404。403 等于承认「这个 id 存在」——对话标题里常带着研究方向。"""
-    owner = await _headers(client, "conv-owner@example.com")
-    intruder = await _headers(client, "conv-intruder@example.com")
-    conv = (await client.post("/api/chat/conversations", json={}, headers=owner)).json()
-
-    assert (
-        await client.delete(f"/api/chat/conversations/{conv['id']}", headers=intruder)
-    ).status_code == 404
-    assert (
-        await client.patch(
-            f"/api/chat/conversations/{conv['id']}", json={"title": "x"}, headers=intruder
-        )
-    ).status_code == 404
-    # 而且真的没被删掉
-    rows = (await client.get("/api/chat/conversations", headers=owner)).json()
-    assert conv["id"] in {r["id"] for r in rows}
 
 
 async def test_deleting_a_conversation_takes_its_messages(client, agent_on):

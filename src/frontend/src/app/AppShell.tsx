@@ -978,7 +978,7 @@ export function AppShell() {
         <div className="content scroll">
           {/* 业务页按语言重挂载：这些页面的文案埋在深层子树里，而路由表给出的元素是稳定
               引用，父组件重渲染带不动它们——换 key 是这里唯一可靠的重新求值方式。
-              壳层与登录页都在这个边界之外，各自就地重渲染，不再陪着丢状态。 */}
+              壳层与桌面端独立页面都在这个边界之外，各自就地重渲染，不再陪着丢状态。 */}
           <Fragment key={lang}>
             <Outlet context={ctx} />
           </Fragment>

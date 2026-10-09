@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "a9c4e7d2f1b8"  # 路由可以指向外部 agent (#840)
+HEAD_REVISION = "88a5bdc0aa15"  # 删掉邮箱验证码表：去掉账号层 (#842)
+ROUTES_TO_AGENTS_REVISION = "a9c4e7d2f1b8"  # 路由可以指向外部 agent (#840)
 ACP_AGENTS_REVISION = "f6b2d8e04a17"  # 外部 agent（ACP 后端）登记表 (#836)
 LEGACY_PREFS_REVISION = "d3f9a1c7e2b4"  # 删掉偏好的旧 system_settings 行 (#821 E2)
 DAILY_FEED_SOURCES_REVISION = "b5e2c8d41f7a"  # 每日池条目记来源 (#821)
@@ -651,7 +652,17 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 每日池条目记来源（#821）：增量同步按库的来源筛池
     assert "sources" in columns["daily_feed_entries"]
 
-    # 先退掉「路由指向 agent」（#840）：provider_id 回到非空，acp_agent_id 列去掉。
+    # 账号层已删（#842）：邮箱验证码表不在 head 上
+    assert "email_verification_codes" not in columns["_tables"]
+
+    # 先退掉「删验证码表」（#842）：表建回来（空表）。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == ROUTES_TO_AGENTS_REVISION
+    assert "email_verification_codes" in columns["_tables"]
+    assert "ix_email_verification_codes_email" in _index_names(db_path, "email_verification_codes")
+
+    # 再退掉「路由指向 agent」（#840）：provider_id 回到非空，acp_agent_id 列去掉。
     assert "acp_agent_id" in columns["model_routes"]
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)

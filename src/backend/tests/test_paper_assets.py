@@ -5,6 +5,7 @@ import uuid
 import pymupdf
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import new_paper
@@ -33,7 +34,7 @@ async def _user(client, email: str) -> tuple[dict[str, str], uuid.UUID]:
     token = await register_and_login(client, email=email)
     headers = {"Authorization": f"Bearer {token}"}
     async with get_sessionmaker()() as session:
-        user_id = await session.scalar(select(User.id).where(User.email == email))
+        user_id = await session.scalar(select(User.id).where(User.email == LOCAL_USER_EMAIL))
     return headers, user_id
 
 
@@ -231,24 +232,3 @@ async def test_asset_http_upload_list_download_and_identity_check(app, client):
     )
     assert response.status_code == 422
     assert "identity" in response.json()["detail"].lower()
-
-
-async def test_asset_http_private_library_is_not_visible_to_stranger(app, client):
-    owner_headers, owner_id = await _user(client, "asset-http-owner@example.com")
-    stranger_headers, _ = await _user(client, "asset-http-stranger@example.com")
-    async with get_sessionmaker()() as session:
-        library = await _library(session, user_id=owner_id)
-        paper = await _paper_in_library(session, library)
-        await session.commit()
-        library_id = str(library.id)
-        paper_id = str(paper.id)
-    response = await client.post(
-        f"/api/libraries/{library_id}/papers/{paper_id}/assets",
-        files={"file": ("paper.pdf", _pdf_bytes("private"), "application/pdf")},
-        headers=owner_headers,
-    )
-    assert response.status_code == 201
-    response = await client.get(
-        f"/api/libraries/{library_id}/papers/{paper_id}/assets", headers=stranger_headers
-    )
-    assert response.status_code == 404

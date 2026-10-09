@@ -4,6 +4,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.library import UserLibraryEntry
 from app.models.library_direction import LibraryPaper
@@ -32,7 +33,9 @@ async def _setup(client, *, email="merge-owner@example.com", name="合并方向"
 
 
 async def _user_id(session, email):
-    return (await session.execute(select(User.id).where(User.email == email))).scalar_one()
+    return (
+        await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
+    ).scalar_one()
 
 
 async def test_merge_papers_full_repoint_with_conflicts(client):
@@ -41,7 +44,6 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
 
     async with get_sessionmaker()() as session:
         owner_id = await _user_id(session, "merge-owner@example.com")
-        other_id = await _user_id(session, "merge-b@example.com")
         pid = uuid.UUID(project_id)
         pid_b = uuid.UUID(project_b)
         lib_a = await ensure_project_library(session, pid)
@@ -102,8 +104,6 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
         session.add(
             PaperUserMeta(paper_id=drop.id, user_id=owner_id, starred=True, reading_status="read")
         )
-        # 另一用户只有 drop 行 → repoint
-        session.add(PaperUserMeta(paper_id=drop.id, user_id=other_id, starred=True))
         # 书架冲突：同课题两行（keep 行无备注）
         session.add(TopicPaper(topic_id=pid, paper_id=keep.id))
         session.add(TopicPaper(topic_id=pid, paper_id=drop.id, note="why"))
@@ -137,7 +137,7 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
     assert report["dropped_dedup_key"] == "doi:10.1000/sparse"
     assert report["library_memberships"] == {"repointed": 1, "merged": 1}
     assert report["topic_papers"] == {"repointed": 1, "merged": 1}
-    assert report["paper_user_meta"] == {"repointed": 1, "merged": 1}
+    assert report["paper_user_meta"] == {"repointed": 0, "merged": 1}
     assert report["notes_repointed"] == 1
     assert report["highlights_repointed"] == 1
     assert report["concept_links"] == {"repointed": 1, "deduped": 1}
@@ -225,8 +225,6 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
 
 async def test_duplicate_candidates_and_merge_api(client):
     headers, project_id = await _setup(client, email="cand-owner@example.com")
-    stranger_token = await register_and_login(client, email="cand-stranger@example.com")
-    stranger = {"Authorization": f"Bearer {stranger_token}"}
 
     async with get_sessionmaker()() as session:
         keep = await add_paper(
@@ -249,9 +247,7 @@ async def test_duplicate_candidates_and_merge_api(client):
         keep_id, drop_id = str(keep.id), str(drop.id)
         library_id = str((await get_library_for_project(session, uuid.UUID(project_id))).id)
 
-    # 候选发现：无关用户 403；可管理者拿到一组（首行 = 有 wiki 的建议保留行）
-    resp = await client.get(f"/api/libraries/{library_id}/duplicate-candidates", headers=stranger)
-    assert resp.status_code == 403
+    # 候选发现：拿到一组（首行 = 有 wiki 的建议保留行）
     resp = await client.get(f"/api/libraries/{library_id}/duplicate-candidates", headers=headers)
     assert resp.status_code == 200, resp.text
     groups = resp.json()
@@ -260,10 +256,8 @@ async def test_duplicate_candidates_and_merge_api(client):
     assert [p["id"] for p in groups[0]["papers"]] == [keep_id, drop_id]
     assert groups[0]["papers"][0]["has_wiki"] is True
 
-    # 合并：无关用户 403；可管理者成功；再次合并（drop 已删）→ 400
+    # 合并成功；再次合并（drop 已删）→ 400
     body = {"keep_id": keep_id, "drop_id": drop_id}
-    resp = await client.post("/api/papers/merge", json=body, headers=stranger)
-    assert resp.status_code == 403
     resp = await client.post("/api/papers/merge", json=body, headers=headers)
     assert resp.status_code == 200, resp.text
     result = resp.json()

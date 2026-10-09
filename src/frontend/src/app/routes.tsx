@@ -103,7 +103,6 @@ function ProjectSettingsRedirect() {
 }
 
 export const router = createBrowserRouter([
-  { path: '/login', element: page(() => import('../features/auth/LoginPage'), 'LoginPage') },
   {
     path: '/',
     element: (

@@ -9,6 +9,7 @@ import uuid
 
 import pytest
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.services import buddy
 from tests.conftest import register_and_login
@@ -163,38 +164,31 @@ def test_page_context_renders_only_known_kinds():
     assert len(buddy.render_page_context("paper", "y" * 500)) <= buddy.MAX_CONTEXT_CHARS
 
 
-async def test_stats_only_count_this_users_data(client):
-    """别人库里的论文不算在我头上；只浏览没收藏的也不算。"""
+async def test_stats_only_count_saved_entries(client):
+    """只浏览没收藏的不算「收进库」。"""
     from app.models.library import UserLibraryEntry
 
-    token_a = await register_and_login(client, email="buddy-a@example.com")
-    token_b = await register_and_login(client, email="buddy-b@example.com")
-    assert token_a and token_b
+    assert await register_and_login(client)
 
     async with get_sessionmaker()() as session:
         from sqlalchemy import select
 
         from app.models.user import User
 
-        users = {u.email: u.id for u in (await session.execute(select(User))).scalars().all()}
-        a, b = users["buddy-a@example.com"], users["buddy-b@example.com"]
+        me = (
+            await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
+        ).scalar_one()
         for i in range(3):
             session.add(
-                UserLibraryEntry(user_id=a, dedup_key=str(uuid.uuid4()), title=f"A{i}", saved=True)
+                UserLibraryEntry(user_id=me, dedup_key=str(uuid.uuid4()), title=f"A{i}", saved=True)
             )
-        # 只浏览没收藏的条目不算"收进库"
         session.add(
-            UserLibraryEntry(user_id=a, dedup_key=str(uuid.uuid4()), title="browsed", saved=False)
-        )
-        session.add(
-            UserLibraryEntry(user_id=b, dedup_key=str(uuid.uuid4()), title="B0", saved=True)
+            UserLibraryEntry(user_id=me, dedup_key=str(uuid.uuid4()), title="browsed", saved=False)
         )
         await session.commit()
 
-        stats_a = await buddy.collect_stats(session, user_id=a)
-        stats_b = await buddy.collect_stats(session, user_id=b)
-    assert stats_a.saved_total == 3
-    assert stats_b.saved_total == 1
+        stats = await buddy.collect_stats(session, user_id=me)
+    assert stats.saved_total == 3
 
 
 async def test_greeting_endpoint_returns_sentence_and_counts(client, agent_on):
@@ -268,15 +262,12 @@ async def test_page_context_reaches_the_model_as_a_user_prefix(client, agent_on,
     assert question == "这篇讲了什么", "提问本身不该被改写"
 
 
-async def test_memories_are_per_user_and_reach_the_prompt(client, agent_on):
-    """长期记忆：只有自己看得见，并且真的进了这一轮的提示词。"""
+async def test_memories_are_listed_and_reach_the_prompt(client, agent_on):
+    """长期记忆：列得出来，并且真的进了这一轮的提示词。"""
     from app.core.db import get_sessionmaker
     from app.services import buddy as buddy_service
 
-    token_a = await register_and_login(client, email="mem-a@example.com")
-    token_b = await register_and_login(client, email="mem-b@example.com")
-    mine = {"Authorization": f"Bearer {token_a}"}
-    theirs = {"Authorization": f"Bearer {token_b}"}
+    mine = {"Authorization": f"Bearer {await register_and_login(client)}"}
 
     created = await client.post(
         "/api/chat/memories", json={"text": "我做具身智能，别给我推纯 NLP"}, headers=mine
@@ -284,13 +275,6 @@ async def test_memories_are_per_user_and_reach_the_prompt(client, agent_on):
     assert created.status_code == 201
 
     assert len((await client.get("/api/chat/memories", headers=mine)).json()) == 1
-    assert (await client.get("/api/chat/memories", headers=theirs)).json() == []
-
-    # 别人的记忆删不掉（404 而不是 403：403 等于承认这条存在）
-    memory_id = created.json()["id"]
-    assert (
-        await client.delete(f"/api/chat/memories/{memory_id}", headers=theirs)
-    ).status_code == 404
 
     async with get_sessionmaker()() as session:
         from sqlalchemy import select
@@ -298,7 +282,7 @@ async def test_memories_are_per_user_and_reach_the_prompt(client, agent_on):
         from app.models.user import User
 
         user_id = (
-            await session.execute(select(User.id).where(User.email == "mem-a@example.com"))
+            await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         rendered = await buddy_service.render_memories(session, user_id=user_id)
     assert "具身智能" in rendered

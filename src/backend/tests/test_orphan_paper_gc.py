@@ -10,6 +10,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.daily_feed import DAILY_FEED_RETENTION_DAYS, DailyFeedEntry
 from app.models.library import UserLibraryEntry
@@ -32,7 +33,9 @@ async def _paper_exists(paper_id: str) -> bool:
 async def _add_personal_entry(email: str, paper_id: str, *, saved: bool) -> None:
     """给某用户对某论文建一条个人库条目：saved=True 收藏 / False 纯浏览记录。"""
     async with get_sessionmaker()() as session:
-        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
+        user = (
+            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
+        ).scalar_one()
         paper = await session.get(Paper, uuid.UUID(paper_id))
         session.add(
             UserLibraryEntry(

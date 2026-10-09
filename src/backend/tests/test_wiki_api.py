@@ -136,14 +136,6 @@ async def test_paper_detail_and_manual_status(client):
     )
     assert resp.status_code == 422  # 只允许 included|excluded
 
-    # 非项目成员也可读（P5c：库成员论文全员可读），但无课题上下文
-    other = await register_and_login(client, email="mallory@example.com")
-    resp = await client.get(
-        f"/api/papers/{ids['p1']}", headers={"Authorization": f"Bearer {other}"}
-    )
-    assert resp.status_code == 200
-    assert resp.json()["project_id"] is None
-
 
 async def test_concepts_list_and_detail(client):
     project_id, headers, ids = await _setup(client)
@@ -230,13 +222,6 @@ async def test_project_stats(client):
     assert stats["gates_pending"] == 0
     assert stats["recent_activities"][0]["kind"] == "ingest.completed"
 
-    # 非成员看不到
-    other = await register_and_login(client, email="eve@example.com")
-    resp = await client.get(
-        f"/api/projects/{project_id}/stats", headers={"Authorization": f"Bearer {other}"}
-    )
-    assert resp.status_code == 404
-
 
 async def test_project_graph(client):
     project_id, headers, ids = await _setup(client)
@@ -260,13 +245,6 @@ async def test_project_graph(client):
     assert (ids["p1"], authors[0]["id"], "paper_author") in kinds
     assert graph["paper_total"] == 1
     assert graph["truncated"] is False
-
-    # 非成员 404
-    other = await register_and_login(client, email="mallory@example.com")
-    resp = await client.get(
-        f"/api/projects/{project_id}/graph", headers={"Authorization": f"Bearer {other}"}
-    )
-    assert resp.status_code == 404
 
 
 async def test_papers_status_group_filters(client):
@@ -342,13 +320,6 @@ async def test_delete_paper_and_batch(client, tmp_path):
         paper = await session.get(Paper, uuid.UUID(ids["p1"]))
         paper.pdf_path = str(pdf)
         await session.commit()
-
-    # 非成员 404
-    other = await register_and_login(client, email="del-outsider@example.com")
-    resp = await client.delete(
-        f"/api/papers/{ids['p1']}", headers={"Authorization": f"Bearer {other}"}
-    )
-    assert resp.status_code == 404
 
     resp = await client.delete(f"/api/papers/{ids['p1']}", headers=headers)
     assert resp.status_code == 204

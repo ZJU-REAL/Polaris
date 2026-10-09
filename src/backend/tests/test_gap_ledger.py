@@ -327,8 +327,8 @@ async def test_gaps_endpoint(client, tmp_path):
     assert anon.status_code == 401
 
 
-async def test_gaps_endpoint_personal_library_hidden(client):
-    owner = await register_and_login(client, email="gapsowner@example.com")
+async def test_gaps_endpoint_on_personal_library(client):
+    owner = await register_and_login(client)
     owner_headers = {"Authorization": f"Bearer {owner}"}
     resp = await client.post(
         "/api/libraries",
@@ -341,10 +341,3 @@ async def test_gaps_endpoint_personal_library_hidden(client):
     # 创建者可读
     resp = await client.get(f"/api/libraries/{lib_id}/gaps", headers=owner_headers)
     assert resp.status_code == 200
-
-    # 他人不可见：按不存在处理（404，不泄漏个人库存在性）
-    other = await register_and_login(client, email="gapsother@example.com")
-    resp = await client.get(
-        f"/api/libraries/{lib_id}/gaps", headers={"Authorization": f"Bearer {other}"}
-    )
-    assert resp.status_code == 404

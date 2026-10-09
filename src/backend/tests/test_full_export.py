@@ -286,13 +286,7 @@ async def test_full_export_api_enqueue_conflict_and_download(client, fake_redis,
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/zip"
 
-    # 非属主/非法 task_id 一律 404（不泄露存在性）
-    other = await register_and_login(client, email="other@example.com")
-    resp = await client.get(
-        f"/api/export/full/{task_id}/download",
-        headers={"Authorization": f"Bearer {other}"},
-    )
-    assert resp.status_code == 404
+    # 非法 task_id 一律 404
     resp = await client.get("/api/export/full/../../etc/passwd/download", headers=headers)
     assert resp.status_code == 404
     path.unlink()

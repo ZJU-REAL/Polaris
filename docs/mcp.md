@@ -60,18 +60,18 @@ If it does not, use the stdio transport below.
 to run with the engine's Python environment and be pointed at the same SQLite database — for the
 desktop app, the venv and `polaris.db` under `<userData>/engine/` (see
 [where the data lives](desktop.md#where-the-data-lives)); for a source checkout, `src/backend/.venv`
-and its `.env`. The user is taken from an environment variable rather than a token, because a local
-process is treated as trusted:
+and its `.env`. A local process is treated as trusted, so it needs no token: every call runs as the
+local user.
 
 ```toml
 [mcp_servers.polaris]
 command = "<userData>/engine/venv/bin/python"   # Windows: <userData>\engine\venv\Scripts\python.exe
 args = ["-m", "app.mcp"]
-env = { POLARIS_DATABASE_URL = "sqlite+aiosqlite:///<userData>/engine/polaris.db", POLARIS_DATA_DIR = "<userData>/engine/data", POLARIS_MCP_USER_EMAIL = "local@polaris.desktop" }
+env = { POLARIS_DATABASE_URL = "sqlite+aiosqlite:///<userData>/engine/polaris.db", POLARIS_DATA_DIR = "<userData>/engine/data" }
 ```
 
-`POLARIS_MCP_USER_EMAIL` must be an existing user; every call runs as that user. On the desktop app
-that is the local user, `local@polaris.desktop`.
+The local user (`local@polaris.desktop`) exists once the desktop app has been opened. To act as a
+different existing user, set `POLARIS_MCP_USER_EMAIL` to that user's email.
 
 ### Scoping and permissions
 
@@ -126,7 +126,7 @@ natively. Names are stable within a versioned profile; treat them as API.
 to the current authenticated user and returns the `project_id` values required
 by the rest of the catalog. It supports name or slug filtering, status
 filtering, and pagination. The server derives the user identity from the bearer
-token or `POLARIS_MCP_USER_EMAIL`; the caller never supplies a user ID.
+token (HTTP) or from the local user (stdio); the caller never supplies a user ID.
 
 ### Papers and reading
 

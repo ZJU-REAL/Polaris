@@ -52,12 +52,3 @@ async def test_export_arxiv_clean_tarball(client):
     assert "main.pdf" not in names
     assert "main.aux" not in names
     assert not any(n.endswith(".log") for n in names)
-
-
-async def test_export_arxiv_requires_membership(client):
-    project_id, headers = await _setup_project(client)
-    resp = await _create_manuscript(client, headers, project_id)
-    ms_id = resp.json()["id"]
-    _, other = await _setup_project(client, email="intruder@example.com")
-    resp = await client.get(f"/api/manuscripts/{ms_id}/export/arxiv", headers=other)
-    assert resp.status_code == 404

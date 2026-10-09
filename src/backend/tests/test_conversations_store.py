@@ -9,6 +9,7 @@ import uuid
 
 import pytest
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.core.llm.base import (
     ImageBlock,
@@ -29,7 +30,9 @@ async def _user_id(client, email: str) -> uuid.UUID:
 
     await register_and_login(client, email=email)
     async with get_sessionmaker()() as session:
-        return (await session.execute(select(User.id).where(User.email == email))).scalar_one()
+        return (
+            await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
+        ).scalar_one()
 
 
 async def test_a_tool_using_round_survives_a_round_trip(client):
@@ -175,25 +178,6 @@ async def test_title_comes_from_the_first_user_message(client):
         title = conv.title
 
     assert title == "最近有哪些值得关注的新论文？", "取首条、去空白、不被第二条覆盖"
-
-
-async def test_someone_elses_conversation_is_never_continued(client):
-    """带着别人的 conversation_id 来，不能把那场对话续下去。"""
-    owner = await _user_id(client, "conv-owner@example.com")
-    other = await _user_id(client, "conv-other@example.com")
-    async with get_sessionmaker()() as session:
-        conv = await store.get_or_create(session, user_id=owner, scope_kind="global")
-        await session.commit()
-        owned_id = conv.id
-
-    async with get_sessionmaker()() as session:
-        got = await store.get_or_create(
-            session, user_id=other, scope_kind="global", conversation_id=owned_id
-        )
-        await session.commit()
-
-    assert got.id != owned_id, "归属对不上就该另开一条，而不是接管"
-    assert got.user_id == other
 
 
 @pytest.mark.parametrize(

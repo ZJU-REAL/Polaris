@@ -430,26 +430,8 @@ async def test_shelf_filters_by_my_tag(client):
     assert got == [] and total == 0
 
 
-async def test_shelf_requires_project_ownership(client):
+async def test_shelf_rejects_unknown_paper(client):
     project_id, headers = await _setup(client)
-    paper_id = await _seed_paper(project_id, title="Members Only", status="scored")
-    outsider = await register_and_login(client, email="shelf-outsider@example.com")
-    outsider_headers = {"Authorization": f"Bearer {outsider}"}
-
-    for method, url, kwargs in (
-        ("get", f"/api/projects/{project_id}/shelf", {}),
-        ("get", f"/api/projects/{project_id}/shelf/ids", {}),
-        ("post", f"/api/projects/{project_id}/shelf", {"json": {"paper_id": paper_id}}),
-        (
-            "post",
-            f"/api/projects/{project_id}/shelf/import",
-            {"json": {"arxiv_id": "2401.99999"}},
-        ),
-        ("patch", f"/api/projects/{project_id}/shelf/{paper_id}", {"json": {"note": "x"}}),
-        ("delete", f"/api/projects/{project_id}/shelf/{paper_id}", {}),
-    ):
-        resp = await getattr(client, method)(url, headers=outsider_headers, **kwargs)
-        assert resp.status_code == 404, (method, url, resp.text)
 
     # 池中不存在的 paper_id 入架 → 404 PAPER_NOT_FOUND
     resp = await client.post(

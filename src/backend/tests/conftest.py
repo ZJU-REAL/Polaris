@@ -3,21 +3,16 @@
 注意：必须在 import app 之前设置环境变量（Settings 是 lru_cache 的）。
 """
 
-import datetime as dt
-import itertools
 import os
-import re
 import tempfile
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select as sa_select
 
 _TMPDIR = tempfile.mkdtemp(prefix="polaris-test-")
 os.environ["POLARIS_ENV"] = "dev"
 os.environ["POLARIS_DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMPDIR}/test.db"
 os.environ["POLARIS_SECRET_KEY"] = "test-secret-key-0123456789abcdef0123456789abcdef"
-os.environ["POLARIS_INVITE_CODE"] = "test-invite"
 os.environ["POLARIS_ENCRYPTION_KEY"] = ""
 os.environ["POLARIS_DATA_DIR"] = f"{_TMPDIR}/data"  # PDF/全文落盘目录（M2）
 os.environ["POLARIS_LLM_FAKE_FALLBACK"] = "1"  # 测试套件依赖确定性 fake provider
@@ -33,7 +28,6 @@ from app.core.llm.router import reset_llm_router  # noqa: E402
 from app.core.queue import get_task_queue  # noqa: E402
 from app.core.redis import get_redis_dep  # noqa: E402
 from app.main import create_app  # noqa: E402
-from app.models.user import User  # noqa: E402
 from app.services.owner import reset_owner_cache  # noqa: E402
 
 import app.models  # noqa: E402,F401  isort: skip  注册全部表
@@ -154,8 +148,6 @@ async def fake_redis(app):
     yield redis
     await redis.aclose()
 
-
-INVITE_CODE = "test-invite"
 
 # ---- P4 内容池造数据助手 ----
 
@@ -341,7 +333,6 @@ async def make_project_with_library(
     """
     import uuid as _uuid
 
-    from app.core.db import get_sessionmaker
     from app.models.library_direction import DirectionLibrary
     from app.services.libraries import set_source_libraries
 
@@ -373,31 +364,6 @@ async def make_project_with_library(
     return str(project_id), library_id
 
 
-def _username_from_email(email: str) -> str:
-    """从 email 派生一个合法用户名（小写字母/数字/下划线 3-32 位）。"""
-    local = email.split("@", 1)[0].lower()
-    uname = re.sub(r"[^a-z0-9_]", "_", local)
-    return (uname + "_u")[:32] if len(uname) < 3 else uname[:32]
-
-
-# 本机 dev 虚拟机的容器墙钟每 ~10 秒跳 ±1 秒（#234 的根因）：连续两次注册的
-# created_at 可能倒挂，「服务器档 owner = created_at 最早的用户」（#722）会被随机
-# 翻车。注册成功后把 created_at 钉成进程内单调递增，还原生产环境（时钟正常）本来
-# 就成立的「注册顺序 == created_at 顺序」，测试才有确定性。
-_register_seq = itertools.count()
-_register_epoch: dt.datetime | None = None
-
-
-async def _pin_created_at(email: str) -> None:
-    global _register_epoch
-    if _register_epoch is None:
-        _register_epoch = dt.datetime.now(dt.UTC)
-    async with get_sessionmaker()() as session:
-        user = (await session.execute(sa_select(User).where(User.email == email))).scalar_one()
-        user.created_at = _register_epoch + dt.timedelta(seconds=next(_register_seq))
-        await session.commit()
-
-
 async def owner_of(session):
     """部署主人的 User 行（= 最早注册的活跃用户）。
 
@@ -417,22 +383,13 @@ async def owner_of(session):
 async def register_and_login(
     client: AsyncClient, email: str = "alice@example.com", username: str | None = None
 ) -> str:
-    """注册 + 登录，返回 Bearer token。"""
-    resp = await client.post(
-        "/api/auth/register",
-        json={
-            "email": email,
-            "password": "str0ng-password",
-            "display_name": "Alice",
-            "username": username or _username_from_email(email),
-            "invite_code": INVITE_CODE,
-        },
-    )
-    assert resp.status_code == 201, resp.text
-    await _pin_created_at(email)
-    resp = await client.post(
-        "/api/auth/jwt/login",
-        data={"username": email, "password": "str0ng-password"},
-    )
+    """取本地会话，返回 Bearer token。
+
+    #842 起没有注册与密码登录：本机只有一个本地用户，会话只能经
+    ``/api/auth/local-session`` 取得。名字与参数保留是为了不惊动上百个调用方；
+    ``email``/``username`` 已无意义——不管传什么都是同一个本地用户。
+    """
+    del email, username
+    resp = await client.post("/api/auth/local-session")
     assert resp.status_code == 200, resp.text
     return resp.json()["access_token"]

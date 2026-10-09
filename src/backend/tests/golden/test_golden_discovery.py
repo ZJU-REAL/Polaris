@@ -24,7 +24,7 @@ import pytest
 
 from app.agents.voyage.engine import VoyageEngine
 from app.core.llm.router import LLMRouter
-from tests.conftest import INVITE_CODE, RecordingBus
+from tests.conftest import RecordingBus
 from tests.golden.normalize import Normalizer
 
 GOLDEN_PATH = Path(__file__).parent / "data" / "discovery_run.json"
@@ -72,26 +72,17 @@ async def test_discovery_chain_matches_golden(client, queue_stub, monkeypatch):
         transcript[name] = n.normalize(body)
         return body
 
-    await step(
-        "register",
-        await client.post(
-            "/api/auth/register",
-            json={
-                "email": "discovery-golden@example.com",
-                "password": "str0ng-password",
-                "display_name": "Discovery Golden",
-                "username": "discoverygolden",
-                "invite_code": INVITE_CODE,
-            },
-        ),
-        201,
-    )
-    login = await client.post(
-        "/api/auth/jwt/login",
-        data={"username": "discovery-golden@example.com", "password": "str0ng-password"},
-    )
+    # 单人本地产品（#842）：会话只能经本地会话端点取得，再给本地用户起个名字
+    login = await client.post("/api/auth/local-session")
     await step("login", login, 200)
     headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    await step(
+        "profile",
+        await client.patch(
+            "/api/users/me", json={"display_name": "Discovery Golden"}, headers=headers
+        ),
+        200,
+    )
 
     library = await step(
         "create_library",

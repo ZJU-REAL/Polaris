@@ -1,90 +1,26 @@
-import re
+"""会话与本人资料（#842：单人本地产品，没有注册/密码登录/邮箱验证码）。"""
 
-from tests.conftest import INVITE_CODE, register_and_login
+import pytest
 
-
-def _register_body(**overrides):
-    email = overrides.get("email", "bob@example.com")
-    username = re.sub(r"[^a-z0-9_]", "_", email.split("@", 1)[0].lower())
-    body = {
-        "email": "bob@example.com",
-        "password": "str0ng-password",
-        "display_name": "Bob",
-        "username": username,
-        "invite_code": INVITE_CODE,
-    }
-    body.update(overrides)
-    return body
+from app.api.auth import LOCAL_USER_EMAIL
+from tests.conftest import register_and_login
 
 
-async def test_register_without_invite_code_fails(client):
-    body = _register_body()
-    del body["invite_code"]
-    resp = await client.post("/api/auth/register", json=body)
-    assert resp.status_code == 422  # invite_code 必填
-
-
-async def test_register_with_wrong_invite_code_fails(client):
-    resp = await client.post("/api/auth/register", json=_register_body(invite_code="nope"))
-    assert resp.status_code == 403
-    assert resp.json()["detail"] == "INVALID_INVITE_CODE"
-
-
-async def test_register_login_me_flow(client):
-    resp = await client.post("/api/auth/register", json=_register_body())
-    assert resp.status_code == 201, resp.text
-    body = resp.json()
-    assert body["email"] == "bob@example.com"
-    assert body["display_name"] == "Bob"
-    assert body["username"] == "bob"
-    assert "role" not in body  # 治理字段已随 #614 移除
-    assert "invite_code" not in body
-
-    # 第二个注册用户与第一个无差别（不再有 admin/member 之分）
-    resp = await client.post("/api/auth/register", json=_register_body(email="second@example.com"))
-    assert resp.status_code == 201
-
-    # 重复注册
-    resp = await client.post("/api/auth/register", json=_register_body())
-    assert resp.status_code == 400
-
-    # 登录拿 JWT（OAuth2 form）
-    resp = await client.post(
-        "/api/auth/jwt/login",
-        data={"username": "bob@example.com", "password": "str0ng-password"},
-    )
-    assert resp.status_code == 200, resp.text
-    token = resp.json()["access_token"]
-
-    # /users/me
-    resp = await client.get("/api/users/me", headers={"Authorization": f"Bearer {token}"})
-    assert resp.status_code == 200
-    assert resp.json()["email"] == "bob@example.com"
-
-
-async def test_username_available(client):
-    resp = await client.get("/api/auth/username-available", params={"username": "bob"})
-    assert resp.status_code == 200
-    assert resp.json() == {"available": True}
-
-    resp = await client.post("/api/auth/register", json=_register_body())
-    assert resp.status_code == 201
-
-    resp = await client.get("/api/auth/username-available", params={"username": "bob"})
-    assert resp.json() == {"available": False}
-    # 大小写与首尾空白归一后同样算占用
-    resp = await client.get("/api/auth/username-available", params={"username": " BOB "})
-    assert resp.json() == {"available": False}
-
-
-async def test_password_policy_rejects_weak(client):
-    resp = await client.post("/api/auth/register", json=_register_body(password="short1"))
-    assert resp.status_code == 400
-    assert resp.json()["detail"]["reason"] == "PASSWORD_TOO_SHORT"
-
-    resp = await client.post("/api/auth/register", json=_register_body(password="onlyletters"))
-    assert resp.status_code == 400
-    assert resp.json()["detail"]["reason"] == "PASSWORD_NEEDS_LETTER_AND_DIGIT"
+async def test_local_session_is_idempotent_and_returns_one_user(client):
+    first = await client.post("/api/auth/local-session")
+    second = await client.post("/api/auth/local-session")
+    assert first.status_code == second.status_code == 200
+    ids = set()
+    for resp in (first, second):
+        token = resp.json()["access_token"]
+        me = await client.get("/api/users/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200
+        body = me.json()
+        assert body["email"] == LOCAL_USER_EMAIL
+        assert body["username"] == "local"
+        assert "is_superuser" not in body
+        ids.add(body["id"])
+    assert len(ids) == 1
 
 
 async def test_me_requires_auth(client):
@@ -92,23 +28,93 @@ async def test_me_requires_auth(client):
     assert resp.status_code == 401
 
 
-async def test_login_wrong_password(client):
-    await register_and_login(client, email="carol@example.com")
-    resp = await client.post(
-        "/api/auth/jwt/login",
-        data={"username": "carol@example.com", "password": "wrong"},
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("post", "/api/auth/register"),
+        ("post", "/api/auth/jwt/login"),
+        ("post", "/api/auth/jwt/logout"),
+        ("post", "/api/auth/send-code"),
+        ("post", "/api/auth/reset-password"),
+        ("get", "/api/auth/username-available"),
+        ("get", "/api/auth/capabilities"),
+    ],
+)
+async def test_account_endpoints_are_gone(client, method, path):
+    resp = await getattr(client, method)(path)
+    assert resp.status_code in (404, 405), resp.text
+
+
+async def test_other_users_are_not_addressable(client):
+    """fastapi-users 的通用 /users/{id} 管理路由已拆掉：只有 /users/me。"""
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    me = (await client.get("/api/users/me", headers=headers)).json()
+    resp = await client.get(f"/api/users/{me['id']}", headers=headers)
+    assert resp.status_code in (404, 405)
+
+
+async def test_patch_me_only_changes_display_name(client):
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = await client.patch(
+        "/api/users/me",
+        json={"display_name": "  王小明 ", "email": "x@example.com", "is_active": False},
+        headers=headers,
     )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["display_name"] == "王小明"
+    assert body["email"] == LOCAL_USER_EMAIL
+    assert body["is_active"] is True
+
+    resp = await client.patch("/api/users/me", json={"display_name": "  "}, headers=headers)
+    assert resp.status_code == 422
+
+
+async def test_username_change_once_then_locked(client):
+    token = await register_and_login(client)
+    h = {"Authorization": f"Bearer {token}"}
+    me = (await client.get("/api/users/me", headers=h)).json()
+    assert me["username_locked"] is False
+
+    # 格式非法
+    resp = await client.patch("/api/users/me/username", json={"username": "AB"}, headers=h)
+    assert resp.status_code == 422
+
+    resp = await client.patch("/api/users/me/username", json={"username": "trinity"}, headers=h)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["username"] == "trinity"
+    assert resp.json()["username_locked"] is True
+
+    resp = await client.patch("/api/users/me/username", json={"username": "morpheus"}, headers=h)
     assert resp.status_code == 400
+    assert resp.json()["detail"] == "USERNAME_LOCKED"
 
 
 async def test_session_lifetime_is_configurable_and_long_by_default():
-    """登录会话默认 30 天：24h 会让用户每天重登一次。
-
-    没有 refresh token 机制，所以有效期就是会话时长；要收紧改
-    POLARIS_SESSION_LIFETIME_SECONDS 即可，不必改代码。
-    """
+    """会话默认 30 天；过期了前端收到 401 会自动再取一次本地会话。"""
     from app.api.auth import get_jwt_strategy
     from app.core.config import Settings, get_settings
 
     assert Settings().session_lifetime_seconds == 60 * 60 * 24 * 30
     assert get_jwt_strategy().lifetime_seconds == get_settings().session_lifetime_seconds
+
+
+async def test_stdio_mcp_defaults_to_the_local_user(client, monkeypatch):
+    """stdio MCP 不用配置也能跑：默认以本地用户身份执行，环境变量只做覆盖。"""
+    from app.mcp.__main__ import _resolve_user_id
+
+    monkeypatch.delenv("POLARIS_MCP_USER_EMAIL", raising=False)
+    with pytest.raises(SystemExit):
+        await _resolve_user_id()  # 一个用户都没有
+
+    token = await register_and_login(client)
+    me = (await client.get("/api/users/me", headers={"Authorization": f"Bearer {token}"})).json()
+    assert str(await _resolve_user_id()) == me["id"]
+
+    monkeypatch.setenv("POLARIS_MCP_USER_EMAIL", LOCAL_USER_EMAIL)
+    assert str(await _resolve_user_id()) == me["id"]
+    monkeypatch.setenv("POLARIS_MCP_USER_EMAIL", "ghost@example.com")
+    with pytest.raises(SystemExit):
+        await _resolve_user_id()

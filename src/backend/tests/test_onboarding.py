@@ -9,6 +9,7 @@
 
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.user import User
 from tests.conftest import register_and_login
@@ -127,19 +128,9 @@ async def test_dismissal_survives_because_the_json_column_is_reassigned(client):
 
     async with get_sessionmaker()() as session:
         user = (
-            await session.execute(select(User).where(User.email == "persist@example.com"))
+            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         assert user.settings.get("onboarding.dismissed") is True
-
-
-async def test_one_users_progress_is_not_another_users(client):
-    headers_a = await _auth(client, "a@example.com")
-    headers_b = await _auth(client, "b@example.com")
-    await client.post(
-        "/api/libraries", json={"name": "A", "statement": "A's work"}, headers=headers_a
-    )
-    assert _item(await _checklist(client, headers_a), "library")["done"] is True
-    assert _item(await _checklist(client, headers_b), "library")["done"] is False
 
 
 async def test_adding_a_machine_ticks_the_experiment_item(client):

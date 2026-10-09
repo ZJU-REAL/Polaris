@@ -160,35 +160,6 @@ async def test_run_snapshot_inherits_library_keywords_exclusions_and_rubric(clie
     assert source_config["score_rubric"] == rubric
 
 
-async def test_personal_library_is_isolated_and_public_library_is_read_only(client):
-    await _headers(client, "visibility-admin@example.com")
-    owner = await _headers(client, "visibility-owner@example.com")
-    stranger = await _headers(client, "visibility-stranger@example.com")
-    library_id = await _personal_library(client, owner)
-
-    response = await client.get(f"/api/libraries/{library_id}/literature/runs", headers=stranger)
-    assert response.status_code == 404
-    response = await client.post(
-        f"/api/libraries/{library_id}/literature/runs",
-        json={"topic": "forbidden"},
-        headers=stranger,
-    )
-    assert response.status_code == 404
-
-    async with get_sessionmaker()() as session:
-        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
-        library.is_public = True
-        await session.commit()
-    response = await client.get(f"/api/libraries/{library_id}/literature/runs", headers=stranger)
-    assert response.status_code == 200
-    response = await client.post(
-        f"/api/libraries/{library_id}/literature/runs",
-        json={"topic": "read-only public access"},
-        headers=stranger,
-    )
-    assert response.status_code == 403
-
-
 async def test_owner_configures_and_triggers_incremental_schedule(client, queue_stub):
     owner = await _headers(client, "discovery-schedule-owner@example.com")
     library_id = await _personal_library(client, owner)
@@ -242,38 +213,6 @@ async def test_owner_configures_and_triggers_incremental_schedule(client, queue_
     assert response.status_code == 200
     assert response.json()["last_run_id"] == run["id"]
     assert response.json()["last_enqueued_at"] is not None
-
-
-async def test_public_schedule_is_read_only_for_non_creators(client):
-    owner = await _headers(client, "public-schedule-owner@example.com")
-    stranger = await _headers(client, "public-schedule-reader@example.com")
-    library_id = await _personal_library(client, owner)
-    response = await client.put(
-        f"/api/libraries/{library_id}/literature/schedule",
-        json={"enabled": False, "timezone": "UTC"},
-        headers=owner,
-    )
-    assert response.status_code == 200, response.text
-    async with get_sessionmaker()() as session:
-        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
-        assert library is not None
-        library.is_public = True
-        await session.commit()
-
-    response = await client.get(
-        f"/api/libraries/{library_id}/literature/schedule", headers=stranger
-    )
-    assert response.status_code == 200
-    response = await client.put(
-        f"/api/libraries/{library_id}/literature/schedule",
-        json={"enabled": True, "timezone": "UTC"},
-        headers=stranger,
-    )
-    assert response.status_code == 403
-    response = await client.delete(
-        f"/api/libraries/{library_id}/literature/schedule", headers=stranger
-    )
-    assert response.status_code == 403
 
 
 async def test_schedule_rejects_invalid_timezone_and_year_window(client):

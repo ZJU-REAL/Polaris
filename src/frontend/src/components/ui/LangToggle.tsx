@@ -1,6 +1,6 @@
 import { setLang, useLang } from '../../lib/i18n';
 
-/** 中/英语言切换（顶栏与登录页共用）。 */
+/** 中/英语言切换（顶栏与桌面端独立页面共用）。 */
 export function LangToggle() {
   const lang = useLang();
   return (

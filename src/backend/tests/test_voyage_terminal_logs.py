@@ -1,4 +1,4 @@
-"""任务终端日志持久化：落库 / 回放接口 / 归属校验 / EventBus 咽喉点持久化。"""
+"""任务终端日志持久化：落库 / 回放接口 / 鉴权 / EventBus 咽喉点持久化。"""
 
 import uuid
 
@@ -45,19 +45,14 @@ async def test_record_and_fetch_terminal_logs(client, queue_stub):
     assert rows[0]["id"] < rows[1]["id"] < rows[2]["id"]
 
 
-async def test_terminal_logs_owner_only(client, queue_stub):
+async def test_terminal_logs_require_auth(client, queue_stub):
     from app.services.voyage_logs import record_terminal_log, reset_state
 
     reset_state()
-    token_a = await register_and_login(client, email="owner@example.com")
-    headers_a = {"Authorization": f"Bearer {token_a}"}
-    voyage_id = await _create_voyage(client, headers_a)
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    voyage_id = await _create_voyage(client, headers)
     await record_terminal_log(uuid.UUID(voyage_id), "log", message="私密", level="info")
-
-    token_b = await register_and_login(client, email="stranger@example.com")
-    headers_b = {"Authorization": f"Bearer {token_b}"}
-    resp = await client.get(f"/api/voyages/{voyage_id}/logs", headers=headers_b)
-    assert resp.status_code == 404
 
     resp = await client.get(f"/api/voyages/{voyage_id}/logs")
     assert resp.status_code == 401

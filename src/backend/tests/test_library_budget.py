@@ -136,12 +136,8 @@ async def test_ingest_budget_not_capped_by_monthly_budget(client, queue_stub):
         assert run.budget["max_tokens"] == 200_000
 
 
-async def test_budget_endpoint_permissions(client):
+async def test_budget_endpoint(client):
     headers, _project_id, library_id = await _setup_project(client, email="budget-d@example.com")
-    stranger_token = await register_and_login(client, email="budget-stranger@example.com")
-    stranger = {"Authorization": f"Bearer {stranger_token}"}
-    resp = await client.get(f"/api/libraries/{library_id}/budget", headers=stranger)
-    assert resp.status_code == 403
     resp = await client.get(f"/api/libraries/{library_id}/budget", headers=headers)
     assert resp.status_code == 200
     body = resp.json()

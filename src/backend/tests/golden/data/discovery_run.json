@@ -460,15 +460,15 @@
     "access_token": "<token>",
     "token_type": "bearer"
   },
-  "register": {
+  "profile": {
     "display_name": "Discovery Golden",
-    "email": "discovery-golden@example.com",
+    "email": "local@polaris.desktop",
     "has_avatar": false,
     "id": "<uuid-1>",
     "is_active": true,
-    "is_verified": false,
+    "is_verified": true,
     "settings": null,
-    "username": "discoverygolden",
+    "username": "local",
     "username_locked": false
   },
   "voyage_detail": {

@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from app.agents.chat.events import DeltaEvent
 from app.agents.chat.loop import ChatAgentLoop, ChatTurnRequest
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.core.llm.fake import FakeProvider
 from app.core.llm.router import LLMRouter
@@ -96,7 +97,7 @@ async def test_scan_filters_sorts_and_paginates_library_papers(client):
 
     async with get_sessionmaker()() as session:
         user_id = (
-            await session.execute(select(User.id).where(User.email == "scan-filters@example.com"))
+            await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         oldest = await add_paper(
             session,
@@ -193,7 +194,7 @@ async def test_scan_keeps_query_only_compatibility_and_rejects_unlinked_library(
     project_id = uuid.UUID(response.json()["id"])
     async with get_sessionmaker()() as session:
         user_id = (
-            await session.execute(select(User.id).where(User.email == "scan-compat@example.com"))
+            await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         paper = await add_paper(
             session,

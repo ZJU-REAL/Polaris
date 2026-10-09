@@ -7,6 +7,7 @@ import pymupdf
 import pytest
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import new_paper
@@ -27,7 +28,7 @@ async def _target(email: str, *, name: str = "batch library", papers: int = 1):
         owner = (
             await session.execute(
                 select(__import__("app.models.user", fromlist=["User"]).User).where(
-                    __import__("app.models.user", fromlist=["User"]).User.email == email
+                    __import__("app.models.user", fromlist=["User"]).User.email == LOCAL_USER_EMAIL
                 )
             )
         ).scalar_one()
@@ -195,7 +196,7 @@ async def test_cached_target_is_skipped_without_losing_item(client):
         from app.services.paper_assets import create_or_reuse_asset
 
         user = (
-            await session.execute(select(User).where(User.email == "cached-owner@example.com"))
+            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         library = await session.get(DirectionLibrary, uuid.UUID(library_id))
         paper = await session.get(Paper, uuid.UUID(paper_ids[0]))

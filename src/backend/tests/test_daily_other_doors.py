@@ -9,6 +9,7 @@
 import datetime as dt
 import uuid
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.daily_feed import DailyFeedEntry
 from app.models.paper import Paper
@@ -83,7 +84,7 @@ async def test_the_buddy_count_matches_what_you_can_see(client):
 
     async with get_sessionmaker()() as session:
         member_row = (
-            await session.execute(select(User).where(User.email == "member@example.com"))
+            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         stats = await buddy.collect_stats(session, user_id=member_row.id)
     assert stats.daily_today == 1
@@ -100,7 +101,7 @@ async def test_the_agent_tool_browses_your_slice_not_the_pool(client):
 
     async with get_sessionmaker()() as session:
         member_row = (
-            await session.execute(select(User).where(User.email == "member@example.com"))
+            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         member_id = member_row.id
 

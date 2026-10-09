@@ -13,6 +13,7 @@ import uuid
 import pytest_asyncio
 from pycrdt import Doc, Text
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.manuscript import ManuscriptFile
 from app.services import crdt_rooms
@@ -263,7 +264,7 @@ async def test_ws_connect_guards_file_lookup(client):
         from app.models.user import User
 
         owner = (
-            (await session.execute(select(User).where(User.email == "alice@example.com")))
+            (await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL)))
             .scalars()
             .one()
         )

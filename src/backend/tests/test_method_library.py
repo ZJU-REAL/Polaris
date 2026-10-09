@@ -420,31 +420,3 @@ async def test_methods_endpoints(client):
     assert anon.status_code == 401
     anon = await client.get(f"/api/libraries/{library_id}/methods/search", params={"q": "x"})
     assert anon.status_code == 401
-
-
-async def test_methods_endpoints_hidden_for_foreign_personal_library(client):
-    """个人库对外人按不存在处理（404），方法库端点与其余读端点同口径。"""
-    owner_token = await register_and_login(client, email="methodowner@example.com")
-    owner_headers = {"Authorization": f"Bearer {owner_token}"}
-    resp = await client.post(
-        "/api/libraries",
-        json={"name": "personal-methods", "statement": "private methods library"},
-        headers=owner_headers,
-    )
-    assert resp.status_code == 201, resp.text
-    library_id = resp.json()["id"]
-
-    # 创建者本人可读
-    resp = await client.get(f"/api/libraries/{library_id}/methods", headers=owner_headers)
-    assert resp.status_code == 200
-
-    stranger_token = await register_and_login(client, email="methodstranger@example.com")
-    stranger_headers = {"Authorization": f"Bearer {stranger_token}"}
-    resp = await client.get(f"/api/libraries/{library_id}/methods", headers=stranger_headers)
-    assert resp.status_code == 404
-    resp = await client.get(
-        f"/api/libraries/{library_id}/methods/search",
-        params={"q": "x"},
-        headers=stranger_headers,
-    )
-    assert resp.status_code == 404

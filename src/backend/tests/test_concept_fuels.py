@@ -13,6 +13,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.library_direction import DirectionLibrary
 from app.models.user import User
@@ -209,25 +210,18 @@ async def test_concept_pairs_endpoint(client):
     ]
 
 
-async def test_concept_pairs_personal_library_hidden(client):
-    # 个人库仅创建者可见：陌生人访问按 404（与其他只读端点同口径）
-    token_owner = await register_and_login(client, email="owner@example.com")
+async def test_concept_pairs_personal_library_empty(client):
+    token_owner = await register_and_login(client)
     owner_headers = {"Authorization": f"Bearer {token_owner}"}
     async with get_sessionmaker()() as session:
         owner = (
-            await session.execute(select(User).where(User.email == "owner@example.com"))
+            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         library = DirectionLibrary(name="private-lib", is_public=False, submitted_by=owner.id)
         session.add(library)
         await session.commit()
         library_id = library.id
 
-    token_other = await register_and_login(client, email="other@example.com")
-    resp = await client.get(
-        f"/api/libraries/{library_id}/concept-pairs",
-        headers={"Authorization": f"Bearer {token_other}"},
-    )
-    assert resp.status_code == 404
     resp = await client.get(f"/api/libraries/{library_id}/concept-pairs", headers=owner_headers)
     assert resp.status_code == 200
     assert resp.json() == []  # 空库 → 空结果而不是报错

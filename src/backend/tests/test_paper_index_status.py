@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.paper import Paper, PaperChunk
 from app.services import paper_enrich
@@ -517,11 +518,11 @@ async def test_index_status_readable_for_a_daily_feed_paper(client):
     assert body["paper_vector"]["built"] is False  # 刚入池，还没建向量
 
 
-async def test_collecting_libraries_lists_only_admitted_and_visible(client):
-    """列出收录了这篇论文的文献库：只算真正进了库的状态，且只列可见的库。
+async def test_collecting_libraries_lists_only_admitted(client):
+    """列出收录了这篇论文的文献库：只算真正进了库的状态。
 
     candidate 是还没打分、excluded 是打分没过，两者都不算「收录」——混进来会让人
-    以为库里有这篇。个人库不能经这个接口泄漏给别人。
+    以为库里有这篇。自己的个人库照常列出。
     """
     from sqlalchemy import select as _select
 
@@ -538,14 +539,14 @@ async def test_collecting_libraries_lists_only_admitted_and_visible(client):
         session.add(paper)
         await session.flush()
         me = (
-            await session.execute(_select(User).where(User.email == "collect-owner@example.com"))
+            await session.execute(_select(User).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         libs = {}
         for name, status, is_public, score in (
             ("已收录公共库", "compiled", True, 0.91),
             ("还没打分", "candidate", True, None),
             ("打分没过", "excluded", True, 0.2),
-            ("别人的个人库", "scored", False, 0.85),
+            ("我的个人库", "scored", False, 0.85),
         ):
             lib = DirectionLibrary(name=name, is_public=is_public, submitted_by=me.id)
             session.add(lib)
@@ -564,9 +565,5 @@ async def test_collecting_libraries_lists_only_admitted_and_visible(client):
     names = [r["name"] for r in resp.json()]
     assert "已收录公共库" in names
     assert "还没打分" not in names and "打分没过" not in names
+    assert "我的个人库" in names
     assert resp.json()[0]["relevance_score"] == pytest.approx(0.91)
-
-    # 别人看不到那个个人库
-    other = {"Authorization": f"Bearer {await register_and_login(client, email='c2@e.com')}"}
-    resp = await client.get(f"/api/papers/{paper_id}/libraries", headers=other)
-    assert "别人的个人库" not in [r["name"] for r in resp.json()]

@@ -381,15 +381,6 @@ async def test_add_mutual_exclusion_422(client):
         )
         assert resp.status_code == 422, payload
 
-    # 非项目成员 404
-    other = await register_and_login(client, email="add-outsider@example.com")
-    resp = await client.post(
-        f"/api/projects/{project_id}/papers",
-        json={"bibtex": BIBTEX_ENTRY},
-        headers={"Authorization": f"Bearer {other}"},
-    )
-    assert resp.status_code == 404
-
 
 async def test_batch_add_is_partial_and_reports_each_item(client, fake_redis):
     """批量导入逐项提交：有效、无效、重复项互不回滚，SSE 给出完整汇总。"""

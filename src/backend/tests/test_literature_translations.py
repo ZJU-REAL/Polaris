@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import func, select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
-from app.models.library_direction import DirectionLibrary
 from app.models.literature_discovery import LiteratureHitTranslation, LiteratureSearchHit
 from app.models.user import User
 from app.services.literature.translations import (
@@ -138,7 +138,7 @@ async def test_translation_keeps_requesting_user_for_worker_model_resolution(cli
         ]
     )
     async with get_sessionmaker()() as session:
-        requester_id = await session.scalar(select(User.id).where(User.email == requester_email))
+        requester_id = await session.scalar(select(User.id).where(User.email == LOCAL_USER_EMAIL))
         assert requester_id is not None
         hit = await session.get(LiteratureSearchHit, hit_ids[0])
         row, _ = await request_translation(
@@ -245,35 +245,6 @@ async def test_translation_api_reports_progress_and_deduplicates_requests(
             .where(LiteratureHitTranslation.hit_id.in_(hit_ids))
         )
         assert count == 2
-
-
-async def test_public_library_reader_cannot_create_translation_jobs(
-    client, queue_stub, monkeypatch
-):
-    _, library_id, run_id, hit_ids = await _run_and_hits(client, count=1)
-    reader_token = await register_and_login(
-        client, email=f"translation-reader-{uuid.uuid4().hex}@example.com"
-    )
-    reader_headers = {"Authorization": f"Bearer {reader_token}"}
-    async with get_sessionmaker()() as session:
-        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
-        assert library is not None
-        library.is_public = True
-        await session.commit()
-
-    monkeypatch.setattr(
-        "app.api.literature_discovery.get_llm_router",
-        lambda: TranslationRouter([]),
-    )
-    response = await client.post(
-        f"/api/libraries/{library_id}/literature/runs/{run_id}/hits/{hit_ids[0]}/translation",
-        json={"target_language": "zh-CN"},
-        headers=reader_headers,
-    )
-
-    assert response.status_code == 403
-    assert response.json()["detail"] == "LIBRARY_DISCOVERY_FORBIDDEN"
-    assert queue_stub.jobs == []
 
 
 async def test_batch_translation_continues_after_one_queue_dispatch_failure(
