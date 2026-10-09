@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { FormField } from '../../components/ui/FormField';
-import { Icon } from '../../components/ui/Icon';
 import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../components/ui/Toast';
 import { api } from '../../lib/api';
 import { copyText } from '../../lib/clipboard';
 import { engineOrigin, localOrigin } from '../../lib/endpoint';
 import { tr } from '../../lib/i18n';
+import { SettingsActions, SettingsGroup, SettingsRow, SettingsSection, SettingsStack } from './settingsUi';
 
 export function ExtensionApiKeySettings() {
   const [apiKey, setApiKey] = useState<string | null>(null);
@@ -24,13 +23,13 @@ export function ExtensionApiKeySettings() {
       setApiKey(result.api_key);
       setKeyPrefix(result.key_prefix);
       toast(
-        tr('API Key 已生成，之前的密钥已失效', 'API key created. The previous key is now invalid.'),
+        tr('已生成新密钥，旧密钥已失效', 'New key created. The old key no longer works.'),
         'ok',
       );
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : String(error);
-      toast(`${tr('生成失败', 'Generation failed')}: ${message}`, 'error');
+      toast(`${tr('生成失败', 'Couldn’t create a key')}：${message}`, 'error');
     },
   });
 
@@ -40,25 +39,22 @@ export function ExtensionApiKeySettings() {
       setApiKey(null);
       setKeyPrefix(null);
       setRevokeOpen(false);
-      toast(tr('Polaris 扩展 API Key 已撤销', 'Polaris extension API key revoked'), 'ok');
+      toast(tr('已撤销密钥', 'Key revoked'), 'ok');
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : String(error);
-      toast(`${tr('撤销失败', 'Revocation failed')}: ${message}`, 'error');
+      toast(`${tr('撤销失败', 'Couldn’t revoke')}：${message}`, 'error');
     },
   });
 
   const testMutation = useMutation({
     mutationFn: () => api.testDownloadApiKey(apiKey!),
-    onSuccess: (identity) => {
-      toast(
-        tr(`连接成功：${identity.email}`, `Connected as ${identity.email}`),
-        'ok',
-      );
+    onSuccess: () => {
+      toast(tr('连接成功', 'Connected'), 'ok');
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : String(error);
-      toast(`${tr('连接测试失败', 'Connection test failed')}: ${message}`, 'error');
+      toast(`${tr('连接失败', 'Connection failed')}：${message}`, 'error');
     },
   });
 
@@ -66,146 +62,87 @@ export function ExtensionApiKeySettings() {
     const copied = await copyText(value);
     toast(
       copied
-        ? tr(`${label} 已复制`, `${label} copied`)
-        : tr(`${label} 复制失败，请手动复制`, `Could not copy ${label}. Copy it manually.`),
+        ? tr('已复制', 'Copied')
+        : tr(`无法复制${label}，请手动复制`, `Couldn’t copy the ${label}. Copy it manually.`),
       copied ? 'ok' : 'error',
     );
   }
 
   return (
-    <>
-      <section className="card card-pad" style={{ maxWidth: 880 }}>
-        <div
-          className="row"
-          style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}
-        >
-          <div style={{ flex: '1 1 420px', minWidth: 0 }}>
-            <div className="section-h">
-              <Icon name="download" size={15} style={{ color: 'var(--accent)' }} />
-              {tr('Polaris 扩展', 'Polaris extension')}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 5, lineHeight: 1.65 }}>
-              {tr(
-                '使用用户专属 API Key 连接浏览器扩展。扩展可以领取论文下载任务，并将验真的 PDF 归档到指定文献库和论文。',
-                'Connect the browser extension with a personal API key. The extension can claim paper download jobs and archive verified PDFs to their assigned libraries and papers.',
-              )}
-            </div>
-          </div>
+    <SettingsStack>
+      <SettingsSection
+        title={tr('浏览器扩展', 'Browser extension')}
+        desc={tr('连接 Polaris 浏览器扩展，让它把论文 PDF 下载到文献库。', 'Connect the Polaris browser extension so it can download paper PDFs into your libraries.')}
+      >
+        <SettingsGroup>
+          <SettingsRow
+            label={tr('Polaris 地址', 'Polaris URL')}
+            hint={isLocalBase ? tr('仅这台电脑上的浏览器可以使用', 'Works only in browsers on this computer') : undefined}
+          >
+            <code className="mono" style={{ fontSize: 12, color: 'var(--text-2)', overflowWrap: 'anywhere' }}>{baseUrl}</code>
+            <button
+              className="btn btn-ghost sm"
+              title={tr('复制地址', 'Copy URL')}
+              aria-label={tr('复制地址', 'Copy URL')}
+              onClick={() => void copy(baseUrl, tr('地址', 'URL'))}
+            >
+              {tr('复制', 'Copy')}
+            </button>
+          </SettingsRow>
+          {apiKey ? (
+            <SettingsRow
+              stack
+              label={tr('密钥', 'Key')}
+              hint={<span style={{ color: 'var(--warn-tx)' }}>{tr('密钥只显示这一次，请现在复制到扩展中', 'This key is shown only once. Copy it into the extension now.')}</span>}
+            >
+              <div className="row gap8">
+                <input className="input mono" value={apiKey} readOnly style={{ flex: 1, minWidth: 0 }} />
+                <button
+                  className="btn btn-ghost sm"
+                  title={tr('复制密钥', 'Copy key')}
+                  aria-label={tr('复制密钥', 'Copy key')}
+                  onClick={() => void copy(apiKey, tr('密钥', 'key'))}
+                >
+                  {tr('复制', 'Copy')}
+                </button>
+                <button
+                  className="btn btn-ghost sm"
+                  disabled={testMutation.isPending}
+                  onClick={() => testMutation.mutate()}
+                >
+                  {testMutation.isPending ? tr('测试中…', 'Testing…') : tr('测试连接', 'Test connection')}
+                </button>
+              </div>
+            </SettingsRow>
+          ) : (
+            <SettingsRow
+              label={tr('密钥', 'Key')}
+              hint={tr('已有的密钥不会显示，扩展里保存的密钥在撤销前一直有效', 'Existing keys aren’t shown. A saved key works until you revoke it.')}
+            />
+          )}
+        </SettingsGroup>
+        <SettingsActions note={keyPrefix ? `${tr('密钥前缀', 'Key prefix')}：${keyPrefix}` : undefined}>
           <button
-            className="btn btn-primary"
+            className="btn btn-ghost sm st-quiet-danger"
+            disabled={revokeMutation.isPending}
+            onClick={() => setRevokeOpen(true)}
+          >
+            {tr('撤销密钥', 'Revoke key')}
+          </button>
+          <button
+            className="btn btn-primary sm"
             disabled={rotateMutation.isPending}
             onClick={() => rotateMutation.mutate()}
           >
-            <Icon name="refresh" size={14} />
-            {rotateMutation.isPending
-              ? tr('生成中...', 'Generating...')
-              : apiKey
-                ? tr('轮换 API Key', 'Rotate API key')
-                : tr('生成 / 轮换 API Key', 'Create / rotate API key')}
+            {rotateMutation.isPending ? tr('生成中…', 'Creating…') : tr('生成新密钥', 'Create new key')}
           </button>
-        </div>
-
-        <div style={{ marginTop: 20 }}>
-          <FormField label={tr('Polaris 地址', 'Polaris base URL')}>
-            <div className="row gap8" style={{ alignItems: 'stretch' }}>
-              <input className="input mono" value={baseUrl} readOnly style={{ flex: 1, minWidth: 0 }} />
-              <button
-                className="btn btn-ghost"
-                title={tr('复制 Polaris 地址', 'Copy Polaris base URL')}
-                aria-label={tr('复制 Polaris 地址', 'Copy Polaris base URL')}
-                onClick={() => void copy(baseUrl, 'Base URL')}
-              >
-                <Icon name="link" size={15} />
-              </button>
-            </div>
-          </FormField>
-          {isLocalBase && (
-            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>
-              {tr(
-                '这是本机引擎的地址，仅这台电脑上的浏览器扩展可以使用。',
-                'This is your local engine address — only browser extensions on this computer can use it.',
-              )}
-            </div>
-          )}
-        </div>
-
-        {apiKey ? (
-          <div style={{ marginTop: 16 }}>
-            <FormField label={tr('API Key（仅本次显示）', 'API key (shown once)')}>
-              <div className="row gap8" style={{ alignItems: 'stretch' }}>
-                <input className="input mono" value={apiKey} readOnly style={{ flex: 1, minWidth: 0 }} />
-                <button
-                  className="btn btn-ghost"
-                  title={tr('复制 API Key', 'Copy API key')}
-                  aria-label={tr('复制 API Key', 'Copy API key')}
-                  onClick={() => void copy(apiKey, 'API Key')}
-                >
-                  <Icon name="link" size={15} />
-                </button>
-              </div>
-            </FormField>
-            <div style={{ fontSize: 12, color: 'var(--danger-tx)', marginTop: 8, lineHeight: 1.6 }}>
-              {tr(
-                '关闭或刷新页面后无法再次查看。生成新 Key 会立即使之前的 Key 失效。',
-                'You cannot view this key again after closing or refreshing the page. Creating a new key immediately invalidates the previous key.',
-              )}
-            </div>
-            <button
-              className="btn btn-soft sm"
-              disabled={testMutation.isPending}
-              onClick={() => testMutation.mutate()}
-              style={{ marginTop: 12 }}
-            >
-              <Icon name={testMutation.isPending ? 'refresh' : 'check'} size={13} />
-              {testMutation.isPending ? tr('测试中...', 'Testing...') : tr('测试连接', 'Test connection')}
-            </button>
-          </div>
-        ) : (
-          <div
-            style={{
-              marginTop: 18,
-              padding: 14,
-              background: 'var(--surface-2)',
-              border: '1px solid var(--border)',
-              borderRadius: 6,
-              color: 'var(--text-3)',
-              fontSize: 12,
-              lineHeight: 1.65,
-            }}
-          >
-            {tr(
-              'Polaris 不保存可恢复的明文密钥，因此此页面不会显示现有 Key 的状态。扩展中已保存的 Key 会继续有效，直到你轮换或撤销它。',
-              'Polaris does not retain recoverable plaintext keys, so this page does not claim whether a key already exists. A key saved in the extension remains valid until you rotate or revoke it.',
-            )}
-          </div>
-        )}
-
-        <div
-          className="row"
-          style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 20, flexWrap: 'wrap' }}
-        >
-          <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)', overflowWrap: 'anywhere' }}>
-            {keyPrefix
-              ? `${tr('本次生成的密钥前缀', 'New key prefix')}: ${keyPrefix}`
-              : tr('权限：领取任务、更新状态、上传 PDF', 'Scopes: claim jobs, update status, upload PDFs')}
-          </span>
-          <button
-            className="btn btn-ghost"
-            disabled={revokeMutation.isPending}
-            onClick={() => setRevokeOpen(true)}
-            style={{ color: 'var(--danger-tx)' }}
-          >
-            <Icon name="trash" size={14} />
-            {tr('撤销 API Key', 'Revoke API key')}
-          </button>
-        </div>
-      </section>
+        </SettingsActions>
+      </SettingsSection>
 
       <Modal
         open={revokeOpen}
         onClose={() => !revokeMutation.isPending && setRevokeOpen(false)}
-        title={tr('撤销 Polaris 扩展 API Key', 'Revoke Polaris extension API key')}
-        sub={tr('此操作会立即断开使用当前 Key 的扩展', 'This immediately disconnects extensions using the current key')}
+        title={tr('撤销扩展密钥？', 'Revoke the extension key?')}
         width={440}
         footer={
           <>
@@ -213,18 +150,15 @@ export function ExtensionApiKeySettings() {
               {tr('取消', 'Cancel')}
             </button>
             <button className="btn btn-danger sm" disabled={revokeMutation.isPending} onClick={() => revokeMutation.mutate()}>
-              {revokeMutation.isPending ? tr('撤销中...', 'Revoking...') : tr('确认撤销', 'Revoke key')}
+              {revokeMutation.isPending ? tr('撤销中…', 'Revoking…') : tr('撤销', 'Revoke')}
             </button>
           </>
         }
       >
         <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.7 }}>
-          {tr(
-            '撤销后，浏览器扩展将无法领取任务或上传 PDF。需要再次连接时，请生成新的 API Key。',
-            'After revocation, the browser extension cannot claim jobs or upload PDFs. Generate a new API key before reconnecting it.',
-          )}
+          {tr('浏览器扩展会立即断开，重新连接需要生成新密钥。', 'The browser extension disconnects right away. Create a new key to reconnect.')}
         </div>
       </Modal>
-    </>
+    </SettingsStack>
   );
 }

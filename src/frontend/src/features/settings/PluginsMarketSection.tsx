@@ -69,7 +69,7 @@ function EntryAction({
       return (
         <div className="row gap8" style={{ alignItems: 'center' }}>
           <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
-            {tr('已安装，尚未启用', 'Installed, not enabled')}
+            {tr('已安装，未启用', 'Installed, off')}
           </span>
           <button
             className="btn btn-primary sm"
@@ -79,14 +79,14 @@ function EntryAction({
               onEnable(state.pluginId);
             }}
           >
-            {enabling ? tr('启用中…', 'Enabling…') : tr('启用', 'Enable')}
+            {enabling ? tr('启用中…', 'Turning on…') : tr('启用', 'Turn on')}
           </button>
         </div>
       );
     case 'installed-enabled':
       return (
         <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-          {tr('已启用', 'Enabled')}
+          {tr('已启用', 'On')}
         </span>
       );
     case 'not-installed':
@@ -194,15 +194,15 @@ function MarketDetailModal({
         ) : state.kind === 'installed-disabled' ? (
           <>
             <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
-              {tr('已安装，尚未启用', 'Installed, not enabled')}
+              {tr('已安装，未启用', 'Installed, off')}
             </span>
             <button className="btn btn-primary" disabled={enabling} onClick={() => onEnable(state.pluginId)}>
-              {enabling ? tr('启用中…', 'Enabling…') : tr('启用', 'Enable')}
+              {enabling ? tr('启用中…', 'Turning on…') : tr('启用', 'Turn on')}
             </button>
           </>
         ) : state.kind === 'installed-enabled' ? (
           <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-            {tr('已启用', 'Enabled')}
+            {tr('已启用', 'On')}
           </span>
         ) : (
           <button className="btn btn-primary" onClick={onInstall}>
@@ -215,7 +215,7 @@ function MarketDetailModal({
       <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, marginBottom: 12 }}>{entry.description}</p>
       <div className="row gap8" style={{ alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
         <span className="pill sm" style={{ background: tier.bg, color: tier.tx }}>
-          {tr(`质量分级：${tier.zh}`, `Tier: ${tier.en}`)}
+          {tr(`质量等级：${tier.zh}`, `Quality: ${tier.en}`)}
         </span>
         {entry.badges.map((b) => (
           <span key={b} className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
@@ -225,7 +225,7 @@ function MarketDetailModal({
       </div>
       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
         <Icon name="shield" size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
-        {tr('声明的权限', 'Declared permissions')}
+        {tr('需要的权限', 'Permissions requested')}
       </div>
       <div className="row gap8" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
         {perms.map((p, i) => (
@@ -236,8 +236,8 @@ function MarketDetailModal({
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 6, lineHeight: 1.5 }}>
         {tr(
-          '当前版本仅展示插件声明的权限，尚未做强制限制。',
-          'For now these are declarations only — they are not yet enforced.',
+          '这些权限由插件自行声明，目前不会强制限制。',
+          'Plugins declare these themselves. They aren’t enforced yet.',
         )}
       </div>
     </Modal>
@@ -276,20 +276,20 @@ export function PluginsMarketSection() {
     onSuccess: (result) => {
       if (result) queryClient.setQueryData(['plugin-market-endpoint'], result);
       setDraftTouched(false); // 让草稿重新跟随保存后的真实值（复位默认时尤其需要）
-      toast(tr('索引源已更新，正在刷新列表', 'Source updated; refreshing list'), 'ok');
+      toast(tr('已保存，正在刷新', 'Saved. Refreshing…'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['plugin-market-index'] });
     },
-    onError: (e) => toast(`${tr('保存索引源失败', 'Failed to save source')}：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败', 'Couldn’t save')}：${errMsg(e)}`, 'error'),
   });
 
   const enableMutation = useMutation({
     mutationFn: (pluginId: string) => enablePlugin(pluginId),
     onSuccess: () => {
-      toast(tr('插件已启用', 'Plugin enabled'), 'ok');
+      toast(tr('已启用', 'Turned on'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['plugins'] });
     },
     onError: (e) => {
-      toast(`${tr('启用失败', 'Enable failed')}：${errMsg(e)}`, 'error');
+      toast(`${tr('启用失败', 'Couldn’t turn it on')}：${errMsg(e)}`, 'error');
       void queryClient.invalidateQueries({ queryKey: ['plugins'] });
     },
   });
@@ -315,7 +315,7 @@ export function PluginsMarketSection() {
         onProgress: (p) => setInstalling((prev) => ({ ...prev, [entry.name]: p })),
         onDone: () => {
           clearInstalling(entry.name);
-          toast(tr(`${entry.name} 已安装，尚未启用`, `${entry.name} installed, not yet enabled`), 'ok');
+          toast(tr(`已安装 ${entry.name}，启用后生效`, `Installed ${entry.name}. Turn it on to use it.`), 'ok');
           void queryClient.invalidateQueries({ queryKey: ['plugins'] });
         },
         onError: (code, message) => {
@@ -340,12 +340,9 @@ export function PluginsMarketSection() {
   return (
     <div>
       {/* 两个市场互相指路（#741）：这里只管插件；AI 任务技能的市场在「技能」页 */}
-      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 10 }}>
-        {tr('这里是插件市场：插件扩展平台本身。', 'This is the plugin market: plugins extend the platform itself.')}
-      </div>
       {/* —— 索引源设置：小输入框 + 保存/恢复默认 + 刷新 —— */}
       <div className="row gap8" style={{ alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
-        <span style={{ fontSize: 12, color: 'var(--text-2)', flexShrink: 0 }}>{tr('索引源', 'Source')}</span>
+        <span style={{ fontSize: 12, color: 'var(--text-2)', flexShrink: 0 }}>{tr('插件源', 'Source')}</span>
         <input
           className="input"
           style={{ flex: '1 1 220px', minWidth: 180, fontSize: 12 }}
@@ -383,8 +380,8 @@ export function PluginsMarketSection() {
       <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 14 }}>
         {endpoint
           ? endpoint.isDefault
-            ? tr('当前使用官方源。', 'Using the official source.')
-            : tr('当前使用自定义源。', 'Using a custom source.')
+            ? tr('正在使用官方源', 'Using the official source')
+            : tr('正在使用自定义源', 'Using a custom source')
           : null}
       </div>
 
@@ -393,8 +390,8 @@ export function PluginsMarketSection() {
       ) : indexQuery.isError || indexQuery.data == null ? (
         <EmptyState
           icon="grid"
-          title={tr('市场列表加载失败', 'Failed to load the market')}
-          desc={`${tr('索引源', 'Source')}：${endpoint?.endpoint ?? tr('（未知）', '(unknown)')} — ${errMsg(indexQuery.error ?? tr('没有返回数据', 'No data returned'))}`}
+          title={tr('无法加载插件市场', 'Couldn’t load the market')}
+          desc={`${endpoint?.endpoint ?? ''} · ${errMsg(indexQuery.error ?? tr('没有返回数据', 'No data returned'))}`}
           action={
             <button className="btn btn-soft sm" onClick={() => void indexQuery.refetch()}>
               {tr('重试', 'Retry')}
@@ -405,7 +402,6 @@ export function PluginsMarketSection() {
         <EmptyState
           icon="grid"
           title={tr('市场里还没有插件', 'No plugins in the market yet')}
-          desc={tr('这个索引源目前是空的。', 'This source has nothing listed right now.')}
         />
       ) : (
         <div style={{ display: 'grid', gap: 10 }}>

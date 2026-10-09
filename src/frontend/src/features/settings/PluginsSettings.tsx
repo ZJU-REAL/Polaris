@@ -9,12 +9,12 @@ import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { Icon } from '../../components/ui/Icon';
 import { Modal } from '../../components/ui/Modal';
 import { Segmented } from '../../components/ui/Segmented';
 import { Switch } from '../../components/ui/Switch';
 import { toast } from '../../components/ui/Toast';
 import { tr } from '../../lib/i18n';
+import { SettingsGroup, SettingsSection, SettingsStack, StatusDot } from './settingsUi';
 import {
   disablePlugin,
   enablePlugin,
@@ -73,7 +73,7 @@ export function PluginsSettings() {
       invalidate();
     },
     onError: (e) => {
-      toast(`${tr('操作失败', 'Failed')}：${errMsg(e)}`, 'error');
+      toast(`${tr('操作失败', 'Something went wrong')}：${errMsg(e)}`, 'error');
       invalidate(); // 启动失败时主进程已回滚，拉一次拿到真实状态（可能带 error）
     },
   });
@@ -85,7 +85,7 @@ export function PluginsSettings() {
       if (!result) return;
       if (result.ok) {
         setErrorLines([]);
-        toast(tr('配置没问题', 'Config looks good'), 'ok');
+        toast(tr('配置无误', 'Config is valid'), 'ok');
       } else {
         setErrorLines(validationErrorLines(result.errors));
       }
@@ -99,7 +99,7 @@ export function PluginsSettings() {
     onSuccess: (result) => {
       if (!result) return;
       if (result.ok) {
-        toast(tr('配置已保存', 'Config saved'), 'ok');
+        toast(tr('已保存', 'Saved'), 'ok');
         setConfigFor(null);
         invalidate();
       } else {
@@ -113,7 +113,7 @@ export function PluginsSettings() {
   const importMutation = useMutation({
     mutationFn: (tree: PluginTreeExport) => importPluginTree(tree),
     onSuccess: () => {
-      toast(tr('插件配置已导入', 'Plugin config imported'), 'ok');
+      toast(tr('已导入', 'Imported'), 'ok');
       setPendingImport(null);
       invalidate();
     },
@@ -131,7 +131,7 @@ export function PluginsSettings() {
     onSuccess: (result) => {
       if (!result) return;
       if (result.ok) {
-        toast(tr('插件已卸载', 'Plugin uninstalled'), 'ok');
+        toast(tr('已卸载', 'Uninstalled'), 'ok');
         invalidate();
       } else {
         // 拒卸原因是数据不是异常：仍启用 / 不是市场装的，原话如实展示
@@ -139,7 +139,7 @@ export function PluginsSettings() {
         invalidate();
       }
     },
-    onError: (e) => toast(`${tr('卸载失败', 'Uninstall failed')}：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('卸载失败', 'Couldn’t uninstall')}：${errMsg(e)}`, 'error'),
   });
 
   const openConfig = (p: PluginEntryInfo) => {
@@ -179,7 +179,7 @@ export function PluginsSettings() {
     try {
       text = await file.text();
     } catch (e) {
-      toast(`${tr('读不了这个文件', 'Could not read the file')}：${errMsg(e)}`, 'error');
+      toast(`${tr('无法读取文件', 'Couldn’t read the file')}：${errMsg(e)}`, 'error');
       return;
     }
     const parsed = parseTreeFile(text);
@@ -194,13 +194,8 @@ export function PluginsSettings() {
   const modalBusy = validateMutation.isPending || saveMutation.isPending;
 
   return (
-    <div className="card card-pad">
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 8 }}>
-        <span className="section-h">
-          <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('插件', 'Plugins')}
-        </span>
-        <div className="row gap8" style={{ flexWrap: 'wrap' }}>
+    <SettingsStack>
+    <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
           <Segmented
             options={[
               { v: 'installed', label: tr('已安装', 'Installed') },
@@ -211,17 +206,16 @@ export function PluginsSettings() {
           />
           {view === 'installed' && (
             <>
-              <button className="btn btn-soft sm" disabled={!bridged || exporting} onClick={() => void doExport()}>
-                <Icon name="download" size={12} />
-                {exporting ? tr('导出中…', 'Exporting…') : tr('导出全部配置', 'Export all config')}
+              <span style={{ flex: 1 }} />
+              <button className="btn btn-ghost sm" disabled={!bridged || exporting} onClick={() => void doExport()}>
+                {exporting ? tr('正在导出…', 'Exporting…') : tr('导出配置', 'Export config')}
               </button>
               <button
-                className="btn btn-soft sm"
+                className="btn btn-ghost sm"
                 disabled={!bridged || importMutation.isPending}
                 onClick={() => fileInputRef.current?.click()}
               >
-                <Icon name="file" size={12} />
-                {tr('从文件导入', 'Import from file')}
+                {tr('导入配置', 'Import config')}
               </button>
             </>
           )}
@@ -236,25 +230,18 @@ export function PluginsSettings() {
               e.target.value = ''; // 允许连续选同一个文件
             }}
           />
-        </div>
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
-        {view === 'market'
-          ? tr(
-              '从插件市场把插件装到这台电脑上。装好的插件默认不启用，确认没问题后再手动启用。',
-              'Install plugins from the market onto this machine. New installs stay off until you enable them.',
-            )
-          : tr(
-              '管理这台电脑上装的插件：随时停用或启用，改配置立即生效。导出的配置文件可以拿到另一台电脑上导入。',
-              'Manage plugins installed on this machine: enable or disable them anytime; config changes apply immediately. Exported config files can be imported on another machine.',
-            )}
-      </div>
+    </div>
+    <SettingsSection
+      title={view === 'market' ? tr('插件市场', 'Market') : tr('已安装', 'Installed')}
+      desc={view === 'market'
+        ? tr('新装的插件默认关闭，确认后再启用。', 'New plugins start off. Turn them on when you’re ready.')
+        : tr('配置修改立即生效，导出的配置可在另一台电脑上导入。', 'Changes apply right away. Exported config can be imported on another computer.')}
+    >
 
       {!bridged ? (
         <EmptyState
           icon="layers"
-          title={tr('插件管理不可用', 'Plugin management unavailable')}
-          desc={tr('这个功能只在桌面客户端里可用。', 'This feature is only available in the desktop app.')}
+          title={tr('插件只能在桌面版中管理', 'Plugins can only be managed in the desktop app')}
         />
       ) : view === 'market' ? (
         <PluginsMarketSection />
@@ -263,7 +250,7 @@ export function PluginsSettings() {
       ) : isError || data == null ? (
         <EmptyState
           icon="layers"
-          title={tr('插件列表加载失败', 'Failed to load plugins')}
+          title={tr('无法加载插件', 'Couldn’t load plugins')}
           action={
             <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
           }
@@ -271,22 +258,22 @@ export function PluginsSettings() {
       ) : plugins.length === 0 ? (
         <EmptyState
           icon="layers"
-          title={tr('还没有装任何插件', 'No plugins installed yet')}
-          desc={tr('装上插件后，可以在这里启停和改配置。', 'Once plugins are installed, you can manage them here.')}
+          title={tr('还没有安装插件', 'No plugins installed yet')}
+          action={<button className="btn btn-soft sm" onClick={() => setView('market')}>{tr('浏览插件市场', 'Browse the market')}</button>}
         />
       ) : (
-        <div className="settings-list">
+        <SettingsGroup>
           {plugins.map((p) => {
             const badge = pluginBadge(p);
             const busy = toggleMutation.isPending && toggleMutation.variables?.id === p.id;
             return (
-              <div key={p.id} className="settings-row" style={{ gap: 12 }}>
-                <div className="settings-row-text" style={{ minWidth: 0 }}>
+              <div key={p.id} className="st-row">
+                <div className="st-row-text">
                   <div className="row gap8" style={{ alignItems: 'center' }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</span>
-                    <span className="pill sm" style={{ background: badge.bg, color: badge.tx }} title={badge.title}>
+                    <span className="st-row-label">{p.name}</span>
+                    <StatusDot tone={p.state === 'active' ? 'ok' : p.state === 'error' ? 'err' : p.state === 'pending' ? 'warn' : 'idle'} title={badge.title}>
                       {tr(badge.zh, badge.en)}
-                    </span>
+                    </StatusDot>
                   </div>
                   {p.state === 'error' && p.error && (
                     <div style={{ fontSize: 11.5, color: 'var(--danger-tx)', marginTop: 3, lineHeight: 1.5 }}>
@@ -295,42 +282,41 @@ export function PluginsSettings() {
                   )}
                 </div>
                 <div className="row gap10" style={{ alignItems: 'center', flexShrink: 0 }}>
-                  <button className="btn btn-soft sm" onClick={() => openConfig(p)}>
-                    <Icon name="sliders" size={12} />
+                  <button className="btn btn-ghost sm" onClick={() => openConfig(p)}>
                     {tr('配置', 'Configure')}
                   </button>
                   {/* 卸载只对停用条目开放；启用中的条目按钮置灰、悬停说明原因，
                       主进程侧同样拒卸（plugin-enabled），这里只是把话提前说 */}
                   <button
-                    className="btn btn-ghost sm"
+                    className="btn btn-ghost sm st-quiet-danger"
                     disabled={p.disabled ? uninstallMutation.isPending : true}
-                    title={p.disabled ? undefined : tr('先停用再卸载', 'Disable it first, then uninstall')}
+                    title={p.disabled ? undefined : tr('请先停用再卸载', 'Turn it off before uninstalling')}
                     onClick={() => {
                       if (p.disabled) uninstallMutation.mutate(p);
                     }}
                   >
-                    <Icon name="trash" size={12} />
                     {tr('卸载', 'Uninstall')}
                   </button>
                   <Switch
                     checked={!p.disabled}
                     disabled={busy}
                     onChange={() => toggleMutation.mutate(p)}
-                    aria-label={tr(`启停插件 ${p.name}`, `Toggle plugin ${p.name}`)}
+                    aria-label={tr(`启用 ${p.name}`, `Turn on ${p.name}`)}
                   />
                 </div>
               </div>
             );
           })}
-        </div>
+        </SettingsGroup>
       )}
+    </SettingsSection>
 
       {/* —— 配置编辑弹窗：JSON 文本域 + 校验 + 保存 —— */}
       <Modal
         open={configFor !== null}
         onClose={() => setConfigFor(null)}
         width={560}
-        title={configFor ? tr(`配置：${configFor.name}`, `Configure: ${configFor.name}`) : ''}
+        title={configFor ? tr(`配置「${configFor.name}」`, `Configure “${configFor.name}”`) : ''}
         footer={
           <>
             <button className="btn btn-ghost" onClick={() => setConfigFor(null)}>{tr('取消', 'Cancel')}</button>
@@ -342,7 +328,7 @@ export function PluginsSettings() {
                 if (config && configFor) validateMutation.mutate({ name: configFor.name, config });
               }}
             >
-              {validateMutation.isPending ? tr('校验中…', 'Checking…') : tr('校验', 'Check')}
+              {validateMutation.isPending ? tr('检查中…', 'Checking…') : tr('检查', 'Check')}
             </button>
             <button
               className="btn btn-primary"
@@ -358,7 +344,7 @@ export function PluginsSettings() {
         }
       >
         <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 8, lineHeight: 1.5 }}>
-          {tr('配置是一段 JSON。保存前会先按插件的要求检查，不合规不会生效。', 'Config is a JSON object. It is checked against the plugin schema before it takes effect.')}
+          {tr('JSON 格式，保存前会检查。', 'JSON. It’s checked before saving.')}
         </div>
         <textarea
           className="textarea mono"
@@ -380,18 +366,18 @@ export function PluginsSettings() {
       <ConfirmModal
         open={pendingImport !== null}
         onClose={() => setPendingImport(null)}
-        title={tr('从文件导入插件配置', 'Import plugin config from file')}
+        title={tr('导入插件配置？', 'Import plugin config?')}
         message={tr(
-          `将替换全部插件配置（文件里有 ${pendingImport?.entries.length ?? 0} 个插件），当前配置会自动备份一份，导入失败会自动恢复。`,
-          `This replaces all plugin config (${pendingImport?.entries.length ?? 0} plugin(s) in the file). Your current config is backed up automatically and restored if the import fails.`,
+          `将替换全部插件配置（文件中有 ${pendingImport?.entries.length ?? 0} 个插件），导入失败会自动恢复。`,
+          `This replaces all plugin config (${pendingImport?.entries.length ?? 0} in the file). It’s restored automatically if the import fails.`,
         )}
-        confirmText={tr('替换并导入', 'Replace and import')}
+        confirmText={tr('导入', 'Import')}
         danger
         busy={importMutation.isPending}
         onConfirm={() => {
           if (pendingImport) importMutation.mutate(pendingImport);
         }}
       />
-    </div>
+    </SettingsStack>
   );
 }

@@ -3,7 +3,6 @@ import { Navigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Avatar } from '../../components/ui/Avatar';
 import { Icon } from '../../components/ui/Icon';
-import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
 import { Switch } from '../../components/ui/Switch';
 import { Modal } from '../../components/ui/Modal';
@@ -26,7 +25,6 @@ import {
   type ChatBotPlatform,
   type DailySyncScope,
   LLM_EFFORT_LEVELS,
-  type LlmCallLogRow,
   type LlmProviderInput,
   type LlmProviderKind,
   type LlmProviderRead,
@@ -38,6 +36,7 @@ import {
 } from '../../lib/api';
 import { BuddySettings } from './BuddySettings';
 import { SettingsLayout, SettingsTabs } from './SettingsTabs';
+import { SettingsActions, SettingsGroup, SettingsStack, SettingsRow, SettingsSection, StatusDot } from './settingsUi';
 import { DailySubscriptionsSection } from './DailySubscriptionsSection';
 import {
   budgetLabel,
@@ -111,98 +110,52 @@ export const KIND_LABELS: Record<LlmProviderKind, string> = {
 function PersonalTab() {
   const queryClient = useQueryClient();
   const { data: me, isLoading, isError } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
-  const { data: usage } = useQuery({ queryKey: ['my-usage'], queryFn: () => api.myUsage(), retry: false });
   const [name, setName] = useState('');
-  const [username, setUsername] = useState('');
   const [avatarVersion, setAvatarVersion] = useState(0);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (me) {
-      setName(me.display_name ?? '');
-      setUsername(me.username ?? '');
-    }
+    if (me) setName(me.display_name ?? '');
   }, [me]);
-
-  const usernameValid = /^[a-z0-9_]{3,32}$/.test(username);
-  const usernameLocked = !!me?.username_locked;
-
-  const usernameMutation = useMutation({
-    mutationFn: () => api.setUsername(username),
-    onSuccess: () => {
-      toast(tr('用户名已设置', 'Username set'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['me'] });
-    },
-    onError: (e) => {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast(
-        msg === 'USERNAME_TAKEN'
-          ? tr('用户名已被占用，换一个吧', 'Username already taken')
-          : msg === 'USERNAME_LOCKED'
-            ? tr('用户名已锁定，不能再改', 'Username is locked')
-            : `${tr('设置失败', 'Failed')}：${msg}`,
-        'error',
-      );
-    },
-  });
 
   const saveMutation = useMutation({
     mutationFn: () => api.updateMe({ display_name: name.trim() }),
     onSuccess: () => {
-      toast(tr('个人资料已保存', 'Profile saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['me'] });
     },
-    onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败', 'Couldn’t save')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   const avatarMutation = useMutation({
     mutationFn: (file: File) => api.uploadAvatar(file),
     onSuccess: () => {
-      toast(tr('头像已更新', 'Avatar updated'), 'ok');
+      toast(tr('头像已更新', 'Photo updated'), 'ok');
       setAvatarVersion((v) => v + 1);
       void queryClient.invalidateQueries({ queryKey: ['me'] });
       void queryClient.invalidateQueries({ queryKey: ['avatar'] });
     },
     onError: (e) => {
       const msg = e instanceof Error ? e.message : String(e);
-      toast(msg === 'AVATAR_TOO_LARGE' ? tr('图片超过 2MB', 'Image exceeds 2MB') : msg === 'AVATAR_NOT_IMAGE' ? tr('不是有效的图片文件', 'Not a valid image file') : `${tr('上传失败', 'Upload failed')}：${msg}`, 'error');
+      toast(
+        msg === 'AVATAR_TOO_LARGE'
+          ? tr('图片不能超过 2 MB', 'The image must be 2 MB or smaller')
+          : msg === 'AVATAR_NOT_IMAGE'
+            ? tr('请选择 PNG、JPEG 或 WebP 图片', 'Choose a PNG, JPEG or WebP image')
+            : `${tr('上传失败', 'Upload failed')}：${msg}`,
+        'error',
+      );
     },
   });
 
   if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
-  if (isError || !me) return <div className="empty">{tr('无法加载用户信息（后端不可用）', 'Failed to load user info (backend unavailable)')}</div>;
+  if (isError || !me) return <div className="empty">{tr('无法加载个人资料，请确认本机引擎正在运行', 'Couldn’t load your profile. Check that the local engine is running.')}</div>;
 
   return (
-    <>
-      {/* —— 身份条：头像 + 是谁 + 角色/用量，横着铺满 —— */}
-      <div className="card card-pad" style={{ marginBottom: 20 }}>
-        <div className="row gap20 wrap" style={{ alignItems: 'center' }}>
-          <Avatar userId={me.id} hasAvatar={!!me.has_avatar} name={me.display_name || me.email} size={72} version={avatarVersion} />
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontSize: 17, fontWeight: 650, lineHeight: 1.3 }}>
-              {me.display_name || tr('（还没填姓名）', '(no name yet)')}
-            </div>
-            <div className="mono" style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>{me.email}</div>
-            <div className="row gap8 wrap" style={{ marginTop: 9 }}>
-              {me.username && (
-                <span className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-                  @{me.username}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* AI 用量：这里只报个数，明细在「用量」标签页 */}
-          {usage && (
-            <div style={{ minWidth: 190 }}>
-              <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{tr('AI 用量', 'AI usage')}</div>
-              <div className="row gap6" style={{ alignItems: 'baseline', marginTop: 2 }}>
-                <span className="mono" style={{ fontSize: 19, fontWeight: 700 }}>{usage.tokens_used.toLocaleString()}</span>
-                <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>tokens</span>
-              </div>
-            </div>
-          )}
-
-          <div>
+    <SettingsStack>
+      <SettingsSection title={tr('个人资料', 'Profile')}>
+        <SettingsGroup>
+          <SettingsRow label={tr('头像', 'Photo')} hint={tr('PNG、JPEG 或 WebP，不超过 2 MB', 'PNG, JPEG or WebP, up to 2 MB')}>
+            <Avatar userId={me.id} hasAvatar={!!me.has_avatar} name={me.display_name || ''} size={36} version={avatarVersion} />
             <input
               ref={avatarInputRef}
               type="file"
@@ -214,84 +167,25 @@ function PersonalTab() {
                 e.target.value = '';
               }}
             />
-            <button className="btn btn-soft sm" disabled={avatarMutation.isPending} onClick={() => avatarInputRef.current?.click()}>
-              {avatarMutation.isPending ? tr('上传中…', 'Uploading…') : tr('更换头像', 'Change avatar')}
+            <button className="btn btn-ghost sm" disabled={avatarMutation.isPending} onClick={() => avatarInputRef.current?.click()}>
+              {avatarMutation.isPending ? tr('上传中…', 'Uploading…') : tr('更换', 'Change')}
             </button>
-            <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 6, textAlign: 'center' }}>
-              {tr('PNG / JPEG / WebP，2MB 以内', 'PNG / JPEG / WebP, up to 2MB')}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* —— 主表单 + 学术身份并排 —— */}
-      <div className="settings-main-side">
-        <div className="card card-pad">
-          <div className="section-h" style={{ marginBottom: 14 }}>
-            <Icon name="users" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('账号信息', 'Account')}
-          </div>
-
-          <div className="settings-fields">
-            <FormField label={tr('姓名', 'Name')}>
-              <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('你的真实姓名', 'Your name')} />
-            </FormField>
-            <FormField label={tr('邮箱', 'Email')} hint={tr('注册后不能改', 'Cannot be changed after signup')}>
-              <input className="input" value={me.email} disabled />
-            </FormField>
-          </div>
-
-          <FormField
-            label={tr('用户名', 'Username')}
-            hint={
-              usernameLocked
-                ? tr('已经定下来了，不能再改。', 'Already set — it cannot be changed.')
-                : tr('小写字母、数字、下划线 3-32 位；全局唯一。只能设置一次，设完就锁。', 'Lowercase letters, digits, underscore; 3-32 chars; unique. Can only be set once, then it locks.')
-            }
-            error={!usernameLocked && username && !usernameValid ? tr('格式不对', 'Invalid format') : null}
-          >
-            {usernameLocked ? (
-              <div className="row gap8" style={{ alignItems: 'center' }}>
-                <input className="input mono" value={me.username ?? ''} disabled style={{ flex: 1, minWidth: 0 }} />
-                <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)', flexShrink: 0 }}>
-                  {tr('已锁定', 'Locked')}
-                </span>
-              </div>
-            ) : (
-              <div className="row gap8" style={{ alignItems: 'center' }}>
-                <input
-                  className="input mono"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value.toLowerCase())}
-                  placeholder="e.g. zhang_san"
-                  style={{ flex: 1, minWidth: 0 }}
-                />
-                <button
-                  className="btn btn-soft"
-                  style={{ flexShrink: 0 }}
-                  disabled={!usernameValid || usernameMutation.isPending || username === (me.username ?? '')}
-                  onClick={() => usernameMutation.mutate()}
-                >
-                  {tr('保存', 'Save')}
-                </button>
-              </div>
-            )}
-          </FormField>
-
-          <div className="row" style={{ justifyContent: 'flex-end', marginTop: 4 }}>
+          </SettingsRow>
+          <SettingsRow label={tr('姓名', 'Name')}>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('例如 张三', 'e.g. Jane Smith')} />
             <button
-              className="btn btn-primary"
+              className="btn btn-primary sm"
               disabled={saveMutation.isPending || (me.display_name ?? '') === name.trim()}
               onClick={() => saveMutation.mutate()}
             >
-              {tr('保存', 'Save')}
+              {saveMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
             </button>
-          </div>
-        </div>
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
 
-        <AcademicIdentitySection />
-      </div>
-    </>
+      <AcademicIdentitySection />
+    </SettingsStack>
   );
 }
 
@@ -312,90 +206,57 @@ function PreferencesTab() {
     onSuccess: (saved) => {
       setWatchdogMinutes(saved.unanswered_minutes);
       queryClient.setQueryData(['managed-command-watchdog', 'user'], saved);
-      toast(tr('远端命令等待时间已保存', 'Remote-command wait saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
     },
     onError: (error) => toast(
-      `${tr('保存失败', 'Save failed')}：${error instanceof Error ? error.message : String(error)}`,
+      `${tr('保存失败', 'Couldn’t save')}：${error instanceof Error ? error.message : String(error)}`,
       'error',
     ),
   });
   return (
-    <>
-    <div className="card card-pad">
-      <div className="section-h" style={{ marginBottom: 4 }}>
-        <Icon name="sliders" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('界面偏好', 'Interface preferences')}
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>
-        {tr(
-          '这些只存在这台设备的浏览器里，不跟着账号走——换台电脑要重新设。',
-          'These live in this browser only and do not follow your account — set them again on another machine.',
-        )}
-      </div>
+    <SettingsStack>
+      <SettingsSection title={tr('界面', 'Interface')}>
+        <SettingsGroup>
+          <SettingsRow
+            labelId="pref-task-log-history"
+            label={tr('任务终端显示历史日志', 'Show earlier logs in the task terminal')}
+            hint={tr('关闭后只显示本次运行的日志', 'When off, only this run’s logs are shown')}
+          >
+            <Switch checked={showHistory} onChange={setTaskLogHistory} aria-labelledby="pref-task-log-history" />
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
 
-      <div className="settings-list">
-        <div className="settings-row">
-          <div className="settings-row-text">
-            <div id="pref-task-log-history" style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4 }}>
-              {tr('任务终端展示历史日志', 'Show past logs in the task terminal')}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5, marginTop: 3 }}>
-              {tr(
-                '打开任务终端时把之前跑过的日志一起显示出来。关掉就只看这次新产生的。',
-                'Include logs from earlier runs when you open a task terminal. Turn it off to see only what this run produces.',
-              )}
-            </div>
-          </div>
-          <Switch
-            checked={showHistory}
-            onChange={setTaskLogHistory}
-            aria-labelledby="pref-task-log-history"
-          />
-        </div>
-      </div>
-    </div>
-    <div className="card card-pad" style={{ marginTop: 16 }}>
-      <div className="section-h" style={{ marginBottom: 4 }}>
-        <Icon name="clock" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('远端命令等待策略', 'Remote-command wait policy')}
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6, marginBottom: 16 }}>
-        {tr(
-          '远端命令超时并等待你决定后，超过此时间仍未回复时，系统会检查该命令是否占用 GPU。仅确认占用时自动终止；不占用或无法可靠归属时继续等待。管理员设置的上限优先生效。',
-          'After a timed-out remote command asks for your decision, Polaris checks its GPU use once this wait expires. It stops only GPU use attributable to that command; idle or uncertain commands keep waiting. The administrator cap takes precedence.',
-        )}
-      </div>
-      {watchdog.isError ? (
-        <div className="empty">{tr('无法加载设置', 'Failed to load settings')}</div>
-      ) : (
-        <FormField
-          label={tr('等待时间（分钟）', 'Wait (minutes)')}
-          hint={watchdog.data ? tr(
-            `管理员上限 ${watchdog.data.admin_max_unanswered_minutes} 分钟；当前实际生效 ${watchdog.data.effective_unanswered_minutes} 分钟。`,
-            `Administrator cap: ${watchdog.data.admin_max_unanswered_minutes} minutes; effective: ${watchdog.data.effective_unanswered_minutes} minutes.`,
-          ) : undefined}
-        >
-          <input
-            className="input mono"
-            type="number"
-            min={15}
-            max={10080}
-            value={shownMinutes}
-            onChange={(event) => setWatchdogMinutes(Number(event.target.value))}
-          />
-        </FormField>
-      )}
-      <div className="row" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
-        <button
-          className="btn btn-primary"
-          disabled={watchdog.isLoading || shownMinutes < 15 || shownMinutes > 10080 || saveWatchdog.isPending || shownMinutes === watchdog.data?.unanswered_minutes}
-          onClick={() => saveWatchdog.mutate()}
-        >
-          {saveWatchdog.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
-        </button>
-      </div>
-    </div>
-    </>
+      <SettingsSection title={tr('远程命令超时', 'Remote command timeout')}>
+        <SettingsGroup>
+          <SettingsRow
+            label={tr('等待回复（分钟）', 'Wait for reply (minutes)')}
+            hint={watchdog.isError
+              ? tr('无法加载此设置', 'Couldn’t load this setting')
+              : watchdog.data && watchdog.data.effective_unanswered_minutes < watchdog.data.unanswered_minutes
+                ? tr(`上限为 ${watchdog.data.effective_unanswered_minutes} 分钟`, `Capped at ${watchdog.data.effective_unanswered_minutes} minutes`)
+                : tr('超时后仍占用 GPU 的命令会被终止', 'Commands still using a GPU are then stopped')}
+          >
+            <input
+              className="input mono st-num"
+              type="number"
+              min={15}
+              max={10080}
+              value={shownMinutes}
+              disabled={watchdog.isError}
+              onChange={(event) => setWatchdogMinutes(Number(event.target.value))}
+            />
+            <button
+              className="btn btn-primary sm"
+              disabled={watchdog.isLoading || shownMinutes < 15 || shownMinutes > 10080 || saveWatchdog.isPending || shownMinutes === watchdog.data?.unanswered_minutes}
+              onClick={() => saveWatchdog.mutate()}
+            >
+              {saveWatchdog.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+            </button>
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+    </SettingsStack>
   );
 }
 
@@ -441,13 +302,13 @@ const EMPTY_CHAT_BOT_DRAFTS: Record<ChatBotPlatform, ChatBotDraft> = {
 function chatBotError(e: unknown): string {
   if (e instanceof ApiError) {
     if (e.message === 'INVALID_CHAT_BOT_ID') {
-      return tr('机器人 ID / Webhook 格式不正确，请粘贴官方地址', 'Invalid bot ID / Webhook; paste the official URL');
+      return tr('Webhook 格式不对，请粘贴钉钉或飞书提供的完整地址', 'That Webhook isn’t valid. Paste the full URL from DingTalk or Feishu.');
     }
     if (e.message === 'CHAT_BOT_NOT_CONFIGURED') {
-      return tr('机器人尚未配置', 'Bot is not configured');
+      return tr('还没有设置这个机器人', 'This bot isn’t set up yet');
     }
     if (e.message.startsWith('CHAT_BOT_DELIVERY_FAILED')) {
-      return tr('推送失败，请检查机器人 ID、Secret 和群安全设置', 'Delivery failed; check the bot ID, secret, and group security settings');
+      return tr('发送失败，请检查 Webhook、签名密钥和群的安全设置', 'Couldn’t send. Check the Webhook, signing secret and the group’s security settings.');
     }
   }
   return e instanceof Error ? e.message : String(e);
@@ -476,32 +337,32 @@ function ChatBotsTab() {
     onSuccess: (_, platform) => {
       setDrafts((current) => ({ ...current, [platform]: { robot_id: '', secret: '' } }));
       invalidate();
-      toast(tr(`${CHAT_BOT_META[platform].zh}配置已加密保存`, `${CHAT_BOT_META[platform].en} configuration saved encrypted`), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
     },
-    onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${chatBotError(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败', 'Couldn’t save')}：${chatBotError(e)}`, 'error'),
   });
   const testMutation = useMutation({
     mutationFn: (platform: ChatBotPlatform) => api.testChatBotConfig(platform),
-    onSuccess: (_, platform) => {
+    onSuccess: () => {
       invalidate();
-      toast(tr(`测试消息已发送到${CHAT_BOT_META[platform].zh}群`, `Test message sent to the ${CHAT_BOT_META[platform].en} group`), 'ok');
+      toast(tr('测试消息已发送', 'Test message sent'), 'ok');
     },
-    onError: (e) => toast(`${tr('测试失败', 'Test failed')}：${chatBotError(e)}`, 'error'),
+    onError: (e) => toast(chatBotError(e), 'error'),
   });
   const deleteMutation = useMutation({
     mutationFn: (platform: ChatBotPlatform) => api.deleteChatBotConfig(platform),
-    onSuccess: (_, platform) => {
+    onSuccess: () => {
       invalidate();
-      toast(tr(`${CHAT_BOT_META[platform].zh}配置已删除`, `${CHAT_BOT_META[platform].en} configuration deleted`), 'ok');
+      toast(tr('已删除', 'Deleted'), 'ok');
     },
-    onError: (e) => toast(`${tr('删除失败', 'Delete failed')}：${chatBotError(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败', 'Couldn’t delete')}：${chatBotError(e)}`, 'error'),
   });
 
   if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
   if (isError || !data) {
     return (
       <div className="empty">
-        {tr('无法加载群机器人配置', 'Failed to load bot configurations')}
+        {tr('无法加载群机器人', 'Couldn’t load group bots')}
         <div style={{ marginTop: 10 }}>
           <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
         </div>
@@ -510,84 +371,38 @@ function ChatBotsTab() {
   }
 
   return (
-    <>
-      <div className="card card-pad" style={{ marginBottom: 20 }}>
-        <div className="section-h">
-          <Icon name="chat" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('群机器人单向推送', 'One-way group bot delivery')}
-        </div>
-        {/* 三步说明横着排：宽屏下一眼看完，不用顺着一长条文字读到底 */}
-        <div className="settings-stats" style={{ marginTop: 14 }}>
-          {[
-            {
-              n: '1',
-              zh: '在目标群里添加「自定义机器人」，并开启「签名校验」。',
-              en: 'Add a custom bot to the target group and enable signature verification.',
-            },
-            {
-              n: '2',
-              zh: '把 Webhook（或其中的机器人 ID）和 Secret 填到下面对应的卡片里。',
-              en: 'Enter its Webhook (or bot ID) and secret in the matching card below.',
-            },
-            {
-              n: '3',
-              zh: '在文献对话或 AI 伴读里输入 @ 选中机器人，回答生成完就直接推到群里，群成员不用再 @ 它。',
-              en: 'In literature chat or AI reading, type @ and pick the bot; finished answers go straight to the group.',
-            },
-          ].map((s) => (
-            <div key={s.n} className="row gap10" style={{ alignItems: 'flex-start' }}>
-              <span
-                className="mono"
-                style={{
-                  flexShrink: 0, width: 20, height: 20, borderRadius: 999,
-                  background: 'var(--accent-soft)', color: 'var(--accent-text)',
-                  fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                }}
-              >
-                {s.n}
-              </span>
-              <span style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6 }}>{tr(s.zh, s.en)}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="settings-2col">
-        {CHAT_BOT_PLATFORMS.map((platform) => {
-          const meta = CHAT_BOT_META[platform];
-          const config = data.find((item) => item.platform === platform);
-          const draft = drafts[platform];
-          const busy =
-            (saveMutation.isPending && saveMutation.variables === platform) ||
-            (testMutation.isPending && testMutation.variables === platform) ||
-            (deleteMutation.isPending && deleteMutation.variables === platform);
-          return (
-            <div key={platform} className="card card-pad">
-              <div className="row gap10" style={{ marginBottom: 14, alignItems: 'center' }}>
-                <Icon name="chat" size={16} style={{ color: 'var(--accent)' }} />
-                <span className="section-h">{tr(meta.zh, meta.en)}</span>
-                <span
-                  className="pill sm"
-                  style={config?.configured
-                    ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
-                    : { background: 'var(--surface-3)', color: 'var(--text-3)' }}
-                >
-                  {config?.configured
-                    ? tr(config.has_secret ? '已配置 · 已加签' : '已配置 · 未加签', config.has_secret ? 'Configured · signed' : 'Configured · unsigned')
-                    : tr('未配置', 'Not configured')}
-                </span>
-                <a href={meta.docs} target="_blank" rel="noreferrer noopener" className="btn btn-ghost sm" style={{ marginLeft: 'auto' }}>
-                  {tr('官方配置说明', 'Official setup guide')}
+    <SettingsStack>
+      {CHAT_BOT_PLATFORMS.map((platform, index) => {
+        const meta = CHAT_BOT_META[platform];
+        const config = data.find((item) => item.platform === platform);
+        const draft = drafts[platform];
+        const busy =
+          (saveMutation.isPending && saveMutation.variables === platform) ||
+          (testMutation.isPending && testMutation.variables === platform) ||
+          (deleteMutation.isPending && deleteMutation.variables === platform);
+        return (
+          <SettingsSection
+            key={platform}
+            title={tr(meta.zh, meta.en)}
+            desc={index === 0
+              ? tr(
+                  '在群里添加自定义机器人并填到这里，之后在对话中 @ 它即可把回答发到群里。',
+                  'Add a custom bot to the group and enter it here. Mention it with @ in a chat to send the answer there.',
+                )
+              : undefined}
+            actions={
+              <>
+                <StatusDot tone={config?.configured ? 'ok' : 'idle'}>
+                  {config?.configured ? tr('已设置', 'Set up') : tr('未设置', 'Not set up')}
+                </StatusDot>
+                <a href={meta.docs} target="_blank" rel="noreferrer noopener" className="btn btn-ghost sm">
+                  {tr('设置说明', 'Setup guide')}
                 </a>
-              </div>
-
-              <FormField
-                label={tr(meta.idZh, meta.idEn)}
-                hint={tr(
-                  '推荐直接粘贴完整 Webhook；后端只保存提取出的 ID，并拒绝非官方域名。已配置的值不会回传，更新时请重新填写。',
-                  'Paste the full Webhook. The backend stores only the extracted ID and rejects non-official hosts. Saved values are write-only; re-enter them to update.',
-                )}
-              >
+              </>
+            }
+          >
+            <SettingsGroup>
+              <SettingsRow stack label="Webhook" hint={tr('粘贴完整的 Webhook 地址', 'Paste the full Webhook URL')}>
                 <input
                   className="input mono"
                   value={draft.robot_id}
@@ -595,17 +410,16 @@ function ChatBotsTab() {
                     ...current,
                     [platform]: { ...current[platform], robot_id: e.target.value },
                   }))}
-                  placeholder={config?.configured ? tr('已加密保存；填写新值可替换', 'Saved encrypted; enter a new value to replace') : meta.placeholder}
+                  placeholder={config?.configured ? tr('已保存，填写新值即可替换', 'Saved. Enter a new value to replace it.') : meta.placeholder}
                   autoComplete="off"
                   spellCheck={false}
                 />
-              </FormField>
-              <FormField
-                label={tr('签名 Secret', 'Signing secret')}
-                hint={tr(
-                  '推荐在机器人安全设置中开启“签名校验”并填写。若机器人没有开启签名校验，可留空。',
-                  'Recommended: enable signature verification in the bot security settings and enter the secret. Leave blank only if signing is disabled for the bot.',
-                )}
+              </SettingsRow>
+              <SettingsRow
+                label={tr('签名密钥', 'Signing secret')}
+                hint={config?.configured && !config.has_secret
+                  ? tr('建议在机器人安全设置中开启加签', 'Turn on signing in the bot’s security settings')
+                  : tr('机器人未开启加签时可留空', 'Leave empty if signing is off')}
               >
                 <input
                   className="input mono"
@@ -615,53 +429,51 @@ function ChatBotsTab() {
                     ...current,
                     [platform]: { ...current[platform], secret: e.target.value },
                   }))}
-                  placeholder={config?.has_secret ? tr('已加密保存', 'Saved encrypted') : tr('可选', 'Optional')}
+                  placeholder={config?.has_secret ? tr('已保存', 'Saved') : tr('可选', 'Optional')}
                   autoComplete="new-password"
                 />
-              </FormField>
-
-              <div className="row gap8" style={{ justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                {config?.last_delivered_at && (
-                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginRight: 'auto' }}>
-                    {tr('最近发送', 'Last sent')}：{fmtTime(config.last_delivered_at)}
-                  </span>
-                )}
-                {config?.configured && (
-                  <>
-                    <button
-                      className="btn btn-soft sm"
-                      disabled={busy}
-                      title={tr('会向目标群实际发送一条测试消息', 'Sends a real test message to the target group')}
-                      onClick={() => testMutation.mutate(platform)}
-                    >
-                      {testMutation.isPending && testMutation.variables === platform ? tr('发送中…', 'Sending…') : tr('发送测试消息', 'Send test message')}
-                    </button>
-                    <button
-                      className="btn btn-ghost sm"
-                      disabled={busy}
-                      onClick={() => {
-                        if (window.confirm(tr(`删除${meta.zh}配置？`, `Delete the ${meta.en} configuration?`))) {
-                          deleteMutation.mutate(platform);
-                        }
-                      }}
-                    >
-                      {tr('删除配置', 'Delete')}
-                    </button>
-                  </>
-                )}
-                <button
-                  className="btn btn-primary sm"
-                  disabled={busy || draft.robot_id.trim() === ''}
-                  onClick={() => saveMutation.mutate(platform)}
-                >
-                  {saveMutation.isPending && saveMutation.variables === platform ? tr('保存中…', 'Saving…') : tr('保存配置', 'Save')}
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </>
+              </SettingsRow>
+            </SettingsGroup>
+            <SettingsActions
+              note={config?.last_delivered_at
+                ? tr(`上次发送 ${fmtTime(config.last_delivered_at)}`, `Last sent ${fmtTime(config.last_delivered_at)}`)
+                : undefined}
+            >
+              {config?.configured && (
+                <>
+                  <button
+                    className="btn btn-ghost sm st-quiet-danger"
+                    disabled={busy}
+                    onClick={() => {
+                      if (window.confirm(tr(`删除${meta.zh}？之后无法再向这个群发送消息。`, `Delete the ${meta.en}? Polaris will stop sending to that group.`))) {
+                        deleteMutation.mutate(platform);
+                      }
+                    }}
+                  >
+                    {tr('删除', 'Delete')}
+                  </button>
+                  <button
+                    className="btn btn-ghost sm"
+                    disabled={busy}
+                    title={tr('向群里发送一条测试消息', 'Sends a test message to the group')}
+                    onClick={() => testMutation.mutate(platform)}
+                  >
+                    {testMutation.isPending && testMutation.variables === platform ? tr('发送中…', 'Sending…') : tr('发送测试消息', 'Send test message')}
+                  </button>
+                </>
+              )}
+              <button
+                className="btn btn-primary sm"
+                disabled={busy || draft.robot_id.trim() === ''}
+                onClick={() => saveMutation.mutate(platform)}
+              >
+                {saveMutation.isPending && saveMutation.variables === platform ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+              </button>
+            </SettingsActions>
+          </SettingsSection>
+        );
+      })}
+    </SettingsStack>
   );
 }
 
@@ -721,16 +533,16 @@ function SshTab() {
   const createMutation = useMutation({
     mutationFn: () => api.createSshCredential(toSshInput(draft)),
     onSuccess: () => {
-      toast(tr('SSH 凭据已添加（私钥加密存储）', 'SSH credential added (private key stored encrypted)'), 'ok');
+      toast(tr('已添加服务器', 'Server added'), 'ok');
       setModalOpen(false);
       invalidate();
     },
-    onError: (e) => toast(`${tr('添加失败', 'Add failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('添加失败', 'Couldn’t add')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.deleteSshCredential(id),
     onSuccess: () => {
-      toast(tr('凭据已删除', 'Credential deleted'), 'ok');
+      toast(tr('已删除', 'Deleted'), 'ok');
       invalidate();
     },
     onError: (e) => toast(`${tr('删除失败', 'Delete failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
@@ -741,7 +553,7 @@ function SshTab() {
       toast(r.ok ? `${tr('连接成功', 'Connected')}：${r.detail}` : `${tr('连接失败', 'Connection failed')}：${r.detail}`, r.ok ? 'ok' : 'error');
       if (r.ok) invalidate(); // 后端更新 last_verified_at
     },
-    onError: (e) => toast(`${tr('测试失败', 'Test failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('连接失败', 'Connection failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const canSave =
@@ -752,117 +564,92 @@ function SshTab() {
     !createMutation.isPending;
 
   return (
-    <div className="card card-pad">
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
-        <span className="section-h">
-          <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('SSH 凭据', 'SSH credentials')} <span className="en-label" style={{ fontSize: 11 }}>{tr('实验用远程服务器', 'remote servers for experiments')}</span>
-        </span>
+    <SettingsStack>
+    <SettingsSection
+      title={tr('远程服务器', 'Remote servers')}
+      desc={tr('实验通过 SSH 在这些服务器上运行。', 'Experiments run on these servers over SSH.')}
+      actions={
         <button className="btn btn-primary sm" onClick={() => { setDraft(emptySshDraft()); setModalOpen(true); }}>
           <Icon name="plus" size={13} />
-          {tr('添加凭据', 'Add credential')}
+          {tr('添加服务器', 'Add server')}
         </button>
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
-        {tr(
-          '私钥加密存储（Fernet），仅用于你自己的实验任务，绝不回传前端；实验工作目录限定 ~/polaris_runs/。',
-          'Private keys are stored encrypted (Fernet), used only for your own experiment jobs and never sent back to the browser; the experiment working dir is limited to ~/polaris_runs/.',
-        )}
-      </div>
-
+      }
+    >
       {isLoading ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
+        <SettingsGroup pad><div className="st-row-hint">{tr('加载中…', 'Loading…')}</div></SettingsGroup>
       ) : isError ? (
-        <div className="empty" style={{ padding: 24 }}>
-          {tr('无法加载（后端不可用或接口尚未就绪）', 'Failed to load (backend unavailable or API not ready)')}
-          <div style={{ marginTop: 10 }}>
-            <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-          </div>
-        </div>
+        <SettingsGroup>
+          <SettingsRow label={tr('无法加载远程服务器', 'Couldn’t load remote servers')}>
+            <button className="btn btn-ghost sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
+          </SettingsRow>
+        </SettingsGroup>
       ) : creds.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>
-          {tr('还没有 SSH 凭据 — 添加一台 GPU 服务器后即可在 Experiment Lab 发起实验', 'No SSH credentials yet — add a GPU server to run experiments in Experiment Lab')}
-        </div>
+        <SettingsGroup>
+          <SettingsRow label={tr('还没有远程服务器', 'No remote servers yet')} hint={tr('添加一台 GPU 服务器即可运行实验', 'Add a GPU server to run experiments')} />
+        </SettingsGroup>
       ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{tr('名称', 'Name')}</th>
-                <th>host</th>
-                <th style={{ width: 60 }}>port</th>
-                <th>username</th>
-                <th style={{ width: 130 }}>{tr('最近验证', 'Last verified')}</th>
-                <th style={{ width: 150 }} />
-              </tr>
-            </thead>
-            <tbody>
+        <SettingsGroup>
               {creds.map((c) => (
                 <Fragment key={c.id}>
-                  <tr>
-                    <td style={{ fontWeight: 600 }}>{c.name}</td>
-                    <td className="mono" style={{ fontSize: 11.5 }}>{c.host}</td>
-                    <td className="mono" style={{ fontSize: 11.5 }}>{c.port}</td>
-                    <td className="mono" style={{ fontSize: 11.5 }}>{c.username}</td>
-                    <td className="mono" style={{ fontSize: 11, color: c.last_verified_at ? 'var(--ok-tx)' : 'var(--text-4)' }}>
-                      {c.last_verified_at ? fmtTime(c.last_verified_at) : tr('从未验证', 'Never verified')}
-                    </td>
-                    <td>
-                      <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
+                  <SettingsRow
+                    label={<span className="row gap8" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                      {c.name}
+                      {c.last_verified_at ? (
+                        <StatusDot tone="ok" title={fmtTime(c.last_verified_at)}>{tr('连接正常', 'Connected')}</StatusDot>
+                      ) : (
+                        <StatusDot tone="idle">{tr('未测试', 'Not tested')}</StatusDot>
+                      )}
+                    </span>}
+                    hint={<span className="mono" style={{ overflowWrap: 'anywhere' }}>{`${c.username}@${c.host}${c.port && c.port !== 22 ? `:${c.port}` : ''}`}</span>}
+                  >
                         <button
-                          className="btn btn-soft sm"
+                          className="btn btn-ghost sm"
                           onClick={() => setSysinfoId(sysinfoId === c.id ? null : c.id)}
                         >
-                          <Icon name="cpu" size={12} />
-                          {sysinfoId === c.id ? tr('收起状态', 'Hide status') : tr('系统状态', 'System status')}
+                          {sysinfoId === c.id ? tr('收起', 'Hide') : tr('查看状态', 'Status')}
                         </button>
                         <button
-                          className="btn btn-soft sm"
+                          className="btn btn-ghost sm"
                           disabled={testMutation.isPending}
                           onClick={() => testMutation.mutate(c.id)}
                         >
                           {testMutation.isPending && testMutation.variables === c.id ? tr('连接中…', 'Connecting…') : tr('测试连接', 'Test connection')}
                         </button>
                         <button
-                          className="icon-btn"
+                          className="icon-btn st-quiet-danger"
                           style={{ width: 26, height: 26 }}
                           title={tr('删除', 'Delete')}
                           disabled={deleteMutation.isPending}
                           onClick={() => {
-                            if (window.confirm(`${tr('确定删除凭据', 'Delete credential')} “${c.name}”？${tr('使用中的实验将无法再连接该服务器。', 'Experiments using it will no longer be able to reach this server.')}`)) {
+                            if (window.confirm(tr(`删除服务器「${c.name}」？用到它的实验将无法再连接。`, `Delete server “${c.name}”? Experiments that use it can no longer connect.`))) {
                               deleteMutation.mutate(c.id);
                             }
                           }}
                         >
                           <Icon name="trash" size={13} />
                         </button>
-                      </div>
-                    </td>
-                  </tr>
+                  </SettingsRow>
                   {sysinfoId === c.id && (
-                    <tr>
-                      <td colSpan={6} style={{ background: 'var(--surface-2)', padding: '12px 16px' }}>
-                        <SysinfoPanel
-                          loading={sysinfoQuery.isLoading}
-                          error={sysinfoQuery.isError}
-                          info={sysinfoQuery.data}
-                          onRefresh={() => void sysinfoQuery.refetch()}
-                        />
-                      </td>
-                    </tr>
+                    <div style={{ background: 'var(--surface-2)', padding: '12px 14px' }}>
+                      <SysinfoPanel
+                        loading={sysinfoQuery.isLoading}
+                        error={sysinfoQuery.isError}
+                        info={sysinfoQuery.data}
+                        onRefresh={() => void sysinfoQuery.refetch()}
+                      />
+                    </div>
                   )}
                 </Fragment>
               ))}
-            </tbody>
-          </table>
-        </div>
+        </SettingsGroup>
       )}
+    </SettingsSection>
 
       <Modal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         width={560}
-        title={tr('添加 SSH 凭据', 'Add SSH credential')}
+        title={tr('添加远程服务器', 'Add remote server')}
         footer={
           <>
             <button className="btn btn-ghost" onClick={() => setModalOpen(false)}>{tr('取消', 'Cancel')}</button>
@@ -874,7 +661,7 @@ function SshTab() {
       >
         <FormField label={tr('名称', 'Name')}>
           <input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            placeholder={tr('如 lab-gpu-1', 'e.g. lab-gpu-1')} />
+            placeholder={tr('例如 lab-gpu-1', 'e.g. lab-gpu-1')} />
         </FormField>
         <div className="row gap12" style={{ alignItems: 'flex-start' }}>
           <FormField label={tr('主机', 'Host')} style={{ flex: 1 }}>
@@ -890,7 +677,7 @@ function SshTab() {
           <input className="input mono" value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })}
             placeholder="ubuntu" autoComplete="off" />
         </FormField>
-        <FormField label={tr('私钥（PEM）', 'Private key (PEM)')} hint={tr('粘贴完整 PEM 文本；后端 Fernet 加密入库，只写不读。', 'Paste the full PEM text; stored encrypted on the backend, write-only.')}>
+        <FormField label={tr('私钥', 'Private key')} hint={tr('粘贴完整的私钥文本', 'Paste the whole private key')}>
           <textarea
             className="textarea mono"
             style={{ minHeight: 130, fontSize: 11 }}
@@ -901,20 +688,20 @@ function SshTab() {
             spellCheck={false}
           />
         </FormField>
-        <FormField label={tr('密钥口令（可选）', 'Passphrase (optional)')}>
+        <FormField label={tr('私钥密码（可选）', 'Passphrase (optional)')}>
           <input className="input mono" type="password" autoComplete="new-password" value={draft.passphrase}
-            onChange={(e) => setDraft({ ...draft, passphrase: e.target.value })} placeholder={tr('私钥无口令则留空', 'Leave empty if the key has no passphrase')} />
+            onChange={(e) => setDraft({ ...draft, passphrase: e.target.value })} placeholder={tr('私钥没有密码则留空', 'Leave empty if the key has none')} />
         </FormField>
-        <FormField label={tr('出外网代理（可选）', 'Outbound proxy (optional)')}>
+        <FormField
+          label={tr('外网代理（可选）', 'Internet proxy (optional)')}
+          hint={tr('服务器安装依赖、下载模型时使用；能直接上网则留空', 'Used to install packages and download models. Leave empty if the server has direct access.')}
+        >
           <input className="input mono" value={draft.proxy_url}
             onChange={(e) => setDraft({ ...draft, proxy_url: e.target.value })}
-            placeholder={tr('如 http://10.205.70.120:7899，服务器直连外网则留空', 'e.g. http://10.205.70.120:7899; leave empty if the server has direct internet access')} />
-          <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
-            {tr('实验装依赖、下载模型数据时自动走该代理；内网 LLM 接口不受影响', 'Used when experiments install dependencies or download models; internal LLM endpoints are unaffected')}
-          </div>
+            placeholder={tr('例如 http://10.0.0.1:7890', 'e.g. http://10.0.0.1:7890')} />
         </FormField>
       </Modal>
-    </div>
+    </SettingsStack>
   );
 }
 
@@ -1014,7 +801,7 @@ function ProviderForm({ draft, setDraft, isNew }: {
             onChange={(v) => setDraft({ ...draft, kind: v as LlmProviderKind })}
           />
         </FormField>
-        <FormField label="Base URL" style={{ flex: 1 }}>
+        <FormField label={tr('API 地址', 'API URL')} style={{ flex: 1 }}>
           <input className="input mono" value={draft.base_url} onChange={(e) => setDraft({ ...draft, base_url: e.target.value })}
             placeholder="https://api.example.com/v1" disabled={draft.kind === 'fake'} />
         </FormField>
@@ -1029,26 +816,23 @@ function ProviderForm({ draft, setDraft, isNew }: {
       )}
       {draft.kind === 'openai_compat' && (
         <FormField label={tr('Rerank 路径（可选）', 'Rerank path (optional)')}
-          hint={tr(
-            '接在 Base URL 后面。各家不统一，常见的是 /rerank 或 /reranks；留空用 /rerank。',
-            'Appended to the Base URL. Providers differ — usually /rerank or /reranks. Leave empty for /rerank.',
-          )}>
+          hint={tr('接在 API 地址之后，留空则用 /rerank', 'Added after the API URL. Leave empty to use /rerank.')}>
           <input className="input mono" value={draft.rerank_path}
             onChange={(e) => setDraft({ ...draft, rerank_path: e.target.value })}
             placeholder={DEFAULT_RERANK_PATH} />
         </FormField>
       )}
       <FormField label="API Key"
-        hint={isNew ? undefined : tr('留空 = 保持不变；后端只写不读，展示为 masked', 'Leave empty to keep unchanged; write-only on the backend, shown masked')}>
+        hint={isNew ? undefined : tr('留空则不修改', 'Leave empty to keep the current key')}>
         <input className="input mono" type="password" autoComplete="new-password" value={draft.api_key}
           onChange={(e) => setDraft({ ...draft, api_key: e.target.value })}
-          placeholder={isNew ? 'sk-…' : tr('••••••（留空不变）', '•••••• (empty = unchanged)')} disabled={draft.kind === 'fake'} />
+          placeholder={isNew ? 'sk-…' : '••••••'} disabled={draft.kind === 'fake'} />
       </FormField>
-      <FormField label={tr('可用模型', 'Available models')}
-        hint={tr('逗号或换行分隔；作为路由表 model 输入框的候选', 'Comma or newline separated; used as suggestions in the routing table model field')}>
+      <FormField label={tr('可用模型', 'Models')}
+        hint={tr('用逗号或换行分隔，选择模型时会列出', 'Separate with commas or new lines. They’re offered when you pick a model.')}>
         <textarea className="input mono" rows={3} style={{ resize: 'vertical', fontSize: 12 }}
           value={draft.models} onChange={(e) => setDraft({ ...draft, models: e.target.value })}
-          placeholder={tr('如 gpt-5.6-sol, gpt-5.5（可留空）', 'e.g. gpt-5.6-sol, gpt-5.5 (optional)')} />
+          placeholder={tr('例如 gpt-5.5, text-embedding-3-large', 'e.g. gpt-5.5, text-embedding-3-large')} />
       </FormField>
       <label className="row gap8" style={{ fontSize: 13, cursor: 'pointer', userSelect: 'none' }}>
         <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
@@ -1163,16 +947,16 @@ function ModelStatusBadge({ state, onTest, idleHint, slow }: {
   if (state.status === 'testing') {
     return (
       <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}
-        title={slow ? tr('智能体要真跑一次，最长可能要一分钟', 'The agent really runs once; this can take up to a minute') : undefined}>
+        title={slow ? tr('智能体测试最长约需 1 分钟', 'Testing an agent can take up to a minute') : undefined}>
         <Icon name="refresh" size={11} style={{ animation: 'spin 1s linear infinite' }} />
-        {slow ? tr('测试中，最长约 1 分钟…', 'Testing, up to 1 min…') : tr('测试中…', 'Testing…')}
+        {tr('测试中…', 'Testing…')}
       </span>
     );
   }
   if (state.status === 'ok') {
     return (
       <span className="pill sm" style={{ ...base, background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}
-        title={tr('点击重新测试', 'Click to retest')} onClick={onTest}>
+        title={tr('点击重新测试', 'Click to test again')} onClick={onTest}>
         <Icon name="check" size={11} />
         {tr('正常', 'OK')} · {state.latencyMs.toLocaleString()}ms
       </span>
@@ -1189,8 +973,8 @@ function ModelStatusBadge({ state, onTest, idleHint, slow }: {
   }
   return (
     <span className="pill sm" style={{ ...base, background: 'var(--surface-3)', color: 'var(--text-3)' }}
-      title={onTest ? tr('点击测试该模型', 'Click to test this model') : idleHint} onClick={onTest}>
-      {tr('未测试', 'Untested')}
+      title={onTest ? tr('点击测试', 'Click to test') : idleHint} onClick={onTest}>
+      {tr('未测试', 'Not tested')}
     </span>
   );
 }
@@ -1229,25 +1013,25 @@ function ProvidersSection() {
   const createMutation = useMutation({
     mutationFn: () => api.createLlmProvider(toInput(draft)),
     onSuccess: () => {
-      toast(tr('Provider 已创建', 'Provider created'), 'ok');
+      toast(tr('已添加', 'Added'), 'ok');
       setModal('closed');
       invalidate();
     },
-    onError: (err) => toast(`${tr('创建失败', 'Create failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('添加失败', 'Couldn’t add')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
   const patchMutation = useMutation({
     mutationFn: (id: string) => api.patchLlmProvider(id, toInput(draft)),
     onSuccess: () => {
-      toast(tr('Provider 已更新', 'Provider updated'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       setModal('closed');
       invalidate();
     },
-    onError: (err) => toast(`${tr('更新失败', 'Update failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('保存失败', 'Couldn’t save')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.deleteLlmProvider(id),
     onSuccess: () => {
-      toast(tr('Provider 已删除', 'Provider deleted'), 'ok');
+      toast(tr('已删除', 'Deleted'), 'ok');
       invalidate();
     },
     onError: (err) => toast(`${tr('删除失败', 'Delete failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
@@ -1255,7 +1039,7 @@ function ProvidersSection() {
   const toggleMutation = useMutation({
     mutationFn: (p: LlmProviderRead) => api.patchLlmProvider(p.id, { enabled: !p.enabled }),
     onSuccess: (p) => {
-      toast(p.enabled ? tr('Provider 已启用', 'Provider enabled') : tr('Provider 已停用', 'Provider disabled'), 'ok');
+      toast(p.enabled ? tr('已启用', 'Turned on') : tr('已停用', 'Turned off'), 'ok');
       invalidate();
     },
     onError: (err) => toast(`${tr('操作失败', 'Failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
@@ -1270,7 +1054,7 @@ function ProvidersSection() {
       if (model) inputs.push({ provider_id: p.id, model, capability: providerTestCapability(p.id, model, routes) });
     }
     if (!(await tests.run(inputs))) {
-      toast(tr('没有可测试的 provider — 先在编辑里填写可用模型', 'Nothing to test — add models to a provider first'), 'error');
+      toast(tr('没有可测试的模型，请先在模型服务里填写可用模型', 'Nothing to test. Add models to a provider first.'), 'error');
     }
   };
 
@@ -1286,58 +1070,46 @@ function ProvidersSection() {
   const busy = createMutation.isPending || patchMutation.isPending;
 
   return (
-    <div className="card card-pad" style={{ marginBottom: 20 }}>
-      <div className="row gap12" style={{ justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14, flexWrap: 'wrap' }}>
-        <div style={{ minWidth: 0 }}>
-          <span className="section-h">
-            <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('可选：模型 API', 'Optional: model APIs')}
-          </span>
-          <div
-            style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6, marginTop: 4 }}
-            title={tr('批量测试按各 API 第一个模型在路由表里的用途测', "Test all uses each API's first model as the routing table uses it")}
-          >
-            {tr(
-              '向量嵌入与重排序只能用模型 API；对话类环节有智能体就够了。',
-              'Embeddings and rerank need a model API; an agent is enough for everything else.',
-            )}
-          </div>
-        </div>
-        <div className="row gap8">
-          <button className="btn btn-soft sm" disabled={tests.testing || providers.length === 0}
+    <SettingsSection
+      title={tr('模型服务', 'Model providers')}
+      desc={tr('向量嵌入和重排序需要模型服务，其余环节也可交给智能体。', 'Embeddings and reranking need a model provider. An agent can handle everything else.')}
+      actions={
+        <>
+          <button className="btn btn-ghost sm" disabled={tests.testing || providers.length === 0}
             onClick={() => void runProviderTests(providers)}>
-            <Icon name="play" size={12} />
-            {tests.testing ? tr('测试中…', 'Testing…') : tr('批量测试', 'Test all')}
+            {tests.testing ? tr('测试中…', 'Testing…') : tr('全部测试', 'Test all')}
           </button>
-          <button className="btn btn-primary sm" onClick={() => { setDraft(emptyDraft()); setModal('create'); }}>
+          <button className="btn btn-soft sm" onClick={() => { setDraft(emptyDraft()); setModal('create'); }}>
             <Icon name="plus" size={13} />
-            {tr('添加模型 API', 'Add model API')}
+            {tr('添加模型服务', 'Add provider')}
           </button>
-        </div>
-      </div>
-
+        </>
+      }
+    >
       {isLoading ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
+        <SettingsGroup pad><div className="st-row-hint">{tr('加载中…', 'Loading…')}</div></SettingsGroup>
       ) : isError ? (
-        <div className="empty" style={{ padding: 24 }}>
-          {tr('无法加载（后端不可用或无权限）', 'Failed to load (backend unavailable or no permission)')}
-          <div style={{ marginTop: 10 }}>
-            <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-          </div>
-        </div>
+        <SettingsGroup>
+          <SettingsRow label={tr('无法加载模型服务', 'Couldn’t load model providers')}>
+            <button className="btn btn-ghost sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
+          </SettingsRow>
+        </SettingsGroup>
       ) : providers.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('还没有模型 API。对话可以交给上面的智能体；向量嵌入和重排序要在这里加一个。', 'No model APIs yet. Chat can go to an agent above; embeddings and reranking need one added here.')}</div>
+        <SettingsGroup>
+          <SettingsRow label={tr('还没有模型服务', 'No model providers yet')} hint={tr('向量嵌入和重排序需要添加一个', 'Add one for embeddings and reranking')} />
+        </SettingsGroup>
       ) : (
+        <SettingsGroup>
         <div className="table-wrap">
           {/* 定宽列 + 最小宽度：主区窄时整表横滚，而不是把模型列压到几十像素、chips 叠在一起 */}
           <table className="table" style={{ tableLayout: 'fixed', minWidth: 900 }}>
             <thead>
               <tr>
                 <th style={{ width: 190 }}>{tr('名称', 'Name')}</th>
-                <th style={{ width: 120 }}>api_key</th>
+                <th style={{ width: 120 }}>API Key</th>
                 <th style={{ width: 280 }}>{tr('可用模型', 'Models')}</th>
-                <th style={{ width: 80 }}>{tr('状态', 'Status')}</th>
-                <th style={{ width: 150 }}>{tr('模型状态', 'Model status')}</th>
+                <th style={{ width: 80 }}>{tr('启用', 'On')}</th>
+                <th style={{ width: 150 }}>{tr('连接', 'Connection')}</th>
                 <th style={{ width: 80 }} />
               </tr>
             </thead>
@@ -1355,22 +1127,16 @@ function ProvidersSection() {
                 return (
                   <tr key={p.id}>
                     <td>
-                      {/* 名称优先占满一行，协议徽标放不下就换到下一行 */}
-                      <div className="row gap6" style={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 3 }}>
-                        <span title={p.name} style={{ fontSize: 12, fontWeight: 650, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
-                        <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-                          {KIND_LABELS[p.kind] ?? p.kind}
-                        </span>
-                      </div>
-                      <div className="mono" title={p.base_url ?? undefined}
+                      <div title={p.name} style={{ fontSize: 12, fontWeight: 650, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                      <div title={p.base_url ?? undefined}
                         style={{ fontSize: 10.5, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {p.base_url ?? '—'}
+                        {KIND_LABELS[p.kind] ?? p.kind}{p.base_url ? ` · ${p.base_url}` : ''}
                       </div>
                     </td>
                     <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{p.api_key_masked ?? '—'}</td>
                     <td>
                       {models.length === 0 ? (
-                        <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('（未填写）', '(none)')}</span>
+                        <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('未填写', 'None')}</span>
                       ) : (
                         <div className="row gap6" style={{ flexWrap: 'wrap' }}>
                           {shownModels.map((m) => (
@@ -1397,26 +1163,18 @@ function ProvidersSection() {
                       )}
                     </td>
                     <td>
-                      <span
-                        className="pill sm"
-                        role="button"
-                        title={p.enabled ? tr('点击停用', 'Click to disable') : tr('点击启用', 'Click to enable')}
-                        style={{
-                          cursor: toggleMutation.isPending ? 'default' : 'pointer',
-                          ...(p.enabled
-                            ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
-                            : { background: 'var(--surface-3)', color: 'var(--text-3)' }),
-                        }}
-                        onClick={() => { if (!toggleMutation.isPending) toggleMutation.mutate(p); }}
-                      >
-                        {p.enabled ? tr('启用', 'Enabled') : tr('停用', 'Disabled')}
-                      </span>
+                      <Switch
+                        checked={p.enabled}
+                        disabled={toggleMutation.isPending}
+                        onChange={() => toggleMutation.mutate(p)}
+                        aria-label={tr(`启用 ${p.name}`, `Turn on ${p.name}`)}
+                      />
                     </td>
                     <td>
                       <ModelStatusBadge
                         state={state}
                         onTest={firstModel ? () => void runProviderTests([p]) : undefined}
-                        idleHint={firstModel ? undefined : tr('先填写可用模型才能测试', 'Add models first to enable testing')}
+                        idleHint={firstModel ? undefined : tr('填写可用模型后才能测试', 'Add models to test')}
                       />
                     </td>
                     <td>
@@ -1425,10 +1183,10 @@ function ProvidersSection() {
                           onClick={() => { setDraft(draftFrom(p)); setModal(p.id); }}>
                           <Icon name="pen" size={13} />
                         </button>
-                        <button className="icon-btn" style={{ width: 26, height: 26 }} title={tr('删除', 'Delete')}
+                        <button className="icon-btn st-quiet-danger" style={{ width: 26, height: 26 }} title={tr('删除', 'Delete')}
                           disabled={deleteMutation.isPending}
                           onClick={() => {
-                            if (window.confirm(`${tr('确定删除 Provider', 'Delete provider')} “${p.name}”？${tr('模型路由表里引用它的环节将失效。', 'Routing rows that reference it will stop working.')}`)) {
+                            if (window.confirm(tr(`删除模型服务「${p.name}」？用到它的环节将无法调用模型。`, `Delete provider “${p.name}”? Stages that use it will stop working.`))) {
                               deleteMutation.mutate(p.id);
                             }
                           }}>
@@ -1442,13 +1200,13 @@ function ProvidersSection() {
             </tbody>
           </table>
         </div>
+        </SettingsGroup>
       )}
 
       <Modal
         open={modal !== 'closed'}
         onClose={() => setModal('closed')}
-        title={isNew ? tr('新增 Provider', 'Add provider') : tr('编辑 Provider', 'Edit provider')}
-        sub={tr('api_key 后端只写不读，展示为 masked', 'api_key is write-only on the backend and shown masked')}
+        title={isNew ? tr('添加模型服务', 'Add provider') : tr('编辑模型服务', 'Edit provider')}
         footer={
           <>
             <button className="btn btn-ghost" onClick={() => setModal('closed')}>{tr('取消', 'Cancel')}</button>
@@ -1461,7 +1219,7 @@ function ProvidersSection() {
       >
         <ProviderForm draft={draft} setDraft={setDraft} isNew={isNew} />
       </Modal>
-    </div>
+    </SettingsSection>
   );
 }
 
@@ -1626,12 +1384,12 @@ function RoutesSection() {
       return api.putLlmRoutes(routes);
     },
     onSuccess: () => {
-      toast(tr('模型路由表已保存', 'Model routing saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       // 刚存下的就是新的底稿：服务端回来的（规整过写法的）表整行替换，不算用户改动
       baseRef.current = rows;
       void queryClient.invalidateQueries({ queryKey: ['llm', 'routes'] });
     },
-    onError: (err) => toast(`${tr('保存失败', 'Save failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('保存失败', 'Couldn’t save')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
   // 插件命名空间环节（#736）：不在内置清单里，路由表里有记录才显示一行。
@@ -1714,7 +1472,7 @@ function RoutesSection() {
       }
     }
     if (!(await tests.run(inputs))) {
-      toast(tr('没有可测试的行，先选一个智能体或模型 API', 'Nothing to test — pick an agent or a model API first'), 'error');
+      toast(tr('没有可测试的环节，请先选择智能体或模型服务', 'Nothing to test. Pick an agent or a model provider first.'), 'error');
     }
   };
 
@@ -1727,36 +1485,18 @@ function RoutesSection() {
     LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s) && rows[s]).length + pluginStages.length;
 
   return (
-    <div className="card card-pad">
-      <div className="row gap12" style={{ justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14, flexWrap: 'wrap' }}>
-        <div style={{ minWidth: 0 }}>
-          <span className="section-h">
-            <Icon name="git" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('模型路由表', 'Model routing')}
-          </span>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6, marginTop: 4 }}>
-            {tr(
-              '没单独设置的环节跟随「默认」；向量嵌入与重排序要单独配一个模型 API。',
-              'Stages without their own row follow Default; embeddings and rerank need a model API of their own.',
-            )}
-          </div>
-        </div>
-        <div className="row gap8">
-          <button className="btn btn-soft sm" disabled={tests.testing} onClick={() => void runTests(visibleStages)}>
-            <Icon name="play" size={12} />
-            {tests.testing ? tr('测试中…', 'Testing…') : tr('批量测试', 'Test all')}
-          </button>
-          <button className="btn btn-primary sm" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
-            <Icon name="check" size={13} />
-            {saveMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存路由表', 'Save routing')}
-          </button>
-        </div>
-      </div>
-      {routesQuery.isError && (
-        <div className="field-hint" style={{ marginBottom: 10, color: 'var(--warn-tx)' }}>
-          {tr('路由表加载失败（后端不可用），保存将覆盖整表。', 'Failed to load routes (backend unavailable); saving will overwrite the whole table.')}
-        </div>
-      )}
+    <SettingsSection
+      title={tr('各环节使用的模型', 'Models by stage')}
+      desc={routesQuery.isError
+        ? <span style={{ color: 'var(--warn-tx)' }}>{tr('无法加载当前设置，保存会覆盖全部环节。', 'Couldn’t load the current settings. Saving will replace every stage.')}</span>
+        : tr('未单独设置的环节使用「默认」，向量嵌入和重排序需单独设置。', 'Stages you don’t set use Default. Embeddings and reranking must be set separately.')}
+      actions={
+        <button className="btn btn-ghost sm" disabled={tests.testing} onClick={() => void runTests(visibleStages)}>
+          {tests.testing ? tr('测试中…', 'Testing…') : tr('全部测试', 'Test all')}
+        </button>
+      }
+    >
+      <SettingsGroup>
       <div className="table-wrap">
         {/* 定宽列 + 最小宽度：主区窄时整表横滚；model 列至少 ~200px 才看得清 */}
         <table className="table" style={{ tableLayout: 'fixed', minWidth: 1010 }}>
@@ -1764,27 +1504,21 @@ function RoutesSection() {
             <tr>
               <th style={{ width: 190 }}>{tr('环节', 'Stage')}</th>
               <th style={{ width: 170 }}>{tr('由谁回答', 'Answered by')}</th>
-              <th style={{ width: 210 }}>model</th>
-              <th style={{ width: 90 }}>temperature</th>
+              <th style={{ width: 210 }}>{tr('模型', 'Model')}</th>
+              <th style={{ width: 90 }}>{tr('温度', 'Temperature')}</th>
               <th
                 style={{ width: 110 }}
-                title={tr(
-                  '思考深度。留空即不发送该参数，用模型自带的默认档位；模型不支持所选档位时会自动去掉该参数重试，不会让环节失败。',
-                  'How hard the model thinks. Leave empty to send nothing and use the model default; if the model rejects the level, the call is retried without it instead of failing.',
-                )}
+                title={tr('模型思考的深度，默认使用模型自身设置', 'How hard the model thinks. Defaults to the model’s own setting.')}
               >
-                effort
+                {tr('思考强度', 'Effort')}
               </th>
               <th
                 style={{ width: 100, whiteSpace: 'nowrap' }}
-                title={tr(
-                  '模型的上下文窗口，单位 token，如 128000。留空表示不知道；填了之后，各环节的输入预算不会超过窗口能收下的量，对话历史的裁剪也按它来。',
-                  'The model\'s context window in tokens, e.g. 128000. Leave empty if unknown; when set, no stage\'s input budget exceeds what the window can take, and chat history is trimmed to fit it.',
-                )}
+                title={tr('模型一次能读入的 token 数，例如 128000', 'How many tokens the model can read at once, e.g. 128000')}
               >
                 {tr('上下文窗口', 'Context')}
               </th>
-              <th style={{ width: 140 }}>{tr('模型状态', 'Model status')}</th>
+              <th style={{ width: 140 }}>{tr('连接', 'Connection')}</th>
             </tr>
           </thead>
           <tbody>
@@ -1829,60 +1563,51 @@ function RoutesSection() {
                         <span
                           className="pill sm"
                           style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}
-                          title={tr('插件注册的环节；清除这一行后按插件声明的回退环节调用', 'Registered by a plugin; clearing this row falls back to the stage it declared')}
+                          title={tr('由插件添加的环节', 'Added by a plugin')}
                         >
                           {tr('插件', 'Plugin')}
                         </span>
                       )}
                       {follows && (() => {
                         const text = defaultRow && draftComplete(defaultRow)
-                          ? tr(`跟随默认 → ${targetLabel(defaultRow)}`, `Follows default → ${targetLabel(defaultRow)}`)
+                          ? tr(`使用默认：${targetLabel(defaultRow)}`, `Default: ${targetLabel(defaultRow)}`)
                           : takeover
-                            ? tr(`跟随默认 → ${agentName(takeover)}（接管）`, `Follows default → ${agentName(takeover)} (answering all)`)
-                            : tr('跟随默认', 'Follows default');
+                            ? tr(`使用默认：${agentName(takeover)}`, `Default: ${agentName(takeover)}`)
+                            : tr('使用默认', 'Uses default');
                         return (
-                          <span className="pill sm" title={text} style={{ ...ellipsisPill, background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                          <span title={text} style={{ ...ellipsisPill, fontSize: 12, color: 'var(--text-3)' }}>
                             {text}
                           </span>
                         );
                       })()}
                       {stage === 'default' && viaTakeover && (
                         <span
-                          className="pill sm"
-                          style={{ ...ellipsisPill, background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
-                          title={tr('没有设置默认模型，第一个启用的智能体回答所有对话类环节', 'No default is set, so the first enabled agent answers every chat stage')}
+                          style={{ ...ellipsisPill, fontSize: 12, color: 'var(--text-3)' }}
+                          title={tr('未设置默认模型时，由第一个启用的智能体回答', 'With no default set, the first enabled agent answers')}
                         >
-                          {tr(`未设置 → ${agentName(viaTakeover)} 接管`, `Not set → ${agentName(viaTakeover)} answers`)}
+                          {tr(`由 ${agentName(viaTakeover)} 回答`, `Answered by ${agentName(viaTakeover)}`)}
                         </span>
                       )}
                       {unset && (
-                        <span
-                          className="pill sm"
-                          style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}
-                          title={tr('该环节需要专用模型，不跟随默认；未配置时相关功能自动降级', 'This stage needs a dedicated model and never follows Default; features degrade while unset')}
-                        >
+                        <StatusDot tone="warn" title={tr('需要单独设置，未设置时相关功能不可用', 'Must be set separately. Related features are off until then.')}>
                           {tr('未设置', 'Not set')}
-                        </span>
+                        </StatusDot>
                       )}
                       {explicit && stage !== 'default' && (
                         <button
                           className="icon-btn"
                           style={{ width: 20, height: 20 }}
                           title={capability
-                            ? tr('清除设置，恢复未设置', 'Clear — back to "Not set"')
+                            ? tr('清除设置', 'Clear')
                             : plugin
-                              ? tr('清除这一行，按插件声明的回退环节调用', 'Clear this row and fall back to the stage the plugin declared')
-                              : tr('清除单独设置，恢复跟随默认', 'Clear this override and follow default again')}
+                              ? tr('清除设置，使用插件的默认环节', 'Clear and use the plugin’s fallback')
+                              : tr('清除设置，改用默认', 'Clear and use Default')}
                           onClick={() => clearRow(stage)}
                         >
                           <Icon name="x" size={11} />
                         </button>
                       )}
                     </div>
-                    {/* 插件行的标题就是原串本身，下面再排一遍纯属重复 */}
-                    {!plugin && (
-                      <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{stage}</div>
-                    )}
                   </td>
                   <td>
                     <SelectMenu
@@ -1890,7 +1615,7 @@ function RoutesSection() {
                       muted={follows}
                       value={targetValueOf(shown)}
                       options={[
-                        { value: '', label: tr('（未配置）', '(not set)') },
+                        { value: '', label: tr('未设置', 'Not set') },
                         // 智能体在前：推荐用法；向量嵌入/重排序这类能力型环节不列
                         ...(agentOk
                           ? agents
@@ -1911,10 +1636,10 @@ function RoutesSection() {
                       options={providerModels}
                       muted={follows}
                       placeholder={isAgent
-                        ? tr('agent 默认', 'agent default')
+                        ? tr('智能体默认', 'Agent default')
                         : unset
-                          ? tr('未配置，相关功能将降级', 'Not set — related features degrade')
-                          : tr('如 deepseek-chat', 'e.g. deepseek-chat')}
+                          ? tr('未设置', 'Not set')
+                          : tr('例如 deepseek-chat', 'e.g. deepseek-chat')}
                       onChange={(v) => setRow(stage, { model: v })}
                     />
                   </td>
@@ -1924,7 +1649,7 @@ function RoutesSection() {
                       style={{ height: 32, width: '100%', fontSize: 12, ...(follows ? { color: 'var(--text-3)' } : {}) }}
                       value={isAgent ? '' : shown.temperature}
                       disabled={isAgent}
-                      placeholder={isAgent ? '—' : tr('默认', 'default')}
+                      placeholder={isAgent ? '—' : tr('默认', 'Default')}
                       inputMode="decimal"
                       onChange={(e) => setRow(stage, { temperature: e.target.value })}
                     />
@@ -1948,7 +1673,7 @@ function RoutesSection() {
                       style={{ height: 32, width: '100%', fontSize: 12, ...(follows ? { color: 'var(--text-3)' } : {}) }}
                       value={capability ? '' : shown.context_window}
                       disabled={capability}
-                      placeholder={tr('未知', 'unknown')}
+                      placeholder={tr('未知', 'Unknown')}
                       inputMode="numeric"
                       onChange={(e) => setRow(stage, { context_window: e.target.value })}
                     />
@@ -1958,7 +1683,7 @@ function RoutesSection() {
                       state={state}
                       slow={!!eff?.acp_agent_id || !!viaTakeover}
                       onTest={eff || viaTakeover ? () => void runTests([stage]) : undefined}
-                      idleHint={unset ? tr('未配置，批量测试将跳过该环节', 'Not set; batch tests skip this stage') : undefined}
+                      idleHint={unset ? tr('未设置', 'Not set') : undefined}
                     />
                   </td>
                 </tr>
@@ -1968,12 +1693,9 @@ function RoutesSection() {
                       <div className="row gap12" style={{ flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
                         <span
                           style={{ color: 'var(--text-3)' }}
-                          title={tr(
-                            '这个环节每次调用最多放进多少字符的材料。留空用默认值；超出的部分从末尾截掉。填了上下文窗口时，不会超过窗口能收下的量。',
-                            'How many characters of material this stage puts into one call. Leave empty for the default; anything longer is cut from the end. With a context window set, it never exceeds what the window can take.',
-                          )}
+                          title={tr('每次调用最多读入的字符数，超出部分会被截掉', 'Most characters read per call. Anything longer is cut.')}
                         >
-                          {tr('输入预算', 'Input budget')}
+                          {tr('输入上限', 'Input limit')}
                         </span>
                         {stageBudgets.map((spec) => {
                           const raw = ownBudgets[spec.key] ?? '';
@@ -1994,18 +1716,18 @@ function RoutesSection() {
                                 <span style={{ color: 'var(--warn-tx)' }}>
                                   {effective.problem.kind === 'range'
                                     ? tr(
-                                        `须在 ${fmtChars(effective.problem.min)} – ${fmtChars(effective.problem.max)} 之间`,
-                                        `must be ${fmtChars(effective.problem.min)} – ${fmtChars(effective.problem.max)}`,
+                                        `须在 ${fmtChars(effective.problem.min)}–${fmtChars(effective.problem.max)} 之间`,
+                                        `Must be ${fmtChars(effective.problem.min)}–${fmtChars(effective.problem.max)}`,
                                       )
                                     : tr(
                                         `超出上下文窗口，最多 ${fmtChars(effective.problem.max)}`,
-                                        `too large for the context window (at most ${fmtChars(effective.problem.max)})`,
+                                        `Too large for the context window. Max ${fmtChars(effective.problem.max)}.`,
                                       )}
                                 </span>
                               ) : (
                                 <span style={{ color: 'var(--text-3)' }}>
-                                  {tr('字符，生效', 'chars, in effect')} <span className="mono">{fmtChars(effective.value)}</span>
-                                  {effective.cappedByWindow && tr('（受上下文窗口限制）', ' (capped by the context window)')}
+                                  {tr('字符，实际', 'chars, using')} <span className="mono">{fmtChars(effective.value)}</span>
+                                  {effective.cappedByWindow && tr('（受上下文窗口限制）', ' (limited by context window)')}
                                 </span>
                               )}
                             </span>
@@ -2021,18 +1743,25 @@ function RoutesSection() {
           </tbody>
         </table>
       </div>
-      <div className="row" style={{ justifyContent: 'center', marginTop: 10 }}>
-        <button className="btn btn-ghost sm" onClick={() => setShowAll((v) => !v)}>
+      </SettingsGroup>
+      <SettingsActions
+        note={
+          <button className="btn btn-ghost sm" onClick={() => setShowAll((v) => !v)}>
           <Icon name="chevDown" size={12} style={showAll ? { transform: 'rotate(180deg)' } : undefined} />
           {showAll
-            ? tr('收起，只看默认、向量嵌入与重排序', 'Collapse to Default, Embeddings and Reranking')
+            ? tr('收起', 'Show less')
             : tr(
-                `查看所有环节设置（共 ${LLM_STAGES.length} 个${hiddenExplicitCount > 0 ? `，${hiddenExplicitCount} 个已单独设置` : ''}）`,
-                `Show all stages (${LLM_STAGES.length}${hiddenExplicitCount > 0 ? `, ${hiddenExplicitCount} overridden` : ''})`,
+                `显示全部 ${LLM_STAGES.length} 个环节${hiddenExplicitCount > 0 ? `（${hiddenExplicitCount} 个已单独设置）` : ''}`,
+                `Show all ${LLM_STAGES.length} stages${hiddenExplicitCount > 0 ? ` (${hiddenExplicitCount} set separately)` : ''}`,
               )}
+          </button>
+        }
+      >
+        <button className="btn btn-primary sm" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
+          {saveMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
         </button>
-      </div>
-    </div>
+      </SettingsActions>
+    </SettingsSection>
   );
 }
 
@@ -2048,7 +1777,7 @@ function CallLogDetailPanel({ id }: { id: string }) {
     retry: false,
   });
   if (isLoading) return <div className="empty" style={{ padding: 16 }}>{tr('加载中…', 'Loading…')}</div>;
-  if (isError || !data) return <div className="empty" style={{ padding: 16 }}>{tr('无法加载详情', 'Failed to load detail')}</div>;
+  if (isError || !data) return <div className="empty" style={{ padding: 16 }}>{tr('无法加载详情', 'Couldn’t load details')}</div>;
 
   const messages = data.request?.messages;
   const images = data.request?.images;
@@ -2080,7 +1809,7 @@ function CallLogDetailPanel({ id }: { id: string }) {
             ))}
             {images && images.length > 0 && (
               <div className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                {tr('图片（不存原图）', 'Images (originals not stored)')}：{images.join(' ')}
+                {tr('图片（未保存原图）', 'Images (not saved)')}：{images.join(' ')}
               </div>
             )}
           </div>
@@ -2132,80 +1861,70 @@ function CallLogsSection() {
   const toggleMutation = useMutation({
     mutationFn: (next: boolean) => api.putLlmCallLogSettings(next),
     onSuccess: (r) => {
-      toast(r.enabled ? tr('调用日志已开启', 'Call logging enabled') : tr('调用日志已关闭', 'Call logging disabled'), 'ok');
+      toast(r.enabled ? tr('已开始记录', 'Logging on') : tr('已停止记录', 'Logging off'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['llm', 'call-log-settings'] });
     },
-    onError: (e) => toast(`${tr('设置失败', 'Failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败', 'Couldn’t save')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   const clearMutation = useMutation({
     mutationFn: () => api.clearLlmCallLogs(),
     onSuccess: (r) => {
-      toast(tr(`已清空 ${r.deleted} 条日志`, `Cleared ${r.deleted} log entries`), 'ok');
+      toast(tr(`已清空 ${r.deleted} 条记录`, r.deleted === 1 ? 'Cleared 1 entry' : `Cleared ${r.deleted} entries`), 'ok');
       setExpandedId(null);
       setPage(0);
       void queryClient.invalidateQueries({ queryKey: ['llm', 'call-logs'] });
     },
-    onError: (e) => toast(`${tr('清空失败', 'Clear failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('清空失败', 'Couldn’t clear')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
-  const statusPill = (row: LlmCallLogRow) =>
-    row.status === 'ok'
-      ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
-      : { background: 'var(--danger-bg)', color: 'var(--danger-tx)' };
-
   return (
-    <div className="card card-pad" style={{ marginTop: 20 }}>
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
-        <span className="section-h">
-          <Icon name="file" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('调用日志', 'Call logs')} <span className="en-label" style={{ fontSize: 11 }}>{tr('每次 LLM API 调用的输入/输出', 'full input/output of each LLM API call')}</span>
-        </span>
-        <div className="row gap8">
+    <SettingsSection
+      title={tr('调用记录', 'Call log')}
+      actions={
+        <>
           <button
-            className="btn btn-soft sm"
+            className="btn btn-ghost sm st-quiet-danger"
             disabled={clearMutation.isPending || total === 0}
             onClick={() => {
-              if (window.confirm(tr('确定清空全部调用日志？此操作不可恢复。', 'Clear all call logs? This cannot be undone.'))) {
+              if (window.confirm(tr('清空全部调用记录？清空后无法恢复。', 'Clear the whole call log? This can’t be undone.'))) {
                 clearMutation.mutate();
               }
             }}
           >
-            <Icon name="trash" size={12} />
-            {tr('清空日志', 'Clear logs')}
+            {tr('清空', 'Clear')}
           </button>
-          <button
-            className={`btn sm ${enabled ? 'btn-primary' : 'btn-soft'}`}
+        </>
+      }
+    >
+      <SettingsGroup>
+        <SettingsRow
+          labelId="call-log-enabled"
+          label={tr('记录模型调用', 'Log model calls')}
+          hint={tr('保存每次调用的输入和输出，保留 7 天', 'Keeps each call’s input and output for 7 days')}
+        >
+          <Switch
+            checked={enabled}
             disabled={settingsQuery.isLoading || toggleMutation.isPending}
-            onClick={() => toggleMutation.mutate(!enabled)}
-          >
-            {enabled ? tr('已开启 — 点击关闭', 'On — click to disable') : tr('已关闭 — 点击开启', 'Off — click to enable')}
-          </button>
-        </div>
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
-        {tr(
-          '图片只存大小占位，不存原图；注意存储占用，日志只保留最近 7 天。',
-          'Images are stored as size placeholders only; mind the storage cost — logs are kept for 7 days.',
-        )}
-      </div>
-
+            onChange={(next) => toggleMutation.mutate(next)}
+            aria-labelledby="call-log-enabled"
+          />
+        </SettingsRow>
       {logsQuery.isLoading ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
+        <div className="st-row"><span className="st-row-hint">{tr('加载中…', 'Loading…')}</span></div>
       ) : logsQuery.isError ? (
-        <div className="empty" style={{ padding: 24 }}>
-          {tr('无法加载日志（后端不可用或无权限）', 'Failed to load logs (backend unavailable or no permission)')}
-          <div style={{ marginTop: 10 }}>
-            <button className="btn btn-soft sm" onClick={() => void logsQuery.refetch()}>{tr('重试', 'Retry')}</button>
-          </div>
-        </div>
+        <SettingsRow label={tr('无法加载调用记录', 'Couldn’t load the call log')}>
+          <button className="btn btn-ghost sm" onClick={() => void logsQuery.refetch()}>{tr('重试', 'Retry')}</button>
+        </SettingsRow>
       ) : items.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>
-          {enabled
-            ? tr('还没有日志记录 — 发起一次 AI 任务后这里会出现记录', 'No log entries yet — run an AI task and entries will appear here')
-            : tr('日志已关闭 — 打开开关后开始记录', 'Logging is off — turn it on to start recording')}
+        <div className="st-row">
+          <span className="st-row-hint">
+            {enabled
+              ? tr('还没有调用记录', 'No calls logged yet')
+              : tr('记录已关闭', 'Logging is off')}
+          </span>
         </div>
       ) : (
-        <>
+        <div>
           <div className="table-wrap">
             <table className="table">
               <thead>
@@ -2213,7 +1932,7 @@ function CallLogsSection() {
                   <th style={{ width: 140 }}>{tr('时间', 'Time')}</th>
                   <th style={{ width: 110 }}>{tr('环节', 'Stage')}</th>
                   <th>{tr('模型', 'Model')}</th>
-                  <th style={{ width: 90, textAlign: 'right' }}>{tr('时延', 'Latency')} (ms)</th>
+                  <th style={{ width: 90, textAlign: 'right' }}>{tr('耗时', 'Time')} (ms)</th>
                   <th style={{ width: 120, textAlign: 'right' }}>tokens</th>
                   <th style={{ width: 70 }}>{tr('状态', 'Status')}</th>
                 </tr>
@@ -2222,8 +1941,8 @@ function CallLogsSection() {
                 {items.map((row) => (
                   <Fragment key={row.id}>
                     <tr style={{ cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === row.id ? null : row.id)}>
-                      <td className="mono" style={{ fontSize: 11 }}>{fmtTime(row.created_at)}</td>
-                      <td className="mono" style={{ fontSize: 11.5 }}>{row.stage}</td>
+                      <td className="mono" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{fmtTime(row.created_at)}</td>
+                      <td style={{ fontSize: 12, whiteSpace: 'nowrap' }} title={row.stage}>{tr(stageLabel(row.stage).zh, stageLabel(row.stage).en)}</td>
                       <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
                         {row.model}
                         <span style={{ color: 'var(--text-4)' }}> · {row.provider_name}</span>
@@ -2233,7 +1952,7 @@ function CallLogsSection() {
                         {row.prompt_tokens.toLocaleString()} + {row.completion_tokens.toLocaleString()}
                       </td>
                       <td>
-                        <span className="pill sm" style={statusPill(row)}>{row.status === 'ok' ? 'ok' : tr('出错', 'error')}</span>
+                        <StatusDot tone={row.status === 'ok' ? 'ok' : 'err'}>{row.status === 'ok' ? tr('成功', 'OK') : tr('失败', 'Failed')}</StatusDot>
                       </td>
                     </tr>
                     {expandedId === row.id && (
@@ -2248,20 +1967,21 @@ function CallLogsSection() {
               </tbody>
             </table>
           </div>
-          <div className="row gap8" style={{ justifyContent: 'flex-end', marginTop: 12, alignItems: 'center' }}>
-            <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-              {tr(`共 ${total} 条 · 第 ${page + 1} / ${pageCount} 页`, `${total} entries · page ${page + 1} / ${pageCount}`)}
+          <div className="row gap8" style={{ justifyContent: 'flex-end', padding: '10px 14px', alignItems: 'center' }}>
+            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+              {tr(`共 ${total} 条 · 第 ${page + 1}/${pageCount} 页`, `${total} entries · Page ${page + 1} of ${pageCount}`)}
             </span>
             <button className="btn btn-soft sm" disabled={page === 0} onClick={() => { setExpandedId(null); setPage(page - 1); }}>
-              {tr('上一页', 'Prev')}
+              {tr('上一页', 'Previous')}
             </button>
             <button className="btn btn-soft sm" disabled={page + 1 >= pageCount} onClick={() => { setExpandedId(null); setPage(page + 1); }}>
               {tr('下一页', 'Next')}
             </button>
           </div>
-        </>
+        </div>
       )}
-    </div>
+      </SettingsGroup>
+    </SettingsSection>
   );
 }
 
@@ -2277,44 +1997,37 @@ function AffiliationModeSection() {
   const setMutation = useMutation({
     mutationFn: (m: AffiliationMode) => api.setAffiliationMode(m),
     onSuccess: (r) => {
-      toast(tr('已保存机构抽取时机', 'Affiliation extraction timing saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       queryClient.setQueryData(['affiliation-mode'], r);
     },
-    onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败', 'Couldn’t save')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   return (
-    <div className="card card-pad" style={{ marginTop: 20 }}>
-      <div className="section-h" style={{ marginBottom: 6 }}>
-        <Icon name="users" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('作者机构抽取', 'Author affiliation extraction')}
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
-        {tr(
-          '大模型从论文标题页解析作者机构的时机；DOI 论文的机构来自 OpenAlex，不受此设置影响。',
-          "When the model parses author affiliations from the title page. DOI papers get affiliations from OpenAlex and are unaffected.",
-        )}
-      </div>
-      {isLoading ? (
-        <div className="empty" style={{ padding: 16 }}>{tr('加载中…', 'Loading…')}</div>
-      ) : isError ? (
-        <div className="empty" style={{ padding: 16 }}>
-          {tr('无法加载（后端不可用或无权限）', 'Failed to load (backend unavailable or no permission)')}
-        </div>
-      ) : (
+    <SettingsSection title={tr('作者机构', 'Author affiliations')}>
+      <SettingsGroup>
+        <SettingsRow
+          label={tr('识别时机', 'When to detect')}
+          hint={isError
+            ? tr('无法加载此设置', 'Couldn’t load this setting')
+            : tr('从论文首页识别作者机构，有 DOI 的论文不受影响', 'Reads affiliations from the first page. Papers with a DOI aren’t affected.')}
+        >
+      {isLoading || isError ? null : (
         <Segmented
           options={[
-            { v: 'on_add' as AffiliationMode, label: tr('添加时抽取', 'Extract on add') },
+            { v: 'on_add' as AffiliationMode, label: tr('添加论文时', 'When adding') },
             {
               v: 'on_compile' as AffiliationMode,
-              label: tr('编译 wiki 时抽取（省一次调用）', 'Extract while compiling (saves a call)'),
+              label: tr('生成解读时', 'With the summary'),
             },
           ]}
           value={mode}
           onChange={(v) => { if (v !== mode) setMutation.mutate(v); }}
         />
       )}
-    </div>
+        </SettingsRow>
+      </SettingsGroup>
+    </SettingsSection>
   );
 }
 
@@ -2337,79 +2050,70 @@ function EmbeddingSpaceSection() {
     mutationFn: () => api.adoptEmbeddingSpace(),
     onSuccess: (r) => {
       toast(
-        tr(`已改用 ${r.active.model}（${r.active.dim} 维）`, `Now using ${r.active.model} (${r.active.dim}-dim)`),
+        tr(`已改用 ${r.active.model}`, `Now using ${r.active.model}`),
         'ok',
       );
       void queryClient.invalidateQueries({ queryKey: ['admin', 'embedding-space'] });
     },
-    onError: (e) => toast(`${tr('切换失败', 'Switch failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('切换失败', 'Couldn’t switch')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const active = data?.active ?? null;
   const others = (data?.spaces ?? []).filter((s) => !s.active);
 
   return (
-    <div className="card card-pad" style={{ marginTop: 20 }}>
-      <div className="section-h" style={{ marginBottom: 6 }}>
-        <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('向量模型', 'Embedding model')}
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginBottom: 12 }}>
-        {tr(
-          '语义检索靠向量。不同模型建出来的向量互相不能比，所以全平台只认一批。换模型后要在这里确认一次，确认后旧向量搜不到了，各处点「重新建立索引」逐步补回来。',
-          'Semantic search runs on vectors. Vectors from different models are not comparable, so the platform uses one batch at a time. After changing the model, confirm it here; the old vectors stop being searchable and are rebuilt gradually via "rebuild index".',
-        )}
-      </div>
-
+    <SettingsSection
+      title={tr('搜索索引', 'Search index')}
+      desc={tr('更换向量模型后需在这里确认，再重建索引。', 'After changing the embedding model, confirm it here and rebuild the index.')}
+    >
       {data?.mismatched && (
-        <div className="field-hint" style={{ marginBottom: 10, color: 'var(--warn-tx)' }}>
+        <p className="st-section-desc" style={{ color: 'var(--warn-tx)' }}>
           {tr(
-            `路由表里配的是 ${data.routed_model}，但现有向量出自 ${active?.model}。确认之前不会建任何新向量。`,
-            `Routing says ${data.routed_model}, but the existing vectors come from ${active?.model}. No new vectors are built until you confirm.`,
+            `已设置 ${data.routed_model}，但索引来自 ${active?.model}。确认前不会建立新索引。`,
+            `${data.routed_model} is set, but the index was built with ${active?.model}. Nothing new is indexed until you confirm.`,
           )}
-        </div>
+        </p>
       )}
 
-      <div className="row gap8" style={{ alignItems: 'center' }}>
-        <div style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>
+      <SettingsGroup>
+      <div className="st-row">
+        <div className="st-row-text" style={{ fontSize: 13 }}>
           {active ? (
             <>
               <span className="mono">{active.model}</span>
               <span style={{ color: 'var(--text-3)' }}>
                 {tr(
-                  ` · ${active.dim} 维 · 论文 ${active.papers} · 分段 ${active.chunks} · 想法 ${active.ideas}`,
-                  ` · ${active.dim}-dim · ${active.papers} papers · ${active.chunks} segments · ${active.ideas} ideas`,
+                  ` · ${active.papers} 篇论文 · ${active.ideas} 个想法`,
+                  ` · ${active.papers} papers · ${active.ideas} ideas`,
                 )}
               </span>
             </>
           ) : (
             <span style={{ color: 'var(--text-3)' }}>
-              {tr('还没建过任何向量（第一次建索引时按模型实际维度自动确定）', 'No vectors yet — the first build sets the dimension from the model itself')}
+              {tr('还没有建立索引', 'Nothing indexed yet')}
             </span>
           )}
         </div>
         <button
           className={data?.mismatched ? 'btn btn-primary sm' : 'btn btn-soft sm'}
           disabled={adoptMutation.isPending || (!data?.routed_model)}
-          title={tr(
-            '确认改用路由表里当前的向量模型；旧向量保留，可以再切回来',
-            'Switch to the embedding model currently in the routing table; old vectors are kept and you can switch back',
-          )}
+          title={tr('旧索引会保留，可以再切回来', 'The old index is kept, so you can switch back')}
           onClick={() => adoptMutation.mutate()}
         >
           <Icon name="check" size={12} />
-          {adoptMutation.isPending ? tr('切换中…', 'Switching…') : tr('确认换用当前模型', 'Use current model')}
+          {adoptMutation.isPending ? tr('切换中…', 'Switching…') : tr('改用当前模型', 'Use current model')}
         </button>
       </div>
-
       {others.length > 0 && (
-        <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--text-3)' }}>
-          {tr('库里还留着：', 'Also kept: ')}
-          {others.map((s) => `${s.model}（${s.papers}）`).join('、')}
-          {tr('——旧向量不占检索，切回该模型即可重新用上。', ' — not searchable now; switch back to that model to use them again.')}
+        <div className="st-row">
+          <span className="st-row-hint">
+            {tr('已保留的旧索引：', 'Kept: ')}
+            {others.map((s) => `${s.model}（${s.papers}）`).join(tr('、', ', '))}
+          </span>
         </div>
       )}
-    </div>
+      </SettingsGroup>
+    </SettingsSection>
   );
 }
 
@@ -2423,18 +2127,8 @@ function AnswerStatusHeader() {
   const line = answerStatus(routesQuery.data, agentsQuery.data ?? [], providersQuery.data);
   const warn = line.tone === 'warn';
   return (
-    <div
-      className="card card-pad row gap8"
-      role="status"
-      style={{
-        marginBottom: 16,
-        alignItems: 'flex-start',
-        fontSize: 13,
-        lineHeight: 1.6,
-        ...(warn ? { background: 'var(--warn-bg)', color: 'var(--warn-tx)' } : {}),
-      }}
-    >
-      <Icon name={warn ? 'bell' : 'check'} size={15} style={{ marginTop: 3, flexShrink: 0, color: warn ? undefined : 'var(--ok-tx)' }} />
+    <div className="st-status-line" role="status" style={warn ? { color: 'var(--warn-tx)' } : undefined}>
+      <span className={`st-dot ${warn ? 'st-dot-warn' : 'st-dot-ok'}`} style={{ marginTop: 6 }} aria-hidden />
       <span>{tr(line.zh, line.en)}</span>
     </div>
   );
@@ -2450,102 +2144,20 @@ export function LlmTab({ focus }: { focus?: 'agents' | null }) {
     if (focus === 'agents') agentsRef.current?.scrollIntoView({ block: 'start' });
   }, [focus]);
   return (
-    <>
+    <SettingsStack>
       <AnswerStatusHeader />
-      <div ref={agentsRef} id="agents" style={{ marginBottom: 20, scrollMarginTop: 12 }}>
+      <div ref={agentsRef} id="agents" className="st-page" style={{ scrollMarginTop: 12 }}>
         <AcpAgentsSettings />
       </div>
       <ProvidersSection />
       <RoutesSection />
-      <EmbeddingSpaceSection />
-      <AdminSpeechSettings />
-      <AffiliationModeSection />
-      <CallLogsSection />
-    </>
-  );
-}
-
-// ---------------- 用量 ----------------
-
-export function UsageTab() {
-  const [days, setDays] = useState<'7' | '30' | '90'>('30');
-  const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['llm', 'usage', days],
-    queryFn: () => api.getLlmUsage({ days: Number(days) }),
-    retry: false,
-  });
-  const rows = useMemo(() => data ?? [], [data]);
-  const totals = useMemo(
-    () =>
-      rows.reduce(
-        (acc, r) => ({
-          prompt: acc.prompt + r.prompt_tokens,
-          completion: acc.completion + r.completion_tokens,
-          calls: acc.calls + r.calls,
-        }),
-        { prompt: 0, completion: 0, calls: 0 },
-      ),
-    [rows],
-  );
-
-  return (
-    <>
-    <div className="card card-pad">
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
-        <span className="section-h">
-          <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('LLM 用量', 'LLM usage')} <span className="en-label" style={{ fontSize: 11 }}>{tr('按天 × stage', 'per day × stage')}</span>
-        </span>
-        <Segmented options={[{ v: '7' as const, label: tr('7 天', '7 days') }, { v: '30' as const, label: tr('30 天', '30 days') }, { v: '90' as const, label: tr('90 天', '90 days') }]}
-          value={days} onChange={setDays} />
+      <div className="st-page">
+        <EmbeddingSpaceSection />
+        <AdminSpeechSettings />
+        <AffiliationModeSection />
       </div>
-      {isLoading ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
-      ) : isError ? (
-        <div className="empty" style={{ padding: 24 }}>
-          {tr('无法加载用量数据（后端不可用或无权限）', 'Failed to load usage data (backend unavailable or no permission)')}
-          <div style={{ marginTop: 10 }}>
-            <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-          </div>
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>{tr(`近 ${days} 天暂无用量记录`, `No usage records in the last ${days} days`)}</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{tr('日期', 'Date')}</th>
-                <th>stage</th>
-                <th>model</th>
-                <th style={{ textAlign: 'right' }}>prompt tok</th>
-                <th style={{ textAlign: 'right' }}>completion tok</th>
-                <th style={{ textAlign: 'right' }}>calls</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{r.date}</td>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{r.stage}</td>
-                  <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{r.model}</td>
-                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.prompt_tokens.toLocaleString()}</td>
-                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.completion_tokens.toLocaleString()}</td>
-                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.calls.toLocaleString()}</td>
-                </tr>
-              ))}
-              <tr>
-                <td colSpan={3} style={{ fontWeight: 650 }}>{tr('合计', 'Total')}</td>
-                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.prompt.toLocaleString()}</td>
-                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.completion.toLocaleString()}</td>
-                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.calls.toLocaleString()}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-    </>
+      <CallLogsSection />
+    </SettingsStack>
   );
 }
 
@@ -2576,76 +2188,63 @@ function MyUsageTab() {
   const used = summary?.tokens_used ?? 0;
 
   return (
-    <>
-      {/* —— 指标墙：一眼看完「一共用了多少 / 这段时间用了多少」——
-             左边第一张是累计与配额，后面三张跟着上面的天数选择走。 */}
-      <div className="settings-stats" style={{ marginBottom: 20 }}>
-        <div className="card card-pad">
-          <div className="row gap8" style={{ alignItems: 'center' }}>
-            <Icon name="chart" size={14} style={{ color: 'var(--accent)' }} />
-            <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{tr('累计消耗', 'Total consumed')}</span>
-          </div>
-          <div className="mono" style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{used.toLocaleString()}</div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>
-            tokens
-          </div>
-        </div>
-
-        {[
-          { zh: '这段时间 · 输入', en: 'Selected range · prompt', v: totals.prompt, unit: 'tokens' },
-          { zh: '这段时间 · 输出', en: 'Selected range · completion', v: totals.completion, unit: 'tokens' },
-          { zh: '这段时间 · 调用', en: 'Selected range · calls', v: totals.calls, unit: tr('次', 'calls') },
-        ].map((s) => (
-          <div key={s.en} className="card card-pad">
-            <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{tr(s.zh, s.en)}</div>
-            <div className="mono" style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{s.v.toLocaleString()}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>
-              {s.unit}
-              <span style={{ color: 'var(--text-4)' }}>{tr(` · 近 ${days} 天`, ` · last ${days}d`)}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="card card-pad">
-        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
-          <span className="section-h">
-            <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('用量明细', 'Usage details')} <span className="en-label" style={{ fontSize: 11 }}>{tr('按天 × stage', 'per day × stage')}</span>
-          </span>
+    <SettingsStack>
+      <SettingsSection
+        title={tr('用量', 'Usage')}
+        actions={
           <Segmented options={[{ v: '7' as const, label: tr('7 天', '7 days') }, { v: '30' as const, label: tr('30 天', '30 days') }, { v: '90' as const, label: tr('90 天', '90 days') }]}
             value={days} onChange={setDays} />
-        </div>
-        {isLoading ? (
-          <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
-        ) : isError ? (
-          <div className="empty" style={{ padding: 24 }}>
-            {tr('无法加载用量数据（后端不可用）', 'Failed to load usage data (backend unavailable)')}
-            <div style={{ marginTop: 10 }}>
-              <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-            </div>
+        }
+      >
+        <SettingsGroup pad>
+          <div className="settings-stats">
+            {[
+              { zh: '累计', en: 'All time', v: used, unit: 'tokens' },
+              { zh: `近 ${days} 天输入`, en: `Input, last ${days} days`, v: totals.prompt, unit: 'tokens' },
+              { zh: `近 ${days} 天输出`, en: `Output, last ${days} days`, v: totals.completion, unit: 'tokens' },
+              { zh: `近 ${days} 天调用`, en: `Calls, last ${days} days`, v: totals.calls, unit: tr('次', 'calls') },
+            ].map((s) => (
+              <div key={s.en}>
+                <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{tr(s.zh, s.en)}</div>
+                <div className="mono" style={{ fontSize: 20, fontWeight: 600, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
+                  {s.v.toLocaleString()}
+                  <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--text-3)', marginLeft: 4 }}>{s.unit}</span>
+                </div>
+              </div>
+            ))}
           </div>
+        </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection title={tr('每日明细', 'By day')}>
+        <SettingsGroup>
+        {isLoading ? (
+          <div className="st-row"><span className="st-row-hint">{tr('加载中…', 'Loading…')}</span></div>
+        ) : isError ? (
+          <SettingsRow label={tr('无法加载用量', 'Couldn’t load usage')}>
+            <button className="btn btn-ghost sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
+          </SettingsRow>
         ) : rows.length === 0 ? (
-          <div className="empty" style={{ padding: 24 }}>{tr(`近 ${days} 天暂无用量记录`, `No usage records in the last ${days} days`)}</div>
+          <div className="st-row"><span className="st-row-hint">{tr(`近 ${days} 天没有用量`, `No usage in the last ${days} days`)}</span></div>
         ) : (
           <div className="table-wrap">
             <table className="table">
               <thead>
                 <tr>
                   <th>{tr('日期', 'Date')}</th>
-                  <th>stage</th>
-                  <th>model</th>
-                  <th style={{ textAlign: 'right' }}>prompt tok</th>
-                  <th style={{ textAlign: 'right' }}>completion tok</th>
-                  <th style={{ textAlign: 'right' }}>calls</th>
+                  <th>{tr('环节', 'Stage')}</th>
+                  <th>{tr('模型', 'Model')}</th>
+                  <th style={{ textAlign: 'right' }}>{tr('输入 tokens', 'Input tokens')}</th>
+                  <th style={{ textAlign: 'right' }}>{tr('输出 tokens', 'Output tokens')}</th>
+                  <th style={{ textAlign: 'right' }}>{tr('调用次数', 'Calls')}</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r, i) => (
                   <tr key={i}>
-                    <td className="mono" style={{ fontSize: 11.5 }}>{r.date}</td>
-                    <td className="mono" style={{ fontSize: 11.5 }}>{r.stage}</td>
-                    <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{r.model}</td>
+                    <td className="mono" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{r.date}</td>
+                    <td style={{ fontSize: 12, whiteSpace: 'nowrap' }} title={r.stage}>{tr(stageLabel(r.stage).zh, stageLabel(r.stage).en)}</td>
+                    <td className="mono" style={{ fontSize: 12, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>{r.model}</td>
                     <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.prompt_tokens.toLocaleString()}</td>
                     <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.completion_tokens.toLocaleString()}</td>
                     <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.calls.toLocaleString()}</td>
@@ -2661,8 +2260,9 @@ function MyUsageTab() {
             </table>
           </div>
         )}
-      </div>
-    </>
+        </SettingsGroup>
+      </SettingsSection>
+    </SettingsStack>
   );
 }
 
@@ -2682,37 +2282,27 @@ function DailyEmbedSection() {
   const backfillMutation = useMutation({
     mutationFn: () => api.backfillDailyEmbeddings(),
     onSuccess: (r) => {
-      const base = tr(`已补建 ${r.embedded} 篇，跳过 ${r.skipped} 篇`, `Embedded ${r.embedded}, skipped ${r.skipped}`);
+      const base = tr(`已为 ${r.embedded} 篇建立索引`, r.embedded === 1 ? 'Indexed 1 paper' : `Indexed ${r.embedded} papers`);
       if (r.failed > 0) {
-        toast(`${base}${tr(`，${r.failed} 篇失败`, `, ${r.failed} failed`)}`, 'info');
+        toast(`${base}${tr(`，${r.failed} 篇失败`, `. ${r.failed} failed.`)}`, 'info');
       } else {
         toast(base, 'ok');
       }
     },
-    onError: (e) => toast(`${tr('补建失败', 'Backfill failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('建立索引失败', 'Couldn’t index')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   return (
-    <div className="card card-pad">
-      <div className="section-h" style={{ marginBottom: 6 }}>
-        <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('每日论文向量', 'Daily paper embeddings')}
-      </div>
-
-      <div className="row gap8" style={{ alignItems: 'center', marginTop: 12 }}>
-        <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45 }}>
-          {tr(
-            '每天同步的新论文都会自动建向量。更早入库的论文不会自动补，补一遍可能要跑几十秒。',
-            'Papers from each daily sync are embedded automatically. Older papers are not; a backfill may take tens of seconds.',
-          )}
-        </div>
+    <SettingsSection title={tr('索引', 'Index')}>
+      <SettingsGroup>
+      <SettingsRow
+        label={tr('补建索引', 'Index older papers')}
+        hint={tr('新论文会自动建立索引，较早的论文可在这里补建', 'New papers are indexed automatically')}
+      >
         <button
-          className="btn btn-soft sm"
+          className="btn btn-ghost sm"
           disabled={backfillMutation.isPending}
-          title={tr(
-            '给最近 7 天里还没有向量的每日论文补建向量',
-            'Embed daily papers from the past 7 days that still lack vectors',
-          )}
+          title={tr('为近 7 天未建索引的论文建立索引，约需几十秒', 'Indexes papers from the last 7 days. Takes about a minute.')}
           onClick={() => backfillMutation.mutate()}
         >
           <Icon
@@ -2720,10 +2310,11 @@ function DailyEmbedSection() {
             size={12}
             style={backfillMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined}
           />
-          {backfillMutation.isPending ? tr('补建中…', 'Backfilling…') : tr('补建历史向量', 'Backfill embeddings')}
+          {backfillMutation.isPending ? tr('正在建立索引…', 'Indexing…') : tr('开始', 'Start')}
         </button>
-      </div>
-    </div>
+      </SettingsRow>
+      </SettingsGroup>
+    </SettingsSection>
   );
 }
 
@@ -2768,12 +2359,12 @@ function DailySyncSection() {
   }, [timeQuery.data, clock]);
 
   const fail = (e: unknown) =>
-    toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error');
+    toast(`${tr('保存失败', 'Couldn’t save')}：${e instanceof Error ? e.message : String(e)}`, 'error');
 
   const scopeMutation = useMutation({
     mutationFn: (scope: DailySyncScope) => api.setDailySyncScope(scope),
     onSuccess: () => {
-      toast(tr('同步范围已保存', 'Sync scope saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['daily-sync-scope'] });
     },
     onError: fail,
@@ -2784,7 +2375,7 @@ function DailySyncSection() {
       return api.setDailySyncTime(Number(h), Number(m));
     },
     onSuccess: () => {
-      toast(tr('抓取时刻已保存，重启 worker 后生效', 'Fetch time saved — restart the worker to apply'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['daily-sync-time'] });
     },
     onError: fail,
@@ -2792,7 +2383,7 @@ function DailySyncSection() {
   const probeMutation = useMutation({
     mutationFn: () => api.setDailyProbeAttempts(Number(probes)),
     onSuccess: () => {
-      toast(tr('最大查询次数已保存', 'Max probe attempts saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['daily-probe-attempts'] });
     },
     onError: fail,
@@ -2800,7 +2391,7 @@ function DailySyncSection() {
   const retentionMutation = useMutation({
     mutationFn: () => api.setDailyRetention(Number(days)),
     onSuccess: () => {
-      toast(tr('保留期已保存', 'Retention saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['daily-retention'] });
     },
     onError: fail,
@@ -2812,164 +2403,120 @@ function DailySyncSection() {
       v: 'since_last',
       zh: '上次同步以来',
       en: 'Since last sync',
-      noteZh: '正常就是当天那批；漏了几天会自动多扫几天补回来。',
-      noteEn: 'Normally just today’s batch; automatically catches up if a few days were missed.',
+      noteZh: '通常只看当天，漏掉的日子会补上。',
+      noteEn: 'Usually just today. Missed days are caught up.',
     },
     {
       v: 'daily',
-      zh: '只扫当天',
+      zh: '只看当天',
       en: 'Today only',
-      noteZh: '最省，但漏掉的永远错过——arXiv 不会再给第二次。',
-      noteEn: 'Cheapest, but anything missed is missed for good — arXiv will not serve it again.',
+      noteZh: '用量最少，但漏掉的日子不会补。',
+      noteEn: 'Uses the least, but missed days aren’t caught up.',
     },
     {
       v: 'full',
-      zh: '整个池子',
-      en: 'Whole pool',
-      noteZh: '最稳，代价是每次重排几千篇早就处理过的论文。',
-      noteEn: 'Safest, at the cost of re-ranking thousands of already-processed papers each run.',
+      zh: '全部每日论文',
+      en: 'All daily papers',
+      noteZh: '最完整，但每次都会重新筛选所有论文，用量较大。',
+      noteEn: 'Most complete, but rechecks every paper each time and uses more.',
     },
   ];
   const current = SCOPES.find((x) => x.v === scope);
 
-  const rowStyle = { alignItems: 'center', marginTop: 14 } as const;
-  const labelStyle = { width: 92, flexShrink: 0, fontSize: 12, color: 'var(--text-2)' } as const;
-
   return (
-    <div className="card card-pad">
-      <div className="section-h" style={{ marginBottom: 6 }}>
-        <Icon name="refresh" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('抓取与同步', 'Fetch & sync')}
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
-        {tr(
-          '每日抓取跑完会自动触发各文献库同步，库同步不再单独定时。',
-          'Library sync is triggered once the daily fetch finishes; it is no longer separately scheduled.',
-        )}
-      </div>
+    <SettingsSection
+      title={tr('获取与同步', 'Fetch and sync')}
+      desc={tr('每天获取新论文后，各文献库会随即同步。', 'Libraries sync right after new papers are fetched each day.')}
+    >
+      <SettingsGroup>
+        <SettingsRow label={tr('同步范围', 'Sync scope')} hint={current ? tr(current.noteZh, current.noteEn) : undefined}>
+          <select
+            className="input"
+            value={scope}
+            disabled={scopeQuery.isLoading || scopeMutation.isPending}
+            onChange={(e) => scopeMutation.mutate(e.target.value as DailySyncScope)}
+          >
+            {SCOPES.map((x) => (
+              <option key={x.v} value={x.v}>
+                {tr(x.zh, x.en)}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
 
-      {/* —— 库同步扫描范围 —— */}
-      <div className="row gap8" style={rowStyle}>
-        <span style={labelStyle}>{tr('同步范围', 'Sync scope')}</span>
-        <select
-          className="input"
-          style={{ flex: 1, minWidth: 0, height: 28, fontSize: 12 }}
-          value={scope}
-          disabled={scopeQuery.isLoading || scopeMutation.isPending}
-          onChange={(e) => scopeMutation.mutate(e.target.value as DailySyncScope)}
+        <SettingsRow
+          label={tr('获取时间（UTC）', 'Fetch time (UTC)')}
+          hint={tr('北京时间减 8 小时；之后每 15 分钟检查一次更新', 'arXiv is then checked every 15 minutes')}
         >
-          {SCOPES.map((x) => (
-            <option key={x.v} value={x.v}>
-              {tr(x.zh, x.en)}
-            </option>
-          ))}
-        </select>
-      </div>
-      {current && (
-        <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 5, paddingLeft: 100, lineHeight: 1.5 }}>
-          {tr(current.noteZh, current.noteEn)}
-        </div>
-      )}
+          <input
+            className="input mono st-num"
+            type="time"
+            style={{ width: 140 }}
+            value={clock}
+            onChange={(e) => setClock(e.target.value)}
+          />
+          <button
+            className="btn btn-ghost sm"
+            disabled={!/^\d{2}:\d{2}$/.test(clock) || timeMutation.isPending}
+            onClick={() => timeMutation.mutate()}
+          >
+            {tr('保存', 'Save')}
+          </button>
+        </SettingsRow>
 
-      {/* —— 抓取时刻 —— */}
-      <div className="row gap8" style={rowStyle}>
-        <span style={labelStyle}>{tr('抓取时刻', 'Fetch time')}</span>
-        <input
-          className="input mono"
-          type="time"
-          style={{ width: 120, height: 28, fontSize: 12 }}
-          value={clock}
-          onChange={(e) => setClock(e.target.value)}
-        />
-        <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)' }}>UTC</span>
-        <button
-          className="btn btn-soft sm"
-          disabled={!/^\d{2}:\d{2}$/.test(clock) || timeMutation.isPending}
-          onClick={() => timeMutation.mutate()}
+        <SettingsRow
+          label={tr('每天最多检查次数', 'Checks per day')}
+          hint={tr('用完仍无更新，当天就不再检查；默认 10 次', 'Stops for the day after this many. Default 10.')}
         >
-          {tr('保存', 'Save')}
-        </button>
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 5, paddingLeft: 100, lineHeight: 1.5 }}>
-        {tr(
-          '北京时间 = UTC + 8。这是开始探测的时刻，之后每 15 分钟看一次，直到 arXiv 当天的批次真的放出来。',
-          'Beijing = UTC + 8. This is when probing starts; it then checks every 15 minutes until arXiv actually publishes today’s batch.',
-        )}
-      </div>
+          <input
+            className="input mono st-num"
+            type="number"
+            min={1}
+            max={96}
+            value={probes}
+            onChange={(e) => setProbes(e.target.value)}
+          />
+          <button
+            className="btn btn-ghost sm"
+            disabled={!probes || Number(probes) < 1 || Number(probes) > 96 || probeMutation.isPending}
+            onClick={() => probeMutation.mutate()}
+          >
+            {tr('保存', 'Save')}
+          </button>
+        </SettingsRow>
 
-      {/* —— 最大查询次数 —— */}
-      <div className="row gap8" style={rowStyle}>
-        <span style={labelStyle}>{tr('最大查询次数', 'Max probe attempts')}</span>
-        <input
-          className="input mono"
-          type="number"
-          min={1}
-          max={96}
-          style={{ width: 90, height: 28, fontSize: 12 }}
-          value={probes}
-          onChange={(e) => setProbes(e.target.value)}
-        />
-        <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)' }}>
-          {tr('次 / 天', 'per day')}
-        </span>
-        <button
-          className="btn btn-soft sm"
-          disabled={!probes || Number(probes) < 1 || Number(probes) > 96 || probeMutation.isPending}
-          onClick={() => probeMutation.mutate()}
+        <SettingsRow
+          label={tr('保留天数', 'Keep for (days)')}
+          hint={tr('过期的每日论文会被清除，未同步的也会丢失', 'Older daily papers are removed, synced or not')}
         >
-          {tr('保存', 'Save')}
-        </button>
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 5, paddingLeft: 100, lineHeight: 1.5 }}>
-        {tr(
-          '从抓取时刻起每 15 分钟探一次，探满这么多次仍没有今天的批次就当天收工——这是正常结束，不会留下失败的任务。默认 10 次约覆盖 2.5 小时。',
-          'From the fetch time onwards it probes every 15 minutes; after this many attempts with no batch for today, it stops for the day — a normal ending, not a failed run. The default of 10 covers about 2.5 hours.',
-        )}
-      </div>
-
-      {/* —— 保留天数 —— */}
-      <div className="row gap8" style={rowStyle}>
-        <span style={labelStyle}>{tr('保留天数', 'Retention')}</span>
-        <input
-          className="input mono"
-          type="number"
-          min={1}
-          max={90}
-          style={{ width: 90, height: 28, fontSize: 12 }}
-          value={days}
-          onChange={(e) => setDays(e.target.value)}
-        />
-        <button
-          className="btn btn-soft sm"
-          disabled={!days || Number(days) < 1 || Number(days) > 90 || retentionMutation.isPending}
-          onClick={() => retentionMutation.mutate()}
-        >
-          {tr('保存', 'Save')}
-        </button>
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 5, paddingLeft: 100, lineHeight: 1.5 }}>
-        {tr(
-          '过期的每日论文会被清掉。这张表同时是库同步的取数窗口——调小了，来不及同步的论文就再也收不进来。',
-          'Expired daily papers are pruned. This table is also the window library sync reads from — shrink it and papers not synced in time can never be collected.',
-        )}
-      </div>
-    </div>
+          <input
+            className="input mono st-num"
+            type="number"
+            min={1}
+            max={90}
+            value={days}
+            onChange={(e) => setDays(e.target.value)}
+          />
+          <button
+            className="btn btn-ghost sm"
+            disabled={!days || Number(days) < 1 || Number(days) > 90 || retentionMutation.isPending}
+            onClick={() => retentionMutation.mutate()}
+          >
+            {tr('保存', 'Save')}
+          </button>
+        </SettingsRow>
+      </SettingsGroup>
+    </SettingsSection>
   );
 }
 
 export function DailyCategoriesTab() {
   return (
-    <>
-      {/* 一张卡一份清单：每个来源一行，arXiv 只是其中之一（不再单独占第一张卡） */}
-      <div style={{ marginBottom: 20 }}>
-        <DailySubscriptionsSection />
-      </div>
-      {/* 抓取节奏与向量补建互不相干，并排放 */}
-      <div className="settings-2col">
-        <DailySyncSection />
-        <DailyEmbedSection />
-      </div>
-    </>
+    <SettingsStack>
+      <DailySubscriptionsSection />
+      <DailySyncSection />
+      <DailyEmbedSection />
+    </SettingsStack>
   );
 }
 
@@ -3029,8 +2576,13 @@ export function SettingsPage() {
   // 清单稍后就绪且能力在，effectiveTab 自动切回 plugins。
   // 「关于」（检查更新）只在桌面端有意义（#812）
   const desktop = hasHost();
+  // 只有一个使用者，「用量总览」与「用量」是同一份数据：旧深链 ?tab=usage 落到「用量」
   const effectiveTab: Tab =
-    (tab === 'plugins' && !pluginsAvailable) || (tab === 'about' && !desktop) ? 'personal' : tab;
+    (tab === 'plugins' && !pluginsAvailable) || (tab === 'about' && !desktop)
+      ? 'personal'
+      : tab === 'usage'
+        ? 'myusage'
+        : tab;
 
   // 管理页并入本页后（#755），这些标签**就在这里**，不能再往 /admin 跳——
   // /admin 已经反向重定向到 /settings，两边对跳就是一个死循环。
@@ -3039,39 +2591,39 @@ export function SettingsPage() {
     return <Navigate to="/settings?tab=llm" replace />;
   }
 
-  const personalItems: { v: Tab; label: string }[] = [
-    { v: 'personal', label: tr('个人信息', 'Profile') },
-    { v: 'prefs', label: tr('界面偏好', 'Interface') },
-    { v: 'buddy', label: 'PolarisBuddy' },
-    { v: 'speech', label: tr('语音听读', 'Speech') },
-    { v: 'bots', label: tr('群机器人', 'Group bots') },
-    { v: 'ssh', label: tr('SSH 凭据', 'SSH credentials') },
+  const generalItems: { v: Tab; label: string }[] = [
+    { v: 'personal', label: tr('个人资料', 'Profile') },
+    { v: 'prefs', label: tr('界面', 'Interface') },
+    { v: 'buddy', label: tr('助手', 'Assistant') },
+    { v: 'speech', label: tr('语音', 'Speech') },
     { v: 'myusage', label: tr('用量', 'Usage') },
-    { v: 'extension', label: tr('Polaris 扩展', 'Polaris extension') },
-    { v: 'mcp', label: tr('MCP 接入', 'MCP access') },
-    { v: 'export', label: tr('数据导出', 'Data export') },
-    ...(pluginsAvailable ? [{ v: 'plugins' as Tab, label: tr('插件', 'Plugins') }] : []),
+    { v: 'export', label: tr('数据导出', 'Export') },
+    ...(desktop ? [{ v: 'about' as Tab, label: tr('关于', 'About') }] : []),
   ];
-  // 原「管理」页的六项，并入同一个入口；「关于」也放这组
-  const workspaceItems: { v: Tab; label: string }[] = [
+  const researchItems: { v: Tab; label: string }[] = [
     { v: 'llm', label: tr('模型与智能体', 'Models & agents') },
     { v: 'literature', label: tr('文献检索', 'Literature search') },
-    { v: 'processing', label: tr('文档处理', 'Document processing') },
-    { v: 'experiment', label: tr('实验设置', 'Experiments') },
+    { v: 'processing', label: tr('文档处理', 'Documents') },
     { v: 'daily', label: tr('每日论文', 'Daily papers') },
-    { v: 'usage', label: tr('用量总览', 'Usage overview') },
-    ...(desktop ? [{ v: 'about' as Tab, label: tr('关于', 'About') }] : []),
+    { v: 'experiment', label: tr('实验', 'Experiments') },
+    { v: 'ssh', label: tr('远程服务器', 'Remote servers') },
+  ];
+  const connectionItems: { v: Tab; label: string }[] = [
+    { v: 'bots', label: tr('群机器人', 'Group bots') },
+    { v: 'extension', label: tr('浏览器扩展', 'Browser extension') },
+    { v: 'mcp', label: 'MCP' },
+    ...(pluginsAvailable ? [{ v: 'plugins' as Tab, label: tr('插件', 'Plugins') }] : []),
   ];
 
   return (
     <div className="page fadeup">
-      <PageHead eyebrow="Polaris · Settings" title={tr('设置', 'Settings')} />
-      <SettingsLayout
+            <SettingsLayout
         nav={
           <SettingsTabs
             groups={[
-              { label: tr('个人', 'Personal'), items: personalItems },
-              { label: tr('工作区', 'Workspace'), items: workspaceItems },
+              { label: tr('通用', 'General'), items: generalItems },
+              { label: tr('研究', 'Research'), items: researchItems },
+              { label: tr('连接', 'Connections'), items: connectionItems },
             ]}
             value={effectiveTab}
             onChange={setTab}
@@ -3095,7 +2647,6 @@ export function SettingsPage() {
       {effectiveTab === 'processing' && <DocumentProcessingSettingsPanel />}
       {effectiveTab === 'experiment' && <ExperimentSettings />}
       {effectiveTab === 'daily' && <DailyCategoriesTab />}
-      {effectiveTab === 'usage' && <UsageTab />}
       </SettingsLayout>
     </div>
   );

@@ -56,7 +56,7 @@ describe('failureReason', () => {
 
   it('explains rate limiting as temporary', () => {
     expect(failureReason(info({ error: 'rate-limited', errorDetail: 'HTTP 403' }))).toMatch(
-      /rate-limiting/,
+      /Too many checks/,
     );
   });
 

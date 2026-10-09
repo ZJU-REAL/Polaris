@@ -25,8 +25,8 @@ export const POLICY_OPTIONS: { value: AcpPermissionPolicy; label: ZhEn; hint?: Z
     value: 'ask',
     label: { zh: '每次都问我', en: 'Ask me each time' },
     hint: {
-      zh: '要改文件或跑命令时在助手里问你；没人回答就拒绝。',
-      en: 'Asks you in the assistant before it edits files or runs commands; refuses if nobody answers.',
+      zh: '改文件或运行命令前先问你，无人回答则拒绝',
+      en: 'Asks before editing files or running commands; refuses if nobody answers.',
     },
   },
   {
@@ -35,7 +35,7 @@ export const POLICY_OPTIONS: { value: AcpPermissionPolicy; label: ZhEn; hint?: Z
   },
   {
     value: 'auto',
-    label: { zh: '自动允许（会改文件、跑命令）', en: 'Allow automatically (it may edit files and run commands)' },
+    label: { zh: '全部自动允许（可改文件、运行命令）', en: 'Allow everything (can edit files and run commands)' },
     warn: true,
   },
 ];
@@ -46,28 +46,28 @@ export const DEFAULT_POLICY: AcpPermissionPolicy = 'ask';
 /** 模板说明的中文版；后端只给英文。没收录的模板就用后端那句。 */
 export const TEMPLATE_DESCRIPTIONS: Record<string, ZhEn> = {
   'claude-code': {
-    zh: 'Anthropic 的编程智能体，经官方 ACP 适配器接入。',
-    en: "Anthropic's coding agent, through the official ACP adapter.",
+    zh: 'Anthropic 的编程智能体',
+    en: 'Anthropic’s coding agent',
   },
   codex: {
-    zh: 'OpenAI 的编程智能体，经官方 ACP 适配器接入。',
-    en: "OpenAI's coding agent, through the official ACP adapter.",
+    zh: 'OpenAI 的编程智能体',
+    en: 'OpenAI’s coding agent',
   },
   gemini: {
-    zh: 'Google 的开源智能体，原生支持 ACP。',
-    en: "Google's open-source agent; speaks ACP natively.",
+    zh: 'Google 的开源智能体',
+    en: 'Google’s open-source agent',
   },
   qwen: {
-    zh: '通义千问的编程智能体（Gemini CLI 的分支），原生支持 ACP。',
-    en: "Qwen's coding agent (a Gemini CLI fork); speaks ACP natively.",
+    zh: '通义千问的编程智能体',
+    en: 'Qwen’s coding agent',
   },
   opencode: {
-    zh: '开源智能体，可接多家模型服务。',
-    en: 'Open-source agent that works with many model providers.',
+    zh: '开源智能体，支持多家模型服务',
+    en: 'Open-source agent that works with many providers',
   },
   kimi: {
-    zh: '月之暗面的命令行智能体，原生支持 ACP。',
-    en: "Moonshot's command-line agent; speaks ACP natively.",
+    zh: '月之暗面的命令行智能体',
+    en: 'Moonshot’s command-line agent',
   },
 };
 
@@ -90,9 +90,9 @@ export function envRowIssue(row: EnvRow, all: EnvRow[]): ZhEn | null {
   const key = row.key.trim();
   if (!key) return null;
   if (!ENV_KEY_RE.test(key)) {
-    return { zh: '名字只能用字母、数字和下划线，且不能以数字开头', en: 'Letters, digits and underscores only; cannot start with a digit' };
+    return { zh: '只能用字母、数字和下划线，且不能以数字开头', en: 'Letters, digits and underscores only, not starting with a digit' };
   }
-  if (all.filter((r) => r.key.trim() === key).length > 1) return { zh: '名字重复了', en: 'Duplicate name' };
+  if (all.filter((r) => r.key.trim() === key).length > 1) return { zh: '名字重复', en: 'Duplicate name' };
   return null;
 }
 
@@ -129,18 +129,18 @@ export function freeSlug(base: string, taken: Iterable<string>): string {
 /** 探测结果 → 一行行给人看的能力说明。 */
 export function probeCapabilities(probe: AcpProbeInfo): ZhEn[] {
   const out: ZhEn[] = [];
-  if (probe.load_session) out.push({ zh: '能接着上次的对话继续', en: 'Can resume earlier sessions' });
-  if (probe.mcp_http || probe.mcp_sse) out.push({ zh: '能使用 Polaris 的工具（MCP）', en: 'Can use Polaris tools (MCP)' });
-  if (probe.prompt_image) out.push({ zh: '能看图片', en: 'Accepts images' });
+  if (probe.load_session) out.push({ zh: '可继续之前的对话', en: 'Can resume earlier chats' });
+  if (probe.mcp_http || probe.mcp_sse) out.push({ zh: '可使用 Polaris 的工具', en: 'Can use Polaris tools' });
+  if (probe.prompt_image) out.push({ zh: '可读图片', en: 'Reads images' });
   return out;
 }
 
 /** 后端错误码 → 一句人话；认不出的返回 null，由调用方原样透出。 */
 export function acpErrorText(detail: string): ZhEn | null {
-  if (detail.startsWith('SLUG_TAKEN')) return { zh: '这个标识已经被用了，换一个', en: 'That ID is already taken — pick another' };
-  if (detail.startsWith('BAD_ENV_KEY')) return { zh: '环境变量名不合法', en: 'An environment variable name is invalid' };
-  if (detail.startsWith('COMMAND_REQUIRED')) return { zh: '要填启动命令', en: 'A command is required' };
-  if (detail.startsWith('BAD_PERMISSION_POLICY')) return { zh: '权限策略不认识', en: 'Unknown permission policy' };
+  if (detail.startsWith('SLUG_TAKEN')) return { zh: '这个标识已被使用，请换一个', en: 'That ID is taken. Choose another.' };
+  if (detail.startsWith('BAD_ENV_KEY')) return { zh: '有环境变量名不正确', en: 'An environment variable name is invalid' };
+  if (detail.startsWith('COMMAND_REQUIRED')) return { zh: '请填写启动命令', en: 'Enter a command' };
+  if (detail.startsWith('BAD_PERMISSION_POLICY')) return { zh: '无法识别的权限设置', en: 'Unknown permission setting' };
   if (detail.startsWith('UNKNOWN_TEMPLATE')) return { zh: '模板不存在', en: 'Unknown template' };
   return null;
 }

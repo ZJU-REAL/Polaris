@@ -6,6 +6,7 @@ import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
 import { api, ApiError } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { SettingsGroup, SettingsRow, SettingsSection, SettingsStack } from './settingsUi';
 import { subscribeSse } from '../../lib/sse';
 import { saveBlob } from '../wiki/shared';
 
@@ -23,9 +24,9 @@ function facetLabel(facet: string): string {
     case 'notes':
       return tr('笔记与划线', 'Notes & highlights');
     case 'wiki':
-      return tr('论文解读', 'Paper interpretations');
+      return tr('解读', 'Summaries');
     case 'discovery':
-      return tr('假设探索', 'Hypothesis discovery');
+      return tr('假设探索', 'Hypothesis exploration');
     case 'experiments':
       return tr('实验记录', 'Experiments');
     case 'manuscripts':
@@ -45,11 +46,11 @@ function countSummary(counts: ExportCounts): string {
   push(counts.pdfs, '份 PDF', 'PDFs');
   push(counts.notes, '条笔记', 'notes');
   push(counts.highlights, '条划线', 'highlights');
-  push(counts.wiki_pages, '页解读', 'wiki pages');
-  push(counts.discovery_runs, '个探索任务', 'discovery runs');
+  push(counts.wiki_pages, '篇解读', 'summaries');
+  push(counts.discovery_runs, '次假设探索', 'explorations');
   push(counts.experiments, '个实验', 'experiments');
   push(counts.manuscripts, '篇稿件', 'manuscripts');
-  return parts.length > 0 ? parts.join(tr('、', ', ')) : tr('还没有数据，导出的是空骨架', 'No data yet — the archive is an empty skeleton');
+  return parts.length > 0 ? parts.join(tr('、', ', ')) : tr('还没有数据，导出的文件是空的', 'No data yet, so the archive is empty');
 }
 
 export function FullExportSettings() {
@@ -100,10 +101,10 @@ export function FullExportSettings() {
       setPhase('running');
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
-        toast(tr('已经有一个导出在进行中，请稍候', 'An export is already running. Please wait.'), 'error');
+        toast(tr('已有一个导出正在进行，请等它完成', 'An export is already running. Wait for it to finish.'), 'error');
       } else {
         const message = error instanceof Error ? error.message : String(error);
-        toast(`${tr('导出启动失败', 'Could not start export')}: ${message}`, 'error');
+        toast(`${tr('无法开始导出', 'Couldn’t start the export')}：${message}`, 'error');
       }
     } finally {
       setStarting(false);
@@ -118,56 +119,35 @@ export function FullExportSettings() {
       saveBlob(blob, 'polaris-full-export.zip');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      toast(`${tr('下载失败', 'Download failed')}: ${message}`, 'error');
+      toast(`${tr('下载失败', 'Download failed')}：${message}`, 'error');
     } finally {
       setDownloading(false);
     }
   }
 
   return (
-    <section className="card card-pad" style={{ maxWidth: 880 }}>
-      <div
-        className="row"
-        style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}
+    <SettingsStack>
+    <SettingsSection title={tr('导出', 'Export')}>
+      <SettingsGroup>
+      <SettingsRow
+        label={tr('导出全部数据', 'Export all data')}
+        hint={tr('文献库、PDF、笔记、解读、实验和稿件，打包为一个 zip', 'Libraries, PDFs, notes, summaries, experiments and manuscripts in one zip')}
       >
-        <div style={{ flex: '1 1 420px', minWidth: 0 }}>
-          <div className="section-h">
-            <Icon name="download" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('全量导出', 'Full export')}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 5, lineHeight: 1.65 }}>
-            {tr(
-              '把你在 Polaris 里的全部数据打包带走：文献库和 PDF、笔记划线、论文解读、假设探索、实验记录、论文稿件，全部装进一个 zip。里面都是普通的 Markdown、BibTeX 和 JSON 文件，离开平台也能直接用。',
-              'Take all your Polaris data with you: libraries and PDFs, notes and highlights, paper interpretations, hypothesis discovery runs, experiment records and manuscripts, packed into one zip of plain Markdown, BibTeX and JSON files that work anywhere.',
-            )}
-          </div>
-        </div>
         <button
-          className="btn btn-primary"
+          className={phase === 'done' ? 'btn btn-ghost sm' : 'btn btn-primary sm'}
           disabled={starting || phase === 'running'}
           onClick={() => void start()}
         >
-          <Icon name={phase === 'running' ? 'refresh' : 'download'} size={14} />
           {phase === 'running'
-            ? tr('打包中...', 'Packing...')
+            ? tr('正在打包…', 'Packing…')
             : starting
-              ? tr('启动中...', 'Starting...')
-              : tr('打包我的全部数据', 'Pack all my data')}
+              ? tr('正在开始…', 'Starting…')
+              : tr('开始导出', 'Start export')}
         </button>
-      </div>
+      </SettingsRow>
 
       {phase !== 'idle' && (
-        <div
-          style={{
-            marginTop: 18,
-            padding: 14,
-            background: 'var(--surface-2)',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
-            fontSize: 12.5,
-            lineHeight: 1.8,
-          }}
-        >
+        <div className="st-row st-row-stack" style={{ fontSize: 13, lineHeight: 1.8, gap: 0 }}>
           {doneFacets.map((facet) => (
             <div key={facet} className="row" style={{ gap: 8, alignItems: 'center' }}>
               <Icon name="check" size={13} style={{ color: 'var(--ok-tx, var(--accent))' }} />
@@ -176,40 +156,43 @@ export function FullExportSettings() {
           ))}
           {phase === 'running' && (
             <div style={{ color: 'var(--text-3)', marginTop: doneFacets.length > 0 ? 6 : 0 }}>
-              {tr('正在收拾你的数据，请稍等……', 'Gathering your data, one moment...')}
+              {tr('正在打包…', 'Packing…')}
             </div>
           )}
           {phase === 'done' && (
             <div style={{ marginTop: 8 }}>
               <div style={{ color: 'var(--text-2)' }}>
-                {tr('打包完成：', 'All packed: ')}
+                {tr('已打包：', 'Packed: ')}
                 {countSummary(counts)}
                 {warnings > 0 &&
                   tr(
-                    `（有 ${warnings} 项没能装进去，详见包内 manifest.json）`,
-                    ` (${warnings} item(s) could not be included — see manifest.json inside the archive)`,
+                    `（${warnings} 项未能导出，详见压缩包内的 manifest.json）`,
+                    warnings === 1
+                      ? ' (1 item couldn’t be exported. See manifest.json in the zip.)'
+                      : ` (${warnings} items couldn’t be exported. See manifest.json in the zip.)`,
                   )}
               </div>
               <button
-                className="btn btn-soft sm"
+                className="btn btn-primary sm"
                 disabled={downloading}
                 onClick={() => void download()}
                 style={{ marginTop: 10 }}
               >
                 <Icon name="download" size={13} />
-                {downloading ? tr('下载中...', 'Downloading...') : tr('下载 zip', 'Download zip')}
+                {downloading ? tr('正在下载…', 'Downloading…') : tr('下载 zip', 'Download zip')}
               </button>
             </div>
           )}
           {phase === 'error' && (
             <div style={{ color: 'var(--danger-tx)', marginTop: 6 }}>
-              {tr('导出没成功', 'Export failed')}
-              {errorMsg ? `: ${errorMsg}` : ''}
-              {tr('。可以稍后再试一次。', ' You can try again later.')}
+              {tr('导出失败，请重试', 'Export failed. Try again.')}
+              {errorMsg && <div className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{errorMsg}</div>}
             </div>
           )}
         </div>
       )}
-    </section>
+      </SettingsGroup>
+    </SettingsSection>
+    </SettingsStack>
   );
 }

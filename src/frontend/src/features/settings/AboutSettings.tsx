@@ -14,6 +14,7 @@ import { Icon } from '../../components/ui/Icon';
 import { UpdateDialog } from '../../components/ui/UpdateDialog';
 import { checkUpdate, hostAppVersion, openExternal, type UpdateInfo } from '../../lib/host';
 import { tr } from '../../lib/i18n';
+import { SettingsGroup, SettingsRow, SettingsSection, SettingsStack } from './settingsUi';
 
 const RELEASES_URL = 'https://github.com/ZJU-REAL/Polaris/releases';
 
@@ -51,19 +52,16 @@ export function failureReason(info: UpdateInfo): string {
   const detail = info.errorDetail ? `（${info.errorDetail}）` : '';
   switch (info.error) {
     case 'rate-limited':
-      return tr(
-        'GitHub 暂时限制了查询频率，过一会儿再试',
-        'GitHub is rate-limiting update checks — try again in a while',
-      );
+      return tr('查询太频繁，请稍后再试', 'Too many checks. Try again later.');
     case 'network':
-      return tr('连不上 GitHub', 'Could not reach GitHub') + detail;
+      return tr('无法连接 GitHub', 'Couldn’t reach GitHub') + detail;
     case 'no-package':
       return tr(
-        `v${info.latestVersion ?? '?'} 已发布，但还没有适合本机的安装包，可能仍在上传`,
-        `v${info.latestVersion ?? '?'} is out, but there is no package for this system yet — it may still be uploading`,
+        `v${info.latestVersion ?? '?'} 已发布，适合本机的安装包还没准备好，请稍后再试`,
+        `v${info.latestVersion ?? '?'} is out, but the installer for this computer isn’t ready yet. Try again later.`,
       );
     case 'http':
-      return tr('GitHub 返回了错误', 'GitHub returned an error') + detail;
+      return tr('GitHub 返回错误', 'GitHub returned an error') + detail;
     default:
       return (info.error ?? '') + detail;
   }
@@ -96,79 +94,59 @@ export function AboutSettings() {
   const outcome = result ? describeCheck(result) : null;
 
   return (
-    <section className="card card-pad" style={{ maxWidth: 640 }}>
-      <div className="section-h" style={{ marginBottom: 14 }}>
-        <Icon name="sparkle" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('关于 Polaris', 'About Polaris')}
-      </div>
-
-      <div className="row gap12" style={{ alignItems: 'center', marginBottom: 16 }}>
-        <span className="muted" style={{ fontSize: 13 }}>{tr('当前版本', 'Current version')}</span>
-        <span className="mono" style={{ fontSize: 14, fontWeight: 650 }}>
-          {version ? `v${version}` : '—'}
-        </span>
-      </div>
-
-      <div className="row gap8" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-        <button className="btn btn-primary" onClick={() => void check()} disabled={checking}>
-          <Icon name="refresh" size={14} />
-          {checking ? tr('检查中…', 'Checking…') : tr('检查更新', 'Check for updates')}
-        </button>
-        <button className="btn btn-ghost" onClick={() => void openExternal(RELEASES_URL)}>
-          <Icon name="link" size={14} />
-          {tr('所有版本', 'All releases')}
-        </button>
-      </div>
-
-      {outcome && result && (
-        <div style={{ marginTop: 16, fontSize: 13, lineHeight: 1.6 }}>
-          {outcome.kind === 'available' && (
-            <div className="row gap8" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-              <span>
-                {tr('有新版本', 'A new version is available')}：
-                <span className="mono" style={{ fontWeight: 650 }}> v{outcome.latest}</span>
-              </span>
-              <button className="btn btn-soft sm" onClick={() => setDialogOpen(true)}>
-                {tr('查看并更新', 'View and update')}
+    <SettingsStack>
+      <SettingsSection title={tr('关于 Polaris', 'About Polaris')}>
+        <SettingsGroup>
+          <SettingsRow label={tr('版本', 'Version')}>
+            <span className="mono" style={{ fontSize: 13 }}>{version ? `v${version}` : '—'}</span>
+          </SettingsRow>
+          <SettingsRow
+            label={tr('更新', 'Updates')}
+            hint={outcome && result ? (
+              outcome.kind === 'available' ? (
+                <span>{tr('有新版本', 'New version')}：<span className="mono">v{outcome.latest}</span></span>
+              ) : outcome.kind === 'latest' ? (
+                <span style={{ color: 'var(--ok-tx)' }}>{tr('已是最新版本', 'You’re up to date')}</span>
+              ) : outcome.kind === 'no-newer' ? (
+                tr('没有发现新版本', 'No newer version found')
+              ) : (
+                <span style={{ color: 'var(--warn-tx)' }}>
+                  {tr('检查失败', 'Couldn’t check for updates')}：{outcome.reason}{' '}
+                  <a
+                    href={result.releaseUrl ?? RELEASES_URL}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      void openExternal(result.releaseUrl ?? RELEASES_URL);
+                    }}
+                  >
+                    {tr('在发布页查看', 'Check the releases page')}
+                  </a>
+                </span>
+              )
+            ) : undefined}
+          >
+            {outcome?.kind === 'available' ? (
+              <button className="btn btn-primary sm" onClick={() => setDialogOpen(true)}>
+                {tr('更新', 'Update')}
               </button>
-            </div>
-          )}
-          {outcome.kind === 'latest' && (
-            <span style={{ color: 'var(--ok, #2e9e5b)' }}>
-              {tr('当前已是最新版本', 'You are on the latest version')}
-            </span>
-          )}
-          {outcome.kind === 'no-newer' && (
-            <span className="muted">{tr('没有发现新版本', 'No newer version found')}</span>
-          )}
-          {outcome.kind === 'failed' && (
-            <div className="col gap6">
-              <span style={{ color: 'var(--warn, #b7791f)' }}>
-                {tr('没能完成检查', 'Could not check for updates')}：{outcome.reason}
-              </span>
-              <span className="muted" style={{ fontSize: 12 }}>
-                {tr(
-                  '可以直接去发布页看看有没有新版本。',
-                  'You can check the releases page directly.',
-                )}{' '}
-                <a
-                  href={result.releaseUrl ?? RELEASES_URL}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    void openExternal(result.releaseUrl ?? RELEASES_URL);
-                  }}
-                >
-                  {tr('打开发布页', 'Open releases')}
-                </a>
-              </span>
-            </div>
-          )}
-        </div>
-      )}
+            ) : (
+              <button className="btn btn-ghost sm" onClick={() => void check()} disabled={checking}>
+                {checking ? tr('检查中…', 'Checking…') : tr('检查更新', 'Check for updates')}
+              </button>
+            )}
+          </SettingsRow>
+          <SettingsRow label={tr('所有版本', 'All releases')}>
+            <button className="btn btn-ghost sm" onClick={() => void openExternal(RELEASES_URL)}>
+              <Icon name="link" size={13} />
+              GitHub
+            </button>
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
 
       {result?.available && (
         <UpdateDialog info={result} open={dialogOpen} onClose={() => setDialogOpen(false)} />
       )}
-    </section>
+    </SettingsStack>
   );
 }

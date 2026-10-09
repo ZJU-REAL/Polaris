@@ -59,9 +59,9 @@ export function marketTierBadge(tier: MarketIndexEntry['tier'] | string): TierBa
     这句话由组件在权限区固定附注，不在这里拼。 */
 export function marketPermissionLabels(permissions: MarketIndexEntry['permissions']): BiText[] {
   const labels: BiText[] = [];
-  if (permissions.network) labels.push({ zh: '声明需要联网', en: 'Declares network access' });
-  if (permissions.filesystem) labels.push({ zh: '声明需要读写文件', en: 'Declares file access' });
-  if (labels.length === 0) labels.push({ zh: '未声明任何权限', en: 'No permissions declared' });
+  if (permissions.network) labels.push({ zh: '联网', en: 'Network access' });
+  if (permissions.filesystem) labels.push({ zh: '读写文件', en: 'File access' });
+  if (labels.length === 0) labels.push({ zh: '无', en: 'None' });
   return labels;
 }
 
@@ -76,7 +76,7 @@ export function installPhaseText(phase: string): BiText {
     case 'extract':
       return { zh: '解压中', en: 'Extracting' };
     case 'register':
-      return { zh: '登记中', en: 'Registering' };
+      return { zh: '安装中', en: 'Installing' };
     default:
       return { zh: phase, en: phase };
   }

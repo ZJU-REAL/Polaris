@@ -79,7 +79,7 @@ export function ParamField({
       {label}
       {options ? (
         <select className="input mono" style={{ height: 32 }} value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">{tr('（不传）', '(omit)')}</option>
+          <option value="">{tr('不填', 'Not set')}</option>
           {options.map((o) => (
             <option key={o} value={o}>
               {o}
@@ -92,7 +92,7 @@ export function ParamField({
           style={{ height: 32 }}
           type={param.type === 'integer' || param.type === 'number' ? 'number' : 'text'}
           value={value}
-          placeholder={param.required ? tr('必填', 'required') : tr('可选', 'optional')}
+          placeholder={param.required ? tr('必填', 'Required') : tr('可选', 'Optional')}
           onChange={(e) => onChange(e.target.value)}
         />
       )}
@@ -115,7 +115,7 @@ export function ResultView({ result }: { result: McpInvokeResult }) {
               : { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
           }
         >
-          {result.is_error ? tr('调用失败', 'Failed') : tr('调用成功', 'Success')}
+          {result.is_error ? tr('失败', 'Failed') : tr('成功', 'Succeeded')}
         </span>
         <span style={{ color: 'var(--text-3)' }}>{result.duration_ms} ms</span>
         {images.length > 0 && (
@@ -219,18 +219,18 @@ export function ToolRunner({
         </button>
         {tool.network && (
           <span style={{ fontSize: 11.5, color: 'var(--warn-tx)' }}>
-            {tr('会真的请求外部文献接口', 'Really calls the external literature API')}
+            {tr('会联网查询外部文献库', 'Queries external literature sources online')}
           </span>
         )}
         {!projectId && (
           <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-            {tr('先在上方选一个课题', 'Pick a topic above first')}
+            {tr('请先在上方选择课题', 'Pick a topic above first')}
           </span>
         )}
       </div>
       {run.isError && (
         <div style={{ fontSize: 12, color: 'var(--danger-tx)' }}>
-          {tr('请求失败：', 'Request failed: ')}
+          {tr('运行失败：', 'Run failed: ')}
           {(run.error as Error).message}
         </div>
       )}

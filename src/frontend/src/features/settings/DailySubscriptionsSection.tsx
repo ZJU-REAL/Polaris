@@ -15,6 +15,7 @@ import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
 import { api, type DailySubscription } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { SettingsActions, SettingsGroup, SettingsRow, SettingsSection, StatusDot } from './settingsUi';
 
 /** arXiv 分类的大致格式：如 cs.AI / stat.ML / q-bio.NC / hep-th。 */
 const ARXIV_CATEGORY_RE = /^[a-z][a-z-]+(\.[A-Za-z]{2,10})?$/;
@@ -22,9 +23,9 @@ const ARXIV_CATEGORY_RE = /^[a-z][a-z-]+(\.[A-Za-z]{2,10})?$/;
 /** 一个订阅词在这个来源上是否像样；不像样返回给人看的原因。 */
 export function termIssue(source: string, term: string): string | null {
   const v = term.trim();
-  if (!v) return tr('先填一个词', 'Enter a term first');
+  if (!v) return tr('请输入订阅词', 'Enter a term');
   if (source === 'arxiv' && !ARXIV_CATEGORY_RE.test(v)) {
-    return tr('arXiv 按分类订阅，格式形如 cs.AI、q-bio.NC、hep-th', 'arXiv subscribes by category, e.g. cs.AI, q-bio.NC, hep-th');
+    return tr('arXiv 需填写分类，例如 cs.AI、q-bio.NC、hep-th', 'arXiv needs a category, e.g. cs.AI, q-bio.NC, hep-th');
   }
   return null;
 }
@@ -41,8 +42,8 @@ export function subscriptionsPayload(rows: { source: string; terms: string[] }[]
 
 function termPlaceholder(source: string): string {
   return source === 'arxiv'
-    ? tr('如 cs.AI、q-bio.NC', 'e.g. cs.AI, q-bio.NC')
-    : tr('如 neuroscience', 'e.g. neuroscience');
+    ? tr('例如 cs.AI、q-bio.NC', 'e.g. cs.AI, q-bio.NC')
+    : tr('例如 neuroscience', 'e.g. neuroscience');
 }
 
 export function DailySubscriptionsSection() {
@@ -78,13 +79,13 @@ export function DailySubscriptionsSection() {
   const save = useMutation({
     mutationFn: () => api.setDailySubscriptions(subscriptionsPayload(shown)),
     onSuccess: (res) => {
-      toast(tr('订阅已保存', 'Subscriptions saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       setRows(res.subscriptions);
       void queryClient.invalidateQueries({ queryKey: ['daily-subscriptions'] });
       void queryClient.invalidateQueries({ queryKey: ['daily-categories'] });
     },
     onError: (e) =>
-      toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('保存失败', 'Couldn’t save')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const addTerm = (source: string) => {
@@ -104,55 +105,38 @@ export function DailySubscriptionsSection() {
     setAdding('');
   };
 
-  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
-  if (isError) {
+  const title = tr('订阅', 'Subscriptions');
+  const desc = tr('每天从这些来源获取新论文：arXiv 按分类，其他来源按检索词。', 'New papers arrive daily: arXiv by category, other sources by search term.');
+  if (isLoading || isError) {
     return (
-      <div className="empty">
-        {tr('无法加载订阅（后端不可用）', 'Failed to load subscriptions (backend unavailable)')}
-      </div>
+      <SettingsSection title={title} desc={desc}>
+        <SettingsGroup pad>
+          <div className="st-row-hint">{isLoading ? tr('加载中…', 'Loading…') : tr('无法加载订阅', 'Couldn’t load subscriptions')}</div>
+        </SettingsGroup>
+      </SettingsSection>
     );
   }
 
   return (
-    <div className="card card-pad">
-      <div className="section-h" style={{ marginBottom: 6 }}>
-        <Icon name="book" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('每日论文订阅', 'Daily paper subscriptions')}
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 16, lineHeight: 1.6 }}>
-        {tr(
-          '每天从这些来源取新论文。arXiv 按分类订（如 cs.AI、q-bio.NC），PubMed 等按检索词订。改动从下一次抓取开始生效。',
-          'New papers arrive every day from these sources. arXiv is subscribed by category (e.g. cs.AI, q-bio.NC); PubMed and others by search term. Fetching is shared across the platform, but what others subscribe to never appears in your list. Changes apply from the next fetch.',
+    <SettingsSection title={title} desc={desc}>
+      <SettingsGroup>
+        {shown.length === 0 && (
+          <SettingsRow label={tr('还没有订阅', 'No subscriptions yet')} hint={tr('在下方添加来源', 'Add a source below')} />
         )}
-      </div>
-
-      {shown.length === 0 && (
-        <div style={{ fontSize: 12.5, color: 'var(--text-4)', marginBottom: 14 }}>
-          {tr('还没有订阅。在下面选一个来源开始。', 'No subscriptions yet — pick a source below to start.')}
-        </div>
-      )}
-
-      <div className="col" style={{ gap: 14 }}>
         {shown.map((row) => (
-          <div
-            key={row.source}
-            className="col gap8"
-            style={{ border: '0.5px solid var(--border)', borderRadius: 10, padding: 12 }}
-          >
+          <div key={row.source} className="st-row st-row-stack">
             <div className="row gap8" style={{ alignItems: 'center' }}>
-              <strong style={{ fontSize: 13 }}>{titleOf(row.source)}</strong>
+              <span className="st-row-label">{titleOf(row.source)}</span>
               {/* 订了一个供不了日更的源：池子会一直空着而界面上看不出原因 */}
               {!row.supports_daily && (
-                <span style={{ fontSize: 11.5, color: 'var(--warn-tx)' }}>
-                  {tr('这个来源当前无法提供每日新增，不会有论文进来', 'This source cannot supply daily papers right now — nothing will arrive')}
-                </span>
+                <StatusDot tone="warn">{tr('暂时无法每日更新', 'Can’t update daily right now')}</StatusDot>
               )}
               <button
-                className="btn btn-ghost sm"
+                className="btn btn-ghost sm st-quiet-danger"
                 style={{ marginLeft: 'auto' }}
                 onClick={() => setRows(shown.filter((r) => r.source !== row.source))}
               >
-                {tr('移除来源', 'Remove source')}
+                {tr('移除', 'Remove')}
               </button>
             </div>
             {row.terms.length > 0 && (
@@ -184,7 +168,7 @@ export function DailySubscriptionsSection() {
             <div className="row gap8">
               <input
                 className={'input' + (row.source === 'arxiv' ? ' mono' : '')}
-                style={{ width: 240, height: 32, fontSize: 12.5 }}
+                style={{ width: 240, maxWidth: '100%' }}
                 placeholder={termPlaceholder(row.source)}
                 value={drafts[row.source] ?? ''}
                 onChange={(e) => setDrafts({ ...drafts, [row.source]: e.target.value })}
@@ -195,25 +179,25 @@ export function DailySubscriptionsSection() {
                   }
                 }}
               />
-              <button className="btn btn-soft sm" disabled={!(drafts[row.source] ?? '').trim()} onClick={() => addTerm(row.source)}>
+              <button className="btn btn-ghost sm" disabled={!(drafts[row.source] ?? '').trim()} onClick={() => addTerm(row.source)}>
                 <Icon name="plus" size={12} />
                 {tr('添加', 'Add')}
               </button>
             </div>
             {row.terms.length === 0 && (
-              <div style={{ fontSize: 11.5, color: 'var(--text-4)' }}>
-                {tr('至少加一个词，这个来源才会被订阅。', 'Add at least one term, or this source is not subscribed.')}
+              <div className="st-row-hint">
+                {tr('添加至少一个订阅词后才会生效', 'Add at least one term to subscribe')}
               </div>
             )}
           </div>
         ))}
-      </div>
+      </SettingsGroup>
 
-      <div className="row gap8" style={{ marginTop: 16, alignItems: 'center' }}>
-        {addable.length > 0 ? (
+      <SettingsActions
+        note={addable.length > 0 ? (
           <select
             className="input"
-            style={{ width: 200, height: 32, fontSize: 12.5 }}
+            style={{ width: 200 }}
             value={adding}
             onChange={(e) => addSource(e.target.value)}
           >
@@ -224,16 +208,12 @@ export function DailySubscriptionsSection() {
               </option>
             ))}
           </select>
-        ) : (
-          <span style={{ fontSize: 12, color: 'var(--text-4)' }}>
-            {tr('能供每日新增的来源都已添加。', 'Every source that can supply daily papers is added.')}
-          </span>
-        )}
-        <div style={{ flex: 1 }} />
+        ) : tr('所有可用来源都已添加', 'All available sources are added')}
+      >
         <button className="btn btn-primary sm" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
           {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
         </button>
-      </div>
-    </div>
+      </SettingsActions>
+    </SettingsSection>
   );
 }

@@ -47,28 +47,28 @@ export function EngineUnavailablePage({
   let title: string;
   let detail: string;
   if (setupFailed) {
-    title = tr('本机环境没有准备好', 'Local setup did not finish');
+    title = tr('安装没有完成', 'Setup didn’t finish');
     detail = tr(
-      '准备本机运行环境时出了问题。重新打开 Polaris 会再试一次；如果反复失败，请检查网络后再试。',
-      'Something went wrong while preparing the local environment. Restarting Polaris will try again; if it keeps failing, check your network connection.',
+      '请检查网络连接，然后重新打开 Polaris 再试一次。',
+      'Check your network connection, then restart Polaris to try again.',
     );
   } else if (problem === 'stale-engine') {
-    title = tr('还有一个旧的 Polaris 引擎在运行', 'An older Polaris engine is still running');
+    title = tr('另一个 Polaris 仍在运行', 'Another copy of Polaris is still running');
     detail = tr(
-      '端口 18080 被另一个 Polaris 引擎占着（可能是上次没有正常退出，或者同时开着另一份 Polaris）。请关掉其他 Polaris 窗口；仍然不行的话，在活动监视器/任务管理器里结束名为 python 的 Polaris 引擎进程，或重启电脑，然后重新打开 Polaris。',
-      'Port 18080 is held by another Polaris engine (it may not have shut down last time, or another copy of Polaris is open). Close other Polaris windows; if that does not help, end the Polaris engine (a python process) in Activity Monitor / Task Manager, or restart your computer, then reopen Polaris.',
+      '请关闭其他 Polaris 窗口后重新打开；仍不行的话，重启电脑再试。',
+      'Close any other Polaris windows and restart Polaris. If that doesn’t help, restart your computer.',
     );
   } else if (problem === 'port-in-use') {
-    title = tr('端口 18080 被别的程序占用', 'Port 18080 is in use by another program');
+    title = tr('端口 18080 被其他程序占用', 'Port 18080 is in use');
     detail = tr(
-      'Polaris 的本机引擎需要用 18080 端口，但它现在被另一个程序占着。请退出那个程序后重新打开 Polaris。',
-      'The Polaris engine needs port 18080 on this computer, but another program is using it. Quit that program, then restart Polaris.',
+      'Polaris 需要这个端口，请退出占用它的程序后重新打开 Polaris。',
+      'Polaris needs this port. Quit the program using it, then restart Polaris.',
     );
   } else {
-    title = tr('本机引擎没有启动', 'The local engine is not running');
+    title = tr('本机引擎没有运行', 'The local engine isn’t running');
     detail = tr(
-      'Polaris 的数据和功能都由这台电脑上的引擎提供，它现在没有运行。重新打开 Polaris 会再启动一次。',
-      'Polaris keeps your data and runs its features on an engine on this computer, and that engine is not running. Restarting Polaris will start it again.',
+      '重新打开 Polaris 会再次启动它。',
+      'Restart Polaris to start it again.',
     );
   }
 

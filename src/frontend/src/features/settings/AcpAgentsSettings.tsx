@@ -8,6 +8,7 @@ import { toast } from '../../components/ui/Toast';
 import { copyText } from '../../lib/clipboard';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { SettingsGroup, SettingsRow, SettingsSection, StatusDot } from './settingsUi';
 import {
   ApiError,
   api,
@@ -117,7 +118,7 @@ function CopyLine({ text, label }: { text: string; label: string }) {
         aria-label={tr('复制', 'Copy')}
         onClick={() =>
           void copyText(text).then((ok) =>
-            toast(ok ? tr('已复制', 'Copied') : tr('复制失败，请手动复制', 'Could not copy — copy it manually'), ok ? 'ok' : 'error'),
+            toast(ok ? tr('已复制', 'Copied') : tr('无法复制，请手动复制', 'Couldn’t copy. Copy it manually.'), ok ? 'ok' : 'error'),
           )
         }
       >
@@ -151,7 +152,7 @@ function EnvRowsEditor({ rows, onChange }: { rows: EnvRow[]; onChange: (rows: En
                 type="password"
                 style={{ flex: 1, minWidth: 0 }}
                 value={r.value}
-                placeholder={tr('值', 'value')}
+                placeholder={tr('值', 'Value')}
                 spellCheck={false}
                 autoComplete="new-password"
                 aria-label={tr('变量值', 'Variable value')}
@@ -159,7 +160,7 @@ function EnvRowsEditor({ rows, onChange }: { rows: EnvRow[]; onChange: (rows: En
               />
               <button
                 className="btn btn-ghost sm"
-                title={tr('删除这一行', 'Remove this row')}
+                title={tr('删除', 'Remove')}
                 onClick={() => onChange(rows.filter((_, j) => j !== i))}
               >
                 <Icon name="x" size={12} />
@@ -208,16 +209,16 @@ function AgentRow({
   const update = useMutation({
     mutationFn: (input: AcpAgentUpdate) => api.updateAcpAgent(agent.id, input),
     onSuccess: (row) => refresh(row),
-    onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败', 'Couldn’t save')}：${errText(e)}`, 'error'),
   });
   const probe = useMutation({
     mutationFn: () => api.probeAcpAgent(agent.id),
     onSuccess: (row) => {
       refresh(row);
-      if (row.last_error) toast(tr('连不上，原因见下方', 'Could not connect — see below'), 'error');
+      if (row.last_error) toast(tr('连接失败，原因见下方', 'Couldn’t connect. See the details below.'), 'error');
       else toast(tr('连接正常', 'Connected'), 'ok');
     },
-    onError: (e) => toast(`${tr('检查失败', 'Check failed')}：${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('检查失败', 'Couldn’t check')}：${errText(e)}`, 'error'),
   });
   const remove = useMutation({
     mutationFn: () => api.deleteAcpAgent(agent.id),
@@ -226,7 +227,7 @@ function AgentRow({
       refresh();
       toast(tr('已删除', 'Removed'), 'ok');
     },
-    onError: (e) => toast(`${tr('删除失败', 'Delete failed')}：${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败', 'Couldn’t remove')}：${errText(e)}`, 'error'),
   });
 
   const policy = POLICY_OPTIONS.find((o) => o.value === agent.permission_policy);
@@ -235,44 +236,33 @@ function AgentRow({
   const caps = probeInfo ? probeCapabilities(probeInfo) : [];
 
   return (
-    <div style={{ padding: '14px 0', borderTop: '0.5px solid var(--border)' }}>
+    <div className="st-row st-row-stack" style={{ gap: 4 }}>
       <div className="row gap8" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-        <strong style={{ fontSize: 14 }}>{agent.name || agent.slug}</strong>
-        <span className="pill sm">{agent.template === 'custom' ? tr('自定义', 'Custom') : agent.template}</span>
-        {!agent.enabled && <span className="pill sm">{tr('已停用', 'Off')}</span>}
-        {modelRole === 'default' && (
-          <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-            {tr('默认模型', 'Default model')}
-          </span>
-        )}
+        <span className="st-row-label" style={agent.enabled ? undefined : { color: 'var(--text-3)' }}>{agent.name || agent.slug}</span>
+        {!agent.enabled && <StatusDot tone="idle">{tr('已停用', 'Off')}</StatusDot>}
+        {modelRole === 'default' && <StatusDot tone="ok">{tr('默认', 'Default')}</StatusDot>}
         {modelRole === 'takeover' && (
-          <span
-            className="pill sm"
-            style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
-            title={tr('没有设置默认模型，所有对话类环节都由它回答', 'No default model is set, so it answers every chat stage')}
-          >
-            {tr('正在接管所有模型调用', 'Answering all model calls')}
-          </span>
+          <StatusDot tone="ok" title={tr('未设置默认模型，由它回答', 'No default model is set, so it answers')}>
+            {tr('正在回答', 'Answering')}
+          </StatusDot>
         )}
         <span style={{ flex: 1 }} />
         {onMakeDefault && agent.enabled && modelRole !== 'default' && (
           <button
-            className="btn btn-soft sm"
+            className="btn btn-ghost sm"
             disabled={makingDefault}
-            title={tr('让没单独设置的对话类环节都交给它回答', 'Every chat stage without its own row will be answered by it')}
+            title={tr('未单独设置的环节都由它回答', 'It answers every stage you haven’t set separately')}
             onClick={onMakeDefault}
           >
-            <Icon name="star" size={12} />
-            {tr('设为默认模型', 'Use as default model')}
+            {tr('设为默认', 'Make default')}
           </button>
         )}
-        <button className="btn btn-soft sm" disabled={probe.isPending} onClick={() => probe.mutate()}>
-          <Icon name="refresh" size={12} style={probe.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
+        <button className="btn btn-ghost sm" disabled={probe.isPending} onClick={() => probe.mutate()}>
           {probe.isPending ? tr('检查中…', 'Checking…') : tr('检查连接', 'Check connection')}
         </button>
         {confirmDelete ? (
           <>
-            <span style={{ fontSize: 12, color: 'var(--danger-tx)' }}>{tr('确定删除？', 'Remove it?')}</span>
+            <span style={{ fontSize: 12, color: 'var(--danger-tx)' }}>{tr(`删除「${agent.name || agent.slug}」？`, `Remove “${agent.name || agent.slug}”?`)}</span>
             <button className="btn btn-danger sm" disabled={remove.isPending} onClick={() => remove.mutate()}>
               {tr('删除', 'Remove')}
             </button>
@@ -281,7 +271,7 @@ function AgentRow({
             </button>
           </>
         ) : (
-          <button className="btn btn-ghost sm" title={tr('删除', 'Remove')} onClick={() => setConfirmDelete(true)}>
+          <button className="icon-btn st-quiet-danger" title={tr('删除', 'Remove')} aria-label={tr('删除', 'Remove')} onClick={() => setConfirmDelete(true)}>
             <Icon name="trash" size={12} />
           </button>
         )}
@@ -293,8 +283,8 @@ function AgentRow({
       {!agent.command_found && (
         <div style={{ fontSize: 12, color: 'var(--warn-tx)', marginTop: 4 }}>
           {tr(
-            `在这台机器上找不到命令「${agent.command}」——先装好再用。`,
-            `Command "${agent.command}" was not found on this machine — install it first.`,
+            `本机找不到命令「${agent.command}」，请先安装`,
+            `Can’t find “${agent.command}” on this computer. Install it first.`,
           )}
         </div>
       )}
@@ -330,14 +320,14 @@ function AgentRow({
         </div>
       ) : (
         <div style={{ fontSize: 12, color: 'var(--text-4)', marginTop: 8 }}>
-          {tr('还没检查过连接。', 'Not checked yet.')}
+          {tr('未检查连接', 'Not checked yet')}
         </div>
       )}
 
       <div className="settings-fields" style={{ marginTop: 12 }}>
         <FormField
           label={tr('权限', 'Permissions')}
-          hint={tr('智能体想读文件、改文件或跑命令时，按这一条回答它。', 'How to answer when the agent asks to read, edit or run something.')}
+          hint={tr('智能体要读写文件或运行命令时如何处理', 'What happens when the agent wants to read, edit or run something')}
         >
           <SelectMenu
             value={agent.permission_policy}
@@ -347,7 +337,7 @@ function AgentRow({
           />
           {policy?.warn && (
             <div style={{ fontSize: 12, color: 'var(--warn-tx)', marginTop: 4 }}>
-              {tr('它会不经确认就改文件、跑命令。只在你信得过的环境里用。', 'It will edit files and run commands without asking. Only use this where you trust it.')}
+              {tr('它会直接改文件、运行命令而不先询问，只在可信的环境中使用。', 'It edits files and runs commands without asking. Use only where you trust it.')}
             </div>
           )}
           <PolicyHint policy={policy} />
@@ -358,9 +348,9 @@ function AgentRow({
               checked={agent.enabled}
               disabled={update.isPending}
               onChange={(v) => update.mutate({ enabled: v })}
-              aria-label={tr('启用', 'Enabled')}
+              aria-label={tr('启用', 'On')}
             />
-            {tr('启用（在助手里可选）', 'Enabled (selectable in the assistant)')}
+            {tr('启用', 'On')}
           </label>
         </div>
       </div>
@@ -372,8 +362,8 @@ function AgentRow({
             <EnvRowsEditor rows={envRows} onChange={setEnvRows} />
             <div className="field-hint">
               {tr(
-                '保存会整体替换原来的变量（旧值读不回来）。全部删掉再保存就是清空。',
-                'Saving replaces all existing variables (old values cannot be read back). Remove every row and save to clear them.',
+                '保存后替换全部原有变量；删光再保存即清空。',
+                'Saving replaces all existing variables. Remove every row and save to clear them.',
               )}
             </div>
             <div className="row gap8" style={{ marginTop: 8 }}>
@@ -387,7 +377,7 @@ function AgentRow({
                       onSuccess: () => {
                         setEnvEditing(false);
                         setEnvRows([]);
-                        toast(tr('环境变量已更新', 'Environment updated'), 'ok');
+                        toast(tr('已保存', 'Saved'), 'ok');
                       },
                     },
                   )
@@ -403,7 +393,7 @@ function AgentRow({
         ) : (
           <div className="row gap6" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
             {agent.env_keys.length === 0 ? (
-              <span style={{ fontSize: 12, color: 'var(--text-4)' }}>{tr('没有设置', 'None set')}</span>
+              <span style={{ fontSize: 12, color: 'var(--text-4)' }}>{tr('未设置', 'None')}</span>
             ) : (
               agent.env_keys.map((k) => (
                 <span key={k} className="chip mono" style={{ cursor: 'default' }}>
@@ -440,25 +430,30 @@ function TemplateRow({
   onAdd: () => void;
 }) {
   const desc = TEMPLATE_DESCRIPTIONS[template.id];
+  // 安装、登录命令默认收起：六七个模板全展开时，这一节会比整页其余部分还长
+  const [howOpen, setHowOpen] = useState(false);
   return (
-    <div style={{ padding: '12px 0', borderTop: '0.5px solid var(--border)' }}>
+    <div className="st-row st-row-stack" style={{ gap: 4 }}>
       <div className="row gap8" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-        <strong style={{ fontSize: 13.5 }}>{template.name}</strong>
-        {template.installed ? (
-          <span className="pill sm st-implemented">{tr('已安装', 'Installed')}</span>
-        ) : (
-          <span className="pill sm st-candidate">{tr('未安装', 'Not installed')}</span>
-        )}
+        <span className="st-row-label" style={template.installed ? undefined : { color: 'var(--text-3)' }}>{template.name}</span>
+        <StatusDot tone={template.installed ? 'ok' : 'idle'}>
+          {template.installed ? tr('已安装', 'Installed') : tr('未安装', 'Not installed')}
+        </StatusDot>
         <span style={{ flex: 1 }} />
-        <button className="btn btn-soft sm" disabled={adding} onClick={onAdd}>
+        {!template.installed && (template.install || template.login) && (
+          <button className="btn btn-ghost sm" onClick={() => setHowOpen((o) => !o)}>
+            {howOpen ? tr('收起', 'Hide') : tr('安装方法', 'How to install')}
+          </button>
+        )}
+        <button className="btn btn-ghost sm" disabled={adding} onClick={onAdd}>
           <Icon name="plus" size={12} />
           {tr('添加', 'Add')}
         </button>
       </div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, lineHeight: 1.6 }}>
+      <div className="st-row-hint">
         {desc ? tr(desc.zh, desc.en) : template.description}
       </div>
-      {!template.installed && (
+      {!template.installed && howOpen && (
         <div className="col" style={{ gap: 6, marginTop: 8 }}>
           {template.install && <CopyLine label={tr('安装', 'Install')} text={template.install} />}
           {template.login && <CopyLine label={tr('登录', 'Sign in')} text={template.login} />}
@@ -499,7 +494,7 @@ function CustomAgentForm({ taken, onDone }: { taken: string[]; onDone: () => voi
       toast(tr('已添加', 'Added'), 'ok');
       onDone();
     },
-    onError: (e) => toast(`${tr('添加失败', 'Could not add')}：${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('添加失败', 'Couldn’t add')}：${errText(e)}`, 'error'),
   });
 
   return (
@@ -510,12 +505,12 @@ function CustomAgentForm({ taken, onDone }: { taken: string[]; onDone: () => voi
         </FormField>
         <FormField
           label={tr('标识', 'ID')}
-          hint={tr('小写字母、数字、- 和 _，不能重复。', 'Lowercase letters, digits, - and _; must be unique.')}
+          hint={tr('小写字母、数字、- 和 _', 'Lowercase letters, digits, - and _')}
           error={
             effectiveSlug && slugBad
               ? tr('格式不对', 'Invalid format')
               : taken.includes(effectiveSlug)
-                ? tr('已经被用了', 'Already taken')
+                ? tr('已被使用', 'Already taken')
                 : null
           }
         >
@@ -530,7 +525,7 @@ function CustomAgentForm({ taken, onDone }: { taken: string[]; onDone: () => voi
             }}
           />
         </FormField>
-        <FormField label={tr('启动命令', 'Command')} hint={tr('可执行文件名或完整路径。', 'Executable name or full path.')}>
+        <FormField label={tr('启动命令', 'Command')} hint={tr('命令名或完整路径', 'Command name or full path')}>
           <input
             className="input mono"
             value={command}
@@ -539,7 +534,7 @@ function CustomAgentForm({ taken, onDone }: { taken: string[]; onDone: () => voi
             onChange={(e) => setCommand(e.target.value)}
           />
         </FormField>
-        <FormField label={tr('参数', 'Arguments')} hint={tr('用空格分隔。', 'Separated by spaces.')}>
+        <FormField label={tr('参数', 'Arguments')} hint={tr('用空格分隔', 'Separate with spaces')}>
           <input
             className="input mono"
             value={args}
@@ -557,7 +552,7 @@ function CustomAgentForm({ taken, onDone }: { taken: string[]; onDone: () => voi
         <label className="field-label">{tr('环境变量', 'Environment variables')}</label>
         <EnvRowsEditor rows={envRows} onChange={setEnvRows} />
         <div className="field-hint">
-          {tr('保存后只显示变量名，值不会再显示。', 'After saving only the names are shown; values are never displayed again.')}
+          {tr('保存后只显示变量名，不再显示值。', 'After saving, only names are shown.')}
         </div>
       </div>
       <div className="row" style={{ justifyContent: 'flex-end', marginTop: 10 }}>
@@ -594,9 +589,9 @@ export function AcpAgentsSettings() {
     onSuccess: (_, a) => {
       // 路由表那边没保存的改动不会被冲掉：它按行合并服务端的新表（rebaseDrafts）
       void queryClient.invalidateQueries({ queryKey: ['llm'] });
-      toast(tr(`默认模型已改为「${a.name || a.slug}」`, `Default model is now "${a.name || a.slug}"`), 'ok');
+      toast(tr(`已将「${a.name || a.slug}」设为默认`, `“${a.name || a.slug}” is now the default`), 'ok');
     },
-    onError: (e) => toast(`${tr('设置失败', 'Could not set it')}：${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('设置失败', 'Couldn’t set the default')}：${errText(e)}`, 'error'),
   });
 
   const addTemplate = useMutation({
@@ -605,38 +600,29 @@ export function AcpAgentsSettings() {
       invalidateAfterAgentChange(queryClient);
       toast(tr(`已添加 ${row.name}`, `Added ${row.name}`), 'ok');
     },
-    onError: (e) => toast(`${tr('添加失败', 'Could not add')}：${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('添加失败', 'Couldn’t add')}：${errText(e)}`, 'error'),
   });
 
   return (
     <>
-      <div className="card card-pad">
-        <div className="section-h" style={{ marginBottom: 4 }}>
-          <Icon name="cpu" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('智能体后端', 'Agent backends')}{' '}
-          <span className="en-label" style={{ fontSize: 11 }}>{tr('推荐', 'recommended')}</span>
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6, marginBottom: 4 }}>
-          {tr(
-            '用你已经在用的智能体（Claude Code、Codex、Gemini CLI……）回答模型调用，通过 Agent Client Protocol 连接。它在这台机器上用你自己的登录运行，Polaris 拿不到它的密钥。有一个启用的智能体就够了：没设置默认模型时，它会回答所有对话类环节；在助手输入框上方也能直接选它。',
-            'Use an agent you already have (Claude Code, Codex, Gemini CLI…) to answer model calls, connected through the Agent Client Protocol. It runs on this machine with your own sign-in; Polaris never sees its keys. One enabled agent is enough: with no default model set, it answers every chat stage, and you can also pick it just above the assistant’s input box.',
-          )}
-        </div>
+      <SettingsSection
+        title={tr('智能体', 'Agents')}
+        desc={tr(
+          '让你已安装的 Claude Code、Codex 等智能体来回答，它用你自己的登录在本机运行。',
+          'Let an agent you already use, like Claude Code or Codex, answer. It runs on this computer with your own sign-in.',
+        )}
+      >
+        <SettingsGroup>
         {agentsQ.isLoading ? (
-          <div className="empty">{tr('加载中…', 'Loading…')}</div>
+          <div className="st-row"><span className="st-row-hint">{tr('加载中…', 'Loading…')}</span></div>
         ) : agentsQ.isError ? (
-          <div className="empty">
-            {tr('无法加载智能体列表', 'Could not load the agents')}
-            <div style={{ marginTop: 10 }}>
-              <button className="btn btn-soft sm" onClick={() => void agentsQ.refetch()}>
-                {tr('重试', 'Retry')}
-              </button>
-            </div>
-          </div>
+          <SettingsRow label={tr('无法加载智能体', 'Couldn’t load agents')}>
+            <button className="btn btn-ghost sm" onClick={() => void agentsQ.refetch()}>
+              {tr('重试', 'Retry')}
+            </button>
+          </SettingsRow>
         ) : agents.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: 'var(--text-4)', padding: '8px 0' }}>
-            {tr('还没有。从下面挑一个添加。', 'None yet. Add one from below.')}
-          </div>
+          <SettingsRow label={tr('还没有智能体', 'No agents yet')} hint={tr('在下方添加一个', 'Add one below')} />
         ) : (
           agents.map((a) => (
             <AgentRow
@@ -648,23 +634,18 @@ export function AcpAgentsSettings() {
             />
           ))
         )}
-      </div>
+        </SettingsGroup>
+      </SettingsSection>
 
-      <div className="card card-pad" style={{ marginTop: 16 }}>
-        <div className="section-h" style={{ marginBottom: 4 }}>
-          <Icon name="plus" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('添加智能体', 'Add an agent')}
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6, marginBottom: 4 }}>
-          {tr(
-            '没装的先在终端里装好并登录一次，再回来添加、检查连接。',
-            'If it is not installed yet, install it and sign in once in a terminal, then add it here and check the connection.',
-          )}
-        </div>
+      <SettingsSection
+        title={tr('添加智能体', 'Add an agent')}
+        desc={tr('未安装的请先在终端里安装并登录一次。', 'If it isn’t installed, install it and sign in once in a terminal first.')}
+      >
+        <SettingsGroup>
         {templatesQ.isLoading ? (
-          <div className="empty">{tr('加载中…', 'Loading…')}</div>
+          <div className="st-row"><span className="st-row-hint">{tr('加载中…', 'Loading…')}</span></div>
         ) : templatesQ.isError ? (
-          <div className="empty">{tr('无法加载模板', 'Could not load templates')}</div>
+          <div className="st-row"><span className="st-row-hint">{tr('无法加载可添加的智能体', 'Couldn’t load the agent list')}</span></div>
         ) : (
           (templatesQ.data ?? []).map((t) => (
             <TemplateRow
@@ -676,11 +657,11 @@ export function AcpAgentsSettings() {
           ))
         )}
 
-        <div style={{ paddingTop: 12, borderTop: '0.5px solid var(--border)' }}>
+        <div className="st-row st-row-stack" style={{ gap: 4 }}>
           <div className="row gap8" style={{ alignItems: 'center' }}>
-            <strong style={{ fontSize: 13.5 }}>{tr('自定义智能体', 'Custom agent')}</strong>
+            <span className="st-row-label">{tr('自定义智能体', 'Custom agent')}</span>
             <span style={{ flex: 1, fontSize: 12, color: 'var(--text-3)' }}>
-              {tr('任何支持 ACP 的命令。', 'Any command that speaks ACP.')}
+              {tr('任何支持 ACP 协议的命令', 'Any command that supports ACP')}
             </span>
             <button className="btn btn-ghost sm" onClick={() => setCustomOpen((o) => !o)}>
               <Icon name={customOpen ? 'minus' : 'plus'} size={12} />
@@ -689,7 +670,8 @@ export function AcpAgentsSettings() {
           </div>
           {customOpen && <CustomAgentForm taken={taken} onDone={() => setCustomOpen(false)} />}
         </div>
-      </div>
+        </SettingsGroup>
+      </SettingsSection>
     </>
   );
 }

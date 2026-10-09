@@ -1,0 +1,102 @@
+/* ============================================================
+   设置页的分组列表（#857）：参照系统设置的排法——
+   分区标签（小号、灰色、在卡片外）→ 一张卡片 → 细线分隔的行，
+   行内左边是名称（可带一行说明），右边是控件。
+   只放设置页（及 MCP 页）自己用的类；通用 token 仍在 styles/tokens.css。
+   ============================================================ */
+
+/* 单栏、限宽：设置项是一行行读的，不需要铺满大屏 */
+.st-page { display: flex; flex-direction: column; gap: 28px; max-width: 720px; min-width: 0; }
+.st-page-wide { max-width: none; }
+
+.st-section { display: flex; flex-direction: column; min-width: 0; }
+.st-section-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 28px; margin: 0 2px 8px; flex-wrap: wrap;
+}
+.st-section-label {
+  margin: 0; font-size: 12px; font-weight: 500; letter-spacing: 0.02em;
+  color: var(--text-3);
+}
+.st-section-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.st-section-desc {
+  margin: -4px 2px 10px; font-size: 12px; line-height: 1.5; color: var(--text-3);
+}
+
+/* 分组卡片：平、细边，行之间一条细线 */
+.st-group {
+  background: var(--surface); border: 0.5px solid var(--border);
+  border-radius: var(--radius-sm); min-width: 0;
+}
+.st-group > * + * { border-top: 0.5px solid var(--border-2); }
+.st-group-pad { padding: 12px 14px; }
+
+/* 平卡片（无行分隔），用于卡片墙里的单张卡 */
+.st-card {
+  background: var(--surface); border: 0.5px solid var(--border);
+  border-radius: var(--radius-sm); min-width: 0;
+}
+
+.st-row {
+  display: flex; align-items: center; gap: 16px;
+  min-height: 44px; padding: 10px 14px;
+}
+.st-row-text { flex: 1; min-width: 0; }
+.st-row-label { font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.4; }
+.st-row-hint {
+  margin-top: 2px; font-size: 12px; color: var(--text-3); line-height: 1.45;
+}
+.st-row-control {
+  flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+  max-width: 60%; min-width: 0;
+}
+.st-row-control > .input, .st-row-control > select.input { width: 260px; max-width: 100%; }
+.st-row-control > .input.st-num { width: 110px; }
+/* 长内容（多行输入、表格、标签输入）：名称在上，控件占满整行 */
+.st-row-stack { flex-direction: column; align-items: stretch; gap: 8px; }
+.st-row-stack > .st-row-control { max-width: none; width: 100%; flex-shrink: 1; }
+.st-row-stack > .st-row-control > .input,
+.st-row-stack > .st-row-control > .textarea,
+.st-row-stack > .st-row-control > div { width: 100%; }
+.st-row-error { margin-top: 4px; font-size: 12px; color: var(--danger-tx); }
+
+/* 分区底部的操作：主按钮靠右，次要信息靠左 */
+.st-actions {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  flex-wrap: wrap; margin-top: 10px;
+}
+.st-actions-note { margin-right: auto; font-size: 12px; color: var(--text-3); }
+
+/* 可折叠的次要分组（只有部分人用得上的设置） */
+.st-disclosure { margin-top: 18px; }
+.st-disclosure > summary { cursor: pointer; user-select: none; margin: 0 2px 8px; }
+
+/* 状态：圆点 + 文字，不用彩色胶囊 */
+.st-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-2); white-space: nowrap;
+}
+.st-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--text-4); }
+.st-dot-ok { background: var(--ok); }
+.st-dot-warn { background: var(--warn); }
+.st-dot-err { background: var(--danger); }
+.st-dot-busy { background: var(--accent); }
+
+/* 行内的安静删除按钮 */
+.st-quiet-danger { color: var(--danger-tx); }
+
+/* 卡片里放表格：表格自带横线，卡片不再加内边距 */
+.st-group > .table-wrap { border: 0; }
+.st-group .table th:first-child, .st-group .table td:first-child { padding-left: 14px; }
+
+/* 页首一句状态（谁在回答模型调用） */
+.st-status-line {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 13px; line-height: 1.55; color: var(--text-2);
+}
+
+/* 窄屏：控件换到名称下面，避免挤成竖条 */
+@container mainarea (max-width: 640px) {
+  .st-row { flex-wrap: wrap; }
+  .st-row-control { max-width: none; width: 100%; }
+}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { FormField } from '../../components/ui/FormField';
+import { SettingsActions, SettingsGroup, SettingsRow, SettingsSection, SettingsStack } from './settingsUi';
 import { toast } from '../../components/ui/Toast';
 import { ApiError, api, type ExperimentEnvSettings, type ExperimentEnvVar } from '../../lib/api';
 import { tr } from '../../lib/i18n';
@@ -52,19 +52,19 @@ interface TextField {
 const GENERAL_FIELDS: TextField[] = [
   {
     key: 'proxy_url',
-    zh: '出网代理',
-    en: 'Outbound proxy',
+    zh: '外网代理',
+    en: 'Internet proxy',
     placeholder: 'http://10.0.0.1:7890',
-    hintZh: '实验机出外网用的 HTTP 代理。某台机器在 SSH 凭据里单独配了代理的，以凭据为准。',
-    hintEn: 'HTTP proxy for the experiment host. A proxy set on an individual SSH credential takes precedence.',
+    hintZh: '远程服务器上网用的代理，单台服务器设置了代理时以它为准',
+    hintEn: 'Used by remote servers to reach the internet. A server’s own proxy takes priority.',
   },
   {
     key: 'dataset_root',
     zh: '数据位置',
     en: 'Data directory',
     placeholder: '/data',
-    hintZh: '实验机上放数据的根目录（环境变量 $POLARIS_DATASET_ROOT）。生成的代码按这个位置找数据，不再靠猜路径。',
-    hintEn: 'Where data lives on the experiment host ($POLARIS_DATASET_ROOT). Generated code looks for data here instead of guessing.',
+    hintZh: '服务器上存放数据的目录，实验代码会从这里读取数据',
+    hintEn: 'Where data lives on the server. Experiment code reads data from here.',
   },
 ];
 
@@ -75,24 +75,24 @@ const PYTHON_FIELDS: TextField[] = [
     zh: '模型位置',
     en: 'Model directory',
     placeholder: '/hf/model',
-    hintZh: '实验机上本地模型的存放根目录（$POLARIS_MODEL_ROOT）。',
-    hintEn: 'Where local models live on the experiment host ($POLARIS_MODEL_ROOT).',
+    hintZh: '服务器上存放模型的目录',
+    hintEn: 'Where models live on the server.',
   },
   {
     key: 'pip_index_url',
     zh: 'pip 镜像源',
     en: 'pip index URL',
     placeholder: 'https://pypi.tuna.tsinghua.edu.cn/simple',
-    hintZh: '装 Python 依赖走这个源。连不上官方源的机器建议配上。',
-    hintEn: 'Python dependency installs use this index. Set it if the host cannot reach PyPI.',
+    hintZh: '服务器无法访问 PyPI 时填写',
+    hintEn: 'Set this if the server can’t reach PyPI.',
   },
   {
     key: 'hf_endpoint',
     zh: 'HuggingFace 端点',
     en: 'HuggingFace endpoint',
     placeholder: 'https://hf-mirror.com',
-    hintZh: '从 HuggingFace 拉模型/数据集时用的地址。',
-    hintEn: 'Endpoint used when pulling models or datasets from HuggingFace.',
+    hintZh: '下载 HuggingFace 模型和数据集时使用',
+    hintEn: 'Used to download HuggingFace models and datasets.',
   },
 ];
 
@@ -112,13 +112,13 @@ export function envVarIssue(v: ExperimentEnvVar, all: ExperimentEnvVar[]): strin
   const name = v.name.trim();
   if (!name) return null;
   if (!ENV_NAME_RE.test(name)) {
-    return tr('名字只能用字母、数字和下划线，且不能以数字开头', 'Letters, digits and underscores only; cannot start with a digit');
+    return tr('只能用字母、数字和下划线，且不能以数字开头', 'Use letters, digits and underscores, and don’t start with a digit');
   }
   if (RESERVED_ENV_NAMES.has(name.toUpperCase())) {
-    return tr('平台自己会设置这个变量，换个名字', 'The platform sets this variable itself — pick another name');
+    return tr('这个名字由 Polaris 使用，请换一个', 'Polaris uses this name. Choose another.');
   }
-  if (all.filter((x) => x.name.trim() === name).length > 1) return tr('名字重复了', 'Duplicate name');
-  if (CONTROL_CHAR_RE.test(v.value)) return tr('值里不能有换行', 'Values cannot contain line breaks');
+  if (all.filter((x) => x.name.trim() === name).length > 1) return tr('名字重复', 'Duplicate name');
+  if (CONTROL_CHAR_RE.test(v.value)) return tr('值不能包含换行', 'Values can’t contain line breaks');
   return null;
 }
 
@@ -163,34 +163,41 @@ export function ExperimentSettings() {
       setBadField(null);
       setDraft({ ...EMPTY, ...res });
       queryClient.setQueryData(['experiment-env'], res);
-      toast(tr('实验设置已保存', 'Experiment settings saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
     },
     onError: (e) => {
       const field = invalidField(e);
       setBadField(field);
       toast(
         field
-          ? tr(`「${labelOf(field)}」格式不对，没保存`, `Invalid ${field} — nothing saved`)
-          : `${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`,
+          ? tr(`「${labelOf(field)}」格式不对，未保存`, `${labelOf(field)} isn’t valid. Nothing was saved.`)
+          : `${tr('保存失败', 'Couldn’t save')}：${e instanceof Error ? e.message : String(e)}`,
         'error',
       );
     },
   });
 
-  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
-  if (isError) {
+  if (isLoading || isError) {
     return (
-      <div className="empty">
-        {tr('无法加载实验设置（后端不可用）', 'Failed to load experiment settings (backend unavailable)')}
-        <div style={{ marginTop: 10 }}>
-          <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-        </div>
-      </div>
+      <SettingsStack>
+        <SettingsSection title={tr('实验环境', 'Experiment environment')}>
+          <SettingsGroup>
+            {isLoading ? (
+              <div className="st-row"><span className="st-row-hint">{tr('加载中…', 'Loading…')}</span></div>
+            ) : (
+              <SettingsRow label={tr('无法加载实验设置', 'Couldn’t load experiment settings')}>
+                <button className="btn btn-ghost sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
+              </SettingsRow>
+            )}
+          </SettingsGroup>
+        </SettingsSection>
+        <ManagedCommandWatchdogAdminCard />
+      </SettingsStack>
     );
   }
 
   const renderField = (f: TextField) => (
-    <FormField
+    <SettingsRow
       key={f.key}
       label={tr(f.zh, f.en)}
       hint={tr(f.hintZh, f.hintEn)}
@@ -207,7 +214,7 @@ export function ExperimentSettings() {
           setDraft({ ...shown, [f.key]: e.target.value });
         }}
       />
-    </FormField>
+    </SettingsRow>
   );
 
   const setEnvVars = (env_vars: ExperimentEnvVar[]) => {
@@ -217,23 +224,20 @@ export function ExperimentSettings() {
   const pythonCount = pythonConfiguredCount(saved);
 
   return (
-    <>
-    <div className="card card-pad">
-      <div className="section-h" style={{ marginBottom: 4 }}>
-        <Icon name="flask" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('实验环境', 'Experiment environment')}
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6, marginBottom: 16 }}>
-        {tr(
-          '所有实验共用这一份。实验跑在另一台机器上，平台不知道那台机器的情况——这里配的会写进每个实验的启动环境，也会作为事实告诉写代码的模型，免得它猜错。留空表示不配置。',
-          'Shared by every experiment. Experiments run on another machine the platform knows nothing about — what you set here goes into each run’s environment and is stated as fact to the model that writes the code, so it does not guess. Leave a field empty to skip it.',
-        )}
-      </div>
+    <SettingsStack>
+    <SettingsSection
+      title={tr('实验环境', 'Experiment environment')}
+      desc={tr('告诉实验数据和软件在服务器上的位置，不需要的项留空。', 'Tell experiments where data and software live on the server. Leave unused fields empty.')}
+    >
+      <SettingsGroup>
+      {GENERAL_FIELDS.map(renderField)}
 
-      <div className="settings-fields">{GENERAL_FIELDS.map(renderField)}</div>
-
-      <div className="field">
-        <label className="field-label">{tr('自定义环境变量', 'Custom environment variables')}</label>
+      <SettingsRow
+        stack
+        label={tr('自定义环境变量', 'Custom environment variables')}
+        hint={tr('每次实验启动时设置，例如软件安装位置或许可证服务器', 'Set when each experiment starts, e.g. where software is installed')}
+        error={badField === 'env_vars' ? tr('有变量名或值不正确', 'A variable name or value isn’t valid') : null}
+      >
         <div className="col" style={{ gap: 8 }}>
           {shown.env_vars.map((v, i) => (
             <div key={i}>
@@ -253,7 +257,7 @@ export function ExperimentSettings() {
                   className="input mono"
                   style={{ flex: 1, minWidth: 0 }}
                   value={v.value}
-                  placeholder={tr('值', 'value')}
+                  placeholder={tr('值', 'Value')}
                   spellCheck={false}
                   autoComplete="off"
                   aria-label={tr('变量值', 'Variable value')}
@@ -261,7 +265,7 @@ export function ExperimentSettings() {
                 />
                 <button
                   className="btn btn-ghost sm"
-                  title={tr('删除这一行', 'Remove this row')}
+                  title={tr('删除', 'Remove')}
                   onClick={() => setEnvVars(shown.env_vars.filter((_, j) => j !== i))}
                 >
                   <Icon name="x" size={12} />
@@ -271,49 +275,40 @@ export function ExperimentSettings() {
             </div>
           ))}
           <div>
-            <button className="btn btn-soft sm" onClick={() => setEnvVars([...shown.env_vars, { name: '', value: '' }])}>
+            <button className="btn btn-ghost sm" onClick={() => setEnvVars([...shown.env_vars, { name: '', value: '' }])}>
               <Icon name="plus" size={12} />
               {tr('添加变量', 'Add variable')}
             </button>
           </div>
         </div>
-        {badField === 'env_vars' ? (
-          <div className="field-error">{tr('有变量名或值不合法', 'A variable name or value is invalid')}</div>
-        ) : (
-          <div className="field-hint">
-            {tr(
-              '每个实验启动前都会导出，用来告诉实验机任何事：软件装在哪（如 MATLAB_ROOT）、许可证服务器、项目名。写代码的模型只看得到变量名、看不到值，会从环境里读取。',
-              'Exported before every run — use them for anything the host needs: where software is installed (e.g. MATLAB_ROOT), a license server, a project name. The model writing the code sees only the names, never the values, and reads them from the environment.',
-            )}
-          </div>
-        )}
-      </div>
+      </SettingsRow>
+      </SettingsGroup>
 
       {/* 配过才默认展开：key 随「配没配」变化，保存后按新状态重新决定开合 */}
-      <details key={pythonCount > 0 ? 'open' : 'closed'} open={pythonCount > 0} className="settings-disclosure">
-        <summary>
+      <details key={pythonCount > 0 ? 'open' : 'closed'} open={pythonCount > 0} className="st-disclosure">
+        <summary className="st-section-label">
           {tr('Python / 机器学习', 'Python / machine learning')}
-          <span className="settings-disclosure-note">
+          <span style={{ marginLeft: 8, fontWeight: 400 }}>
             {pythonCount > 0
-              ? tr(`已配 ${pythonCount} 项`, `${pythonCount} set`)
-              : tr('模型目录、pip 镜像、HuggingFace 端点', 'Model directory, pip index, HuggingFace endpoint')}
+              ? tr(`已设置 ${pythonCount} 项`, `${pythonCount} set`)
+              : tr('模型目录、pip 镜像、HuggingFace 地址', 'Model directory, pip index, HuggingFace endpoint')}
           </span>
         </summary>
-        <div className="settings-fields" style={{ marginTop: 12 }}>{PYTHON_FIELDS.map(renderField)}</div>
+        <SettingsGroup>{PYTHON_FIELDS.map(renderField)}</SettingsGroup>
       </details>
 
-      <div className="row" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
+      <SettingsActions>
         <button
-          className="btn btn-primary"
+          className="btn btn-primary sm"
           disabled={!dirty || hasEnvIssue || saveMutation.isPending}
           onClick={() => saveMutation.mutate()}
         >
           {saveMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
         </button>
-      </div>
-    </div>
+      </SettingsActions>
+    </SettingsSection>
     <ManagedCommandWatchdogAdminCard />
-    </>
+    </SettingsStack>
   );
 }
 
@@ -338,51 +333,40 @@ function ManagedCommandWatchdogAdminCard() {
       setMinutes(saved.max_unanswered_minutes);
       queryClient.setQueryData(['managed-command-watchdog', 'admin'], saved);
       void queryClient.invalidateQueries({ queryKey: ['managed-command-watchdog', 'user'] });
-      toast(tr('无人答复策略已保存', 'Unanswered-command policy saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
     },
     onError: (error) => toast(
-      `${tr('保存失败', 'Save failed')}：${error instanceof Error ? error.message : String(error)}`,
+      `${tr('保存失败', 'Couldn’t save')}：${error instanceof Error ? error.message : String(error)}`,
       'error',
     ),
   });
   return (
-    <div className="card card-pad" style={{ marginTop: 16 }}>
-      <div className="section-h" style={{ marginBottom: 4 }}>
-        <Icon name="clock" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('远端命令无人答复策略', 'Unanswered remote-command policy')}
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6, marginBottom: 16 }}>
-        {tr(
-          '当远端命令超时后转为等待用户决定，此值是允许等待的最长时间。到期后仅在确认该命令本身仍占用 GPU 时自动终止；未占用 GPU 或无法可靠归属时继续保留。用户可以选择更短时间，但不能超过此上限。',
-          'Maximum wait after a timed-out remote command asks for a decision. Once reached, Polaris stops it only when GPU use is attributable to that command; idle or uncertain commands remain running. Users may choose a shorter wait, never a longer one.',
-        )}
-      </div>
-      {query.isError ? (
-        <div className="empty">{tr('无法加载设置', 'Failed to load settings')}</div>
-      ) : (
-        <FormField
-          label={tr('最长等待时间（分钟）', 'Maximum wait (minutes)')}
-          hint={tr('范围 15 分钟至 7 天，默认 120 分钟。', '15 minutes to 7 days; default 120 minutes.')}
+    <SettingsSection title={tr('远程命令超时', 'Remote command timeout')}>
+      <SettingsGroup>
+        <SettingsRow
+          label={tr('最长等待（分钟）', 'Longest wait (minutes)')}
+          hint={query.isError
+            ? tr('无法加载此设置', 'Couldn’t load this setting')
+            : tr('到时终止仍占用 GPU 的命令；15–10080，默认 120', 'Then stops commands still using a GPU. 15–10,080, default 120.')}
         >
           <input
-            className="input mono"
+            className="input mono st-num"
             type="number"
             min={15}
             max={10080}
             value={shown}
+            disabled={query.isError}
             onChange={(event) => setMinutes(Number(event.target.value))}
           />
-        </FormField>
-      )}
-      <div className="row" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
-        <button
-          className="btn btn-primary"
-          disabled={query.isLoading || shown < 15 || shown > 10080 || mutation.isPending || shown === query.data?.max_unanswered_minutes}
-          onClick={() => mutation.mutate()}
-        >
-          {mutation.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
-        </button>
-      </div>
-    </div>
+          <button
+            className="btn btn-primary sm"
+            disabled={query.isLoading || shown < 15 || shown > 10080 || mutation.isPending || shown === query.data?.max_unanswered_minutes}
+            onClick={() => mutation.mutate()}
+          >
+            {mutation.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+          </button>
+        </SettingsRow>
+      </SettingsGroup>
+    </SettingsSection>
   );
 }
