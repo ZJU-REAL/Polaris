@@ -16,6 +16,7 @@
   一篇论文的 PDF 丢了不该让全部数据都带不走。
 """
 
+import asyncio
 import io
 import json
 import logging
@@ -188,7 +189,11 @@ async def _export_libraries(
                         if paper.pdf_path and Path(paper.pdf_path).is_file():
                             pdf_dir = lib_dir / "pdfs"
                             pdf_dir.mkdir(parents=True, exist_ok=True)
-                            shutil.copyfile(paper.pdf_path, pdf_dir / f"{keys[paper.id]}.pdf")
+                            await asyncio.to_thread(
+                                shutil.copyfile,
+                                paper.pdf_path,
+                                pdf_dir / f"{keys[paper.id]}.pdf",
+                            )
                             counts["pdfs"] += 1
                     except OSError as e:
                         _warn(manifest, "libraries", f"{library.name}/pdf/{paper.title}", e)
@@ -514,13 +519,13 @@ async def _export_manuscripts(
                 if file.is_binary:
                     src = asset_path(manuscript.id, file.path)
                     if src.is_file():
-                        shutil.copyfile(src, target)
+                        await asyncio.to_thread(shutil.copyfile, src, target)
                 else:
                     target.write_text(file.content or "", encoding="utf-8")
             pdf = latest_ok_pdf(manuscript)
             if pdf is not None:
                 ms_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(pdf, ms_dir / "compiled.pdf")
+                await asyncio.to_thread(shutil.copyfile, pdf, ms_dir / "compiled.pdf")
             counts["manuscripts"] += 1
         except Exception as e:  # noqa: BLE001
             _warn(manifest, "manuscripts", manuscript.title, e)
@@ -624,8 +629,9 @@ async def run_full_export(
     (tree / "README.md").write_text(_README, encoding="utf-8")
     _dump_json(tree / "manifest.json", manifest)
     zip_path = dest_dir / "export.zip"
-    _zip_tree(tree, zip_path)
-    shutil.rmtree(tree, ignore_errors=True)
+    # 打包与清理都是大目录的磁盘活：放线程里，别冻住整个引擎的事件循环（#850）
+    await asyncio.to_thread(_zip_tree, tree, zip_path)
+    await asyncio.to_thread(shutil.rmtree, tree, ignore_errors=True)
     return zip_path, manifest
 
 
@@ -655,7 +661,7 @@ async def run_full_export_task(redis: Redis, *, task_id: str, user_id: str) -> d
         final = export_zip_path(task_id)
         final.parent.mkdir(parents=True, exist_ok=True)
         zip_path.replace(final)
-        shutil.rmtree(workdir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, workdir, ignore_errors=True)
         await publish_paper_task_event(
             bus,
             task_id,
@@ -669,7 +675,7 @@ async def run_full_export_task(redis: Redis, *, task_id: str, user_id: str) -> d
         return {"counts": manifest["counts"]}
     except Exception as e:  # noqa: BLE001 — 失败以 error 事件告知前端，不再重抛（重试无意义）
         logger.exception("full export failed: task=%s user=%s", task_id, user_id)
-        shutil.rmtree(workdir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, workdir, ignore_errors=True)
         await publish_paper_task_event(bus, task_id, "error", {"message": str(e)})
         return {"error": str(e)}
     finally:

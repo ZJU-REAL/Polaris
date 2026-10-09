@@ -654,25 +654,25 @@ class LLMRouter:
         voyage_id: uuid.UUID | None,
         library_id: uuid.UUID | None = None,
     ) -> None:
+        from app.core.db import side_write
         from app.models.llm_config import LLMUsage
 
-        try:
-            async with get_sessionmaker()() as session:
-                session.add(
-                    LLMUsage(
-                        user_id=user_id,
-                        project_id=project_id,
-                        library_id=library_id,
-                        voyage_id=voyage_id,
-                        stage=stage,
-                        model=model,
-                        prompt_tokens=int(usage.get("prompt_tokens", 0)),
-                        completion_tokens=int(usage.get("completion_tokens", 0)),
-                    )
-                )
-                await session.commit()
-        except Exception:  # noqa: BLE001 — 记账尽力而为，失败不打断 LLM 主流程
-            logger.warning("llm usage accounting failed (stage=%s)", stage, exc_info=True)
+        row = LLMUsage(
+            user_id=user_id,
+            project_id=project_id,
+            library_id=library_id,
+            voyage_id=voyage_id,
+            stage=stage,
+            model=model,
+            prompt_tokens=int(usage.get("prompt_tokens", 0)),
+            completion_tokens=int(usage.get("completion_tokens", 0)),
+        )
+
+        async def _write(session) -> None:
+            session.add(row)
+
+        # 记账尽力而为，失败不打断 LLM 主流程；调用方握着写锁时转后台写（见 side_write）
+        await side_write(_write, what=f"llm usage accounting (stage={stage})")
 
     async def _log_call(
         self,

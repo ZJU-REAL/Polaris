@@ -60,12 +60,20 @@ async def test_enqueueing_a_registered_task_passes_the_check():
 # ---- sqlite 引擎 ----
 
 
-def test_sqlite_engine_skips_pool_sizing():
-    """sqlite 用的是 NullPool/StaticPool，传 pool_size 会直接报错——测试库靠这条保命。"""
-    from app.core.db import get_engine
+def test_sqlite_engine_pool_sizing():
+    """文件型 sqlite 是 QueuePool：池子按配置放大，装得下进程内任务的并发；
+    内存库是 StaticPool，传池参数会直接报错，所以不传。"""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.core.config import get_settings
+    from app.core.db import _is_memory_sqlite, get_engine
 
     engine = get_engine()
-    assert engine is not None  # 建得起来即说明没把池参数塞给 sqlite
+    assert engine.pool.size() == get_settings().db_pool_size
+    assert _is_memory_sqlite("sqlite+aiosqlite://")
+    assert _is_memory_sqlite("sqlite+aiosqlite:///:memory:")
+    assert not _is_memory_sqlite("sqlite+aiosqlite:////tmp/polaris.db")
+    create_async_engine("sqlite+aiosqlite://")  # 内存库不带池参数建得起来
 
 
 # ---- 启动对账要认领所有在途状态 ----

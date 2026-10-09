@@ -9,6 +9,7 @@
   ②soffice 渲染成图 → VLM 检查布局/文字可读性 → 不过让 LLM 修（≤2 轮，无 soffice 降级跳过）。
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -197,7 +198,7 @@ async def present_collect(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 "body": (wiki or p.abstract or "")[:cap],
             }
         )
-    catalog, _ = _figure_catalog(papers)
+    catalog, _ = await asyncio.to_thread(_figure_catalog, papers)
     ctx.checkpoint["present_ctx"] = {"mode": mode, "materials": materials, "figures": catalog}
     return {"papers": len(materials), "figures": len(catalog), "mode": mode}
 
@@ -282,7 +283,7 @@ async def present_build(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
     if not deck:
         raise ValueError("present.build requires present_deck in checkpoint")
     papers = [p for p, _ in await _load_papers(ctx)]
-    _, blobs = _figure_catalog(papers)
+    _, blobs = await asyncio.to_thread(_figure_catalog, papers)
 
     # ①文本规范迭代：确定性校验 → LLM 修
     text_rounds = 0
@@ -296,14 +297,15 @@ async def present_build(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         spec = DeckSpec.model_validate(deck)
     remaining = validate_deck_spec(spec, figure_indices=set(blobs))
 
-    pptx = build_deck(spec, blobs)
+    pptx = await asyncio.to_thread(build_deck, spec, blobs)
 
     # ②视觉反馈迭代：soffice 渲染成图 → VLM 审 → LLM 修（无 soffice 降级跳过）
     visual_rounds, visual_issues = 0, []
     rendered_pages = reviewed_pages = 0
     if soffice_available():
         for _ in range(_FIX_ROUNDS):
-            images = render_slide_images(pptx)
+            # soffice 子进程（最长 120s）+ 逐页栅格化：放线程里，别冻住整个引擎的事件循环
+            images = await asyncio.to_thread(render_slide_images, pptx)
             if not images:
                 break
             rendered_pages = len(images)
@@ -345,12 +347,12 @@ async def present_build(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             )
             deck = await _fix_deck(ctx, spec.model_dump(), "视觉审查未通过：\n" + diagnosis)
             spec = DeckSpec.model_validate(deck)
-            pptx = build_deck(spec, blobs)
+            pptx = await asyncio.to_thread(build_deck, spec, blobs)
 
     out_dir = Path(get_settings().data_dir) / "presentations"
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{ctx.run.id}.pptx"
-    path.write_bytes(pptx)
+    await asyncio.to_thread(path.write_bytes, pptx)
     ctx.checkpoint["present_deck"] = spec.model_dump()
     ctx.checkpoint["presentation"] = {
         "path": str(path),

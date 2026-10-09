@@ -727,6 +727,15 @@ async def await_task(task_id: str) -> None:
         await task
 
 
+async def cancel_all_tasks(grace_s: float = 5.0) -> None:
+    """停机时取消本进程起的补全/批量导入任务，给它们 ``grace_s`` 秒收尾（#850）。"""
+    tasks = [t for t in _TASKS.values() if not t.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.wait(tasks, timeout=grace_s)
+
+
 async def owner_of(redis: Redis, task_id: str) -> str | None:
     """取任务归属用户 id（字符串），无则 None。"""
     return await redis.get(paper_task_owner_key(task_id))

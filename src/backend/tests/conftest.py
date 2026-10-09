@@ -52,10 +52,11 @@ async def _stop_background_tasks() -> None:
     库，下一个用例重建表就会撞上 "database is locked"——哪个用例倒霉看时机。"""
     import asyncio
 
+    import app.core.db as db_mod
     import app.core.queue as queue_mod
     from app.services import paper_enrich
 
-    tasks = list(paper_enrich._TASKS.values())
+    tasks = list(paper_enrich._TASKS.values()) + list(db_mod._side_writes)
     if queue_mod._queue is not None:
         tasks += list(getattr(queue_mod._queue, "_tasks", {}).values())
     for task in tasks:

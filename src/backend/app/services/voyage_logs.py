@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select
 
-from app.core.db import get_sessionmaker
 from app.models.base import utcnow
 
 if TYPE_CHECKING:
@@ -57,29 +56,34 @@ async def record_terminal_log(
     if not message:
         return
     try:
+        from app.core.db import side_write
         from app.models.voyage import VoyageTerminalLog
 
         run_uuid = run_id if isinstance(run_id, uuid.UUID) else uuid.UUID(str(run_id))
-        async with get_sessionmaker()() as session:
-            now = time.monotonic()
-            if _last_cleanup_at is None or now - _last_cleanup_at >= _CLEANUP_INTERVAL:
-                _last_cleanup_at = now
+        now = time.monotonic()
+        cleanup = _last_cleanup_at is None or now - _last_cleanup_at >= _CLEANUP_INTERVAL
+        if cleanup:
+            _last_cleanup_at = now
+        row = VoyageTerminalLog(
+            run_id=run_uuid,
+            event=event,
+            level=level,
+            stage=stage,
+            message=_truncate(message),
+            at=utcnow(),
+        )
+
+        async def _write(session) -> None:
+            if cleanup:
                 await session.execute(
                     delete(VoyageTerminalLog).where(
                         VoyageTerminalLog.at < utcnow() - timedelta(days=RETENTION_DAYS)
                     )
                 )
-            session.add(
-                VoyageTerminalLog(
-                    run_id=run_uuid,
-                    event=event,
-                    level=level,
-                    stage=stage,
-                    message=_truncate(message),
-                    at=utcnow(),
-                )
-            )
-            await session.commit()
+            session.add(row)
+
+        # 引擎常在握着写锁时记日志：被锁住就转后台写，不卡住引擎（见 side_write）
+        await side_write(_write, what=f"voyage terminal log (run={run_id} event={event})")
     except Exception:  # noqa: BLE001 — 日志记录绝不影响任务主流程
         logger.warning(
             "voyage terminal log write failed (run=%s event=%s)", run_id, event, exc_info=True

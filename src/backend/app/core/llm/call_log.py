@@ -114,37 +114,40 @@ async def record_call(
     """写一条调用日志（尽力而为，失败只 warning）；低频顺带清理过期日志。"""
     global _last_cleanup_at
     try:
+        from app.core.db import side_write
         from app.models.llm_config import LLMCallLog
 
-        async with get_sessionmaker()() as session:
-            now = time.monotonic()
-            if _last_cleanup_at is None or now - _last_cleanup_at >= _CLEANUP_INTERVAL:
-                _last_cleanup_at = now
+        now = time.monotonic()
+        cleanup = _last_cleanup_at is None or now - _last_cleanup_at >= _CLEANUP_INTERVAL
+        if cleanup:
+            _last_cleanup_at = now
+        row = LLMCallLog(
+            stage=stage,
+            provider_name=provider_name,
+            model=model,
+            duration_ms=duration_ms,
+            status=status,
+            error=truncate_text(error, MESSAGE_MAX_CHARS) if error else None,
+            request=request,
+            response=truncate_text(response, RESPONSE_MAX_CHARS) if response is not None else None,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            user_id=user_id,
+            project_id=project_id,
+            voyage_id=voyage_id,
+            library_id=library_id,
+        )
+
+        async def _write(session) -> None:
+            if cleanup:
                 await session.execute(
                     delete(LLMCallLog).where(
                         LLMCallLog.created_at < utcnow() - timedelta(days=RETENTION_DAYS)
                     )
                 )
-            session.add(
-                LLMCallLog(
-                    stage=stage,
-                    provider_name=provider_name,
-                    model=model,
-                    duration_ms=duration_ms,
-                    status=status,
-                    error=truncate_text(error, MESSAGE_MAX_CHARS) if error else None,
-                    request=request,
-                    response=truncate_text(response, RESPONSE_MAX_CHARS)
-                    if response is not None
-                    else None,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    user_id=user_id,
-                    project_id=project_id,
-                    voyage_id=voyage_id,
-                    library_id=library_id,
-                )
-            )
-            await session.commit()
+            session.add(row)
+
+        # 调用方可能正握着写锁：被锁住就转后台写，不卡住调用方（见 side_write）
+        await side_write(_write, what=f"llm call log (stage={stage})")
     except Exception:  # noqa: BLE001 — 日志记录绝不影响业务调用
         logger.warning("llm call log write failed (stage=%s)", stage, exc_info=True)
