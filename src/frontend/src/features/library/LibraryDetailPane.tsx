@@ -92,7 +92,7 @@ function MetaItem({ label, children }: { label: string; children: React.ReactNod
       <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', width: 88, flexShrink: 0 }}>
         {label}
       </span>
-      <span style={{ fontSize: 12.5, color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>
+      <span style={{ fontSize: 13, color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>
         {children}
       </span>
     </div>
@@ -169,7 +169,7 @@ export function LibraryDetailPane({
   const renderSnapshotFigure = useCallback(
     () => (
       <span className="muted" style={{ fontSize: 12 }}>
-        {tr('（图片已随源论文删除）', '(figure removed with the source paper)')}
+        {tr('（图片已删除）', '(Figure deleted)')}
       </span>
     ),
     [],
@@ -183,7 +183,7 @@ export function LibraryDetailPane({
   const { openConcept, openConceptByName } = usePoolConceptNav();
 
   if (paperId !== null && paperQuery.isLoading) {
-    return <div className="empty" style={{ margin: 'auto' }}>{tr('加载论文详情…', 'Loading paper…')}</div>;
+    return <div className="empty" style={{ margin: 'auto' }}>{tr('加载中…', 'Loading…')}</div>;
   }
 
   // 详情拉不到（比如论文刚被删）时退回快照展示
@@ -218,12 +218,12 @@ export function LibraryDetailPane({
         {alive && paper.has_wiki && (
           <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
             <Icon name="sparkle" size={11} />
-            wiki
+            {tr('解读', 'Summary')}
           </span>
         )}
         {!alive && (
           <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-            {tr('源课题已删除，仅保留快照', 'Source topic deleted — snapshot only')}
+            {tr('原文已删除，仅保留副本', 'Paper deleted, copy kept')}
           </span>
         )}
       </div>
@@ -231,7 +231,7 @@ export function LibraryDetailPane({
       {/* —— 标题 + 作者 + 机构（都可点：点了按它过滤列表）+ 相关度 —— */}
       <div className="row" style={{ alignItems: 'flex-start', gap: 20 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
+          <h1 style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
             {title}
           </h1>
           <AuthorLinks authors={authors} onFilter={onFilterAuthor} />
@@ -250,17 +250,17 @@ export function LibraryDetailPane({
             onClick={() => navigate(`/papers/${paper.id}/read`, { state: readerFrom(location, 'library') })}
           >
             <Icon name="file" size={13} />
-            {tr('打开阅读页', 'Open reader')}
+            {tr('阅读全文', 'Read paper')}
           </button>
         )}
         {alive && paper.wiki_content && (
           <button
             className="btn btn-soft sm"
-            title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
+            title={tr('全屏阅读解读，可导出 PDF', 'Read the summary full screen and export to PDF')}
             onClick={openReader}
           >
             <Icon name="book" size={13} />
-            {tr('阅览模式', 'Reading mode')}
+            {tr('阅读模式', 'Reading mode')}
           </button>
         )}
         {alive &&
@@ -274,7 +274,7 @@ export function LibraryDetailPane({
             </button>
           ) : (
             // 手动添加、未纳入任何方向文献库：置灰不可点，hover 说明原因
-            <span title={tr('这篇是手动添加的，不在任何方向文献库里', 'Manually added — not in any direction library')}>
+            <span title={tr('这篇论文不在任何文献库中', 'This paper isn’t in any library')}>
               <button className="btn btn-ghost sm" disabled style={{ opacity: 0.45, cursor: 'not-allowed' }}>
                 <Icon name="book" size={13} />
                 {tr('去文献库', 'Open library')}
@@ -302,7 +302,7 @@ export function LibraryDetailPane({
             style={{ textDecoration: 'none' }}
           >
             <Icon name="link" size={13} />
-            {tr('原文链接', 'Source link')}
+            {tr('原文链接', 'Original link')}
           </a>
         )}
         {alive && <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />}
@@ -348,7 +348,7 @@ export function LibraryDetailPane({
             color: 'var(--text)',
           }}
         >
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
             TL;DR
           </span>
           {tldr}
@@ -359,23 +359,23 @@ export function LibraryDetailPane({
           只是多一次点击。样式与「我的笔记」同款，默认收起。 */}
       <MetaFold label={tr('摘要', 'Abstract')}>
         {abstract ? (
-          <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>{abstract}</div>
+          <div style={{ fontSize: 13, lineHeight: 1.7 }}>{abstract}</div>
         ) : (
-          <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
             {tr('这篇还没有摘要。', 'No abstract for this paper.')}
           </p>
         )}
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '0.5px solid var(--border)' }}>
-        <MetaItem label="arxiv_id">
+        <MetaItem label={tr('arXiv 编号', 'arXiv ID')}>
           {arxivId ? <span className="mono">{arxivId}</span> : <span className="muted">—</span>}
         </MetaItem>
-        <MetaItem label="doi">{doi ? <span className="mono">{doi}</span> : <span className="muted">—</span>}</MetaItem>
-        <MetaItem label={tr('年份', 'year')}>
+        <MetaItem label="DOI">{doi ? <span className="mono">{doi}</span> : <span className="muted">—</span>}</MetaItem>
+        <MetaItem label={tr('年份', 'Year')}>
           {year !== null ? <span className="mono">{year}</span> : <span className="muted">—</span>}
         </MetaItem>
-        <MetaItem label={tr('发表于', 'venue')}>{venue ?? <span className="muted">—</span>}</MetaItem>
+        <MetaItem label={tr('发表于', 'Venue')}>{venue ?? <span className="muted">—</span>}</MetaItem>
         {snapshot.citedByCount !== undefined && (
-          <MetaItem label={tr('被引', 'cited by')}>
+          <MetaItem label={tr('被引', 'Cited by')}>
             <span className="mono">{snapshot.citedByCount}</span>
           </MetaItem>
         )}
@@ -406,8 +406,8 @@ export function LibraryDetailPane({
                 className="row gap8"
                 style={{ paddingBottom: 10, marginBottom: 16, borderBottom: '0.5px solid var(--border)' }}
               >
-                <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
-                  {tr('AI 图文介绍', 'AI intro')}
+                <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
+                  {tr('AI 解读', 'AI summary')}
                 </span>
                 <CompileBadge model={paper.compiled_model} at={paper.compiled_at} />
                 <WikiHeaderActions
@@ -427,8 +427,8 @@ export function LibraryDetailPane({
                 textAlign: 'center',
               }}
             >
-              <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
-                {tr('这篇还没有 AI 解读。', 'No AI wiki for this paper yet.')}
+              <div style={{ fontSize: 13, color: 'var(--text-3)', lineHeight: 1.6 }}>
+                {tr('还没有解读', 'No summary yet')}
               </div>
             </div>
           )}
@@ -442,8 +442,8 @@ export function LibraryDetailPane({
             className="row gap8"
             style={{ paddingBottom: 10, marginBottom: 16, borderBottom: '0.5px solid var(--border)' }}
           >
-            <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
-              {tr('AI 图文介绍（快照）', 'AI intro (snapshot)')}
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
+              {tr('AI 解读（副本）', 'AI summary (copy)')}
             </span>
           </div>
           <Markdown source={snapshotWiki} onWikiLink={openConceptByName} renderFigure={renderSnapshotFigure} />

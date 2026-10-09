@@ -5,6 +5,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
+import { tr } from '../../lib/i18n';
 import {
   api,
   type HighlightColor,
@@ -57,16 +58,16 @@ function HighlightCard({
     mutationFn: (input: { color?: HighlightColor; style?: HighlightStyle; note?: string | null }) =>
       api.patchHighlight(hl.id, input),
     onSuccess: () => onChanged(),
-    onError: (e) => toast(`保存失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败：', 'Couldn’t save: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteHighlight(hl.id),
     onSuccess: () => {
-      toast('划线已删除', 'ok');
+      toast(tr('已删除划线', 'Highlight deleted'), 'ok');
       onChanged();
     },
-    onError: (e) => toast(`删除失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败：', 'Couldn’t delete: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const saveNote = () => {
@@ -74,7 +75,7 @@ function HighlightCard({
       { note: draft.trim() || '' },
       {
         onSuccess: () => {
-          toast('批注已保存', 'ok');
+          toast(tr('已保存批注', 'Note saved'), 'ok');
           setEditing(false);
           onChanged();
         },
@@ -98,9 +99,9 @@ function HighlightCard({
       {/* 原文引用（点它跳回 PDF） */}
       <div
         onClick={onJump}
-        title="跳到 PDF 中的位置"
+        title={tr('跳到 PDF 中的位置', 'Jump to this spot in the PDF')}
         style={{
-          fontSize: 12.5,
+          fontSize: 13,
           lineHeight: 1.5,
           color: 'var(--text-2)',
           fontStyle: 'italic',
@@ -119,8 +120,8 @@ function HighlightCard({
         <div style={{ marginTop: 8 }}>
           <textarea
             className="textarea"
-            style={{ width: '100%', minHeight: 60, fontSize: 12.5, resize: 'vertical' }}
-            placeholder="给这处划线写点批注，支持 Markdown…"
+            style={{ width: '100%', minHeight: 60, fontSize: 13, resize: 'vertical' }}
+            placeholder={tr('写批注，支持 Markdown', 'Add a note (Markdown supported)')}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             autoFocus
@@ -134,7 +135,7 @@ function HighlightCard({
                 style={{ fontSize: 11 }}
                 onClick={() => patchMutation.mutate({ style: st.v })}
               >
-                {st.label}
+                {tr(st.label, st.en)}
               </span>
             ))}
           </div>
@@ -144,7 +145,7 @@ function HighlightCard({
               {HIGHLIGHT_COLORS.map((c) => (
                 <button
                   key={c.v}
-                  title={`${c.label}色`}
+                  title={tr(`${c.label}色`, c.en)}
                   onClick={() => patchMutation.mutate({ color: c.v })}
                   style={{
                     width: 16,
@@ -160,10 +161,10 @@ function HighlightCard({
               ))}
             </span>
             <button className="btn btn-ghost sm" onClick={() => setEditing(false)}>
-              取消
+              {tr('取消', 'Cancel')}
             </button>
             <button className="btn btn-primary sm" disabled={patchMutation.isPending} onClick={saveNote}>
-              保存
+              {tr('保存', 'Save')}
             </button>
           </div>
         </div>
@@ -175,18 +176,17 @@ function HighlightCard({
         )
       )}
 
-      {/* 页脚：页码 · 作者 · 时间 · 操作 */}
+      {/* 页脚：页码 · 时间 · 操作（单用户本地版不显示作者） */}
       <div className="row gap8" style={{ marginTop: 7 }}>
-        <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
+        <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)' }}>
           P{hl.page}
         </span>
-        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{hl.author_name}</span>
-        <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{fmtTime(hl.created_at)}</span>
+        <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)' }}>{fmtTime(hl.created_at)}</span>
         {canEdit && !editing && (
           <span className="row gap6" style={{ marginLeft: 'auto' }}>
             <button
               className="icon-btn"
-              title={hl.note ? '编辑批注' : '加批注'}
+              title={hl.note ? tr('编辑批注', 'Edit note') : tr('添加批注', 'Add note')}
               style={{ width: 22, height: 22 }}
               onClick={() => {
                 setDraft(hl.note ?? '');
@@ -197,7 +197,7 @@ function HighlightCard({
             </button>
             <button
               className="icon-btn"
-              title="删除划线"
+              title={tr('删除划线', 'Delete highlight')}
               style={{ width: 22, height: 22 }}
               disabled={deleteMutation.isPending}
               onClick={() => deleteMutation.mutate()}
@@ -225,15 +225,15 @@ export function HighlightsPanel({
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '14px 14px 12px' }}>
         {loading ? (
-          <div className="empty">加载标注…</div>
+          <div className="empty">{tr('加载中…', 'Loading…')}</div>
         ) : error ? (
-          <EmptyState compact icon="x" title="标注暂时加载不出来" desc="后端不可用或接口尚未就绪，稍后再试。" />
+          <EmptyState compact icon="x" title={tr('无法加载划线', 'Couldn’t load highlights')} desc={tr('请确认本机引擎正在运行，然后重试。', 'Make sure the local engine is running, then try again.')} />
         ) : highlights.length === 0 ? (
           <EmptyState
             compact
             icon="pen"
-            title="还没有划线"
-            desc="在左边 PDF 里选中句子，点弹出的颜色即可划线。"
+            title={tr('还没有划线', 'No highlights yet')}
+            desc={tr('在 PDF 中选中文字，再选一种颜色即可划线。', 'Select text in the PDF, then pick a color to highlight it.')}
           />
         ) : (
           highlights.map((h) => (

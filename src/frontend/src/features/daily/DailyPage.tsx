@@ -59,6 +59,7 @@ import {
   WikiHeaderActions,
 } from '../shared/PaperDetailBlocks';
 import { DailyLikes } from './DailyLikes';
+import { StateDot } from '../shared/StateDot';
 import { DailyChatTab } from './DailyChatTab';
 import { CollectTreeModal, type CollectPaperRef } from './CollectTreeModal';
 import { PaperProgressModal } from '../library/PaperProgressModal';
@@ -98,9 +99,9 @@ function AnnounceBadge({ type }: { type: DailyPaperItem['announce_type'] }) {
     return (
       <span
         className="pill sm"
-        style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)', fontWeight: 700, letterSpacing: '0.05em', flexShrink: 0 }}
+        style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)', fontWeight: 600, letterSpacing: '0.05em', flexShrink: 0 }}
       >
-        NEW
+        {tr('新', 'NEW')}
       </span>
     );
   }
@@ -148,7 +149,7 @@ function DailyRow({
           checked={checked}
           onClick={(e) => e.stopPropagation()}
           onChange={onToggleCheck}
-          title={tr('选中后可批量导出引用', 'Select for bulk citation export')}
+          title={tr('选择以导出引用', 'Select to export citations')}
           style={{
             width: 13,
             height: 13,
@@ -179,7 +180,7 @@ function DailyRow({
             </span>
             {p.has_wiki && (
               <span
-                title={tr('已有 AI 解读', 'AI summary available')}
+                title={tr('已有解读', 'Summary available')}
                 style={{ display: 'inline-flex', color: 'var(--accent)', flexShrink: 0 }}
               >
                 <Icon name="file" size={11} />
@@ -190,17 +191,16 @@ function DailyRow({
           {p.related_library_name && (
             <div style={{ marginTop: 4 }}>
               <span
-                className="pill sm"
                 onClick={(e) => {
                   e.stopPropagation();
                   if (p.related_library_id) navigate(`/libraries/${p.related_library_id}`);
                 }}
                 title={tr(
-                  `和你的文献库「${p.related_library_name}」方向相近，点击打开该库`,
-                  `Close to your library “${p.related_library_name}” — click to open it`,
+                  `与文献库「${p.related_library_name}」相关，点击打开`,
+                  `Related to your library “${p.related_library_name}”. Click to open.`,
                 )}
                 style={{
-                  background: 'var(--accent-soft)',
+                  fontSize: 11,
                   color: 'var(--accent-text)',
                   cursor: 'pointer',
                   display: 'inline-flex',
@@ -213,7 +213,7 @@ function DailyRow({
                 <span
                   style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                 >
-                  {tr('与你的库相关', 'Relevant to')} · {p.related_library_name}
+                  {tr('相关文献库', 'Related to')} · {p.related_library_name}
                 </span>
               </span>
             </div>
@@ -297,14 +297,14 @@ function DailyDetailPane({
   // 每日推送是池级上下文：概念一律进不限库的概念页
   const { openConcept, openConceptByName } = usePoolConceptNav();
 
-  if (isLoading) return <div className="empty">{tr('加载论文详情…', 'Loading paper…')}</div>;
+  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
   if (isError || !paper) {
     return (
       <EmptyState
         compact
         icon="x"
-        title={tr('无法加载论文详情', 'Failed to load paper')}
-        desc={tr('后端不可用或该论文已过期。', 'Backend unavailable or the paper has expired.')}
+        title={tr('无法加载论文', 'Couldn’t load the paper')}
+        desc={tr('论文可能已过保留期，或本机引擎未运行。', 'The paper may have expired, or the local engine isn’t running.')}
       />
     );
   }
@@ -354,14 +354,14 @@ function DailyDetailPane({
       </div>
 
       {/* 标题永远是纯文本（不可点）；链接放上面的 arXiv chip */}
-      <h1 style={{ fontSize: 21, fontWeight: 680, lineHeight: 1.3, margin: '2px 0 6px', letterSpacing: '-0.01em' }}>
+      <h1 style={{ fontSize: 21, fontWeight: 600, lineHeight: 1.3, margin: '2px 0 6px', letterSpacing: '-0.01em' }}>
         {paper.title}
       </h1>
       {/* 作者 / 机构都可点：点了按它过滤列表 */}
       <AuthorLinks authors={paper.authors} onFilter={onFilterAuthor} />
       <AffiliationChips affiliations={paper.affiliations} onFilter={onFilterAffiliation} />
       {paper.published_at && (
-        <div style={{ fontSize: 11.5, color: 'var(--text-4)', margin: '6px 0 14px' }}>
+        <div style={{ fontSize: 12, color: 'var(--text-3)', margin: '6px 0 14px' }}>
           {tr('发布于', 'Published')} {fmtTime(paper.published_at)}
         </div>
       )}
@@ -376,7 +376,7 @@ function DailyDetailPane({
             }
           >
             <Icon name="file" size={13} />
-            {tr('阅读原文', 'Read original')}
+            {tr('阅读全文', 'Read paper')}
           </button>
         ) : (
           (paper.arxiv_id || pdfDownloadUrl) && (
@@ -384,7 +384,7 @@ function DailyDetailPane({
               className="btn btn-primary sm"
               disabled={downloading}
               onClick={() => onFetchPdf(paper.entry_id)}
-              title={tr('下载 PDF 到平台，下载后即可在线阅读', 'Fetch the PDF into Polaris so it can be read here')}
+              title={tr('下载 PDF 后可在 Polaris 中阅读', 'Download the PDF to read it in Polaris')}
             >
               {downloading ? (
                 <>
@@ -394,7 +394,7 @@ function DailyDetailPane({
               ) : (
                 <>
                   <Icon name="download" size={13} />
-                  {tr('下载原文', 'Download PDF')}
+                  {tr('下载 PDF', 'Download PDF')}
                 </>
               )}
             </button>
@@ -404,8 +404,8 @@ function DailyDetailPane({
           className="btn btn-soft sm"
           title={
             paper.has_wiki
-              ? tr('用最新的图文模式重写这篇介绍', 'Rewrite this intro with the latest text+figures mode')
-              : tr('AI 精读并编译图文介绍', 'Have the AI read and compile an illustrated intro')
+              ? tr('重新生成这篇论文的解读', 'Regenerate the summary for this paper')
+              : tr('生成带图的论文解读', 'Generate an illustrated summary')
           }
           disabled={compiling}
           onClick={() => (paper.has_wiki ? setRecompileConfirm(true) : onCompile(paper.entry_id))}
@@ -413,31 +413,31 @@ function DailyDetailPane({
           {compiling ? (
             <>
               <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-              {tr('AI 编译中，约半分钟…', 'Compiling — about half a minute…')}
+              {tr('正在生成，约半分钟…', 'Generating, about 30 seconds…')}
             </>
           ) : (
             <>
               <Icon name="sparkle" size={13} />
-              {paper.has_wiki ? tr('重新编译', 'Recompile') : tr('编译', 'Compile')}
+              {paper.has_wiki ? tr('重新生成', 'Regenerate') : tr('生成解读', 'Generate summary')}
             </>
           )}
         </button>
         {paper.wiki_content && (
           <button
             className="btn btn-soft sm"
-            title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
+            title={tr('全屏阅读解读，可导出 PDF', 'Read the summary full screen and export to PDF')}
             onClick={openReader}
           >
             <Icon name="book" size={13} />
-            {tr('阅览模式', 'Reading mode')}
+            {tr('阅读模式', 'Reading mode')}
           </button>
         )}
         <button
-          className="btn btn-primary sm"
+          className="btn btn-soft sm"
           onClick={() => onCollect({ paper_id: paper.paper_id, entry_id: paper.entry_id, title: paper.title })}
         >
           <Icon name="plus" size={13} />
-          {tr('收进文献库', 'Add to libraries')}
+          {tr('添加到文献库', 'Add to library')}
         </button>
         <DailyLikes item={paper} />
       </div>
@@ -484,7 +484,7 @@ function DailyDetailPane({
             color: 'var(--text)',
           }}
         >
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
             TL;DR
           </span>
           {poolPaper.tldr}
@@ -495,20 +495,20 @@ function DailyDetailPane({
           只是多一次点击。样式与「我的笔记」同款，默认收起。 */}
       <MetaFold label={tr('摘要', 'Abstract')}>
         {paper.abstract ? (
-          <p style={{ fontSize: 13.5, lineHeight: 1.7, margin: 0 }}>{paper.abstract}</p>
+          <p style={{ fontSize: 13, lineHeight: 1.7, margin: 0 }}>{paper.abstract}</p>
         ) : (
-          <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
-            {tr('这篇还没有摘要。', 'No abstract for this paper.')}
+          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+            {tr('暂无摘要', 'No abstract')}
           </p>
         )}
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '0.5px solid var(--border)' }}>
-        <MetaItem label="arxiv_id">
+        <MetaItem label={tr('arXiv 编号', 'arXiv ID')}>
           {paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}
         </MetaItem>
-        <MetaItem label="doi">
+        <MetaItem label="DOI">
           {poolPaper?.doi ? <span className="mono">{poolPaper.doi}</span> : <span className="muted">—</span>}
         </MetaItem>
-        <MetaItem label="published">
+        <MetaItem label={tr('发布日期', 'Published')}>
           {paper.published_at ? (
             <span className="mono">{paper.published_at.slice(0, 10)}</span>
           ) : (
@@ -549,8 +549,8 @@ function DailyDetailPane({
             }}
           >
             <div className="row gap8" style={{ minWidth: 0 }}>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
-                {tr('AI 图文介绍', 'AI intro')}
+              <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
+                {tr('AI 解读', 'AI summary')}
               </span>
               <CompileBadge model={paper.wiki_model ?? null} at={paper.compiled_at ?? null} />
             </div>
@@ -562,11 +562,8 @@ function DailyDetailPane({
         <EmptyState
           compact
           icon="pen"
-          title={tr('还没有 AI 介绍', 'No AI intro yet')}
-          desc={tr(
-            '点上方的编译按钮生成。',
-            'Hit the compile button above to generate one.',
-          )}
+          title={tr('还没有解读', 'No summary yet')}
+          desc={tr('点击上方「生成解读」。', 'Click “Generate summary” above.')}
         />
       )}
 
@@ -585,12 +582,16 @@ function DailyDetailPane({
       <ConfirmModal
         open={recompileConfirm}
         onClose={() => setRecompileConfirm(false)}
-        title={tr('重新编译解读', 'Recompile the wiki')}
-        message={tr(
-          `现有解读由 ${paper.compiled_by_name ?? '未知用户'} 在 ${paper.compiled_at ? fmtTime(paper.compiled_at) : '未知时间'} 用 ${paper.wiki_model ?? '未知模型'} 编译，重新编译会覆盖它，旧的找不回来。`,
-          `The current wiki was compiled by ${paper.compiled_by_name ?? 'an unknown user'} at ${paper.compiled_at ? fmtTime(paper.compiled_at) : 'an unknown time'} with ${paper.wiki_model ?? 'an unknown model'}. Recompiling overwrites it — the old one cannot be recovered.`,
-        )}
-        confirmText={tr('重新编译', 'Recompile')}
+        title={tr('重新生成解读？', 'Regenerate the summary?')}
+        message={
+          paper.compiled_at
+            ? tr(
+                `${fmtTime(paper.compiled_at)} 生成的解读会被替换，且无法恢复。`,
+                `The summary from ${fmtTime(paper.compiled_at)} will be replaced and can’t be restored.`,
+              )
+            : tr('现有解读会被替换，且无法恢复。', 'The current summary will be replaced and can’t be restored.')
+        }
+        confirmText={tr('重新生成', 'Regenerate')}
         danger
         onConfirm={() => {
           setRecompileConfirm(false);
@@ -633,7 +634,7 @@ function SyncStatusPill() {
   // 已跟上、以及「arXiv 自己没发」——都不是问题，用常规灰字，不摆警告
   if (state === 'fresh' || state === 'quiet') {
     return (
-      <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', marginLeft: 10 }}>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 10 }}>
         {state === 'quiet'
           ? tr(`arXiv 未更新 · 最新 ${latest}`, `Nothing new on arXiv · latest ${latest}`)
           : tr(`已更新至 ${latest}`, `Updated to ${latest}`)}
@@ -650,39 +651,41 @@ function SyncStatusPill() {
     return (
       <span
         className="mono"
-        style={{ fontSize: 11, color: 'var(--text-4)', marginLeft: 10 }}
+        style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 10 }}
         title={tr(
-          'arXiv 每天约北京时间 12:00 放当天批次，平台从设定时刻起每 15 分钟探一次',
-          'arXiv publishes the day’s batch around 04:00 UTC; the platform probes every 15 minutes from the configured time',
+          'arXiv 约在北京时间 12:00 发布，之后每 15 分钟检查一次',
+          'arXiv publishes around 04:00 UTC. Polaris checks every 15 minutes after that.',
         )}
       >
-        {tr(`等待今天的批次${probed} · 最新 ${latest}`, `Waiting for today’s batch${probed} · latest ${latest}`)}
+        {tr(`等待今日更新${probed} · 最新 ${latest}`, `Waiting for today’s papers${probed} · latest ${latest}`)}
       </span>
     );
   }
 
   const label =
     state === 'failed'
-      ? tr(`${failed.join('、')} 抓取失败`, `${failed.join(', ')} failed to fetch`)
-      : tr(`论文池已停更（最新 ${latest}）`, `Feed is stale (latest ${latest})`);
+      ? tr(`${failed.join('、')} 获取失败`, `Couldn’t fetch ${failed.join(', ')}`)
+      : tr(`未能更新（最新 ${latest}）`, `Not updated (latest ${latest})`);
   return (
-    <span
-      className={data.last_run_id ? 'pill sm hoverable' : 'pill sm'}
-      style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)', marginLeft: 10 }}
-      title={
-        state === 'failed'
-          ? tr('这些分类当天的新论文不会进池，各文献库也就收不到', 'Those categories will not enter the pool today, so no library will receive them')
-          : tr('该公告的日子已经过去，池子却没跟上——不是周末，也不是 arXiv 没发', 'A publishing day has passed without the pool catching up — not a weekend, and not arXiv having nothing')
-      }
-      onClick={data.last_run_id ? () => navigate(`/voyages/${data.last_run_id}`) : undefined}
-    >
-      {label}
-      {data.last_run_id ? ' →' : ''}
+    <span style={{ marginLeft: 10 }}>
+      <StateDot
+        tone={state === 'failed' ? 'danger' : 'warning'}
+        title={
+          state === 'failed'
+            ? tr('这些分类今天的新论文不会出现，请稍后重试。', 'Today’s papers in these categories won’t appear. Try again later.')
+            : tr('arXiv 已发布新论文，但未能同步。', 'arXiv has new papers that haven’t synced yet.')
+        }
+        onClick={data.last_run_id ? () => navigate(`/voyages/${data.last_run_id}`) : undefined}
+      >
+        {label}
+        {data.last_run_id ? ' →' : ''}
+      </StateDot>
     </span>
   );
 }
 
 export function DailyPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [view, setView] = useState<DailyView>('papers');
   const [qInput, setQInput] = useState('');
@@ -888,7 +891,7 @@ export function DailyPage() {
     mutationFn: (format: CitationFormat) => api.downloadDailyCitations({ format, ids: [...selected] }),
     onSuccess: (blob, format) => {
       saveBlob(blob, format === 'bibtex' ? 'polaris-daily-citations.bib' : 'polaris-daily-citations.json');
-      toast(tr(`已导出 ${selected.size} 篇`, `Exported ${selected.size} papers`), 'ok');
+      toast(tr(`已导出 ${selected.size} 篇`, `Exported ${selected.size} ${selected.size === 1 ? 'paper' : 'papers'}`), 'ok');
     },
     onError: (e) =>
       toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
@@ -909,11 +912,11 @@ export function DailyPage() {
       void downloadPending.run(entryId, async () => {
         try {
           await api.fetchDailyPaperPdf(entryId);
-          toast(tr('已下载原文，可以在线阅读了', 'PDF fetched — you can read it here now'), 'ok');
+          toast(tr('PDF 已下载', 'PDF downloaded'), 'ok');
           void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });
         } catch (e) {
           toast(
-            `${tr('下载原文失败', 'Failed to fetch the PDF')}：${e instanceof Error ? e.message : String(e)}`,
+            `${tr('PDF 下载失败', 'Couldn’t download the PDF')}：${e instanceof Error ? e.message : String(e)}`,
             'error',
           );
         }
@@ -935,11 +938,11 @@ export function DailyPage() {
           void queryClient.invalidateQueries({ queryKey: ['paper'] });
         } catch (e) {
           if (e instanceof ApiError && e.status === 409) {
-            toast(tr('已有人在生成，稍后刷新即可', 'Someone is already generating it, refresh later'), 'info');
+            toast(tr('解读正在生成，稍后刷新', 'Summary is already being generated. Refresh later.'), 'info');
             void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });
           } else {
             toast(
-              `${tr('生成解读失败', 'Failed to generate summary')}：${e instanceof Error ? e.message : String(e)}`,
+              `${tr('生成解读失败', 'Couldn’t generate the summary')}：${e instanceof Error ? e.message : String(e)}`,
               'error',
             );
           }
@@ -970,7 +973,7 @@ export function DailyPage() {
             className="row gap6 wrap"
             style={{ marginLeft: 'auto', justifyContent: 'flex-end', maxWidth: 420 }}
           >
-            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>{tr('订阅分类', 'Subscribed')}</span>
+            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{tr('订阅分类', 'Subscribed')}</span>
             {categoriesQuery.data?.categories.map((c) => (
               <span key={c} className="pill sm mono" style={{ background: 'var(--surface-3)' }}>
                 {c}
@@ -997,8 +1000,8 @@ export function DailyPage() {
                   onChange={setQInput}
                   placeholder={
                     semanticOn
-                      ? tr('语义检索（自然语言描述）…', 'Semantic search (natural language)…')
-                      : tr('搜标题 / 摘要 / 作者…', 'Search title / abstract / authors…')
+                      ? tr('用一句话描述要找的内容', 'Describe what you’re looking for')
+                      : tr('搜索标题、摘要、作者', 'Search titles, abstracts, authors')
                   }
                 />
                 <SemanticSwitch checked={semanticOn} onChange={setSemanticOn} />
@@ -1006,10 +1009,10 @@ export function DailyPage() {
                   open={advOpen}
                   active={advActive}
                   onToggle={() => setAdvOpen((o) => !o)}
-                  title={tr('高级检索：作者 / 机构', 'Advanced search: author / affiliation')}
+                  title={tr('按作者或机构筛选', 'Filter by author or affiliation')}
                 />
-                <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
-                  {total ? tr(`${total} 篇`, `${total}`) : ''}
+                <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
+                  {total ? tr(`${total} 篇`, `${total} ${total === 1 ? 'paper' : 'papers'}`) : ''}
                 </span>
               </div>
 
@@ -1020,7 +1023,7 @@ export function DailyPage() {
                   style={{ width: 120, height: 26, fontSize: 11, padding: '0 6px', flexShrink: 0 }}
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  title={tr('只看某个订阅分类的论文', 'Only papers in one subscribed category')}
+                  title={tr('按订阅分类筛选', 'Filter by subscribed category')}
                 >
                   <option value="">{tr('全部分类', 'All categories')}</option>
                   {(categoriesQuery.data?.categories ?? []).map((c) => (
@@ -1032,7 +1035,7 @@ export function DailyPage() {
                 <span
                   className={`chip${announce === 'collected' ? ' on' : ''}`}
                   onClick={() => setAnnounce('collected')}
-                  title={tr('只看已被文献库收录的（默认）', 'Only papers collected into a library (default)')}
+                  title={tr('只看已收录到文献库的论文', 'Only papers added to a library')}
                 >
                   {tr('已收录', 'Collected')}
                 </span>
@@ -1048,7 +1051,7 @@ export function DailyPage() {
                     <span
                       className={`chip${sortMode === 'date' ? ' on' : ''}`}
                       onClick={() => setSortMode('date')}
-                      title={tr('最新公告的排最前', 'Newest announcements first')}
+                      title={tr('最新的在前', 'Newest first')}
                     >
                       {tr('按时间', 'By time')}
                     </span>
@@ -1056,8 +1059,8 @@ export function DailyPage() {
                       className={`chip${sortMode === 'relevance' ? ' on' : ''}`}
                       onClick={() => setSortMode('relevance')}
                       title={tr(
-                        '和你的文献库方向相近的排前面（还没有文献库时与按时间一样）',
-                        'Papers close to your libraries come first (same as by time if you have no libraries)',
+                        '与你的文献库相关的在前',
+                        'Papers related to your libraries first',
                       )}
                     >
                       {tr('按相关性', 'By relevance')}
@@ -1082,15 +1085,15 @@ export function DailyPage() {
                     <FilterInput
                       value={authorInput}
                       onChange={setAuthorInput}
-                      placeholder={tr('作者姓名…', 'Author name…')}
+                      placeholder={tr('作者', 'Author')}
                     />
                     <FilterInput
                       value={affiliationInput}
                       onChange={setAffiliationInput}
-                      placeholder={tr('发表机构…', 'Affiliation…')}
+                      placeholder={tr('机构', 'Affiliation')}
                       title={tr(
-                        '机构信息要等这篇编译出解读后才有，没编译过的论文匹配不到',
-                        'Affiliations only exist after a paper has been compiled here',
+                        '只能匹配已生成解读的论文',
+                        'Only matches papers that have a summary',
                       )}
                     />
                   </div>
@@ -1101,8 +1104,8 @@ export function DailyPage() {
               {!advOpen && (!!author || !!affiliation) && (
                 <div
                   onClick={() => setAdvOpen(true)}
-                  style={{ marginTop: 6, fontSize: 11, color: 'var(--text-4)', cursor: 'pointer', lineHeight: 1.5 }}
-                  title={tr('点开高级检索改筛选条件', 'Open advanced search to change the filters')}
+                  style={{ marginTop: 6, fontSize: 11, color: 'var(--text-3)', cursor: 'pointer', lineHeight: 1.5 }}
+                  title={tr('修改筛选条件', 'Change filters')}
                 >
                   {tr('只看：', 'Showing: ')}
                   {[author, affiliation].filter(Boolean).join(' · ')}
@@ -1110,10 +1113,10 @@ export function DailyPage() {
               )}
 
               {semantic && (
-                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-4)', lineHeight: 1.5 }}>
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-3)', lineHeight: 1.5 }}>
                   {tr(
-                    '语义检索只覆盖已生成向量的论文，结果可能不全。',
-                    'Semantic search only covers papers that already have embeddings — results may be incomplete.',
+                    '部分论文尚未建立索引，结果可能不全。',
+                    'Some papers aren’t indexed yet, so results may be incomplete.',
                   )}
                 </div>
               )}
@@ -1129,7 +1132,7 @@ export function DailyPage() {
                     lineHeight: 1.5,
                   }}
                 >
-                  {tr('语义检索暂不可用，已回退为关键词匹配。', 'Semantic search unavailable — fell back to keyword matching.')}
+                  {tr('语义检索暂不可用，已改用关键词搜索。', 'Semantic search is unavailable, so keyword search was used.')}
                 </div>
               )}
               {/* —— 日期切换：前一天 / 当前 / 后一天，右侧勾选看全部 ——
@@ -1140,7 +1143,7 @@ export function DailyPage() {
                   style={{ padding: '0 7px', height: 24, fontSize: 11 }}
                   disabled={showAll || dayIdx <= 0}
                   onClick={() => setDay(dates[dayIdx - 1] ?? day)}
-                  title={tr('前一天有公告的日期', 'Previous day with papers')}
+                  title={tr('上一个有论文的日期', 'Previous day with papers')}
                 >
                   ‹ {tr('前一天', 'Prev')}
                 </button>
@@ -1149,8 +1152,8 @@ export function DailyPage() {
                   style={{
                     minWidth: 132,
                     textAlign: 'center',
-                    fontSize: 11.5,
-                    color: showAll ? 'var(--text-4)' : 'var(--text-1)',
+                    fontSize: 12,
+                    color: showAll ? 'var(--text-3)' : 'var(--text-1)',
                     fontWeight: showAll ? 400 : 600,
                   }}
                 >
@@ -1165,14 +1168,14 @@ export function DailyPage() {
                   style={{ padding: '0 7px', height: 24, fontSize: 11 }}
                   disabled={showAll || dayIdx < 0 || dayIdx >= dates.length - 1}
                   onClick={() => setDay(dates[dayIdx + 1] ?? day)}
-                  title={tr('后一天有公告的日期', 'Next day with papers')}
+                  title={tr('下一个有论文的日期', 'Next day with papers')}
                 >
                   {tr('后一天', 'Next')} ›
                 </button>
                 <label
                   className="row gap6"
                   style={{ alignItems: 'center', cursor: 'pointer', marginLeft: 4 }}
-                  title={tr('跨天一起看，按时间倒排', 'Show every day, newest first')}
+                  title={tr('显示所有日期，最新的在前', 'Show all days, newest first')}
                 >
                   <input
                     type="checkbox"
@@ -1183,20 +1186,20 @@ export function DailyPage() {
                       if (!e.target.checked && !day) setDay(dates[dates.length - 1] ?? '');
                     }}
                   />
-                  <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{tr('全部', 'All')}</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{tr('全部日期', 'All days')}</span>
                 </label>
               </div>
             </div>
 
             <div ref={listScrollRef} className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
               {listQuery.isLoading ? (
-                <div className="empty">{tr('加载论文…', 'Loading papers…')}</div>
+                <div className="empty">{tr('加载中…', 'Loading…')}</div>
               ) : listQuery.isError ? (
                 <EmptyState
                   compact
                   icon="x"
-                  title={tr('无法加载每日新论文', 'Failed to load daily papers')}
-                  desc={tr('后端不可用或接口尚未就绪，稍后重试。', 'Backend unavailable — try again later.')}
+                  title={tr('无法加载每日新论文', 'Couldn’t load daily papers')}
+                  desc={tr('请确认本机引擎正在运行，然后重试。', 'Make sure the local engine is running, then try again.')}
                 />
               ) : items.length === 0 ? (
                 /* 没订阅就什么都不该看到（#806 起信息流按本人订阅过滤）——这不是
@@ -1208,22 +1211,24 @@ export function DailyPage() {
                     icon="book"
                     title={tr('还没有订阅分类', 'No subscribed categories yet')}
                     desc={tr(
-                      '先在 设置 → 每日新论文订阅分类 里添加要跟踪的 arXiv 分类，之后每天的新论文就会出现在这里。',
-                      'Add the arXiv categories you want to follow in Settings → Daily subscribed categories, and each day’s new papers will show up here.',
+                      '订阅 arXiv 分类后，每天的新论文会出现在这里。',
+                      'Subscribe to arXiv categories to see new papers here each day.',
                     )}
+                    action={
+                      <button className="btn btn-soft sm" onClick={() => navigate('/settings?tab=daily')}>
+                        {tr('订阅分类', 'Subscribe to categories')}
+                      </button>
+                    }
                   />
                 ) : (
                 <EmptyState
                   compact
                   icon="book"
-                  title={filtered ? tr('没有匹配的论文', 'No matching papers') : tr('今天还没有新论文', 'No new papers yet')}
+                  title={filtered ? tr('没有匹配的论文', 'No matching papers') : tr('还没有新论文', 'No new papers yet')}
                   desc={
                     filtered
-                      ? tr('换个关键词或过滤条件试试。', 'Try a different keyword or filter.')
-                      : tr(
-                          'arxiv 周末不发布新提交。',
-                          'arxiv does not announce on weekends.',
-                        )
+                      ? tr('换个关键词或筛选条件试试。', 'Try a different keyword or filter.')
+                      : tr('arXiv 周末不发布新论文。', 'arXiv doesn’t publish on weekends.')
                   }
                 />
                 )
@@ -1244,7 +1249,7 @@ export function DailyPage() {
                             zIndex: 3,
                             padding: '6px 16px',
                             fontSize: 11,
-                            fontWeight: 700,
+                            fontWeight: 600,
                             color: 'var(--text-3)',
                             background: 'var(--surface-2)',
                             borderBottom: '0.5px solid var(--border)',
@@ -1279,7 +1284,7 @@ export function DailyPage() {
                       ? tr('加载中…', 'Loading…')
                       : hasNextPage
                         ? tr(`已显示 ${items.length} / ${total} 篇`, `${items.length} of ${total}`)
-                        : tr(`共 ${total} 篇，已到底`, `${total} papers — that's all`)}
+                        : tr(`共 ${total} 篇`, `${total} ${total === 1 ? 'paper' : 'papers'}`)}
                   </span>
                 </div>
               )}
@@ -1292,7 +1297,7 @@ export function DailyPage() {
             >
               <button
                 className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
-                title={tr('开启后列表出现复选框，可批量导出引用', 'Show checkboxes to export citations in bulk')}
+                title={tr('选择多篇论文以导出引用', 'Select papers to export citations')}
                 onClick={() => {
                   setSelectMode((m) => !m);
                   setSelected(new Set());
@@ -1331,7 +1336,7 @@ export function DailyPage() {
               />
             ) : (
               <div className="empty" style={{ margin: 'auto' }}>
-                {tr('选择论文查看详情', 'Select a paper to view details')}
+                {tr('选择一篇论文查看详情', 'Select a paper to see details')}
               </div>
             )}
           </div>

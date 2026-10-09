@@ -55,7 +55,7 @@ export function DailyChatTab() {
             }
           } else if (event === 'done') ctrl.onDone();
           else if (event === 'error') {
-            let detail = tr('服务端出错', 'Server error');
+            let detail = tr('本机引擎出错', 'The local engine hit an error');
             try {
               detail = (JSON.parse(dataStr) as { detail?: string }).detail ?? detail;
             } catch {
@@ -77,21 +77,21 @@ export function DailyChatTab() {
       title={tr('每日新论文对话', 'Daily papers chat')}
       contextKinds={[]}
       hint={tr(
-        '对最近 7 天的每日新论文提问；[n] 为引用来源编号。',
-        'Ask about the last 7 days of daily papers. [n] marks a source number.',
+        '基于最近 7 天的新论文回答，[n] 为来源编号。',
+        'Answers draw on the last 7 days of papers. [n] marks a source.',
       )}
       emptyIcon="chat"
       emptyTitle={tr('和最近的新论文对话', 'Chat with the latest papers')}
       emptyDesc={tr(
-        '找热点、比方法、挑值得细读的都行。',
-        'Spot trends, compare methods, pick what to read.',
+        '找热点、比较方法，或挑出值得细读的论文。',
+        'Spot trends, compare methods, or find papers worth reading.',
       )}
       suggestions={SUGGESTIONS}
-      placeholder={tr('就最近 7 天的新论文提问…', 'Ask about the last 7 days of new papers…')}
+      placeholder={tr('问问最近 7 天的新论文', 'Ask about the last 7 days of papers')}
       renderAssistant={(m: ChatMsg) => (
         <Markdown
           source={m.content}
-          style={{ fontSize: 12.5 }}
+          style={{ fontSize: 13 }}
           renderCitation={citationRenderer(m.sources)}
           renderLibraryFigure={(paperId, index) => (
             <ChatFigure paperId={paperId} index={index} onOpenPaper={openPaper} />

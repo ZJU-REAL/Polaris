@@ -92,8 +92,8 @@ function CheckRow({
         <span
           style={{
             display: 'block',
-            fontSize: 12.5,
-            fontWeight: 550,
+            fontSize: 13,
+            fontWeight: 500,
             color: checked ? 'var(--accent-text)' : 'var(--text)',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
@@ -106,8 +106,8 @@ function CheckRow({
           <span
             style={{
               display: 'block',
-              fontSize: 10.5,
-              color: 'var(--text-4)',
+              fontSize: 11,
+              color: 'var(--text-3)',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -209,15 +209,15 @@ function Popover({
         void queryClient.invalidateQueries({ queryKey: ['shelf-ids', pid] });
       }
       if (ok === 0) {
-        toast(tr('全部加入失败', 'All additions failed'), 'error');
+        toast(tr('添加失败', 'Couldn’t add'), 'error');
       } else if (fail === 0) {
-        toast(tr(`已加入 ${ok} 处`, `Added to ${ok} place(s)`), 'ok');
+        toast(tr(`已添加到 ${ok} 处`, `Added to ${ok} ${ok === 1 ? 'place' : 'places'}`), 'ok');
       } else {
-        toast(tr(`已加入 ${ok} 处，${fail} 处失败`, `Added to ${ok}, ${fail} failed`), 'info');
+        toast(tr(`已添加到 ${ok} 处，${fail} 处失败`, `Added to ${ok}, ${fail} failed`), 'info');
       }
       onClose();
     },
-    onError: (e) => toast(`${tr('加入失败：', 'Failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('添加失败：', 'Couldn’t add: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const toggleProj = (id: string) =>
@@ -253,20 +253,20 @@ function Popover({
       <div
         style={{
           padding: '11px 14px 9px',
-          fontSize: 12.5,
-          fontWeight: 700,
+          fontSize: 13,
+          fontWeight: 600,
           color: 'var(--text-2)',
           borderBottom: '0.5px solid var(--border)',
         }}
       >
-        {tr('加入到…', 'Add to…')}
+        {tr('添加到…', 'Add to…')}
       </div>
 
       <div style={{ padding: '8px 8px 4px', overflowY: 'auto', maxHeight: MAX_LIST_H + 120 }}>
         {/* 第一段：个人文献库 */}
         <CheckRow
           icon="bookmark"
-          label={tr('我的个人文献库', 'My library')}
+          label={tr('我的文献库', 'My library')}
           checked={lib}
           onToggle={() => setLib((v) => !v)}
         />
@@ -276,8 +276,8 @@ function Popover({
           style={{
             marginTop: 6,
             padding: '3px 4px 2px 10px',
-            fontSize: 10.5,
-            fontWeight: 700,
+            fontSize: 11,
+            fontWeight: 600,
             letterSpacing: '.04em',
             color: 'var(--text-3)',
           }}
@@ -291,18 +291,18 @@ function Popover({
               style={{ height: 30, fontSize: 12, width: '100%' }}
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              placeholder={tr('搜索课题…', 'Filter topics…')}
+              placeholder={tr('搜索课题', 'Search topics')}
               type="search"
             />
           </div>
         )}
         <div style={{ paddingLeft: 6, borderLeft: '1.5px solid var(--border)', marginLeft: 12 }}>
           {projects.length === 0 ? (
-            <div style={{ padding: '10px 8px', fontSize: 11.5, color: 'var(--text-4)' }}>
+            <div style={{ padding: '10px 8px', fontSize: 12, color: 'var(--text-3)' }}>
               {tr('还没有课题', 'No topics yet')}
             </div>
           ) : filtered.length === 0 ? (
-            <div style={{ padding: '10px 8px', fontSize: 11.5, color: 'var(--text-4)' }}>
+            <div style={{ padding: '10px 8px', fontSize: 12, color: 'var(--text-3)' }}>
               {tr('没有匹配的课题', 'No matching topics')}
             </div>
           ) : (
@@ -327,14 +327,14 @@ function Popover({
           display: 'flex',
           gap: 6,
           padding: '8px 14px',
-          fontSize: 10.5,
+          fontSize: 11,
           lineHeight: 1.5,
-          color: 'var(--text-4)',
+          color: 'var(--text-3)',
           borderTop: '0.5px solid var(--border)',
         }}
       >
         <Icon name="bulb" size={12} style={{ flexShrink: 0, marginTop: 1 }} />
-        <span>{tr('加入课题会一并收藏进你的个人文献库。', 'Adding to a topic also saves it to your library.')}</span>
+        <span>{tr('添加到课题时也会收藏到我的文献库。', 'Adding to a topic also saves it to My library.')}</span>
       </div>
 
       {/* 操作 */}
@@ -356,10 +356,10 @@ function Popover({
           onClick={() => mutation.mutate()}
         >
           {mutation.isPending
-            ? tr('加入中…', 'Adding…')
+            ? tr('添加中…', 'Adding…')
             : count > 0
-              ? tr(`确认加入 · ${count}`, `Add · ${count}`)
-              : tr('确认加入', 'Add')}
+              ? tr(`添加 · ${count}`, `Add · ${count}`)
+              : tr('添加', 'Add')}
         </button>
       </div>
     </div>,
@@ -378,8 +378,8 @@ export function AddToButton({ paperId }: { paperId: string }) {
         ref={btnRef}
         type="button"
         className="icon-btn"
-        title={tr('加入个人库 / 课题', 'Add to library / topics')}
-        aria-label={tr('加入到…', 'Add to…')}
+        title={tr('添加到我的文献库或课题', 'Add to My library or a topic')}
+        aria-label={tr('添加到…', 'Add to…')}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={(e) => {

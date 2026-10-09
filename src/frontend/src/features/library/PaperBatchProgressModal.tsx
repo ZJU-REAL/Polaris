@@ -16,7 +16,7 @@ const EMPTY_SUMMARY: BatchSummary = { created: 0, existing: 0, invalid: 0, faile
 
 function statusMeta(status: PaperBatchItemStatus): { zh: string; en: string; icon: 'check' | 'minus' | 'x'; color: string } {
   if (status === 'created') return { zh: '已添加', en: 'Added', icon: 'check', color: 'var(--ok)' };
-  if (status === 'existing') return { zh: '已存在', en: 'Existing', icon: 'minus', color: 'var(--text-3)' };
+  if (status === 'existing') return { zh: '已存在', en: 'Already added', icon: 'minus', color: 'var(--text-3)' };
   if (status === 'invalid') return { zh: '格式错误', en: 'Invalid', icon: 'x', color: 'var(--warn)' };
   return { zh: '添加失败', en: 'Failed', icon: 'x', color: 'var(--danger)' };
 }
@@ -78,7 +78,7 @@ export function PaperBatchProgressModal({
             onDoneRef.current?.();
           } else if (event === 'error') {
             const result = JSON.parse(data) as { message?: string };
-            setFatal(result.message || tr('批量任务失败', 'Batch task failed'));
+            setFatal(result.message || tr('批量添加失败', 'Batch import failed'));
             stopped = true;
             cancel();
           }
@@ -115,11 +115,11 @@ export function PaperBatchProgressModal({
               animation: !fatal && !done ? 'spin 1s linear infinite' : undefined,
             }}
           />
-          {tr('批量添加文献', 'Batch paper import')}
+          {tr('批量添加论文', 'Import papers')}
         </>
       }
       sub={tr(
-        `${completed}/${total} 项已解析${stillProcessing ? `，${stillProcessing} 项正在后台处理` : ''}`,
+        `已解析 ${completed}/${total}${stillProcessing ? `，${stillProcessing} 篇处理中` : ''}`,
         `${completed}/${total} parsed${stillProcessing ? `, ${stillProcessing} processing` : ''}`,
       )}
       footer={
@@ -139,9 +139,9 @@ export function PaperBatchProgressModal({
         />
       </div>
 
-      <div className="row gap12" style={{ marginTop: 12, fontSize: 11.5, color: 'var(--text-2)', flexWrap: 'wrap' }}>
+      <div className="row gap12" style={{ marginTop: 12, fontSize: 12, color: 'var(--text-2)', flexWrap: 'wrap' }}>
         <span>{tr('已添加', 'Added')} {summary.created}</span>
-        <span>{tr('已存在', 'Existing')} {summary.existing}</span>
+        <span>{tr('已存在', 'Already added')} {summary.existing}</span>
         <span>{tr('格式错误', 'Invalid')} {summary.invalid}</span>
         <span>{tr('失败', 'Failed')} {summary.failed}</span>
       </div>
@@ -168,7 +168,7 @@ export function PaperBatchProgressModal({
                       <span className="ellipsis">{item.title}</span>
                     </button>
                   ) : (
-                    <span className="ellipsis" style={{ fontSize: 12.5 }}>
+                    <span className="ellipsis" style={{ fontSize: 13 }}>
                       {item.title || item.input}
                     </span>
                   )}
@@ -181,7 +181,7 @@ export function PaperBatchProgressModal({
                     className={item.error ? undefined : 'mono'}
                     style={{
                       marginTop: 2,
-                      fontSize: 10.5,
+                      fontSize: 11,
                       color: item.error ? 'var(--danger-tx)' : 'var(--text-3)',
                       lineHeight: 1.45,
                       overflowWrap: 'anywhere',
@@ -191,7 +191,7 @@ export function PaperBatchProgressModal({
                   </div>
                 )}
               </div>
-              <span style={{ color: meta.color, fontSize: 10.5, whiteSpace: 'nowrap' }}>
+              <span style={{ color: meta.color, fontSize: 11, whiteSpace: 'nowrap' }}>
                 {tr(meta.zh, meta.en)}
               </span>
             </div>

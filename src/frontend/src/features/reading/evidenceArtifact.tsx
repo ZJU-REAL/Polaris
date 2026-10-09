@@ -75,8 +75,8 @@ export function evidenceCitationRenderer({
         href={href}
         className="evidence-citation"
         title={exact
-          ? `${title} · ${tr('定位原文句子', 'Locate source sentence')}`
-          : `${title} · ${tr('打开论文来源', 'Open paper source')}`}
+          ? `${title} · ${tr('跳到原句', 'Go to the quoted sentence')}`
+          : `${title} · ${tr('打开论文', 'Open paper')}`}
       >
         {label || (sentenceNo ? `[文${articleNo}·句${sentenceNo}]` : `[文${articleNo}]`)}
       </a>

@@ -57,7 +57,7 @@ export function PaperMyMetaRow({
       }
     },
     onError: (e) =>
-      toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('更新失败：', 'Couldn’t update: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   return (
@@ -72,7 +72,7 @@ export function PaperMyMetaRow({
         {starred ? tr('已星标', 'Starred') : tr('加星标', 'Star')}
       </button>
       <span className="row gap8">
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
           {tr('阅读状态', 'Reading status')}
         </span>
         <Segmented<ReadingStatus>
@@ -142,7 +142,7 @@ export function PaperMyTagsRow({
       }
     },
     onError: (e) =>
-      toast(`${tr('标签更新失败：', 'Tag update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('标签更新失败：', 'Couldn’t update tags: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const commit = () => {
@@ -171,7 +171,6 @@ export function PaperMyTagsRow({
       <span
         className="row gap6"
         style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginRight: 2 }}
-        title={tr('只有你自己看得到', 'Only you can see these')}
       >
         <Icon name="bookmark" size={12} style={{ color: 'var(--text-3)' }} />
         {tr('我的标签', 'My tags')}
@@ -192,8 +191,8 @@ export function PaperMyTagsRow({
         <input
           className="input"
           autoFocus
-          style={{ height: 24, fontSize: 11.5, width: 120, padding: '0 8px' }}
-          placeholder={tr('标签名，回车确定', 'Tag name, Enter to confirm')}
+          style={{ height: 24, fontSize: 12, width: 120, padding: '0 8px' }}
+          placeholder={tr('标签名，按回车添加', 'Tag name, press Enter')}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onBlur={commit}
@@ -212,7 +211,7 @@ export function PaperMyTagsRow({
           onClick={() => !putMutation.isPending && setAdding(true)}
         >
           <Icon name="plus" size={10} style={{ display: 'inline-block', verticalAlign: -1 }} />{' '}
-          {tr('加标签', 'Add tag')}
+          {tr('添加标签', 'Add tag')}
         </span>
       )}
       {trailing && (
@@ -258,7 +257,7 @@ export function PaperMyTagChips({
         </span>
       ))}
       {hidden > 0 && (
-        <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
+        <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)' }}>
           +{hidden}
         </span>
       )}
@@ -303,12 +302,12 @@ export function PaperNotesSection({
   const createMutation = useMutation({
     mutationFn: () => api.createPaperNote(paperId, draft.trim()),
     onSuccess: () => {
-      toast(tr('笔记已保存', 'Note saved'), 'ok');
+      toast(tr('已保存笔记', 'Note saved'), 'ok');
       setDraft('');
       refresh();
     },
     onError: (e) =>
-      toast(`${tr('保存失败：', 'Save failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('保存失败：', 'Couldn’t save: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const count = notesQuery.data ? notes.length : noteCount;
@@ -320,7 +319,7 @@ export function PaperNotesSection({
         onClick={() => setOpen((o) => !o)}
         style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
       >
-        <span className="row gap6" style={{ fontSize: 12.5, fontWeight: 650 }}>
+        <span className="row gap6" style={{ fontSize: 13, fontWeight: 600 }}>
           <Icon name="pen" size={12} style={{ color: 'var(--text-3)' }} />
           {tr('我的笔记', 'My notes')}
           <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 400 }}>
@@ -337,33 +336,30 @@ export function PaperNotesSection({
         <div style={{ padding: '0 16px 14px' }}>
           {notesQuery.isLoading ? (
             <div className="empty" style={{ padding: 12 }}>
-              {tr('加载笔记…', 'Loading notes…')}
+              {tr('加载中…', 'Loading…')}
             </div>
           ) : notesQuery.isError ? (
             <EmptyState
               compact
               icon="x"
-              title={tr('笔记暂时加载不出来', 'Notes failed to load')}
-              desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
+              title={tr('无法加载笔记', 'Couldn’t load notes')}
+              desc={tr('请确认本机引擎正在运行，然后重试。', 'Make sure the local engine is running, then try again.')}
             />
           ) : notes.length === 0 ? (
             <div className="empty" style={{ padding: '4px 0 12px', textAlign: 'left' }}>
-              {tr('还没有笔记。', 'No notes yet.')}
+              {tr('还没有笔记', 'No notes yet')}
             </div>
           ) : (
             notes.map((n) => <NoteCard key={n.id} note={n} canEdit onSaved={refresh} />)
           )}
           <textarea
             className="textarea"
-            style={{ width: '100%', minHeight: 72, maxHeight: 200, fontSize: 12.5, resize: 'vertical' }}
-            placeholder={tr('记下想法、疑问或要点，支持 Markdown…', 'Jot down ideas, questions or key points — Markdown supported…')}
+            style={{ width: '100%', minHeight: 72, maxHeight: 200, fontSize: 13, resize: 'vertical' }}
+            placeholder={tr('记下想法或疑问，支持 Markdown', 'Ideas or questions (Markdown supported)')}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
           />
-          <div className="row" style={{ marginTop: 8, justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-              {tr('笔记只有你自己看得到。', 'Only you can see your notes.')}
-            </span>
+          <div className="row" style={{ marginTop: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
             <button
               className="btn btn-primary sm"
               disabled={createMutation.isPending || !draft.trim()}
@@ -459,13 +455,13 @@ export function WikiHeaderActions({
 }) {
   return (
     <div className="row gap6" style={style}>
-      <button className="btn btn-soft sm" title={tr('全屏专注阅读', 'Full-screen focused reading')} onClick={onRead}>
+      <button className="btn btn-soft sm" title={tr('全屏阅读解读', 'Read the summary full screen')} onClick={onRead}>
         <Icon name="book" size={13} />
-        {tr('阅览模式', 'Reading mode')}
+        {tr('阅读模式', 'Reading mode')}
       </button>
       <button
         className="btn btn-ghost sm"
-        title={tr('打开阅览页并唤起打印，另存为 PDF', 'Open the reader and print to save as PDF')}
+        title={tr('通过打印另存为 PDF', 'Save as PDF via print')}
         onClick={onExport}
       >
         <Icon name="download" size={13} />
@@ -508,9 +504,9 @@ export function PaperCitationsSection({ paperId }: { paperId: string }) {
         onClick={() => setOpen((o) => !o)}
         style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
       >
-        <span className="row gap6" style={{ fontSize: 12.5, fontWeight: 650 }}>
+        <span className="row gap6" style={{ fontSize: 13, fontWeight: 600 }}>
           <Icon name="link" size={12} style={{ color: 'var(--text-3)' }} />
-          {tr('引文（按意图）', 'Citations by intent')}
+          {tr('引用的文献', 'References by purpose')}
           {typeof total === 'number' && (
             <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 400 }}>
               · {total}
@@ -527,17 +523,17 @@ export function PaperCitationsSection({ paperId }: { paperId: string }) {
         <div style={{ padding: '0 16px 14px' }}>
           {citationsQuery.isLoading ? (
             <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-              {tr('加载引文…', 'Loading citations…')}
+              {tr('加载中…', 'Loading…')}
             </p>
           ) : citationsQuery.isError ? (
             <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-              {tr('引文加载失败。', 'Failed to load citations.')}
+              {tr('无法加载引用的文献', 'Couldn’t load references')}
             </p>
           ) : groups.length === 0 ? (
             <p className="muted" style={{ fontSize: 12, margin: 0 }}>
               {tr(
-                '还没有解析出引文——需要先有 PDF 全文（含参考文献表）。',
-                'No citations parsed yet — the paper needs a full text with a reference list.',
+                '有 PDF 全文后才能整理引用的文献。',
+                'References appear once the full-text PDF is available.',
               )}
             </p>
           ) : (
@@ -552,21 +548,21 @@ export function PaperCitationsSection({ paperId }: { paperId: string }) {
                     >
                       {label ? tr(label.zh, label.en) : tr('未分类', 'Unclassified')}
                     </span>
-                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
                       {group.items.length}
                     </span>
                   </div>
                   {group.items.map((item) => (
                     <div key={item.id} style={{ padding: '5px 0', borderBottom: '0.5px solid var(--border)' }}>
                       <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-2)', overflowWrap: 'break-word' }}>
-                        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginRight: 6 }}>
+                        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginRight: 6 }}>
                           [{item.ref_index}]
                         </span>
                         {item.cited_paper_title ?? item.cited_ref_raw}
                       </div>
                       {item.context && (
-                        <div style={{ fontSize: 11, lineHeight: 1.55, color: 'var(--text-4)', marginTop: 2, overflowWrap: 'break-word' }}>
-                          {tr('引用处：', 'Cited as: ')}
+                        <div style={{ fontSize: 11, lineHeight: 1.55, color: 'var(--text-3)', marginTop: 2, overflowWrap: 'break-word' }}>
+                          {tr('原文：', 'In text: ')}
                           {item.context}
                         </div>
                       )}
@@ -596,7 +592,7 @@ const SKELETON_FIELDS: { key: string; zh: string; en: string }[] = [
 function ExtractionField({ label, value }: { label: string; value: string | string[] }) {
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 11, fontWeight: 650, color: 'var(--text-3)', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', marginBottom: 3 }}>{label}</div>
       {Array.isArray(value) ? (
         <ul style={{ margin: 0, paddingLeft: 18 }}>
           {value.map((item, i) => (
@@ -635,7 +631,7 @@ export function PaperExtractionsSection({ paperId }: { paperId: string }) {
         onClick={() => setOpen((o) => !o)}
         style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
       >
-        <span className="row gap6" style={{ fontSize: 12.5, fontWeight: 650 }}>
+        <span className="row gap6" style={{ fontSize: 13, fontWeight: 600 }}>
           <Icon name="layers" size={12} style={{ color: 'var(--text-3)' }} />
           {tr('结构化摘要', 'Structured summary')}
         </span>
@@ -649,17 +645,17 @@ export function PaperExtractionsSection({ paperId }: { paperId: string }) {
         <div style={{ padding: '0 16px 14px' }}>
           {extractionsQuery.isLoading ? (
             <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-              {tr('加载结构化摘要…', 'Loading structured summary…')}
+              {tr('加载中…', 'Loading…')}
             </p>
           ) : extractionsQuery.isError ? (
             <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-              {tr('结构化摘要加载失败。', 'Failed to load the structured summary.')}
+              {tr('无法加载结构化摘要', 'Couldn’t load the structured summary')}
             </p>
           ) : extractions.length === 0 ? (
             <p className="muted" style={{ fontSize: 12, margin: 0 }}>
               {tr(
-                '还没有结构化摘要——需要先有 PDF 全文，抽取会在论文补全时自动进行。',
-                'No structured summary yet — it is extracted automatically once the full text is available.',
+                '有 PDF 全文后会自动生成结构化摘要。',
+                'A structured summary appears once the full-text PDF is available.',
               )}
             </p>
           ) : (
@@ -677,8 +673,8 @@ export function PaperExtractionsSection({ paperId }: { paperId: string }) {
                     <ExtractionField key={key} label={key} value={extraction.payload[key]!} />
                   ))}
                   {typeof extraction.confidence === 'number' && (
-                    <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-                      {tr('抽取置信度', 'Extraction confidence')} {Math.round(extraction.confidence * 100)}%
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                      {tr('置信度', 'Confidence')} {Math.round(extraction.confidence * 100)}%
                     </div>
                   )}
                 </div>

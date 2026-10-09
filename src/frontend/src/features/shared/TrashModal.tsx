@@ -97,12 +97,11 @@ export function TrashModal({
                 {tr('取消', 'Cancel')}
               </button>
               <button
-                className="btn btn-primary sm"
-                style={{ background: 'var(--danger-tx)' }}
+                className="btn btn-danger sm"
                 disabled={busy}
                 onClick={onEmpty}
               >
-                {emptying ? tr('清空中…', 'Emptying…') : tr('确认清空', 'Confirm empty')}
+                {emptying ? tr('清空中…', 'Emptying…') : tr('清空回收站', 'Empty trash')}
               </button>
             </>
           ) : (
@@ -127,12 +126,12 @@ export function TrashModal({
       {/* 搜索区固定不随列表滚动：列表自带滚动容器，整体高度不超出 Modal 内容区 */}
       <div className="row gap10" style={{ marginBottom: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <SearchInput value={trashQ} onChange={setTrashQ} placeholder={tr('搜索标题 / 作者…', 'Search title / author…')} />
+          <SearchInput value={trashQ} onChange={setTrashQ} placeholder={tr('搜索标题、作者', 'Search titles, authors')} />
         </div>
         <span className="mono muted" style={{ fontSize: 11, flexShrink: 0 }}>
           {kw
             ? tr(`${items.length} / ${allItems.length} 篇`, `${items.length} / ${allItems.length}`)
-            : tr(`${allItems.length} 篇`, `${allItems.length} papers`)}
+            : tr(`${allItems.length} 篇`, `${allItems.length} ${allItems.length === 1 ? 'paper' : 'papers'}`)}
         </span>
       </div>
       {loading ? (
@@ -140,7 +139,7 @@ export function TrashModal({
       ) : allItems.length === 0 ? (
         <div className="empty" style={{ padding: 24 }}>{tr('回收站是空的', 'Trash is empty')}</div>
       ) : items.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('没有匹配的文献', 'No matching papers')}</div>
+        <div className="empty" style={{ padding: 24 }}>{tr('没有匹配的论文', 'No matching papers')}</div>
       ) : (
         <div
           className="scroll"
@@ -166,8 +165,8 @@ export function TrashModal({
           {(total ?? 0) > allItems.length && (
             <div className="muted" style={{ fontSize: 11, textAlign: 'center', padding: 8 }}>
               {tr(
-                `仅显示最近 ${allItems.length} 篇（共 ${total} 篇）`,
-                `Showing the latest ${allItems.length} (of ${total})`,
+                `显示最近的 ${allItems.length} 篇，共 ${total} 篇`,
+                `Showing the latest ${allItems.length} of ${total}`,
               )}
             </div>
           )}
@@ -206,11 +205,11 @@ function TrashRow({
     >
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="row gap8" style={{ marginBottom: 5 }}>
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
             {item.code}
           </span>
           {item.year !== null && (
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
               {item.year}
             </span>
           )}
@@ -226,7 +225,7 @@ function TrashRow({
                 style={{
                   flex: 1,
                   minWidth: 0,
-                  fontSize: 11.5,
+                  fontSize: 12,
                   color: 'var(--text-3)',
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
@@ -244,21 +243,21 @@ function TrashRow({
           className="btn btn-soft sm"
           style={{ height: 26 }}
           disabled={busy}
-          title={restoreHint ?? tr('召回到论文库', 'Restore to the library')}
+          title={restoreHint ?? tr('恢复到文献库', 'Restore to the library')}
           onClick={onRestore}
         >
           <Icon name="refresh" size={12} />
-          {tr('召回', 'Restore')}
+          {tr('恢复', 'Restore')}
         </button>
         <button
           className="btn btn-ghost sm"
           style={{ height: 26, color: 'var(--danger-tx)' }}
           disabled={busy}
-          title={purgeHint ?? tr('彻底删除（连同文件，无法恢复）', 'Delete permanently (files included, no undo)')}
+          title={purgeHint ?? tr('永久删除，包括文件', 'Delete permanently, including files')}
           onClick={onPurge}
         >
           <Icon name="x" size={12} />
-          {tr('彻底删除', 'Delete forever')}
+          {tr('永久删除', 'Delete')}
         </button>
       </div>
     </div>

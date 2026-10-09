@@ -80,8 +80,8 @@ export function ReadingPage() {
       clearEvidenceLocation();
       toast(
         tr(
-          '原句位置已随重新解析变化，已退回论文级来源。',
-          'The sentence moved after reprocessing. Showing the paper-level source.',
+          '找不到引用的原句，已打开论文开头。',
+          'Couldn’t find the quoted sentence, so the paper opens at the start.',
         ),
         'info',
       );
@@ -105,8 +105,8 @@ export function ReadingPage() {
     clearEvidenceLocation();
     toast(
       tr(
-        '该引用不存在或你已无权读取对应原文，已退回论文级来源。',
-        'The citation is unavailable or no longer authorized. Showing the paper-level source.',
+        '这条引用已失效，已打开论文开头。',
+        'This citation is no longer available, so the paper opens at the start.',
       ),
       'info',
     );
@@ -203,15 +203,15 @@ export function ReadingPage() {
     onSuccess: () => {
       toast(
         libState?.saved
-          ? tr('已移入回收站，可以召回', 'Moved to trash — you can restore it')
-          : tr('已加入文献库', 'Added to my library'),
+          ? tr('已移入回收站', 'Moved to trash')
+          : tr('已收藏到我的文献库', 'Saved to My library'),
         'ok',
       );
       void queryClient.invalidateQueries({ queryKey: ['library-state', id] });
       void queryClient.invalidateQueries({ queryKey: ['library'] });
     },
     onError: (e) =>
-      toast(`${tr('操作失败：', 'Action failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('操作失败：', 'Something went wrong: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // —— 课题「相关研究」书架：入架状态 + 加入/移出（P5a） ——
@@ -231,7 +231,7 @@ export function ReadingPage() {
     onSuccess: () => {
       toast(
         shelved
-          ? tr('已移入回收站，可以召回（个人库收藏保留）', 'Moved to trash — you can restore it (still saved in my library)')
+          ? tr('已从相关研究移除，我的文献库中仍保留', 'Removed from related work. It stays in My library.')
           : tr('已加入相关研究', 'Added to related work'),
         'ok',
       );
@@ -242,7 +242,7 @@ export function ReadingPage() {
       void queryClient.invalidateQueries({ queryKey: ['library'] });
     },
     onError: (e) =>
-      toast(`${tr('操作失败：', 'Action failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('操作失败：', 'Something went wrong: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const invalidateHighlights = useCallback(
@@ -257,7 +257,7 @@ export function ReadingPage() {
       setPanel('highlights');
       invalidateHighlights();
     },
-    onError: (e) => toast(`${tr('划线失败：', 'Highlight failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('划线失败：', 'Couldn’t highlight: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // 星标 / 阅读状态（乐观更新详情缓存，列表页缓存失效）
@@ -269,7 +269,7 @@ export function ReadingPage() {
       );
       if (paper) void queryClient.invalidateQueries({ queryKey: ['papers', paper.project_id] });
     },
-    onError: (e) => toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('更新失败：', 'Couldn’t update: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // 论文所属文献库：「回文献库」这类跳转的落点。后端直接给 library_id；旧后端没这个字段时
@@ -291,15 +291,15 @@ export function ReadingPage() {
   }, []);
 
   if (paperQuery.isLoading) {
-    return <div className="empty" style={{ marginTop: 120 }}>{tr('加载论文…', 'Loading paper…')}</div>;
+    return <div className="empty" style={{ marginTop: 120 }}>{tr('加载中…', 'Loading…')}</div>;
   }
   if (paperQuery.isError || !paper) {
     return (
       <div style={{ marginTop: 100 }}>
         <EmptyState
           icon="x"
-          title={tr('打不开这篇论文', 'Cannot open this paper')}
-          desc={tr('论文不存在、你不在这个课题里，或后端暂时不可用。', 'It does not exist, you are not in this topic, or the backend is unavailable.')}
+          title={tr('无法打开这篇论文', 'Couldn’t open this paper')}
+          desc={tr('论文可能已被删除，或本机引擎未运行。', 'The paper may have been deleted, or the local engine isn’t running.')}
           action={
             <button className="btn btn-ghost" onClick={() => navigate(from ? from.href : '/libraries')}>
               <Icon name="book" size={14} />
@@ -323,7 +323,7 @@ export function ReadingPage() {
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '14px 18px 16px' }}>
       {/* —— 顶栏 —— */}
-      <div className="row gap12" style={{ flexShrink: 0, marginBottom: 12 }}>
+      <div className="row gap12 wrap" style={{ flexShrink: 0, marginBottom: 12, rowGap: 8 }}>
         <button
           className="btn btn-ghost sm"
           onClick={() => navigate(from ? from.href : libHref(`?paper=${paper.id}`))}
@@ -331,12 +331,13 @@ export function ReadingPage() {
           <Icon name="chevron" size={13} style={{ transform: 'rotate(180deg)' }} />
           {from ? readerBackLabel(from.kind) : tr('回文献库', 'Back to library')}
         </button>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        {/* 标题至少留 200px：窄屏时右侧按钮换到下一行，而不是把标题挤没 */}
+        <div style={{ flex: 1, minWidth: 200 }}>
           <div
             title={paper.title}
             style={{
-              fontSize: 14.5,
-              fontWeight: 660,
+              fontSize: 15,
+              fontWeight: 600,
               letterSpacing: '-0.01em',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
@@ -345,15 +346,15 @@ export function ReadingPage() {
           >
             {paper.title}
           </div>
-          <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 1 }}>
-            {paper.arxiv_id ?? paper.venue ?? tr('论文阅读', 'Paper reading')}
+          <div className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>
+            {paper.arxiv_id ?? paper.venue ?? tr('论文', 'Paper')}
           </div>
         </div>
         <button
           className="icon-btn"
           title={
             shelved
-              ? tr('已在相关研究 · 点击移入回收站（可召回）', 'In related work · click to move to trash (restorable)')
+              ? tr('从相关研究移除', 'Remove from related work')
               : tr('加入相关研究', 'Add to related work')
           }
           disabled={shelfMutation.isPending || shelfIdsQuery.isLoading}
@@ -366,8 +367,8 @@ export function ReadingPage() {
           className="icon-btn"
           title={
             libSaved
-              ? tr('移入回收站（可在文献库里召回）', 'Move to trash (restorable from my library)')
-              : tr('加入文献库', 'Add to my library')
+              ? tr('取消收藏（移入回收站）', 'Unsave (moves to trash)')
+              : tr('收藏到我的文献库', 'Save to My library')
           }
           disabled={libSaveMutation.isPending || libStateQuery.isLoading}
           onClick={() => libSaveMutation.mutate()}
@@ -403,11 +404,11 @@ export function ReadingPage() {
         <div className="row gap8 wrap" style={{ flexShrink: 0, marginBottom: 10, padding: '8px 10px', border: '1px solid var(--warn-bd)', background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
           <Icon name="link" size={14} />
           <span style={{ flex: 1, fontSize: 12 }}>
-            {tr('论文仍可阅读，但精确引用位置暂时无法解析。', 'The paper remains readable, but exact citation positioning is temporarily unavailable.')}
+            {tr('暂时无法定位引用的原句。', 'Couldn’t locate the quoted sentence right now.')}
           </span>
           <button className="btn btn-ghost sm" disabled={evidenceQuery.isFetching} onClick={() => void evidenceQuery.refetch()}>
             <Icon name="refresh" size={12} style={evidenceQuery.isFetching ? { animation: 'spin 1s linear infinite' } : undefined} />
-            {tr('重试定位', 'Retry')}
+            {tr('重试', 'Retry')}
           </button>
         </div>
       )}
@@ -441,7 +442,7 @@ export function ReadingPage() {
               <div
                 onMouseDown={onDragStart}
                 onDoubleClick={() => setRightWidth(RIGHT_DEFAULT)}
-                title={tr('拖动调整宽度 · 双击复位', 'Drag to resize · double-click to reset')}
+                title={tr('拖动调整宽度，双击还原', 'Drag to resize. Double-click to reset.')}
                 style={{
                   width: 12,
                   flexShrink: 0,
@@ -457,19 +458,22 @@ export function ReadingPage() {
               {/* 右：四面板 */}
               <div
                 className="card"
-                style={{ width: rightWidth, flexShrink: 0, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+                style={{ width: rightWidth, maxWidth: '50%', flexShrink: 0, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
               >
-                <div style={{ padding: '10px 14px 0', flexShrink: 0 }}>
-                  <Segmented<PanelTab>
-                options={[
-                  { v: 'highlights', label: `${tr('标注', 'Highlights')}${highlights.length ? ` · ${highlights.length}` : ''}` },
-                  { v: 'notes', label: `${tr('笔记', 'Notes')}${paper.note_count ? ` · ${paper.note_count}` : ''}` },
-                  { v: 'chat', label: tr('AI 伴读', 'AI chat') },
-                  { v: 'info', label: tr('论文信息', 'Paper info') },
-                ]}
-                value={panel}
-                onChange={setPanel}
-              />
+                <div className="scroll" style={{ padding: '10px 14px 0', flexShrink: 0, overflowX: 'auto' }}>
+                  {/* max-content：窄面板里标签不折行，放不下就横向滚动 */}
+                  <div style={{ width: 'max-content' }}>
+                    <Segmented<PanelTab>
+                      options={[
+                        { v: 'highlights', label: `${tr('标注', 'Highlights')}${highlights.length ? ` · ${highlights.length}` : ''}` },
+                        { v: 'notes', label: `${tr('笔记', 'Notes')}${paper.note_count ? ` · ${paper.note_count}` : ''}` },
+                        { v: 'chat', label: tr('AI 问答', 'Ask AI') },
+                        { v: 'info', label: tr('论文信息', 'Paper info') },
+                      ]}
+                      value={panel}
+                      onChange={setPanel}
+                    />
+                  </div>
             </div>
             {panel === 'highlights' ? (
               <HighlightsPanel

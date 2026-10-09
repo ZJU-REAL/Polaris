@@ -8,13 +8,13 @@ import { tr } from '../../lib/i18n';
 function uploadError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.message.includes('PDF_UPLOAD_TOO_LARGE')) {
-      return tr('PDF 超过 100 MB 上限', 'The PDF exceeds the 100 MB limit');
+      return tr('PDF 不能超过 100 MB', 'The PDF must be 100 MB or smaller');
     }
     if (error.message.includes('PDF_UPLOAD_INVALID')) {
-      return tr('文件不是有效的 PDF，或 PDF 已加密', 'The file is not a valid PDF or is password-protected');
+      return tr('不是有效的 PDF，或文件已加密', 'This isn’t a valid PDF, or it’s password-protected');
     }
     if (error.message.includes('PDF_UPLOAD_EMPTY')) {
-      return tr('所选 PDF 是空文件', 'The selected PDF is empty');
+      return tr('文件是空的', 'The file is empty');
     }
     if (error.message.includes('PDF_ALREADY_EXISTS')) {
       return tr('这篇论文已经有 PDF', 'This paper already has a PDF');
@@ -50,9 +50,9 @@ export function PdfUploadButton({
     mutationFn: (file: File) => api.uploadPaperPdf(paperId, file),
     onSuccess: (detail) => {
       applyDetail(detail);
-      toast(tr('PDF 已上传，可以阅读全文了', 'PDF uploaded — the full paper is ready to read'), 'ok');
+      toast(tr('PDF 已上传', 'PDF uploaded'), 'ok');
     },
-    onError: (error) => toast(`${tr('上传 PDF 失败：', 'PDF upload failed: ')}${uploadError(error)}`, 'error'),
+    onError: (error) => toast(`${tr('上传失败：', 'Couldn’t upload: ')}${uploadError(error)}`, 'error'),
   });
 
   const urlMutation = useMutation({
@@ -61,9 +61,9 @@ export function PdfUploadButton({
       applyDetail(detail);
       setUrl('');
       setLinkOpen(false);
-      toast(tr('PDF 已取回，可以阅读全文了', 'PDF fetched — the full paper is ready to read'), 'ok');
+      toast(tr('PDF 已下载', 'PDF downloaded'), 'ok');
     },
-    onError: (error) => toast(`${tr('按链接取 PDF 失败：', 'Fetching the PDF failed: ')}${uploadError(error)}`, 'error'),
+    onError: (error) => toast(`${tr('下载失败：', 'Couldn’t download: ')}${uploadError(error)}`, 'error'),
   });
 
   if (pdfAvailable) return null;
@@ -96,7 +96,7 @@ export function PdfUploadButton({
           size={13}
           style={mutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined}
         />
-        {mutation.isPending ? tr('上传处理中…', 'Uploading…') : tr('上传 PDF', 'Upload PDF')}
+        {mutation.isPending ? tr('上传中…', 'Uploading…') : tr('上传 PDF', 'Upload PDF')}
       </button>
       <button
         type="button"
@@ -106,7 +106,7 @@ export function PdfUploadButton({
         onClick={() => setLinkOpen((open) => !open)}
       >
         <Icon name="link" size={13} />
-        {tr('用链接', 'From link')}
+        {tr('从链接添加', 'Add from link')}
       </button>
       {linkOpen && (
         <form
@@ -122,11 +122,11 @@ export function PdfUploadButton({
             type="url"
             value={url}
             autoFocus
-            placeholder={tr('可直接下载的 PDF 链接', 'Direct link to a PDF')}
+            placeholder={tr('例如 https://arxiv.org/pdf/2005.11401', 'e.g. https://arxiv.org/pdf/2005.11401')}
             onChange={(event) => setUrl(event.target.value)}
           />
           <button type="submit" className="btn sm" disabled={busy || !url.trim()}>
-            {urlMutation.isPending ? tr('取回中…', 'Fetching…') : tr('取回', 'Fetch')}
+            {urlMutation.isPending ? tr('下载中…', 'Downloading…') : tr('下载', 'Download')}
           </button>
         </form>
       )}

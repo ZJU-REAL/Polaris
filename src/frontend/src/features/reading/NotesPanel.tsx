@@ -43,20 +43,20 @@ export function NoteCard({
   const saveMutation = useMutation({
     mutationFn: () => api.patchNote(note.id, draft.trim()),
     onSuccess: () => {
-      toast(tr('笔记已更新', 'Note updated'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       setEditing(false);
       onSaved();
     },
-    onError: (e) => toast(`${tr('保存失败：', 'Save failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败：', 'Couldn’t save: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteNote(note.id),
     onSuccess: () => {
-      toast(tr('笔记已删除', 'Note deleted'), 'ok');
+      toast(tr('已删除笔记', 'Note deleted'), 'ok');
       onSaved();
     },
-    onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败：', 'Couldn’t delete: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const edited = note.updated_at && note.updated_at !== note.created_at;
@@ -64,10 +64,9 @@ export function NoteCard({
   return (
     <div className="card" style={{ padding: '11px 14px', marginBottom: 10 }}>
       <div className="row gap8" style={{ marginBottom: 7 }}>
-        <span style={{ fontSize: 12, fontWeight: 650, color: 'var(--text)' }}>{note.author_name}</span>
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
           {fmtTime(note.created_at)}
-          {edited ? ` · ${tr('已编辑', 'edited')}` : ''}
+          {edited ? ` · ${tr('已编辑', 'Edited')}` : ''}
         </span>
         {canEdit && !editing && (
           <span className="row gap6" style={{ marginLeft: 'auto' }}>
@@ -98,7 +97,7 @@ export function NoteCard({
         <>
           <textarea
             className="textarea"
-            style={{ width: '100%', minHeight: 90, fontSize: 12.5, resize: 'vertical' }}
+            style={{ width: '100%', minHeight: 90, fontSize: 13, resize: 'vertical' }}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
           />
@@ -116,7 +115,7 @@ export function NoteCard({
           </div>
         </>
       ) : (
-        <Markdown source={note.content} style={{ fontSize: 12.5 }} />
+        <Markdown source={note.content} style={{ fontSize: 13 }} />
       )}
     </div>
   );
@@ -138,12 +137,12 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
   const createMutation = useMutation({
     mutationFn: () => api.createPaperNote(paperId, draft.trim()),
     onSuccess: () => {
-      toast(tr('笔记已发布', 'Note published'), 'ok');
+      toast(tr('已保存笔记', 'Note saved'), 'ok');
       setDraft('');
       setPreview(false);
       invalidateNotes(queryClient, paperId, pid);
     },
-    onError: (e) => toast(`${tr('发布失败：', 'Publish failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败：', 'Couldn’t save: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const onSaved = () => invalidateNotes(queryClient, paperId, pid);
@@ -154,9 +153,9 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
       {/* —— 列表 —— */}
       <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '14px 14px 6px' }}>
         {notesQuery.isLoading ? (
-          <div className="empty">{tr('加载笔记…', 'Loading notes…')}</div>
+          <div className="empty">{tr('加载中…', 'Loading…')}</div>
         ) : notesQuery.isError ? (
-          <EmptyState compact icon="x" title={tr('笔记暂时加载不出来', 'Notes failed to load')} desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')} />
+          <EmptyState compact icon="x" title={tr('无法加载笔记', 'Couldn’t load notes')} desc={tr('请确认本机引擎正在运行，然后重试。', 'Make sure the local engine is running, then try again.')} />
         ) : notes.length === 0 ? (
           <EmptyState
             compact
@@ -178,7 +177,7 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
       {/* —— 编辑器 —— */}
       <div style={{ borderTop: '0.5px solid var(--border)', padding: '10px 14px 12px', flexShrink: 0 }}>
         <div className="row" style={{ marginBottom: 8, justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 12, fontWeight: 650 }}>
+          <span style={{ fontSize: 12, fontWeight: 600 }}>
             {tr('写笔记', 'New note')}
           </span>
           <span className="row gap6">
@@ -212,18 +211,18 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
             }}
           >
             {draft.trim() ? (
-              <Markdown source={draft} style={{ fontSize: 12.5 }} />
+              <Markdown source={draft} style={{ fontSize: 13 }} />
             ) : (
               <span className="muted" style={{ fontSize: 12 }}>
-                {tr('（还没有内容，切换到编辑标签开始写）', '(Nothing yet — switch to the edit tab to start writing)')}
+                {tr('暂无内容', 'Nothing to preview')}
               </span>
             )}
           </div>
         ) : (
           <textarea
             className="textarea"
-            style={{ width: '100%', minHeight: 88, maxHeight: 180, fontSize: 12.5, resize: 'vertical' }}
-            placeholder={tr('记下想法、疑问或要点，支持 Markdown…', 'Jot down ideas, questions or key points — Markdown supported…')}
+            style={{ width: '100%', minHeight: 88, maxHeight: 180, fontSize: 13, resize: 'vertical' }}
+            placeholder={tr('记下想法或疑问，支持 Markdown', 'Ideas or questions (Markdown supported)')}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
           />
@@ -239,7 +238,7 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
             ) : (
               <Icon name="pen" size={13} />
             )}
-            {tr('发布笔记', 'Publish note')}
+            {tr('保存笔记', 'Save note')}
           </button>
         </div>
       </div>

@@ -460,18 +460,18 @@ export function PdfReader({
   const fetchPdfMutation = useMutation({
     mutationFn: () => api.requestPaperPdf(paper.id),
     onSuccess: () => {
-      toast('PDF 已下载好，正在打开', 'ok');
+      toast(tr('PDF 已下载', 'PDF downloaded'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['paper-pdf', paper.id] });
       void queryClient.invalidateQueries({ queryKey: ['paper', paper.id] });
     },
     onError: (e) => {
       const msg =
         e instanceof ApiError && e.message.includes('PDF_FETCH_FAILED')
-          ? '下载失败，源站暂时取不到，稍后再试'
+          ? tr('暂时无法从来源网站下载，请稍后重试', 'The source site isn’t responding. Try again later.')
           : e instanceof Error
             ? e.message
             : String(e);
-      toast(`获取 PDF 失败：${msg}`, 'error');
+      toast(`${tr('PDF 下载失败：', 'Couldn’t download the PDF: ')}${msg}`, 'error');
     },
   });
 
@@ -610,8 +610,8 @@ export function PdfReader({
         setMode('structured');
         toast(
           tr(
-            'PDF 文本层无法可靠定位该句，已切换到结构化原文。',
-            'The PDF text layer could not resolve the sentence reliably. Switched to structured text.',
+            '无法在 PDF 中定位这句话，已切换到文本视图。',
+            'Couldn’t find the sentence in the PDF, so the text view is shown.',
           ),
           'info',
         );
@@ -683,7 +683,7 @@ export function PdfReader({
   );
 
   if (libraryId && !paper.pdf_available && assetsQuery.isLoading) {
-    return <div className="empty">{tr('正在检查 PDF 资产…', 'Checking PDF assets…')}</div>;
+    return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
   }
 
   // 无 PDF：引导获取（原先靠「先整包下一遍，404 就是没有」判断，现在直接读元数据，
@@ -694,11 +694,11 @@ export function PdfReader({
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <EmptyState
           icon="file"
-          title="该论文还没有 PDF"
+          title={tr('还没有 PDF', 'No PDF yet')}
           desc={
             canFetch
               ? undefined
-              : '这篇论文不是 arXiv 来源，暂时不支持自动下载 PDF，可以通过右上角原文链接查看。'
+              : tr('只有 arXiv 论文能自动下载 PDF，你可以打开原文链接或上传 PDF。', 'Only arXiv papers can be downloaded automatically. Open the original link or upload a PDF.')
           }
           action={(
             <div className="row gap8 wrap" style={{ justifyContent: 'center' }}>
@@ -716,7 +716,7 @@ export function PdfReader({
                   ) : (
                     <>
                       <Icon name="download" size={14} />
-                      {tr('获取 PDF', 'Fetch PDF')}
+                      {tr('下载 PDF', 'Download PDF')}
                     </>
                   )}
                 </button>
@@ -729,7 +729,7 @@ export function PdfReader({
                   style={{ textDecoration: 'none' }}
                 >
                   <Icon name="link" size={14} />
-                  {tr('打开原文链接', 'Open source link')}
+                  {tr('打开原文链接', 'Open original link')}
                 </a>
               ) : null}
               {!libraryId && <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />}
@@ -745,18 +745,18 @@ export function PdfReader({
       {/* —— 顶部控制条：阅读器模式切换 + 缩放 —— */}
       <div
         className="row"
-        style={{ flexShrink: 0, gap: 10, padding: '8px 12px', borderBottom: '0.5px solid var(--border)' }}
+        style={{ flexShrink: 0, gap: 10, rowGap: 6, flexWrap: 'wrap', padding: '8px 12px', borderBottom: '0.5px solid var(--border)' }}
       >
         <Segmented<ReaderMode>
           options={[
-            { v: 'annotate', label: tr('标注阅读器', 'Annotate') },
-            { v: 'standard', label: tr('标准阅读器', 'Standard') },
+            { v: 'annotate', label: tr('标注', 'Annotate') },
+            { v: 'standard', label: tr('标准', 'Standard') },
             ...(contentVersion && ['ready', 'ready_fallback', 'vector_ready'].includes(contentVersion.status)
               ? [{
                   v: 'structured' as const,
                   label: contentVersion.status === 'ready_fallback'
-                    ? tr('纯原文', 'Plain text')
-                    : tr('结构化原文', 'Structured'),
+                    ? tr('纯文本', 'Plain text')
+                    : tr('文本视图', 'Text view'),
                 }]
               : []),
           ]}
@@ -793,14 +793,14 @@ export function PdfReader({
             </button>
           </span>
         ) : mode === 'structured' ? (
-          <span className="row gap8" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>
+          <span className="row gap8" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-3)' }}>
             {structuredQuery.data
-              ? `${structuredQuery.data.manifest.parser} · ${structuredQuery.data.manifest.page_count} ${tr('页', 'pages')} · ${structuredQuery.data.manifest.assets.length} ${tr('项资源', 'assets')}`
-              : tr('正在载入解析结果', 'Loading parsed content')}
+              ? tr(`${structuredQuery.data.manifest.page_count} 页`, `${structuredQuery.data.manifest.page_count} ${structuredQuery.data.manifest.page_count === 1 ? 'page' : 'pages'}`)
+              : tr('加载中…', 'Loading…')}
           </span>
         ) : (
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>
-            {tr('标准阅读器不支持划线标注', 'Standard viewer has no highlighting')}
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-3)' }}>
+            {tr('切换到「标注」可划线', 'Switch to Annotate to highlight')}
           </span>
         )}
       </div>
@@ -815,7 +815,7 @@ export function PdfReader({
               structuredQuery.data.manifest.content_format === 'mineru_markdown' ? (
                 <Markdown source={structuredQuery.data.content} />
               ) : (
-                <article style={{ whiteSpace: 'pre-wrap', fontSize: 13.5, lineHeight: 1.8, color: 'var(--text-2)' }}>
+                <article style={{ whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.8, color: 'var(--text-2)' }}>
                   {structuredQuery.data.content}
                 </article>
               )
@@ -823,11 +823,11 @@ export function PdfReader({
               <EmptyState
                 compact
                 icon="x"
-                title={tr('结构化原文暂时无法加载', 'Structured content is unavailable')}
-                desc={tr('签名链接可能已过期，请刷新页面后重试。', 'The signed link may have expired. Refresh and try again.')}
+                title={tr('无法加载文本视图', 'Couldn’t load the text view')}
+                desc={tr('请刷新页面后重试。', 'Refresh the page and try again.')}
               />
             ) : (
-              <div className="empty">{tr('正在载入解析后的全文…', 'Loading parsed full text…')}</div>
+              <div className="empty">{tr('加载中…', 'Loading…')}</div>
             )}
           </div>
         </div>
@@ -850,12 +850,12 @@ export function PdfReader({
               justifyContent: 'center',
               background: '#525659',
               color: pdfQuery.isError ? '#fca5a5' : '#cbd5e1',
-              fontSize: 12.5,
+              fontSize: 13,
             }}
           >
             {pdfQuery.isError
-              ? tr('PDF 加载失败，可以换回标注阅读器', 'Failed to load — try the annotating reader')
-              : tr('正在下载完整 PDF…', 'Downloading the full PDF…')}
+              ? tr('PDF 加载失败，可切换到「标注」重试', 'Couldn’t load the PDF. Try Annotate instead.')
+              : tr('正在加载 PDF…', 'Loading the PDF…')}
           </div>
         )
       ) : (
@@ -877,14 +877,14 @@ export function PdfReader({
           // 网络慢时整份 PDF 可能要几分钟，不报进度的话跟卡死没有区别
           <div className="muted" style={{ textAlign: 'center', padding: 40, color: '#cbd5e1' }}>
             {loadPct == null
-              ? tr('正在解析 PDF…', 'Loading the PDF…')
+              ? tr('正在加载 PDF…', 'Loading the PDF…')
               : tr(`正在加载 PDF… ${loadPct}%`, `Loading the PDF… ${loadPct}%`)}
           </div>
         }
         error={
           // 任何加载失败都会走到这里（文件损坏、网络中断、被拦截），别把话说死成「损坏」
           <div className="muted" style={{ textAlign: 'center', padding: 40, color: '#fca5a5' }}>
-            {tr('PDF 加载失败，请稍后重试。', 'Could not load this PDF — try again later.')}
+            {tr('PDF 加载失败，请稍后重试。', 'Couldn’t load the PDF. Try again later.')}
           </div>
         }
       >
@@ -951,7 +951,7 @@ export function PdfReader({
                     return h.rects.map((r, ri) => (
                       <div
                         key={`${h.id}-${ri}`}
-                        title={h.note ? `批注：${h.note}` : h.selected_text}
+                        title={h.note ? `${tr('批注：', 'Note: ')}${h.note}` : h.selected_text}
                         onClick={(e) => {
                           e.stopPropagation();
                           onHighlightClick(h.id);
@@ -1000,7 +1000,7 @@ export function PdfReader({
             {HIGHLIGHT_STYLES.map((st) => (
               <button
                 key={st.v}
-                title={st.label}
+                title={tr(st.label, st.en)}
                 onClick={() => setPendingStyle(st.v)}
                 style={{
                   width: 24,
@@ -1039,7 +1039,7 @@ export function PdfReader({
           {HIGHLIGHT_COLORS.map((c) => (
             <button
               key={c.v}
-              title={`${c.label}色`}
+              title={tr(`${c.label}色`, c.en)}
               disabled={creating}
               onClick={() => confirmHighlight(c.v)}
               style={{

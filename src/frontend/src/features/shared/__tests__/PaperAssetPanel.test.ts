@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { parseStateMeta, vectorStateMeta } from '../PaperAssetPanel';
 
 describe('PaperAssetPanel status mapping', () => {
-  it('keeps MinerU and PyMuPDF fallback stages distinguishable', () => {
-    expect(parseStateMeta('mineru_uploading').label).toContain('MinerU');
+  it('shows a plain label and keeps MinerU / PyMuPDF stages in the tooltip detail', () => {
+    expect(parseStateMeta('mineru_uploading').label).not.toContain('MinerU');
+    expect(parseStateMeta('mineru_uploading').detail).toContain('MinerU');
     expect(parseStateMeta('mineru_processing').tone).toBe('accent');
-    expect(parseStateMeta('fallback_parsing').label).toContain('PyMuPDF');
+    expect(parseStateMeta('fallback_parsing').label).not.toContain('PyMuPDF');
+    expect(parseStateMeta('fallback_parsing').detail).toContain('PyMuPDF');
     expect(parseStateMeta('failed').tone).toBe('danger');
   });
 

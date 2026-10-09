@@ -131,7 +131,7 @@ function EntryRow({
         onChange={onToggleCheck}
         title={
           entry.last_paper_id === null
-            ? tr('源方向已删除，无法导出引用', 'Source deleted — cannot export citation')
+            ? tr('原文已删除，无法导出引用', 'The paper was deleted, so its citation can’t be exported')
             : undefined
         }
         style={{
@@ -147,24 +147,24 @@ function EntryRow({
       <div style={{ flex: 1, minWidth: 0 }}>
         {/* 顶部 mono 元信息行：编号/venue + 年份 + 源方向状态；右侧浏览信息 */}
         <div className="row gap8" style={{ marginBottom: 5 }}>
-          <span className="mono" style={{ fontSize: 10.5, color: active ? 'var(--accent-text)' : 'var(--text-3)' }}>
+          <span className="mono" style={{ fontSize: 11, color: active ? 'var(--accent-text)' : 'var(--text-3)' }}>
             {entry.arxiv_id ?? entry.venue ?? '—'}
           </span>
           {entry.year !== null && (
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
               {entry.year}
             </span>
           )}
           {entry.last_paper_id === null && (
-            <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-              {tr('源课题已删除', 'Source topic deleted')}
+            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+              {tr('来源课题已删除', 'Topic deleted')}
             </span>
           )}
           {entry.visit_count > 0 ? (
-            <span className="mono" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-4)', flexShrink: 0 }}>
+            <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
               {fmtRelative(entry.last_visited_at)}
               {' · '}
-              {tr(`看过 ${entry.visit_count} 次`, `${entry.visit_count} visits`)}
+              {tr(`看过 ${entry.visit_count} 次`, `Viewed ${entry.visit_count} ${entry.visit_count === 1 ? 'time' : 'times'}`)}
             </span>
           ) : null}
         </div>
@@ -175,7 +175,7 @@ function EntryRow({
           <div
             title={authors}
             style={{
-              fontSize: 11.5,
+              fontSize: 12,
               color: 'var(--text-3)',
               marginTop: 3,
               whiteSpace: 'nowrap',
@@ -190,14 +190,14 @@ function EntryRow({
         {(summary || (entry.venue && entry.arxiv_id)) && (
           <div className="row gap8" style={{ marginTop: 6 }}>
             {entry.venue && entry.arxiv_id && (
-              <span style={{ fontSize: 11.5, color: 'var(--text-3)', flexShrink: 0 }}>{entry.venue}</span>
+              <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>{entry.venue}</span>
             )}
             {summary && (
               <span
                 style={{
                   flex: 1,
                   minWidth: 0,
-                  fontSize: 11.5,
+                  fontSize: 12,
                   color: 'var(--text-3)',
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
@@ -218,7 +218,7 @@ function EntryRow({
           disabled={busy}
           title={
             entry.saved
-              ? tr('取消收藏（放进回收站，可召回）', 'Unsave (goes to trash, restorable)')
+              ? tr('取消收藏（移入回收站）', 'Unsave (moves to trash)')
               : tr('收藏', 'Save')
           }
           style={{ color: entry.saved ? 'var(--accent)' : 'var(--text-3)' }}
@@ -230,7 +230,7 @@ function EntryRow({
           <button
             className="icon-btn"
             disabled={busy}
-            title={tr('彻底删除这条记录', 'Delete this record')}
+            title={tr('删除这条记录', 'Delete this entry')}
             style={{ color: 'var(--text-3)' }}
             onClick={onPurge}
           >
@@ -246,7 +246,7 @@ function EntryRow({
 function PickHint() {
   return (
     <div className="empty" style={{ margin: 'auto' }}>
-      {tr('选择论文查看详情', 'Select a paper to view details')}
+      {tr('选择一篇论文查看详情', 'Select a paper to see details')}
     </div>
   );
 }
@@ -274,28 +274,28 @@ function PersonalTrashModal({ open, onClose }: { open: boolean; onClose: () => v
   const restoreMutation = useMutation({
     mutationFn: (entryId: string) => api.restoreLibraryEntry(entryId),
     onSuccess: (entry) => {
-      toast(`${tr('已召回：', 'Restored: ')}${entry.title.slice(0, 30)}`, 'ok');
+      toast(`${tr('已恢复：', 'Restored: ')}${entry.title.slice(0, 30)}`, 'ok');
       invalidate();
     },
-    onError: (e) => toast(`${tr('召回失败：', 'Restore failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('恢复失败：', 'Couldn’t restore: ')}${errText(e)}`, 'error'),
   });
 
   const purgeMutation = useMutation({
     mutationFn: (entryId: string) => api.removeLibraryEntry(entryId, 'purge'),
     onSuccess: () => {
-      toast(tr('已彻底删除', 'Permanently deleted'), 'ok');
+      toast(tr('已永久删除', 'Deleted permanently'), 'ok');
       invalidate();
     },
-    onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败：', 'Couldn’t delete: ')}${errText(e)}`, 'error'),
   });
 
   const emptyMutation = useMutation({
     mutationFn: () => api.emptyPersonalTrash(),
     onSuccess: (res) => {
-      toast(tr(`回收站已清空（${res.deleted} 条）`, `Trash emptied (${res.deleted} entries)`), 'ok');
+      toast(tr(`已清空回收站，共 ${res.deleted} 条`, `Emptied trash (${res.deleted} ${res.deleted === 1 ? 'entry' : 'entries'})`), 'ok');
       invalidate();
     },
-    onError: (e) => toast(`${tr('清空失败：', 'Empty failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('清空失败：', 'Couldn’t empty the trash: ')}${errText(e)}`, 'error'),
   });
 
   const items = useMemo<TrashItemView[]>(
@@ -309,13 +309,13 @@ function PersonalTrashModal({ open, onClose }: { open: boolean; onClose: () => v
           title: entry.title,
           leading:
             entry.last_paper_id === null ? (
-              <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-                {tr('源课题已删除', 'Source topic deleted')}
+              <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                {tr('来源课题已删除', 'Topic deleted')}
               </span>
             ) : undefined,
           aside: (
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-              {tr(`${fmtRelative(entry.trashed_at)} 移入`, `trashed ${fmtRelative(entry.trashed_at)}`)}
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+              {tr(`${fmtRelative(entry.trashed_at)} 删除`, `Deleted ${fmtRelative(entry.trashed_at)}`)}
             </span>
           ),
           desc: entry.tldr ?? entry.abstract ?? (authors || null),
@@ -330,8 +330,8 @@ function PersonalTrashModal({ open, onClose }: { open: boolean; onClose: () => v
       open={open}
       onClose={onClose}
       sub={tr(
-        '取消收藏的文献放在这里；清空浏览记录不会动这里',
-        'Papers you unsaved land here; clearing reading history leaves this alone',
+        '取消收藏的论文会放在这里。',
+        'Papers you unsave appear here.',
       )}
       items={items}
       total={trashQuery.data?.total}
@@ -343,12 +343,12 @@ function PersonalTrashModal({ open, onClose }: { open: boolean; onClose: () => v
       onEmpty={() => emptyMutation.mutate()}
       emptyWarning={(n) =>
         tr(
-          `将彻底删除回收站里的全部 ${n} 条，无法恢复`,
-          `This permanently deletes all ${n} entries in the trash — no undo`,
+          `回收站中的 ${n} 条记录将被永久删除，且无法恢复。`,
+          `All ${n} ${n === 1 ? 'entry' : 'entries'} in the trash will be deleted permanently.`,
         )
       }
-      restoreHint={tr('召回到我的收藏', 'Restore to Saved')}
-      purgeHint={tr('彻底删除，无法再召回', 'Delete forever — cannot be restored')}
+      restoreHint={tr('恢复到我的收藏', 'Restore to Saved')}
+      purgeHint={tr('永久删除', 'Delete permanently')}
     />
   );
 }
@@ -522,26 +522,26 @@ export function LibraryPage() {
         : api.saveToLibrary({ entry_id: entry.id }).then(() => undefined),
     onSuccess: (_d, entry) => {
       toast(
-        entry.saved ? tr('已移入回收站，可以召回', 'Moved to trash — you can restore it') : tr('已收藏', 'Saved'),
+        entry.saved ? tr('已移入回收站', 'Moved to trash') : tr('已收藏', 'Saved'),
         'ok',
       );
       // 选中的就是这条时同步右栏快照里的收藏态
       setSelEntry((old) => (old && old.id === entry.id ? { ...old, saved: !entry.saved } : old));
       invalidate();
     },
-    onError: (e) => toast(`${tr('操作失败：', 'Action failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('操作失败：', 'Something went wrong: ')}${errText(e)}`, 'error'),
   });
 
   // 浏览记录里的「彻底删除这条记录」（收藏条目的软删走上面的 toggleMutation）
   const purgeMutation = useMutation({
     mutationFn: (entry: LibraryEntry) => api.removeLibraryEntry(entry.id, 'purge'),
     onSuccess: (_d, entry) => {
-      toast(tr('已删除这条记录', 'Record deleted'), 'ok');
+      toast(tr('已删除', 'Deleted'), 'ok');
       // 删除的是当前选中项 → 清空右栏
       setSelEntry((old) => (old && old.id === entry.id ? null : old));
       invalidate();
     },
-    onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败：', 'Couldn’t delete: ')}${errText(e)}`, 'error'),
   });
 
   // 多选批量取消收藏：后端没有批量端点，按选中集逐条调（同样是软删，落回收站）
@@ -551,13 +551,13 @@ export function LibraryPage() {
       return entryIds.length;
     },
     onSuccess: (n, entryIds) => {
-      toast(tr(`已把 ${n} 篇移入回收站，可以召回`, `Moved ${n} papers to trash — restorable`), 'ok');
+      toast(tr(`已将 ${n} 篇移入回收站`, `Moved ${n} ${n === 1 ? 'paper' : 'papers'} to trash`), 'ok');
       setSelEntry((old) => (old && entryIds.includes(old.id) ? null : old));
       setSelected(new Map());
       setSelectMode(false);
       invalidate();
     },
-    onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败：', 'Couldn’t delete: ')}${errText(e)}`, 'error'),
   });
 
   const exportMutation = useMutation({
@@ -568,9 +568,9 @@ export function LibraryPage() {
         blob,
         format === 'bibtex' ? 'polaris-my-library-citations.bib' : 'polaris-my-library-citations.json',
       );
-      toast(tr(`已导出 ${selected.size} 篇`, `Exported ${selected.size} papers`), 'ok');
+      toast(tr(`已导出 ${selected.size} 篇`, `Exported ${selected.size} ${selected.size === 1 ? 'paper' : 'papers'}`), 'ok');
     },
-    onError: (e) => toast(`${tr('导出失败：', 'Export failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('导出失败：', 'Couldn’t export: ')}${errText(e)}`, 'error'),
   });
 
   const clearMutation = useMutation({
@@ -578,10 +578,10 @@ export function LibraryPage() {
     onSuccess: () => {
       setClearOpen(false);
       setSelEntry(null);
-      toast(tr('浏览记录已清空', 'History cleared'), 'ok');
+      toast(tr('已清空浏览记录', 'History cleared'), 'ok');
       invalidate();
     },
-    onError: (e) => toast(`${tr('清空失败：', 'Clear failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('清空失败：', 'Couldn’t clear history: ')}${errText(e)}`, 'error'),
   });
 
   const busy = toggleMutation.isPending || purgeMutation.isPending || bulkUnsaveMutation.isPending;
@@ -603,7 +603,7 @@ export function LibraryPage() {
               v: 'publications',
               label: (
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  {tr('我发表的', 'My Publications')}
+                  {tr('我发表的', 'My publications')}
                   {pendingCount > 0 && (
                     <span
                       className="mono"
@@ -615,7 +615,7 @@ export function LibraryPage() {
                         background: 'var(--accent)',
                         color: '#fff',
                         fontSize: 10,
-                        fontWeight: 700,
+                        fontWeight: 600,
                         display: 'inline-flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -638,7 +638,7 @@ export function LibraryPage() {
             onClick={() => setAddOpen(true)}
           >
             <Icon name="plus" size={13} />
-            {tr('添加文献', 'Add paper')}
+            {tr('添加论文', 'Add paper')}
           </button>
         )}
       </div>
@@ -662,8 +662,8 @@ export function LibraryPage() {
               <EmptyState
                 compact
                 icon="x"
-                title={tr('署名信息暂时加载不出来', 'Failed to load your author info')}
-                desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
+                title={tr('无法加载作者信息', 'Couldn’t load your author profile')}
+                desc={tr('请确认本机引擎正在运行，然后重试。', 'Make sure the local engine is running, then try again.')}
                 action={
                   <button className="btn btn-soft sm" onClick={() => void profileQuery.refetch()}>
                     {tr('重试', 'Retry')}
@@ -715,8 +715,8 @@ export function LibraryPage() {
                     onChange={setQInput}
                     placeholder={
                       semanticOn && tab === 'saved'
-                        ? tr('语义检索（自然语言描述）…', 'Semantic search (natural language)…')
-                        : tr('搜索标题 / 作者…', 'Search title / authors…')
+                        ? tr('用一句话描述要找的内容', 'Describe what you’re looking for')
+                        : tr('搜索标题、作者', 'Search titles, authors')
                     }
                   />
                   <SemanticSwitch
@@ -726,10 +726,10 @@ export function LibraryPage() {
                     title={
                       tab === 'saved'
                         ? tr(
-                            '按语义相似度检索收藏（需已生成向量）',
-                            'Semantic search over saved papers (needs embeddings)',
+                            '按意思搜索收藏的论文',
+                            'Search saved papers by meaning',
                           )
-                        : tr('浏览记录是流水，只支持关键词检索', 'History is a raw log — keyword search only')
+                        : tr('浏览记录只支持关键词搜索', 'History supports keyword search only')
                     }
                   />
                   <AdvancedToggle
@@ -754,21 +754,21 @@ export function LibraryPage() {
                         <FilterInput
                           value={author}
                           onChange={setAuthor}
-                          placeholder={tr('作者姓名…', 'Author name…')}
+                          placeholder={tr('作者', 'Author')}
                         />
                         <FilterInput
                           value={venue}
                           onChange={setVenue}
-                          placeholder={tr('期刊 / 会议…', 'Venue…')}
+                          placeholder={tr('期刊或会议', 'Venue')}
                         />
                       </div>
                       <FilterInput
                         value={affiliation}
                         onChange={setAffiliation}
-                        placeholder={tr('发表机构…', 'Affiliation…')}
+                        placeholder={tr('机构', 'Affiliation')}
                         title={tr(
-                          '机构信息在论文那边，源论文已被删除的条目匹配不到',
-                          'Affiliations live on the paper — entries whose source paper is gone will not match',
+                          '原文已删除的条目无法匹配',
+                          'Entries whose paper was deleted won’t match',
                         )}
                       />
                       {/* 我的标签 / 阅读状态 / 星标同样记在论文那边，源论文已删的条目匹配不到 */}
@@ -776,7 +776,7 @@ export function LibraryPage() {
                       <ReadingStatusField value={readingStatus} onChange={setReadingStatus} />
                       <label
                         className="row gap6"
-                        style={{ fontSize: 11.5, color: 'var(--text-2)', cursor: 'pointer', alignItems: 'center' }}
+                        style={{ fontSize: 12, color: 'var(--text-2)', cursor: 'pointer', alignItems: 'center' }}
                       >
                         <input type="checkbox" checked={starred} onChange={(e) => setStarred(e.target.checked)} />
                         {tr('只看星标', 'Starred only')}
@@ -808,16 +808,16 @@ export function LibraryPage() {
                 {semantic && data?.mode_used === 'keyword' && (
                   <div style={{ marginTop: 8, fontSize: 11, color: 'var(--warn-tx, var(--text-3))' }}>
                     {tr(
-                      '当前环境暂不支持语义检索，已按关键词返回。',
-                      'Semantic search is unavailable here — showing keyword results.',
+                      '语义检索暂不可用，已改用关键词搜索。',
+                      'Semantic search is unavailable, so keyword search was used.',
                     )}
                   </div>
                 )}
                 {semantic && data?.mode_used === 'semantic' && (
-                  <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-4)' }}>
+                  <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-3)' }}>
                     {tr(
-                      '语义检索只覆盖已生成向量的收藏论文，结果可能不全。',
-                      'Semantic search only covers saved papers with embeddings — results may be incomplete.',
+                      '部分论文尚未建立索引，结果可能不全。',
+                      'Some papers aren’t indexed yet, so results may be incomplete.',
                     )}
                   </div>
                 )}
@@ -831,8 +831,8 @@ export function LibraryPage() {
                   <EmptyState
                     compact
                     icon="x"
-                    title={tr('文献库暂时加载不出来', 'Failed to load your library')}
-                    desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
+                    title={tr('无法加载我的文献库', 'Couldn’t load your library')}
+                    desc={tr('请确认本机引擎正在运行，然后重试。', 'Make sure the local engine is running, then try again.')}
                     action={
                       <button className="btn btn-soft sm" onClick={() => void listQuery.refetch()}>
                         {tr('重试', 'Retry')}
@@ -852,22 +852,22 @@ export function LibraryPage() {
                     }
                     desc={
                       q || advActive
-                        ? tr('换个关键词或放宽高级检索条件。', 'Try another keyword or loosen the filters.')
+                        ? tr('换个关键词或放宽筛选条件。', 'Try another keyword or loosen the filters.')
                         : tab === 'saved'
                           ? tr(
-                              '在论文阅读页点书签按钮也能收进这里。',
-                              'Tapping the bookmark button on a paper reading page also saves it here.',
+                              '添加论文，或在阅读页点书签收藏。',
+                              'Add a paper, or bookmark one while reading.',
                             )
                           : tr(
-                              '打开任意论文的阅读页后，会自动记录在这里。',
-                              'Papers you open in the reader will show up here automatically.',
+                              '打开过的论文会出现在这里。',
+                              'Papers you open appear here.',
                             )
                     }
                     action={
                       tab === 'saved' && !q && !advActive ? (
-                        <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
+                        <button className="btn btn-soft sm" onClick={() => setAddOpen(true)}>
                           <Icon name="plus" size={13} />
-                          {tr('添加文献', 'Add paper')}
+                          {tr('添加论文', 'Add paper')}
                         </button>
                       ) : undefined
                     }
@@ -939,7 +939,7 @@ export function LibraryPage() {
                   <>
                     <button
                       className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
-                      title={tr('批量删除 / 导出引用', 'Bulk delete / citation export')}
+                      title={tr('选择多篇以删除或导出引用', 'Select papers to delete or export citations')}
                       onClick={() => {
                         setSelectMode((m) => !m);
                         setSelected(new Map());
@@ -955,7 +955,7 @@ export function LibraryPage() {
                         <button
                           className="btn btn-ghost sm"
                           style={{ color: 'var(--danger-tx)' }}
-                          title={tr('移入回收站（可召回）', 'Move to trash (restorable)')}
+                          title={tr('移入回收站', 'Move to trash')}
                           disabled={selected.size === 0 || bulkUnsaveMutation.isPending}
                           onClick={() => bulkUnsaveMutation.mutate([...selected.keys()])}
                         >
@@ -1022,8 +1022,8 @@ export function LibraryPage() {
         onClose={() => setClearOpen(false)}
         title={tr('清空浏览记录？', 'Clear reading history?')}
         message={tr(
-          '将删除全部浏览记录；已收藏的文献留在我的收藏，回收站里的条目也不受影响。此操作不可撤销。',
-          'All reading history will be deleted. Saved papers stay in Saved and the trash is left alone. This cannot be undone.',
+          '所有浏览记录将被删除，且无法恢复。收藏不受影响。',
+          'All history will be deleted and can’t be restored. Saved papers aren’t affected.',
         )}
         confirmText={tr('清空', 'Clear')}
         danger

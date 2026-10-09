@@ -55,7 +55,7 @@ function AuthorsLine({ authors, variants }: { authors: PaperAuthor[]; variants: 
   return (
     <div
       style={{
-        fontSize: 11.5,
+        fontSize: 12,
         color: 'var(--text-3)',
         marginTop: 3,
         whiteSpace: 'nowrap',
@@ -69,7 +69,7 @@ function AuthorsLine({ authors, variants }: { authors: PaperAuthor[]; variants: 
           <span
             style={
               nameMatches(a.name, variants)
-                ? { color: 'var(--accent-text)', fontWeight: 650 }
+                ? { color: 'var(--accent-text)', fontWeight: 600 }
                 : undefined
             }
           >
@@ -130,11 +130,11 @@ function PubRow({
     >
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="row gap8" style={{ marginBottom: 5 }}>
-          <span className="mono" style={{ fontSize: 10.5, color: active ? 'var(--accent-text)' : 'var(--text-3)' }}>
+          <span className="mono" style={{ fontSize: 11, color: active ? 'var(--accent-text)' : 'var(--text-3)' }}>
             {pub.arxiv_id ?? pub.venue ?? '—'}
           </span>
           {pub.year !== null && (
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
               {pub.year}
             </span>
           )}
@@ -155,7 +155,7 @@ function PubRow({
           {pub.venue && pub.arxiv_id && (
             <span
               style={{
-                fontSize: 11.5,
+                fontSize: 12,
                 color: 'var(--text-3)',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
@@ -167,8 +167,8 @@ function PubRow({
             </span>
           )}
           {pub.cited_by_count > 0 && (
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', flexShrink: 0 }}>
-              {tr(`被引 ${pub.cited_by_count} 次`, `${pub.cited_by_count} citations`)}
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
+              {tr(`被引 ${pub.cited_by_count} 次`, `${pub.cited_by_count} ${pub.cited_by_count === 1 ? 'citation' : 'citations'}`)}
             </span>
           )}
         </div>
@@ -184,7 +184,7 @@ function PubRow({
 /** 发表列表的包裹容器：圆角描边，内部行用分隔线（同回收站列表）。 */
 function PubList({ children }: { children: ReactNode }) {
   return (
-    <div style={{ border: '0.5px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+    <div style={{ borderTop: '0.5px solid var(--border)' }}>
       {children}
     </div>
   );
@@ -207,7 +207,7 @@ function AddPublicationModal({ open, onClose }: { open: boolean; onClose: () => 
       return api.addPublication(input);
     },
     onSuccess: () => {
-      toast(tr('已添加到我的发表', 'Added to your publications'), 'ok');
+      toast(tr('已添加', 'Added'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['publications'] });
       setValue('');
       setError(null);
@@ -216,7 +216,7 @@ function AddPublicationModal({ open, onClose }: { open: boolean; onClose: () => 
     onError: (e) => {
       // 422 = 解析失败，detail 直接展示在弹层里
       if (e instanceof ApiError && e.status === 422) {
-        setError(`${tr('解析失败：', 'Could not parse: ')}${e.message}`);
+        setError(`${tr('无法解析：', 'Couldn’t parse: ')}${e.message}`);
       } else {
         setError(errText(e));
       }
@@ -227,8 +227,8 @@ function AddPublicationModal({ open, onClose }: { open: boolean; onClose: () => 
     <Modal
       open={open}
       onClose={onClose}
-      title={tr('手动添加发表', 'Add a publication')}
-      sub={tr('三选一：填 arXiv ID、DOI，或粘贴 BibTeX。', 'Provide one of: arXiv ID, DOI, or a BibTeX entry.')}
+      title={tr('添加发表', 'Add publication')}
+      sub={tr('填写 arXiv 编号、DOI 或 BibTeX 中的一项。', 'Enter an arXiv ID, a DOI or a BibTeX entry.')}
       footer={
         <>
           <button className="btn btn-ghost sm" onClick={onClose}>
@@ -263,7 +263,7 @@ function AddPublicationModal({ open, onClose }: { open: boolean; onClose: () => 
               setValue(e.target.value);
               setError(null);
             }}
-            placeholder={'@article{shen2026polaris,\n  title = {...},\n  ...\n}'}
+            placeholder={'@article{smith2024,\n  title = {…},\n  author = {…}\n}'}
             style={{ width: '100%', fontFamily: 'var(--mono)', fontSize: 12 }}
           />
         ) : (
@@ -274,7 +274,7 @@ function AddPublicationModal({ open, onClose }: { open: boolean; onClose: () => 
               setValue(e.target.value);
               setError(null);
             }}
-            placeholder={kind === 'arxiv' ? '2401.12345' : '10.1145/3576915.3616613'}
+            placeholder={kind === 'arxiv' ? tr('例如 2401.12345', 'e.g. 2401.12345') : tr('例如 10.1145/3576915.3616613', 'e.g. 10.1145/3576915.3616613')}
             style={{ width: '100%' }}
           />
         )}
@@ -347,7 +347,7 @@ export function PublicationsTab({
     mutationFn: () => api.syncPublications(),
     onSuccess: () => {
       setSyncing(true);
-      toast(tr('扫描已开始，稍后自动刷新列表', 'Scan started — the list will refresh shortly'), 'ok');
+      toast(tr('已开始查找，完成后列表会更新', 'Searching. The list updates when done.'), 'ok');
       timersRef.current.push(
         window.setTimeout(() => {
           invalidatePubs();
@@ -360,7 +360,7 @@ export function PublicationsTab({
         }, 12000),
       );
     },
-    onError: (e) => toast(`${tr('扫描失败：', 'Scan failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('查找失败：', 'Couldn’t search: ')}${errText(e)}`, 'error'),
   });
 
   const decideMutation = useMutation({
@@ -368,12 +368,12 @@ export function PublicationsTab({
       action === 'confirm' ? api.confirmPublication(id) : api.rejectPublication(id),
     onSuccess: (_d, v) => {
       toast(
-        v.action === 'confirm' ? tr('已加入我的发表', 'Added to your publications') : tr('已移除', 'Removed'),
+        v.action === 'confirm' ? tr('已确认', 'Confirmed') : tr('已移除', 'Removed'),
         'ok',
       );
       invalidatePubs();
     },
-    onError: (e) => toast(`${tr('操作失败：', 'Action failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('操作失败：', 'Something went wrong: ')}${errText(e)}`, 'error'),
   });
 
   const variants = profile.name_variants;
@@ -383,17 +383,16 @@ export function PublicationsTab({
     <div className="col" style={{ gap: 16 }}>
       {/* —— 署名摘要 + 操作 —— */}
       <div
-        className="card"
         style={{
-          padding: '12px 14px',
-          background: 'var(--surface-2)',
+          paddingBottom: 14,
+          borderBottom: '0.5px solid var(--border)',
           display: 'flex',
           flexDirection: 'column',
           gap: 8,
         }}
       >
         <div>
-          <div className="row" style={{ gap: 6, fontSize: 13, fontWeight: 650, lineHeight: 1.4 }}>
+          <div className="row" style={{ gap: 6, fontSize: 13, fontWeight: 600, lineHeight: 1.4 }}>
             <span>
               {profile.name_variants.join(' / ') || '—'}
               {profile.affiliations.length > 0 && (
@@ -405,31 +404,31 @@ export function PublicationsTab({
             <button
               className="icon-btn"
               style={{ width: 22, height: 22, flexShrink: 0 }}
-              title={tr('修改署名信息', 'Edit author info')}
-              aria-label={tr('修改署名信息', 'Edit author info')}
+              title={tr('编辑作者信息', 'Edit author profile')}
+              aria-label={tr('编辑作者信息', 'Edit author profile')}
               onClick={onEditProfile}
             >
               <Icon name="pen" size={12} />
             </button>
           </div>
-          <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 3 }}>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3 }}>
             {profile.last_synced_at
-              ? tr(`上次匹配：${fmtRelative(profile.last_synced_at)}`, `Last matched: ${fmtRelative(profile.last_synced_at)}`)
-              : tr('还没匹配过', 'Not matched yet')}
+              ? tr(`上次查找：${fmtRelative(profile.last_synced_at)}`, `Last searched ${fmtRelative(profile.last_synced_at)}`)
+              : tr('尚未查找', 'Not searched yet')}
           </div>
         </div>
         <div className="row gap6 wrap">
           <button className="btn btn-soft sm" disabled={syncBusy} onClick={() => syncMutation.mutate()}>
             <Icon name="refresh" size={13} style={syncBusy ? { animation: 'spin 1s linear infinite' } : undefined} />
-            {syncBusy ? tr('扫描中…', 'Scanning…') : tr('立即扫描文献库', 'Scan library now')}
+            {syncBusy ? tr('查找中…', 'Searching…') : tr('立即查找', 'Search now')}
           </button>
           <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
             <Icon name="plus" size={13} />
-            {tr('手动添加', 'Add manually')}
+            {tr('添加发表', 'Add publication')}
           </button>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.5 }}>
-          {tr('每天会自动匹配一次，命中的进入待确认', 'Runs automatically once a day; matches land in the pending list')}
+        <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.5 }}>
+          {tr('每天自动从文献库中查找一次，找到的论文需要你确认。', 'Polaris searches your libraries daily. Confirm the matches it finds.')}
         </div>
       </div>
 
@@ -452,7 +451,7 @@ export function PublicationsTab({
                 actions={
                   <>
                     <button
-                      className="btn btn-primary sm"
+                      className="btn btn-soft sm"
                       disabled={decideMutation.isPending}
                       onClick={() => decideMutation.mutate({ id: pub.id, action: 'confirm' })}
                     >
@@ -487,7 +486,7 @@ export function PublicationsTab({
             <EmptyState
               compact
               icon="x"
-              title={tr('发表列表暂时加载不出来', 'Failed to load your publications')}
+              title={tr('无法加载发表列表', 'Couldn’t load your publications')}
               action={
                 <button className="btn btn-soft sm" onClick={() => void confirmedQuery.refetch()}>
                   {tr('重试', 'Retry')}
@@ -514,7 +513,7 @@ export function PublicationsTab({
                     <button
                       className="btn btn-ghost sm"
                       disabled={decideMutation.isPending}
-                      title={tr('从我的发表里拿掉', 'Remove from my publications')}
+                      title={tr('不是我的论文，移除', 'Not mine, remove it')}
                       onClick={() => decideMutation.mutate({ id: pub.id, action: 'reject' })}
                     >
                       {tr('移除', 'Remove')}

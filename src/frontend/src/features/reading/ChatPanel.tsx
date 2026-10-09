@@ -27,7 +27,7 @@ function SaveNoteButton({ content, paperId, pid }: { content: string; paperId: s
       void queryClient.invalidateQueries({ queryKey: ['paper', paperId] });
       void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
     },
-    onError: (e) => toast(`${tr('保存失败：', 'Save failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败：', 'Couldn’t save: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   return (
     <div className="row" style={{ marginTop: 8, justifyContent: 'flex-end' }}>
@@ -49,8 +49,8 @@ function RefList({ sources, onOpen }: { sources: LibraryChatSource[]; onOpen: (i
   if (sources.length === 0) return null;
   return (
     <div className="col" style={{ gap: 3, marginTop: 10, paddingTop: 8, borderTop: '0.5px solid var(--border)' }}>
-      <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
-        {tr(`参考文献 · ${sources.length} 篇`, `References · ${sources.length}`)}
+      <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)' }}>
+        {tr(`参考文献 · ${sources.length} 篇`, `Sources · ${sources.length}`)}
       </span>
       {sources.map((s) => (
         <button
@@ -62,7 +62,7 @@ function RefList({ sources, onOpen }: { sources: LibraryChatSource[]; onOpen: (i
             background: 'transparent',
             cursor: 'pointer',
             padding: 0,
-            fontSize: 11.5,
+            fontSize: 12,
             color: 'var(--text-2)',
             textAlign: 'left',
             display: 'flex',
@@ -116,7 +116,7 @@ export function ChatPanel({ paperId, pid }: { paperId: string; pid: string }) {
               }
             } else if (event === 'done') ctrl.onDone();
             else if (event === 'error') {
-              let detail = tr('服务端出错', 'Server error');
+              let detail = tr('本机引擎出错', 'The local engine hit an error');
               try {
                 detail = (JSON.parse(dataStr) as { detail?: string }).detail ?? detail;
               } catch {
@@ -137,21 +137,21 @@ export function ChatPanel({ paperId, pid }: { paperId: string; pid: string }) {
     <ChatSurface
       surfaceKey={`reading:${paperId}`}
       pid={pid}
-      title={tr('AI 伴读', 'AI reading')}
+      title={tr('AI 问答', 'Ask AI')}
       contextKinds={['paper', 'concept']}
       defaultDrawerOpen={false}
       hint={tr(
-        '回答基于本篇全文；用 / 选入其他文献即可让 AI 一起对比。仅供参考，关键结论请回原文核对。',
-        'Answers use this paper’s full text; use / to add other papers for comparison. For reference only — verify against the original.',
+        '基于本篇全文回答，输入 / 可加入其他论文对比。重要结论请核对原文。',
+        'Answers draw on this paper. Type / to compare with others. Check key claims against the paper.',
       )}
       emptyIcon="chat"
-      emptyTitle={tr('问问 AI 这篇论文', 'Ask AI about this paper')}
+      emptyTitle={tr('关于这篇论文提问', 'Ask about this paper')}
       emptyDesc={tr(
-        '比如它解决了什么问题、方法核心、与前作差别。',
-        'e.g. the problem, the core method, the difference from prior work.',
+        '例如它解决了什么问题、核心方法是什么、和已有工作有何不同。',
+        'For example: what problem it solves, its core method, how it differs from prior work.',
       )}
-      placeholder={tr('针对这篇论文提问，或 @ 分享…', 'Ask about this paper, or @ to share…')}
-      renderAssistant={(m: ChatMsg) => <Markdown source={m.content} style={{ fontSize: 12.5 }} />}
+      placeholder={tr('提问，或输入 @ 分享', 'Ask a question, or type @ to share')}
+      renderAssistant={(m: ChatMsg) => <Markdown source={m.content} style={{ fontSize: 13 }} />}
       assistantExtras={(m: ChatMsg) =>
         (m.sources?.length ?? 0) > 0 && (m.done || m.content) ? (
           <RefList sources={m.sources ?? []} onOpen={(id) => navigate(`/papers/${id}/read`, { state: location.state })} />

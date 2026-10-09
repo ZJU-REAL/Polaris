@@ -19,9 +19,9 @@ type StageStatus = 'pending' | 'running' | 'ok' | 'skipped' | 'error';
 // 模块级常量保留 zh/en，渲染处再 tr（import 时求值不随语言切换更新）
 const STAGES: { id: StageId; zh: string; en: string }[] = [
   { id: 'download', zh: '下载 PDF', en: 'Downloading PDF' },
-  { id: 'extract', zh: '抽取正文', en: 'Extracting text' },
-  { id: 'embed', zh: '向量化', en: 'Embedding' },
-  { id: 'score', zh: '打分', en: 'Scoring' },
+  { id: 'extract', zh: '提取正文', en: 'Extracting text' },
+  { id: 'embed', zh: '建立索引', en: 'Indexing' },
+  { id: 'score', zh: '评估相关度', en: 'Scoring relevance' },
 ];
 
 interface StageState {
@@ -157,7 +157,7 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
     };
   }, [taskId]);
 
-  const sub = paperTitle ?? (done ? tr('处理完成', 'Done') : tr('正在后台处理，请稍候…', 'Working in the background…'));
+  const sub = paperTitle ?? (done ? tr('处理完成', 'Done') : tr('处理中…', 'Processing…'));
 
   return (
     <Modal
@@ -171,7 +171,7 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
             size={15}
             style={{ color: fatal ? 'var(--warn)' : done ? 'var(--ok)' : 'var(--accent)' }}
           />
-          {tr('正在处理文献', 'Processing paper')}
+          {tr('正在处理论文', 'Processing paper')}
         </>
       }
       sub={sub}
@@ -196,11 +196,11 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div
                   className="row gap6"
-                  style={{ fontSize: 12.5, fontWeight: 560, color: dim ? 'var(--text-3)' : 'var(--text)', lineHeight: 1.4 }}
+                  style={{ fontSize: 13, fontWeight: 500, color: dim ? 'var(--text-3)' : 'var(--text)', lineHeight: 1.4 }}
                 >
                   {tr(s.zh, s.en)}
                   {st.status === 'skipped' && (
-                    <span style={{ fontSize: 10.5, color: 'var(--text-3)', fontWeight: 400 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 400 }}>
                       {tr('已跳过', 'Skipped')}
                     </span>
                   )}
@@ -208,7 +208,7 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
                 {st.detail && (
                   <div
                     style={{
-                      fontSize: 10.5,
+                      fontSize: 11,
                       lineHeight: 1.5,
                       marginTop: 2,
                       color: st.status === 'error' ? 'var(--warn-tx)' : 'var(--text-3)',
@@ -227,7 +227,7 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
         <div
           style={{
             marginTop: 14,
-            fontSize: 11.5,
+            fontSize: 12,
             lineHeight: 1.6,
             color: 'var(--danger-tx)',
             background: 'var(--danger-bg)',
@@ -242,7 +242,7 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
         <div
           style={{
             marginTop: 14,
-            fontSize: 11.5,
+            fontSize: 12,
             lineHeight: 1.6,
             color: 'var(--ok-tx)',
             background: 'var(--ok-bg)',
@@ -250,7 +250,7 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
             padding: '9px 11px',
           }}
         >
-          {tr('文献已处理完成。', 'Paper processed.')}
+          {tr('处理完成', 'Done')}
         </div>
       )}
     </Modal>

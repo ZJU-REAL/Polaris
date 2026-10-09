@@ -57,7 +57,7 @@ export function PersonalChatTab() {
             }
           } else if (event === 'done') ctrl.onDone();
           else if (event === 'error') {
-            let detail = tr('服务端出错', 'Server error');
+            let detail = tr('本机引擎出错', 'The local engine hit an error');
             try {
               detail = (JSON.parse(dataStr) as { detail?: string }).detail ?? detail;
             } catch {
@@ -76,25 +76,25 @@ export function PersonalChatTab() {
     <ChatSurface
       surfaceKey="personal"
       pid=""
-      title={tr('个人文献库对话', 'My library chat')}
+      title={tr('文献对话', 'Library chat')}
       contextKinds={['paper']}
       hint={tr(
-        '只就我收藏的这批个人文献回答，不限某个课题；[n] 为引用来源编号。',
-        'Answers stay within your saved personal papers, across all topics. [n] marks a source number.',
+        '基于我收藏的论文回答，[n] 为来源编号。',
+        'Answers draw on your saved papers. [n] marks a source.',
       )}
       headerAction={<BuildIndexButton build={() => api.buildPersonalIndex()} />}
       emptyIcon="chat"
-      emptyTitle={tr('和我收藏的文献对话', 'Chat with my saved papers')}
+      emptyTitle={tr('关于收藏的论文提问', 'Ask about your saved papers')}
       emptyDesc={tr(
-        '跨课题地问我收藏的文献；输入 / 可指定某几篇。',
-        'Ask across the papers you saved; type / to pin specific ones.',
+        '输入 / 可指定某几篇论文。',
+        'Type / to pick specific papers.',
       )}
       suggestions={SUGGESTIONS}
-      placeholder={tr('就我收藏的文献提问，或输入 / 放入上下文…', 'Ask about your saved papers, or type / for context…')}
+      placeholder={tr('提问，或输入 / 选择论文', 'Ask a question, or type / to pick papers')}
       renderAssistant={(m: ChatMsg) => (
         <Markdown
           source={m.content}
-          style={{ fontSize: 12.5 }}
+          style={{ fontSize: 13 }}
           renderCitation={citationRenderer(m.sources)}
           renderLibraryFigure={(paperId, index) => (
             <ChatFigure paperId={paperId} index={index} onOpenPaper={openPaper} />
