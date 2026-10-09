@@ -63,6 +63,8 @@ export type AssistantBlock =
   | { kind: 'sources'; papers: PaperSource[] }
   | { kind: 'verify'; notes: string[] }
   | { kind: 'thinking'; text: string }
+  /** 面板自己画的出错提示（不来自流）：action 给一个站内落点，如「去设置」 */
+  | { kind: 'notice'; text: string; detail?: string; action?: 'model-settings' }
   | {
       kind: 'tool';
       id: string;

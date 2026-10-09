@@ -222,3 +222,62 @@ export function resolveTabParam(param: string | null): { tab: string | null; foc
   if (param === 'agents') return { tab: 'llm', focus: 'agents' };
   return { tab: param, focus: null };
 }
+
+/** 服务端的一行路由 → 路由表里可编辑的草稿。 */
+export function routeToDraft(r: LlmRoute): RouteDraft {
+  return {
+    provider_id: r.provider_id ?? '',
+    acp_agent_id: r.acp_agent_id ?? '',
+    model: r.model,
+    temperature: r.temperature === null || r.temperature === undefined ? '' : String(r.temperature),
+    effort: r.effort ?? '',
+    context_window: r.context_window ? String(r.context_window) : '',
+    budgets: Object.fromEntries(Object.entries(r.input_budgets ?? {}).map(([k, v]) => [k, String(v)])),
+  };
+}
+
+export function draftsFromRoutes(routes: readonly LlmRoute[]): Record<string, RouteDraft> {
+  return Object.fromEntries(routes.map((r) => [r.stage, routeToDraft(r)]));
+}
+
+function sameDraft(a: RouteDraft | undefined, b: RouteDraft | undefined): boolean {
+  if (!a || !b) return a === b;
+  const budgetKeys = new Set([...Object.keys(a.budgets), ...Object.keys(b.budgets)]);
+  return (
+    a.provider_id === b.provider_id &&
+    a.acp_agent_id === b.acp_agent_id &&
+    a.model === b.model &&
+    a.temperature === b.temperature &&
+    a.effort === b.effort &&
+    a.context_window === b.context_window &&
+    [...budgetKeys].every((k) => (a.budgets[k] ?? '') === (b.budgets[k] ?? ''))
+  );
+}
+
+/**
+ * 服务端路由变了（别处「设为默认模型」、删了智能体……）时把新表合进草稿：
+ * 用户没动过的行跟着服务端走，动过（含清掉）的行保留他的改动，等他自己保存。
+ * 以前是整表重置，没保存的编辑一声不响就没了。
+ */
+export function rebaseDrafts(
+  base: Readonly<Record<string, RouteDraft>>,
+  rows: Readonly<Record<string, RouteDraft>>,
+  server: Readonly<Record<string, RouteDraft>>,
+): Record<string, RouteDraft> {
+  const out: Record<string, RouteDraft> = {};
+  for (const stage of new Set([...Object.keys(base), ...Object.keys(rows), ...Object.keys(server)])) {
+    const edited = !sameDraft(rows[stage], base[stage]);
+    const pick = edited ? rows[stage] : server[stage];
+    if (pick) out[stage] = pick;
+  }
+  return out;
+}
+
+/** 草稿和服务端那份比，有没有没保存的改动。 */
+export function draftsDirty(
+  base: Readonly<Record<string, RouteDraft>>,
+  rows: Readonly<Record<string, RouteDraft>>,
+): boolean {
+  const stages = new Set([...Object.keys(base), ...Object.keys(rows)]);
+  return [...stages].some((s) => !sameDraft(rows[s], base[s]));
+}

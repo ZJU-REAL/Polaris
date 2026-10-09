@@ -1,8 +1,10 @@
 /* ============================================================
    每场对话「谁来答」的记忆（#836）。
 
-   后端把选择存在会话设置里，但会话接口不回这一项，所以前端自己记一份：
-   会话 id → 后端 id，外加「新会话默认用谁」。每轮都把选择带上，两边不会走岔。
+   后端把选择存在会话设置里，会话列表也回这一项（backend）。前端另记一份
+   「用户在这台机器上亲手选过的」：会话 id → 后端 id，外加「新会话默认用谁」。
+   老会话本地没记过时以服务端存着的为准，而且**不带 backend**——否则会拿
+   「上次随手选的默认值」把那场对话原本的选择盖掉。
    localStorage 可能不可用（隐私模式），一律 try/catch，失败就只在本次生效。
    ============================================================ */
 
@@ -37,17 +39,28 @@ function readMap(s: Storage | null): Record<string, string> {
   }
 }
 
-/** 这场对话选的是谁；没记过就用新会话默认值。 */
-export function readBackendChoice(convId: string | null, s: Storage | null = store()): string {
+/** 这场对话由谁来答。
+
+    - 新会话（convId 为空）：用上次选过的默认值；选过才算「明确选择」。
+    - 老会话：本地记过就用本地的（明确选择）；没记过就用服务端存着的，不算明确选择。
+    只有 explicit 为 true 时才该把 backend 发给后端。 */
+export function readBackendChoice(
+  convId: string | null,
+  serverBackend: string | null | undefined = null,
+  s: Storage | null = store(),
+): { choice: string; explicit: boolean } {
   if (convId) {
     const hit = readMap(s)[convId];
-    if (hit) return hit;
+    if (hit) return { choice: hit, explicit: true };
+    return { choice: serverBackend || POLARIS_BACKEND, explicit: false };
   }
   try {
-    return s?.getItem(DEFAULT_KEY) || POLARIS_BACKEND;
+    const def = s?.getItem(DEFAULT_KEY);
+    if (def) return { choice: def, explicit: true };
   } catch {
-    return POLARIS_BACKEND;
+    /* 读不到就当没选过 */
   }
+  return { choice: POLARIS_BACKEND, explicit: false };
 }
 
 /** 记下选择：有会话就记到这场上，同时作为之后新会话的默认值。 */
@@ -67,7 +80,7 @@ export function writeBackendChoice(convId: string | null, backend: string, s: St
   }
 }
 
-/** 选过的 agent 被删了 / 不再共享时退回 Polaris，别带着一个不存在的 id 去问。 */
+/** 选过的 agent 被删了 / 停用时退回 Polaris，别带着一个不存在的 id 去问。 */
 export function resolveBackend(choice: string, available: { id: string }[]): string {
   return available.some((b) => b.id === choice) ? choice : POLARIS_BACKEND;
 }

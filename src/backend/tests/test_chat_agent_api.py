@@ -148,6 +148,25 @@ async def test_conversations_are_listed_newest_first(client, agent_on):
     assert listed[0]["title"], "标题取首条用户消息"
 
 
+async def test_listed_conversations_carry_the_stored_backend(client, agent_on):
+    """会话列表带上存着的回答方：老会话没选过就是 None，前端据此不去覆盖它。"""
+    headers = await _headers(client, "agent-backend@example.com")
+    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
+    listed = (await client.get("/api/chat/conversations", headers=headers)).json()
+    assert listed[0]["id"] == conv_id
+    assert listed[0]["backend"] is None
+
+    async with client.stream(
+        "POST",
+        f"/api/chat/conversations/{conv_id}/turn",
+        json={"question": "你好", "backend": "polaris"},
+        headers=headers,
+    ) as stream:
+        await stream.aread()
+    listed = (await client.get("/api/chat/conversations", headers=headers)).json()
+    assert listed[0]["backend"] == "polaris"
+
+
 async def test_an_unknown_scope_is_rejected(client, agent_on):
     headers = await _headers(client, "agent-scope@example.com")
     resp = await client.post(

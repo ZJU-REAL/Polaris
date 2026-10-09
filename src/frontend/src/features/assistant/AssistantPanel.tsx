@@ -8,14 +8,12 @@ import { Markdown } from '../../lib/markdown';
 import { api } from '../../lib/api';
 import {
   assistantTurnSse,
-  setPermissionState,
   type AssistantBlock,
   type ImageRef,
   type PaperSource,
   type PlanStep,
 } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
-import { MODEL_SETTINGS_HREF, isLlmNotConfigured, llmNotConfiguredText } from '../../lib/llmNotConfigured';
 import { copyText } from '../../lib/clipboard';
 import { BuddyHome } from './BuddyHome';
 import { followUps } from './followups';
@@ -28,6 +26,19 @@ import { TurnStatus } from './TurnStatus';
 import { agentToolIcon, agentToolKind, agentToolLabel, toolDisplayName } from './agentTools';
 import { PermissionCard, type PermissionStateChange } from './PermissionCard';
 import { POLARIS_BACKEND, readBackendChoice, resolveBackend, writeBackendChoice } from './backendChoice';
+import {
+  keepLocalTurns,
+  patchConvTurn,
+  pruneConvTurns,
+  renameConv,
+  setPermissionAcross,
+  turnsOf,
+  updateConvTurns,
+  type Turn,
+  type TurnsByConv,
+} from './convTurns';
+import { NoticeView, errorBlock } from './ErrorNotice';
+import { listboxKey } from './listboxKeys';
 
 /* ============================================================
    PolarisBuddy：全局抽屉。⌘J 开关，或点右下角的悬浮球。
@@ -39,11 +50,6 @@ import { POLARIS_BACKEND, readBackendChoice, resolveBackend, writeBackendChoice 
    帮你。未知事件忽略、未知块画成占位，绝不抛——这个项目没有前端测试工具，
    运行时炸了没人拦得住。
    ============================================================ */
-
-interface Turn {
-  role: 'user' | 'assistant';
-  blocks: AssistantBlock[];
-}
 
 /** 服务端持久化的块 → 前端块。认不出的形状一律降级，绝不抛。
 
@@ -137,25 +143,6 @@ function parseRestoredImageRefs(raw: unknown): ImageRef[] {
     });
   }
   return out;
-}
-
-/** 后端错误码 → 用户看得懂的一句话。认不出的原样透出，别把线索吃掉。 */
-function errorText(detail: string): string {
-  if (detail === 'CHAT_AGENT_DISABLED') {
-    return tr('助手在这个部署上没开启，找管理员开一下。', 'The assistant is switched off on this deployment — ask an admin to enable it.');
-  }
-  if (isLlmNotConfigured(detail)) {
-    // 正文按 Markdown 渲染，直接给一个能点的落点
-    return `${llmNotConfiguredText()} [${tr('去设置', 'Open settings')}](${MODEL_SETTINGS_HREF})`;
-  }
-  // 传输层报错带着前缀（"Error: ACP_AGENT_NOT_AVAILABLE"），按包含判断
-  if (detail.includes('ACP_AGENT_NOT_AVAILABLE')) {
-    return tr(
-      '这场对话选的智能体已经不能用了（被删掉、停用或不再共享）。换一个再问。',
-      'The agent picked for this conversation is no longer available (removed, turned off or no longer shared). Pick another one and ask again.',
-    );
-  }
-  return detail;
 }
 
 function ToolCard({ block }: { block: Extract<AssistantBlock, { kind: 'tool' }> }) {
@@ -525,6 +512,7 @@ function BlockView({
   if (block.kind === 'verify') return <VerifyCard notes={block.notes} />;
   if (block.kind === 'thinking') return <ThinkingView text={block.text} live={live} />;
   if (block.kind === 'tool') return <ToolCard block={block} />;
+  if (block.kind === 'notice') return <NoticeView block={block} />;
   if (block.kind === 'permission')
     return (
       <PermissionCard
@@ -559,7 +547,8 @@ export function AssistantPanel({
   onDroppedTextHandled?: () => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
-  const [turns, setTurns] = useState<Turn[]>([]);
+  // 轮次按会话分开存（见 convTurns.ts）：流只写它自己那场，切会话不串
+  const [turnsByConv, setTurnsByConv] = useState<TurnsByConv>({});
   const [input, setInput] = useState('');
   // 「哪些会话在跑」是**一张按 id 的表**，不是一个布尔。
   //
@@ -570,6 +559,15 @@ export function AssistantPanel({
   //: 还没落库的新会话（convId 还是 null）也可能在跑，用这个占位
   const NEW_CONV = '__new__';
   const [convId, setConvId] = useState<string | null>(null);
+  const viewKey = convId ?? NEW_CONV;
+  const turns = turnsOf(turnsByConv, viewKey);
+  // 异步回调里要读「此刻」的值，不是闭包当时的
+  const viewKeyRef = useRef(viewKey);
+  viewKeyRef.current = viewKey;
+  const turnsByConvRef = useRef(turnsByConv);
+  turnsByConvRef.current = turnsByConv;
+  const runningRef = useRef(running);
+  runningRef.current = running;
   // dock 形态下会话列表是常驻一栏（不再是头部时钟弹层）；overlay 形态屏幕太窄，
   // 仍然用弹层。
   //
@@ -597,7 +595,7 @@ export function AssistantPanel({
   //: 发完一轮之后标题才生成，列表要跟着刷新一次
   const [railRefresh, setRailRefresh] = useState(0);
   const [conversations, setConversations] = useState<
-    { id: string; title: string; project_id: string | null }[]
+    { id: string; title: string; project_id: string | null; backend?: string | null }[]
   >([]);
   // 问候语改成前端按本地时间算（见 greeting.ts），这里只要名字。
   // queryKey 与 AppShell 一致，命中同一份缓存，不多发一次请求。
@@ -616,18 +614,49 @@ export function AssistantPanel({
     retry: false,
     staleTime: 60_000,
   });
-  const [backendChoice, setBackendChoice] = useState<string>(() => readBackendChoice(convId));
+  //: 服务端存着的这场的回答方（会话列表里带回来）；新会话为空
+  const [serverBackend, setServerBackend] = useState<string | null>(null);
+  const [backendChoice, setBackendChoice] = useState(() => readBackendChoice(convId, serverBackend));
   const [backendOpen, setBackendOpen] = useState(false);
+  const backendBtnRef = useRef<HTMLButtonElement>(null);
+  const backendMenuRef = useRef<HTMLDivElement>(null);
+  const closeBackendMenu = useCallback(() => {
+    setBackendOpen(false);
+    backendBtnRef.current?.focus();
+  }, []);
+  // 打开时把焦点放到当前选中那项上，键盘可以直接上下挑
   useEffect(() => {
-    setBackendChoice(readBackendChoice(convId));
-  }, [convId]);
-  // 列表还没回来时不替用户做决定：不带 backend，后端沿用会话上存着的
-  const backend = backends ? resolveBackend(backendChoice, backends) : undefined;
+    if (!backendOpen) return;
+    const menu = backendMenuRef.current;
+    const picked = menu?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]');
+    (picked ?? menu?.querySelector<HTMLElement>('[role="option"]'))?.focus();
+  }, [backendOpen]);
+  const onBackendMenuKey = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const options = Array.from(
+        backendMenuRef.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [],
+      );
+      const current = options.findIndex((el) => el === document.activeElement);
+      const next = listboxKey(e.key, current, options.length);
+      if (!next) return;
+      e.preventDefault();
+      if (next === 'close') closeBackendMenu();
+      else options[next.focus]?.focus();
+    },
+    [closeBackendMenu],
+  );
+  useEffect(() => {
+    setBackendChoice(readBackendChoice(convId, serverBackend));
+  }, [convId, serverBackend]);
+  // 显示用：列表还没回来时不替用户做决定
+  const backend = backends ? resolveBackend(backendChoice.choice, backends) : undefined;
+  // 发送用：只有用户亲手选过才带；没选过就不带，后端沿用会话上存着的
+  const sendBackend = backendChoice.explicit ? backend : undefined;
   const backendItem = backends?.find((b) => b.id === backend);
   const showBackendPicker = !!backends && backends.length > 1;
   const pickBackend = useCallback(
     (id: string) => {
-      setBackendChoice(id);
+      setBackendChoice({ choice: id, explicit: true });
       writeBackendChoice(convId, id);
     },
     [convId],
@@ -745,16 +774,7 @@ export function AssistantPanel({
 
   /** 授权卡的状态改在它所在的那一轮上（卡片自己调接口，这里只管落状态）。 */
   const updatePermission = useCallback<PermissionStateChange>((requestId, state, opts) => {
-    setTurns((t) => {
-      let changed = false;
-      const next = t.map((turn) => {
-        const blocks = setPermissionState(turn.blocks, requestId, state, opts);
-        if (blocks === turn.blocks) return turn;
-        changed = true;
-        return { ...turn, blocks };
-      });
-      return changed ? next : t;
-    });
+    setTurnsByConv((m) => setPermissionAcross(m, requestId, state, opts));
   }, []);
 
   const openHistory = useCallback(async () => {
@@ -768,36 +788,46 @@ export function AssistantPanel({
 
   const loadConversation = useCallback(
     async (id: string) => {
-      // 服务端才是历史的权威源：本地状态直接整体替换
+      // 还在跑的会话用内存里那份：服务端不存授权请求，从服务端重建会丢掉还没回答的授权卡
+      const local = keepLocalTurns(turnsByConvRef.current, id, runningRef.current);
       try {
-        const messages = await api.getAssistantMessages(id);
+        const [messages, rows] = await Promise.all([
+          local ? Promise.resolve(null) : api.getAssistantMessages(id),
+          // 会话列表带着课题与回答方；取不到不挡切换
+          api.listAssistantConversations().catch(() => null),
+        ]);
+        const row = rows?.find((c) => c.id === id) ?? conversations.find((c) => c.id === id);
         setConvId(id);
+        setServerBackend(row?.backend ?? null);
         setHistoryOpen(false);
         // 会话上存着的课题才是这场对话真正的作用域，跟着切过去。
-        // （这句注释以前是空头支票：写着「跟着切」，却没有一行代码在切。）
         // 会话自己的作用域也算「定下来了」：它是这场对话当初问的范围，
         // 不该被用户后来在界面上切课题给盖掉。
-        pickTopic(conversations.find((c) => c.id === id)?.project_id ?? null);
+        pickTopic(row?.project_id ?? null);
         const cardById = new Map<string, Extract<AssistantBlock, { kind: 'tool' }>>();
-        setTurns(
-          messages
-            // 一轮会落成几条消息：assistant（正文/调用）+ 携带工具结果的那条。
-            // 后者 role 是 user（Anthropic 形状），但**不是用户说的话**——按 kind 认出来
-            // 并入上一轮，否则历史里会冒出一堆空的「提问」。
-            // 卡片表在**整轮之外**建：tool_use 与 tool_result 分属两条消息，
-            // 每条消息各建一张表就永远对不上（见 restoreBlocks 的注释）。
-            .reduce<Turn[]>((turns, m) => {
-              if (m.role !== 'user' && m.role !== 'assistant') return turns;
-              const blocks = restoreBlocks(m, cardById);
-              const last = turns[turns.length - 1];
-              if (m.kind === 'tool_results' && last) {
-                last.blocks = [...last.blocks, ...blocks];
-                return turns;
-              }
-              turns.push({ role: m.role as 'user' | 'assistant', blocks });
+        const restored = messages
+          // 一轮会落成几条消息：assistant（正文/调用）+ 携带工具结果的那条。
+          // 后者 role 是 user（Anthropic 形状），但**不是用户说的话**——按 kind 认出来
+          // 并入上一轮，否则历史里会冒出一堆空的「提问」。
+          // 卡片表在**整轮之外**建：tool_use 与 tool_result 分属两条消息，
+          // 每条消息各建一张表就永远对不上（见 restoreBlocks 的注释）。
+          ?.reduce<Turn[]>((turns, m) => {
+            if (m.role !== 'user' && m.role !== 'assistant') return turns;
+            const blocks = restoreBlocks(m, cardById);
+            const last = turns[turns.length - 1];
+            if (m.kind === 'tool_results' && last) {
+              last.blocks = [...last.blocks, ...blocks];
               return turns;
-            }, []),
-        );
+            }
+            turns.push({ role: m.role as 'user' | 'assistant', blocks });
+            return turns;
+          }, []);
+        // 只留正在看的这场和还在跑的，其余切回来时重拉
+        const keep = new Set(runningRef.current).add(id);
+        setTurnsByConv((m) => {
+          const kept = pruneConvTurns(m, keep);
+          return restored ? { ...kept, [id]: restored } : kept;
+        });
       } catch {
         /* 载入失败保持现状 */
       }
@@ -810,7 +840,11 @@ export function AssistantPanel({
     // 新的一场对话不该背着上一场的目标
     setGoal('');
     setConvId(null);
-    setTurns([]);
+    setServerBackend(null);
+    const keep = new Set(runningRef.current);
+    keep.delete(convId ?? NEW_CONV);
+    keep.delete(NEW_CONV);
+    setTurnsByConv((m) => pruneConvTurns(m, keep));
     setTitle('');
     setHistoryOpen(false);
   }, [stopConv, convId]);
@@ -825,15 +859,24 @@ export function AssistantPanel({
     // 「在跑」是**每场对话各自**的状态，不再是一个全局 busy，所以这里记的是 id 而不是 true
     const startedAt = convId ?? NEW_CONV;
     setRunning((prev) => new Set(prev).add(startedAt));
-    setTurns((t) => [...t, { role: 'user', blocks: [{ kind: 'text', text: question }] }, { role: 'assistant', blocks: [] }]);
+    setTurnsByConv((m) =>
+      updateConvTurns(m, startedAt, (t) => [
+        ...t,
+        { role: 'user', blocks: [{ kind: 'text', text: question }] },
+        { role: 'assistant', blocks: [] },
+      ]),
+    );
 
     let id = convId;
     try {
       if (!id) {
         id = (await api.createAssistantConversation({})).id;
         // 新会话：把这次选的后端记到它名下，切走再回来还是同一个
-        if (backend) writeBackendChoice(id, backend);
-        setConvId(id);
+        if (sendBackend) writeBackendChoice(id, sendBackend);
+        const newId = id;
+        setTurnsByConv((m) => renameConv(m, NEW_CONV, newId));
+        // 建会话期间用户可能已经切走了：那就别把他拽回来
+        if (viewKeyRef.current === NEW_CONV) setConvId(newId);
         // 占位换成真 id：否则这场跑起来了，列表里那条却不亮
         setRunning((prev) => {
           const next = new Set(prev);
@@ -845,25 +888,23 @@ export function AssistantPanel({
     } catch (e) {
       // 这里以前把所有失败都说成「助手未启用」，把真正的原因吃掉了
       const detail = e instanceof Error ? e.message : String(e);
-      setTurns((t) => {
-        const next = [...t];
-        next[next.length - 1] = { role: 'assistant', blocks: [{ kind: 'text', text: `⚠️ ${errorText(detail)}` }] };
-        return next;
-      });
+      setTurnsByConv((m) => patchConvTurn(m, startedAt, () => [errorBlock(detail)]));
       finish(startedAt);
       return;
     }
 
-    const patch = (fn: (blocks: AssistantBlock[]) => AssistantBlock[]) =>
-      setTurns((t) => {
-        const next = [...t];
-        const last = next[next.length - 1];
-        if (!last || last.role !== 'assistant') return t;
-        next[next.length - 1] = { ...last, blocks: fn(last.blocks) };
-        return next;
-      });
-
     const turnId = id;
+    // 帧只写这条流所属的那场，不管界面此刻显示的是哪场
+    const patch = (fn: (blocks: AssistantBlock[]) => AssistantBlock[]) =>
+      setTurnsByConv((m) => patchConvTurn(m, turnId, fn));
+    /** 跑完了：用户已经切走的话，这场的内存副本就不留了，切回来从服务端拉 */
+    const settle = () => {
+      finish(turnId);
+      if (viewKeyRef.current !== turnId) {
+        setTurnsByConv((m) => pruneConvTurns(m, new Set(Object.keys(m).filter((k) => k !== turnId))));
+      }
+    };
+
     abortById.current.set(turnId, () => undefined); // 占位，真函数在下面赋值
     const abort = assistantTurnSse(
       id,
@@ -878,31 +919,32 @@ export function AssistantPanel({
         // 第一句话立为目标，之后每轮都带同一个——不然第二轮会把新问题当成新目标，
         // 「一直朝一个目标推进」就变成了「每轮换一个目标」。
         goal: mode === 'goal' ? activeGoal : undefined,
-        backend,
-        onMeta: (meta) => setModel(meta.model),
+        backend: sendBackend,
+        onMeta: (meta) => {
+          if (viewKeyRef.current === turnId) setModel(meta.model);
+        },
         onBlocks: patch,
         onDone: () => {
-          finish(turnId);
+          settle();
           setRailRefresh((n) => n + 1);
           // 标题是这一轮结束后才生成的，回头取一次
           void api
             .listAssistantConversations()
-            .then((rows) => setTitle(rows.find((r) => r.id === id)?.title ?? ''))
+            .then((rows) => {
+              if (viewKeyRef.current === turnId) setTitle(rows.find((r) => r.id === turnId)?.title ?? '');
+            })
             .catch(() => undefined);
         },
         onError: (detail) => {
           // 把原始细节一并留下：只写「网络错误」等于让用户和我们都无从查起
-          patch((blocks) => [
-            ...blocks,
-            { kind: 'text', text: `⚠️ ${errorText(detail)}\n\n\`${detail}\`` },
-          ]);
-          finish(turnId);
+          patch((blocks) => [...blocks, errorBlock(detail, true)]);
+          settle();
         },
       },
     );
     abortById.current.set(turnId, abort);
     },
-    [busy, convId, contextOn, pageContext, topicId, mode, goal, backend],
+    [busy, convId, contextOn, pageContext, topicId, mode, goal, sendBackend, finish],
   );
 
   const send = useCallback(() => {
@@ -1328,8 +1370,15 @@ export function AssistantPanel({
           {/* 谁来答：只有登记了外部 agent 才出现（#836） */}
           {showBackendPicker && (
             <button
+              ref={backendBtnRef}
               className="buddy-scope"
               onClick={() => setBackendOpen((o) => !o)}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowDown' && !backendOpen) {
+                  e.preventDefault();
+                  setBackendOpen(true);
+                }
+              }}
               aria-haspopup="listbox"
               aria-expanded={backendOpen}
               title={tr('这场对话由谁来回答', 'Who answers in this conversation')}
@@ -1344,7 +1393,14 @@ export function AssistantPanel({
           {backendOpen && showBackendPicker && (
             <>
               <div onClick={() => setBackendOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 49 }} />
-              <div className="buddy-scope-menu" role="listbox" style={{ left: 'auto', right: 6 }}>
+              <div
+                ref={backendMenuRef}
+                className="buddy-scope-menu"
+                role="listbox"
+                aria-label={tr('由谁来回答', 'Who answers')}
+                onKeyDown={onBackendMenuKey}
+                style={{ left: 'auto', right: 6 }}
+              >
                 <div className="buddy-scope-list">
                   {backends.map((b) => (
                     <button
@@ -1353,9 +1409,10 @@ export function AssistantPanel({
                       role="option"
                       aria-selected={b.id === backend}
                       title={b.name}
+                      tabIndex={b.id === backend ? 0 : -1}
                       onClick={() => {
                         pickBackend(b.id);
-                        setBackendOpen(false);
+                        closeBackendMenu();
                       }}
                     >
                       <Icon name={b.kind === 'polaris' ? 'sparkle' : 'cpu'} size={13} />
@@ -1368,8 +1425,8 @@ export function AssistantPanel({
                 </div>
                 <div className="buddy-scope-empty" style={{ lineHeight: 1.5 }}>
                   {tr(
-                    '外部智能体在这台机器上用你自己的账号运行；在「设置 → 智能体后端」里管理。',
-                    'Outside agents run on this machine with your own sign-in. Manage them in Settings → Agent backends.',
+                    '外部智能体在这台机器上用你自己的账号运行；在「设置 → 模型与智能体」里管理。',
+                    'Outside agents run on this machine with your own sign-in. Manage them in Settings → Models & agents.',
                   )}
                 </div>
               </div>

@@ -183,7 +183,6 @@ function LeaderboardTab({
   loading,
   error,
   refetch,
-  canPromote,
   running,
   onOpenMatches,
 }: {
@@ -192,7 +191,6 @@ function LeaderboardTab({
   loading: boolean;
   error: boolean;
   refetch: () => void;
-  canPromote: boolean;
   running: boolean;
   onOpenMatches: (ideaId: string) => void;
 }) {
@@ -266,7 +264,7 @@ function LeaderboardTab({
           <span />
         </div>
         {rows.map((r, i) => {
-          const promotable = canPromote && (r.status === 'candidate' || r.status === 'under_review');
+          const promotable = (r.status === 'candidate' || r.status === 'under_review');
           return (
             <div
               key={r.id}
@@ -589,9 +587,6 @@ export function ReviewPage() {
   });
   const latestTournament = tournamentQuery.data ?? null;
 
-  // 晋级按钮 owner 可见（成员机制已随 #625 移除，归属只看 owner_id）；信息缺失时放行（后端仍会校验）
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
-  const canPromote = !currentProject || !me?.id || currentProject.owner_id === me.id;
 
   const retryMutation = useMutation({
     mutationFn: () => api.retryFailedTournamentMatches(pid!),
@@ -711,7 +706,6 @@ export function ReviewPage() {
             loading={leaderboardQuery.isLoading}
             error={leaderboardQuery.isError}
             refetch={() => void leaderboardQuery.refetch()}
-            canPromote={canPromote}
             running={!!runningVoyage}
             onOpenMatches={setFocusIdea}
           />

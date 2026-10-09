@@ -71,7 +71,9 @@ describe('课题选择', () => {
 
   it('载入历史会话时采用它自己的课题', () => {
     // 这句注释以前是空头支票：写着「跟着切」，却没有一行代码在切
-    expect(source).toContain('pickTopic(conversations.find((c) => c.id === id)?.project_id ?? null)');
+    // 会话行从服务端列表里取（停靠栏形态下面板自己的 conversations 是空的）
+    expect(source).toContain('rows?.find((c) => c.id === id) ?? conversations.find((c) => c.id === id)');
+    expect(source).toContain('pickTopic(row?.project_id ?? null)');
   });
 
   it('默认跟随你正在做的那个课题', () => {

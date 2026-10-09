@@ -27,6 +27,8 @@ class ConversationRead(BaseModel):
     title: str
     usage: dict[str, Any] = Field(default_factory=dict)
     last_message_at: datetime | None = None
+    # 这场对话选的回答方（polaris 或外部智能体 id）；没选过为 None
+    backend: str | None = None
 
 
 class MemoryToggle(BaseModel):

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { AcpAgentsSettings } from '../AcpAgentsSettings';
+import { AGENTS_KEY, AcpAgentsSettings, invalidateAfterAgentChange } from '../AcpAgentsSettings';
 import {
   DEFAULT_POLICY,
   POLICY_OPTIONS,
@@ -134,5 +134,34 @@ describe('agent backends settings tab', () => {
     const src = readFileSync(join(__dirname, '..', 'acpAgentsModel.ts'), 'utf8');
     // 文案表只存中英两份：这个文件根本不该引入 tr
     expect(src).not.toMatch(/import\s*\{[^}]*\btr\b[^}]*\}\s*from/);
+  });
+});
+
+describe('agent changes refresh the routing table (#850)', () => {
+  it('deleting or toggling an agent invalidates the model routes', () => {
+    const qc = new QueryClient();
+    qc.setQueryData(['llm', 'routes'], []);
+    qc.setQueryData(['llm', 'providers'], []);
+    qc.setQueryData(AGENTS_KEY, []);
+    qc.setQueryData(['chat-backends'], []);
+    invalidateAfterAgentChange(qc);
+    expect(qc.getQueryState(['llm', 'routes'])?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(AGENTS_KEY)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(['chat-backends'])?.isInvalidated).toBe(true);
+  });
+
+  it('every agent mutation goes through it', () => {
+    const src = readFileSync(join(__dirname, '..', 'AcpAgentsSettings.tsx'), 'utf8');
+    const row = src.slice(src.indexOf('function AgentRow('), src.indexOf('const policy = POLICY_OPTIONS'));
+    // update（启停）、probe、remove 都走 refresh，refresh 走 invalidateAfterAgentChange
+    expect(row).toMatch(/const refresh = [\s\S]*invalidateAfterAgentChange\(queryClient\)/);
+    expect(row).toMatch(/const remove = useMutation\(\{[\s\S]*refresh\(\);/);
+    expect(row).toMatch(/const update = useMutation\(\{[\s\S]*onSuccess: \(row\) => refresh\(row\)/);
+  });
+
+  it('the old ?tab=agents deep link only scrolls on landing', () => {
+    const page = readFileSync(join(__dirname, '..', 'SettingsPage.tsx'), 'utf8');
+    const setTab = page.slice(page.indexOf('const setTab = (next: Tab) => {'));
+    expect(setTab.slice(0, 300)).toContain('setFocusAgents(false)');
   });
 });
