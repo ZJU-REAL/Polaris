@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "3c7d9e1f5a20"  # 单用户：LLM 配置并成一张表、agent 去掉共享列 (#842)
+HEAD_REVISION = "7d2e4f9a1b63"  # 单用户：别的用户行的数据并到本地用户 (#850)
+SINGLE_USER_REVISION = "3c7d9e1f5a20"  # 单用户：LLM 配置并成一张表、agent 去掉共享列 (#842)
 NO_ACCOUNTS_REVISION = "88a5bdc0aa15"  # 删掉邮箱验证码表：去掉账号层 (#842)
 ROUTES_TO_AGENTS_REVISION = "a9c4e7d2f1b8"  # 路由可以指向外部 agent (#840)
 ACP_AGENTS_REVISION = "f6b2d8e04a17"  # 外部 agent（ACP 后端）登记表 (#836)
@@ -656,7 +657,12 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 账号层已删（#842）：邮箱验证码表不在 head 上
     assert "email_verification_codes" not in columns["_tables"]
 
-    # 先退掉单用户化（#842）：acp_agents.shared 建回来。
+    # 先退掉用户行合并（#850）：空操作。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == SINGLE_USER_REVISION
+
+    # 再退掉单用户化（#842）：acp_agents.shared 建回来。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == NO_ACCOUNTS_REVISION
@@ -1665,7 +1671,8 @@ def test_legacy_preference_rows_move_to_the_owner_then_go(tmp_path):
 
     with engine.begin() as conn:
         raw = conn.execute(
-            text("SELECT settings FROM users WHERE email = 'owner@e.com'")
+            # 按 id 找：7d2e4f9a1b63（#850）把唯一的用户认作本地用户、邮箱已改成 local@
+            text("SELECT settings FROM users WHERE id = '00000000-0000-0000-0000-000000000001'")
         ).scalar_one()
         keys = {row[0] for row in conn.execute(text("SELECT key FROM system_settings")).all()}
     settings = json.loads(raw) if isinstance(raw, str) else raw
@@ -1694,9 +1701,10 @@ def test_acp_agents_table_roundtrip(tmp_path):
 def test_single_user_migration_folds_llm_rows_and_drops_agent_sharing(tmp_path):
     """#842 第 7 步：按人配置的 LLM 行并进那一张表，外部 agent 的「共享」列删掉。
 
-    - model_routes：同一环节已有部署级路由时删掉按人的；没有的改成 NULL；好几个人
-      各配一条时留本地用户的；
-    - llm_providers：一律改成 NULL，撞名的加「 (2)」；
+    - 只并本地用户自己的那份；别的账号的按人 provider / 路由直接删掉——它们存着别人的
+      API key（#850）；
+    - model_routes：同一环节已有部署级路由时删掉按人的；没有的改成 NULL；
+    - llm_providers：本地用户的改成 NULL，撞名的加「 (2)」；
     - acp_agents.shared：删列；降级建回来、一律 false。
     """
     db_path = tmp_path / "single-user.db"
@@ -1713,7 +1721,7 @@ def test_single_user_migration_folds_llm_rows_and_drops_agent_sharing(tmp_path):
         "display_name, username_locked, created_at, updated_at"
     )
     with engine.begin() as conn:
-        # 另一个人比本地用户先建：并路由时仍按邮箱认本地用户，不按先后
+        # 另一个人比本地用户先建：仍按邮箱认本地用户，不按先后
         conn.execute(
             text(
                 f"INSERT INTO users ({user_cols}) VALUES "
@@ -1756,7 +1764,7 @@ def test_single_user_migration_folds_llm_rows_and_drops_agent_sharing(tmp_path):
         )
     engine.dispose()
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, SINGLE_USER_REVISION)
     engine = create_engine(f"sqlite:///{db_path}")
     try:
         with engine.connect() as conn:
@@ -1770,21 +1778,19 @@ def test_single_user_migration_folds_llm_rows_and_drops_agent_sharing(tmp_path):
             }
     finally:
         engine.dispose()
-    # 部署级的 default 留着，按人的 default 删掉；librarian 留本地用户那条；digest 改成 NULL
+    # 部署级的 default 留着，本地用户的 default 删掉；librarian 留本地用户那条（改成
+    # NULL）；别的账号的 librarian / digest 连同它们的 provider 一起删掉
     assert routes == {
         "r-platform-default": (None, "default"),
         "r-local-librarian": (None, "librarian"),
-        "r-other-digest": (None, "digest"),
     }
-    # 全部并到 NULL；撞名的按建表先后加后缀，不撞的不动
+    # 本地用户的并到 NULL，撞名的加后缀；别的账号的（含 key）删掉
     assert providers == {
         "prov-platform": (None, "openai"),
         "prov-local": (None, "openai (2)"),
-        "prov-other": (None, "openai (3)"),
-        "prov-unique": (None, "mine"),
     }
     version, columns = _inspect_db(db_path)
-    assert version == HEAD_REVISION
+    assert version == SINGLE_USER_REVISION
     assert "shared" not in columns["acp_agents"]
 
     # 降级：shared 列建回来、一律 false；agent 行本身不丢
@@ -1799,3 +1805,287 @@ def test_single_user_migration_folds_llm_rows_and_drops_agent_sharing(tmp_path):
     finally:
         engine.dispose()
     assert [(slug, bool(shared)) for slug, shared in rows] == [("claude", False)]
+
+
+def test_single_user_migration_without_local_user_keeps_the_earliest_users_llm_rows(tmp_path):
+    """#850：库里没有 local@ 时，「本地用户」是最早的活跃用户——并它的，删别人的。"""
+    db_path = tmp_path / "single-user-no-local.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, NO_ACCOUNTS_REVISION)
+    first = "00000000-0000-0000-0000-000000000001"
+    second = "00000000-0000-0000-0000-000000000002"
+    engine = create_engine(f"sqlite:///{db_path}")
+    with engine.begin() as conn:
+        _insert(conn, "users", id=first, email="me@x.com", is_active=1, created_at="2026-01-01")
+        _insert(conn, "users", id=second, email="b@x.com", is_active=1, created_at="2026-02-01")
+        _insert(conn, "llm_providers", id="p1", owner_id=first, name="mine", kind="openai_compat")
+        _insert(
+            conn, "llm_providers", id="p2", owner_id=second, name="theirs", kind="openai_compat"
+        )
+        _insert(conn, "model_routes", id="r1", owner_id=first, stage="default", provider_id="p1")
+        _insert(conn, "model_routes", id="r2", owner_id=second, stage="digest", provider_id="p2")
+    engine.dispose()
+
+    command.upgrade(cfg, SINGLE_USER_REVISION)
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            providers = conn.execute(text("SELECT id, owner_id FROM llm_providers")).all()
+            routes = conn.execute(text("SELECT id, owner_id FROM model_routes")).all()
+    finally:
+        engine.dispose()
+    assert [tuple(r) for r in providers] == [("p1", None)]
+    assert [tuple(r) for r in routes] == [("r1", None)]
+
+
+# ---------------------------------------------------------------------------
+# #850：别的用户行的数据并到本地用户（7d2e4f9a1b63）
+# ---------------------------------------------------------------------------
+
+
+def _filler(col_type: str):
+    t = col_type.upper()
+    if any(k in t for k in ("BOOL", "INT", "FLOAT", "REAL", "NUMERIC")):
+        return 0
+    if "DATETIME" in t or "TIMESTAMP" in t:
+        return "2026-01-01 00:00:00"
+    if "DATE" in t:
+        return "2026-01-01"
+    if "JSON" in t:
+        return "{}"
+    return "x"
+
+
+def _insert(conn, table: str, **values) -> None:
+    """插一行：没给的 NOT NULL 列按类型填个占位值（迁移测试不关心它们）。"""
+    import json
+    import uuid as uuid_mod
+
+    row = dict(values)
+    for col in inspect(conn).get_columns(table):
+        name = col["name"]
+        if name in row:
+            continue
+        if name == "id":
+            row[name] = str(uuid_mod.uuid4())
+        elif not col["nullable"] and col.get("default") is None:
+            row[name] = _filler(str(col["type"]))
+    row = {k: json.dumps(v) if isinstance(v, (dict, list)) else v for k, v in row.items()}
+    cols = ", ".join(row)
+    params = ", ".join(f":{k}" for k in row)
+    conn.execute(text(f"INSERT INTO {table} ({cols}) VALUES ({params})"), row)
+
+
+def _user_fk_values(conn) -> dict[tuple[str, str], set]:
+    """库里每个指向 users.id 的外键列 → 出现过的值。"""
+    found = {}
+    insp = inspect(conn)
+    for table in insp.get_table_names():
+        for fk in insp.get_foreign_keys(table):
+            if fk["referred_table"] != "users":
+                continue
+            col = fk["constrained_columns"][0]
+            values = {
+                r[0] for r in conn.execute(text(f"SELECT {col} FROM {table}")) if r[0] is not None
+            }
+            if values:
+                found[(table, col)] = values
+    return found
+
+
+def test_user_rows_merge_into_the_local_user(tmp_path):
+    """老库里有比 local@ 还早注册的账号（和一个停用账号）：所有外键改指本地用户、
+    撞唯一约束的留本地用户那行、settings 合并（本地用户的键优先）、别的账号停用。"""
+    import json
+
+    db_path = tmp_path / "merge-users.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, SINGLE_USER_REVISION)
+
+    reg = "00000000-0000-0000-0000-00000000000a"
+    local = "00000000-0000-0000-0000-00000000000b"
+    stale = "00000000-0000-0000-0000-00000000000c"
+    engine = create_engine(f"sqlite:///{db_path}")
+    with engine.begin() as conn:
+        _insert(
+            conn,
+            "users",
+            id=reg,
+            email="me@x.com",
+            username="me",
+            is_active=1,
+            created_at="2026-01-01 00:00:00",
+            settings={"daily.sync_time": "07:15", "shared": "reg"},
+        )
+        _insert(
+            conn,
+            "users",
+            id=stale,
+            email="old@x.com",
+            username="old",
+            is_active=0,
+            created_at="2026-01-15 00:00:00",
+            settings={"x": 3, "shared": "stale"},
+        )
+        _insert(
+            conn,
+            "users",
+            id=local,
+            email="local@polaris.desktop",
+            username="local",
+            is_active=1,
+            created_at="2026-02-01 00:00:00",
+            settings={"shared": "local"},
+        )
+        # 不撞的行：整行搬过去
+        _insert(conn, "projects", id="proj-reg", owner_id=reg, slug="old-proj", name="old")
+        _insert(conn, "projects", id="proj-local", owner_id=local, slug="new-proj", name="new")
+        _insert(conn, "conversations", id="conv-reg", user_id=reg, scope_kind="global")
+        _insert(conn, "connection_credentials", id="cred-reg", user_id=reg, name="gpu", host="h")
+        _insert(conn, "paper_notes", id="note-reg", author_id=reg, paper_id="paper-1", content="n")
+        _insert(conn, "buddy_memories", id="mem-reg", user_id=reg)
+        _insert(conn, "llm_usage", id="use-reg", user_id=reg)
+        # 撞唯一约束的：留本地用户那行
+        for row_id, uid, name in (
+            ("tag-reg-ml", reg, "ml"),
+            ("tag-local-ml", local, "ml"),
+            ("tag-reg-rl", reg, "rl"),
+        ):
+            _insert(conn, "user_paper_tags", id=row_id, user_id=uid, paper_id="paper-1", name=name)
+        for row_id, uid, paper in (
+            ("meta-reg-1", reg, "paper-1"),
+            ("meta-local-1", local, "paper-1"),
+            ("meta-reg-2", reg, "paper-2"),
+        ):
+            _insert(conn, "paper_user_meta", id=row_id, user_id=uid, paper_id=paper)
+        _insert(conn, "daily_feed_likes", id="like-reg", user_id=reg, entry_id="entry-1")
+        _insert(conn, "daily_feed_likes", id="like-local", user_id=local, entry_id="entry-1")
+        for row_id, uid, platform in (
+            ("bot-reg-f", reg, "feishu"),
+            ("bot-local-f", local, "feishu"),
+            ("bot-reg-d", reg, "dingtalk"),
+        ):
+            _insert(conn, "chat_bot_configs", id=row_id, user_id=uid, platform=platform)
+        for row_id, uid, key in (
+            ("lib-reg-k1", reg, "k1"),
+            ("lib-local-k1", local, "k1"),
+            ("lib-reg-k2", reg, "k2"),
+        ):
+            _insert(conn, "user_library_entries", id=row_id, user_id=uid, dedup_key=key)
+        # 单列唯一（每人一把）：本地用户没有 → 最早的账号那把搬过来，停用账号那把撞了删掉
+        _insert(conn, "download_api_keys", id="key-reg", user_id=reg, key_prefix="pre-reg")
+        _insert(conn, "download_api_keys", id="key-stale", user_id=stale, key_prefix="pre-st")
+        # 没有外键约束的软引用：人写的评审消息（hex 写法）、闸门的 requested_by
+        _insert(conn, "review_sessions", id="rs-1")
+        _insert(
+            conn,
+            "review_messages",
+            id="rm-1",
+            session_id="rs-1",
+            author_type="human",
+            author_id=reg.replace("-", ""),
+        )
+        _insert(conn, "gates", id="gate-1", requested_by=reg, decided_by=reg)
+    engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            fk_values = _user_fk_values(conn)
+            users = {
+                r[0]: (r[1], bool(r[2]), r[3])
+                for r in conn.execute(text("SELECT id, email, is_active, settings FROM users"))
+            }
+
+            def ids(table):
+                return {r[0] for r in conn.execute(text(f"SELECT id FROM {table}"))}
+
+            tags = ids("user_paper_tags")
+            metas = ids("paper_user_meta")
+            likes = ids("daily_feed_likes")
+            bots = ids("chat_bot_configs")
+            libs = ids("user_library_entries")
+            keys = ids("download_api_keys")
+            review_author = conn.execute(text("SELECT author_id FROM review_messages")).scalar()
+            gate = conn.execute(text("SELECT requested_by, decided_by FROM gates")).one()
+    finally:
+        engine.dispose()
+
+    # 每一个指向 users 的外键列里都只剩本地用户
+    assert len(fk_values) >= 12, fk_values
+    for (table, col), values in fk_values.items():
+        assert values == {local}, (table, col, values)
+    assert tags == {"tag-local-ml", "tag-reg-rl"}  # 标签取并集
+    assert metas == {"meta-local-1", "meta-reg-2"}
+    assert likes == {"like-local"}
+    assert bots == {"bot-local-f", "bot-reg-d"}
+    assert libs == {"lib-local-k1", "lib-reg-k2"}
+    assert keys == {"key-reg"}
+    assert review_author == local.replace("-", "")
+    assert tuple(gate) == (local, local)
+
+    assert users[local][:2] == ("local@polaris.desktop", True)
+    assert users[reg][:2] == ("me@x.com", False)
+    assert users[stale][:2] == ("old@x.com", False)
+    settings = json.loads(users[local][2])
+    assert settings == {"shared": "local", "daily.sync_time": "07:15", "x": 3}
+
+    # 降级是空操作；再升一次（幂等）结果不变
+    command.downgrade(cfg, "-1")
+    assert _inspect_db(db_path)[0] == SINGLE_USER_REVISION
+    command.upgrade(cfg, "head")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            assert _user_fk_values(conn) == fk_values
+    finally:
+        engine.dispose()
+
+
+def test_user_rows_merge_adopts_the_earliest_user_when_there_is_no_local_user(tmp_path):
+    """没有 local@：最早的活跃用户改成 local@（用户名 local 被占就不动），别人的行并给它。"""
+    db_path = tmp_path / "merge-no-local.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, SINGLE_USER_REVISION)
+
+    first = "00000000-0000-0000-0000-000000000001"
+    second = "00000000-0000-0000-0000-000000000002"
+    engine = create_engine(f"sqlite:///{db_path}")
+    with engine.begin() as conn:
+        _insert(
+            conn,
+            "users",
+            id=first,
+            email="me@x.com",
+            username="me",
+            is_active=1,
+            created_at="2026-01-01 00:00:00",
+        )
+        _insert(
+            conn,
+            "users",
+            id=second,
+            email="b@x.com",
+            username="local",
+            is_active=1,
+            created_at="2026-02-01 00:00:00",
+        )
+        _insert(conn, "projects", id="proj-1", owner_id=first, slug="a", name="a")
+        _insert(conn, "projects", id="proj-2", owner_id=second, slug="b", name="b")
+    engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            users = {
+                r[0]: (r[1], r[2], bool(r[3]))
+                for r in conn.execute(text("SELECT id, email, username, is_active FROM users"))
+            }
+            owners = {r[0] for r in conn.execute(text("SELECT owner_id FROM projects"))}
+    finally:
+        engine.dispose()
+    assert users[first] == ("local@polaris.desktop", "me", True)
+    assert users[second] == ("b@x.com", "local", False)
+    assert owners == {first}

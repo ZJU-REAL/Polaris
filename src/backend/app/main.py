@@ -20,6 +20,7 @@ from app.services.crdt_rooms import reset_crdt_rooms
 from app.services.crdt_stream import get_crdt_stream_subscriber, stop_crdt_stream_subscriber
 from app.services.discipline_packs import load_disciplines
 from app.services.interdisciplinary_workflows import ensure_guidance_documents
+from app.services.local_user import ensure_local_user
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,13 @@ async def lifespan(app: FastAPI):
     await recover_interrupted_work()
     # AI 起草流式镜像订阅（worker 发布 → 写活跃 CRDT 房间；连不上 redis 自动放弃）
     get_crdt_stream_subscriber().start()
+    # 本地用户先落定再起定时任务（#850）：否则第一拍时 local@ 还没建，
+    # local_user_id() 会先认到别的用户、等 local-session 建出 local@ 后又换人
+    try:
+        async with get_sessionmaker()() as session:
+            await ensure_local_user(session)
+    except Exception:  # noqa: BLE001
+        logger.warning("ensuring the local user failed (migrations pending?)", exc_info=True)
     # 定时任务由引擎进程自己跑（#842）
     from app.core.scheduler import start_engine_scheduler
 
