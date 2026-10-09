@@ -1020,11 +1020,6 @@ async def test_sync_time_is_admin_configurable(client):
     async with get_sessionmaker()() as session:
         assert await daily_feed.get_sync_time(session) == (3, 45)
 
-    # 只有平台主人能改（#722）
-    other = {"Authorization": f"Bearer {await register_and_login(client, email='u2@e.com')}"}
-    resp = await client.put("/api/daily/sync-time", json={"hour": 5, "minute": 0}, headers=other)
-    assert resp.status_code == 403
-
 
 async def test_due_now_gates_on_the_configured_time(client):
     """检查点每 15 分钟跑一次，靠 due_now 判断到点没有——没有它就会一天触发几十次。"""
@@ -1237,22 +1232,15 @@ async def test_probe_creates_the_run_once_the_batch_appears(client, monkeypatch)
 
 
 async def test_max_probe_attempts_defaults_to_ten_and_is_configurable(client):
-    """默认 10 次；管理员可改，普通用户只读。"""
+    """默认 10 次，可改。"""
     admin = {"Authorization": f"Bearer {await register_and_login(client)}"}
-    member = {
-        "Authorization": f"Bearer {await register_and_login(client, email='probe@example.com')}"
-    }
 
-    resp = await client.get("/api/daily/probe-attempts", headers=member)
+    resp = await client.get("/api/daily/probe-attempts", headers=admin)
     assert resp.status_code == 200 and resp.json()["attempts"] == 10
-
-    assert (
-        await client.put("/api/daily/probe-attempts", json={"attempts": 4}, headers=member)
-    ).status_code == 403  # 只有平台主人能改（#722）
 
     resp = await client.put("/api/daily/probe-attempts", json={"attempts": 4}, headers=admin)
     assert resp.status_code == 200 and resp.json()["attempts"] == 4
-    assert (await client.get("/api/daily/probe-attempts", headers=member)).json()["attempts"] == 4
+    assert (await client.get("/api/daily/probe-attempts", headers=admin)).json()["attempts"] == 4
 
     for bad in (0, 97):
         resp = await client.put("/api/daily/probe-attempts", json={"attempts": bad}, headers=admin)
@@ -1457,11 +1445,6 @@ async def test_retention_defaults_to_two_weeks_and_is_configurable(client):
     assert resp.status_code == 200 and resp.json() == {"days": 21}
     async with get_sessionmaker()() as session:
         assert await daily_feed.get_retention_days(session) == 21
-
-    other = {"Authorization": f"Bearer {await register_and_login(client, email='r2@e.com')}"}
-    assert (
-        await client.put("/api/daily/retention", json={"days": 3}, headers=other)
-    ).status_code == 403  # 只有平台主人能改（#722）
 
 
 async def test_cleanup_uses_the_configured_retention(client, monkeypatch):

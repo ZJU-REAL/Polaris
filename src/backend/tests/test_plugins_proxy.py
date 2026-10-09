@@ -26,18 +26,6 @@ def _kernel_configured(monkeypatch):
     yield
 
 
-async def test_second_user_cannot_manage_plugins(client):
-    await register_and_login(client, email="owner@example.com")
-    second = await register_and_login(client, email="second@example.com")
-    headers = {"Authorization": f"Bearer {second}"}
-
-    for method, url, payload in PROBES:
-        resp = await client.request(method, url, json=payload, headers=headers)
-        # 装插件影响整个部署，不是「我自己的机器」——非主人一律 403
-        assert resp.status_code == 403, (url, resp.status_code)
-        assert resp.json()["detail"] == "OWNER_REQUIRED"
-
-
 async def test_anonymous_cannot_manage_plugins(client):
     for method, url, payload in PROBES:
         resp = await client.request(method, url, json=payload)

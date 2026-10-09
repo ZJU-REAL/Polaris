@@ -45,13 +45,15 @@ async def test_a_slow_job_is_never_stacked():
     assert peak == 1
 
 
-def test_same_jobs_as_the_worker_cron():
-    """与服务器档位 worker 的 cron 表一一对应：漏一个，桌面上那件事就永远不发生。"""
-    from worker.settings import WorkerSettings
-
-    cron = {c.coroutine.__name__ for c in WorkerSettings.cron_jobs}
-    assert {j.fn.__name__ for j in sched.default_jobs()} == cron
-    assert WorkerSettings.on_startup.__name__ == "reconcile_stuck_voyages"
+def test_every_periodic_job_is_scheduled():
+    """原 ARQ cron 表里的五件事一件不少：漏一个，那件事就永远不发生。"""
+    assert {j.fn.__name__ for j in sched.default_jobs()} == {
+        "dispatch_literature_discovery_schedules",
+        "daily_feed_sync",
+        "daily_publication_match",
+        "reconcile_stale_voyages",
+        "watch_unanswered_managed_commands",
+    }
 
 
 async def test_engine_start_reclaims_stuck_runs_once(monkeypatch):

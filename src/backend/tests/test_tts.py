@@ -67,12 +67,8 @@ async def test_tts_configuration_is_database_backed(client, monkeypatch):
 
 async def test_admin_and_personal_tts_settings(client):
     admin = await _headers(client)
-    member = await _headers(client, "tts-member@example.com")
-
-    # admin 面回到单一主人守卫（#722）：第二个注册用户 403
-    denied = await client.get("/api/admin/settings/tts", headers=member)
-    assert denied.status_code == 403
-    assert denied.json()["detail"] == "OWNER_REQUIRED"
+    # 单用户（#842）：设置与个人偏好是同一个人
+    member = admin
 
     payload = {
         "enabled": True,

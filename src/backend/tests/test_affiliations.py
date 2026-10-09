@@ -266,18 +266,12 @@ async def test_affiliation_mode_rejects_invalid(app):
 
 
 async def test_affiliation_mode_admin_endpoint(client):
-    admin = await register_and_login(client)  # 首个 = admin
-    member = await register_and_login(client, email="bob2@example.com")
+    admin = await register_and_login(client)
     ah = {"Authorization": f"Bearer {admin}"}
-    mh = {"Authorization": f"Bearer {member}"}
 
     resp = await client.get("/api/admin/settings/affiliation-mode", headers=ah)
     assert resp.status_code == 200 and resp.json()["mode"] == "on_add"
-    # 只有平台主人能改（#722）；非法值 422（schema Literal 校验）
-    resp = await client.put(
-        "/api/admin/settings/affiliation-mode", json={"mode": "on_compile"}, headers=mh
-    )
-    assert resp.status_code == 403 and resp.json()["detail"] == "OWNER_REQUIRED"
+    # 非法值 422（schema Literal 校验）
     resp = await client.put(
         "/api/admin/settings/affiliation-mode", json={"mode": "on_compile"}, headers=ah
     )

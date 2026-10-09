@@ -42,9 +42,9 @@ def test_fake_fallback_is_strict_opt_in(monkeypatch):
     """
     monkeypatch.delenv("POLARIS_LLM_FAKE_FALLBACK", raising=False)
     # 不显式设：任何 env 都默认关闭
-    assert Settings(env="prod", profile="server").llm_fake_fallback is False
+    assert Settings(env="prod").llm_fake_fallback is False
     assert Settings(env="dev").llm_fake_fallback is False
     # 显式设 1：任何 env 都尊重显式 opt-in（不再按 env 强行改写）
     monkeypatch.setenv("POLARIS_LLM_FAKE_FALLBACK", "1")
-    assert Settings(env="prod", profile="server").llm_fake_fallback is True
+    assert Settings(env="prod").llm_fake_fallback is True
     assert Settings(env="dev").llm_fake_fallback is True

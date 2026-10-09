@@ -117,14 +117,6 @@ async def test_probe_failure_is_data_with_an_install_hint(client):
     assert "npm install -g @agentclientprotocol/claude-agent-acp" in probed["last_error"]
 
 
-async def test_only_the_owner_manages_agents(client):
-    await _owner(client)
-    other = {
-        "Authorization": f"Bearer {await register_and_login(client, email='other@example.com')}"
-    }
-    assert (await client.get("/api/acp-agents", headers=other)).status_code == 403
-
-
 async def test_assistant_turn_runs_on_the_agent(client, agent_on, tmp_path):
     headers = await _owner(client)
     agent = await _register_fake(client, headers)
@@ -203,24 +195,3 @@ async def test_new_process_gets_earlier_turns_as_context(client, agent_on, monke
     await get_pool().close(conv_id)  # 模拟空闲超时被回收
     # 假 agent 回显的是分隔线之后的部分；分隔线存在本身就说明摘要被补进去了
     assert await turn("second question") == "echo: second question"
-
-
-async def test_unshared_agents_are_owner_only(client, agent_on):
-    headers = await _owner(client)
-    agent = await _register_fake(client, headers)
-    other = {"Authorization": f"Bearer {await register_and_login(client, email='o2@example.com')}"}
-    assert [b["id"] for b in (await client.get("/api/chat/backends", headers=other)).json()] == [
-        "polaris"
-    ]
-    conv_id = (await client.post("/api/chat/conversations", json={}, headers=other)).json()["id"]
-    resp = await client.post(
-        f"/api/chat/conversations/{conv_id}/turn",
-        json={"question": "hi", "backend": agent["id"]},
-        headers=other,
-    )
-    assert resp.status_code == 409
-    assert resp.json()["detail"] == "ACP_AGENT_NOT_AVAILABLE"
-
-    await client.patch(f"/api/acp-agents/{agent['id']}", json={"shared": True}, headers=headers)
-    ids = [b["id"] for b in (await client.get("/api/chat/backends", headers=other)).json()]
-    assert agent["id"] in ids

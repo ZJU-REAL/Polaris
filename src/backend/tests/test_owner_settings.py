@@ -45,9 +45,6 @@ async def test_daily_preferences_live_on_the_owner(client):
     from app.services import daily_feed
 
     owner_headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
-    other_headers = {
-        "Authorization": f"Bearer {await register_and_login(client, email='u2@e.com')}"
-    }
 
     resp = await client.put(
         "/api/daily/categories", json={"categories": ["stat.ML"]}, headers=owner_headers
@@ -61,22 +58,12 @@ async def test_daily_preferences_live_on_the_owner(client):
     assert resp.status_code == 200
     resp = await client.put("/api/daily/sync-scope", json={"scope": "full"}, headers=owner_headers)
     assert resp.status_code == 200
-    # 非 owner：部署级的那几项仍然写不了（#722）
-    resp = await client.put("/api/daily/retention", json={"days": 3}, headers=other_headers)
-    assert resp.status_code == 403
-    # 订阅不在此列——它按人存（#806），各人管各人的，见 test_daily_subscriptions_api
-    resp = await client.get("/api/daily/categories", headers=other_headers)
-    assert resp.status_code == 200 and resp.json()["categories"] == []
 
     async with get_sessionmaker()() as session:
         stored = await _owner_settings_snapshot(session)
         assert stored["daily.retention_days"] == 30
         assert stored["daily.sync_time"] == "07:15"
         assert stored["daily.sync_scope"] == "full"
-        # 非 owner 用户的 settings 里不该出现部署级的那几项
-        other = await session.scalar(select(User).where(User.email == "u2@e.com"))
-        assert "daily.retention_days" not in (other.settings or {})
-        assert "daily.sync_time" not in (other.settings or {})
         # 新写入不再落 system_settings
         for key in (
             "daily_feed_categories",

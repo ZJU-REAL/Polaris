@@ -1,12 +1,10 @@
-"""Redis 异步客户端（懒初始化单例）。
+"""进程内 redis 替身（懒初始化单例）。
 
-API 进程与 worker 共用；测试通过 FastAPI 依赖覆盖 ``get_redis_dep``
-（或直接向引擎注入 EventBus）替换为 fakeredis。
+引擎是单进程：API、内联任务队列、定时任务都在同一个进程里，pubsub / 缓存 / 事件流
+全部走进程内的 fakeredis，机器上不需要 Redis 服务（#842 删掉了连外部 Redis 的分支）。
 """
 
 from redis.asyncio import Redis
-
-from app.core.config import get_settings
 
 _client: Redis | None = None
 
@@ -14,14 +12,9 @@ _client: Redis | None = None
 def get_redis() -> Redis:
     global _client
     if _client is None:
-        if get_settings().is_desktop:
-            # desktop 档位：单进程内嵌 redis 替身——API 与内联任务队列同进程，
-            # pubsub/缓存/事件流全部走进程内，机器上不需要 Redis 服务。
-            import fakeredis.aioredis
+        import fakeredis.aioredis
 
-            _client = fakeredis.aioredis.FakeRedis(decode_responses=True)
-        else:
-            _client = Redis.from_url(get_settings().redis_url, decode_responses=True)
+        _client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     return _client
 
 

@@ -61,6 +61,20 @@ def _fresh_owner_cache():
     yield
 
 
+@pytest_asyncio.fixture(autouse=True)
+def _fresh_redis():
+    """进程内 redis 是单例（#842 起恒为 fakeredis）：每个用例换一个新的。
+
+    不换的话，上一个用例写进去的缓存（检索结果、文献源查询）会被下一个读到——
+    哪个先跑决定结果，顺序一变就红。以前测试环境连不上真 redis，缓存从来没生效过，
+    所以这种串味不会出现。"""
+    import app.core.redis as redis_mod
+
+    redis_mod._client = None
+    yield
+    redis_mod._client = None
+
+
 @pytest_asyncio.fixture
 async def client(app):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:

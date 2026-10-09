@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("polaris.config")
@@ -21,10 +21,9 @@ class Settings(BaseSettings):
 
     # ---- App ----
     env: Literal["dev", "prod"] = "dev"
-    # 运行档位：server = 现有多进程形态（uvicorn + arq worker + 外部 Redis/PG）；
-    # desktop = 单进程个人版（SQLite + 进程内任务队列 + 进程内 fakeredis），由
-    # 桌面内核拉起，机器上不需要任何外部服务。见 core/queue.py 与 core/redis.py。
-    profile: Literal["server", "desktop"] = "server"
+    # 只有一种运行形态（#842）：单进程本地引擎——SQLite + 进程内任务队列 + 进程内
+    # redis 替身 + 进程内定时任务，由桌面内核拉起，机器上不需要任何外部服务。
+    # 以前的 server 档位（uvicorn + arq worker + 外部 Redis/Postgres）已删除。
     secret_key: str = "dev-only-secret-key-change-me"  # JWT 签名
     encryption_key: str = ""  # Fernet key；为空时 security.py 会从 secret_key 派生（仅限 dev）
     invite_code: str = "polaris-lab"  # 注册邀请码（部署级静态码，见 api/auth.py 注册端点）
@@ -59,9 +58,8 @@ class Settings(BaseSettings):
     kernel_token: str | None = None
 
     # ---- Database / Cache ----
-    # 默认回退 sqlite+aiosqlite，便于无 docker 的本地开发与测试；生产用 postgresql+asyncpg
+    # SQLite（桌面引导方会传入 userData 下的路径）
     database_url: str = "sqlite+aiosqlite:///./polaris_dev.db"
-    redis_url: str = "redis://localhost:6379/0"
     # 连接池要装得下 worker 的并发：max_jobs(10) 个 voyage × 每个 voyage 的打分并发
     # (_LLM_CONCURRENCY=5)，每篇论文各开一个 session，再加上引擎自己记步骤/检查点的那条。
     # SQLAlchemy 默认 5+10=15，实测在生产上被打满：50 个协程抢 15 个连接，多数等满 30s
@@ -288,17 +286,6 @@ class Settings(BaseSettings):
             logger.info("data_dir 是相对路径 %r，已按当前工作目录解析为 %s", v, resolved)
             return resolved
         return v
-
-    @model_validator(mode="after")
-    def _desktop_forbids_prod(self) -> "Settings":
-        """desktop 档位是单机个人形态，与 env=prod 的多用户部署语义互斥。"""
-        if self.profile == "desktop" and self.env == "prod":
-            raise ValueError("POLARIS_PROFILE=desktop 不能与 POLARIS_ENV=prod 同时使用")
-        return self
-
-    @property
-    def is_desktop(self) -> bool:
-        return self.profile == "desktop"
 
     @property
     def is_sqlite(self) -> bool:
