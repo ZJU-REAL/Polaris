@@ -57,7 +57,7 @@ export function StatementInterview({
         }
       } catch (e) {
         toast(
-          `${tr('访谈出错：', 'Interview failed: ')}${e instanceof Error ? e.message : String(e)}`,
+          `${tr('无法继续：', 'Couldn’t continue: ')}${e instanceof Error ? e.message : String(e)}`,
           'error',
         );
       } finally {
@@ -97,10 +97,10 @@ export function StatementInterview({
     <Modal
       open={open}
       onClose={onClose}
-      title={tr('AI 访谈：把方向说清楚', 'AI interview: pin down the direction')}
+      title={tr('AI 帮写方向说明', 'Draft the scope with AI')}
       sub={tr(
-        '这段描述既用来自动挑论文，也用来给论文打分——写得越具体，收得越准。',
-        'This text both selects and scores papers, so specifics pay off.',
+        '回答几个问题，写得越具体，收录越准。',
+        'Answer a few questions. The more specific, the better the matches.',
       )}
       width={620}
       footer={
@@ -117,7 +117,7 @@ export function StatementInterview({
                 onClose();
               }}
             >
-              {tr('用这段描述', 'Use this statement')}
+              {tr('使用这段说明', 'Use this scope')}
             </button>
           </>
         ) : (
@@ -128,7 +128,7 @@ export function StatementInterview({
             <button
               className="btn btn-primary sm"
               disabled={busy || !question || nothingChosen}
-              title={nothingChosen ? tr('至少选一项或自己写一句', 'Pick at least one, or write your own') : undefined}
+              title={nothingChosen ? tr('请至少选一项或自己填写', 'Pick at least one option or write your own') : undefined}
               onClick={submitAnswer}
             >
               {busy ? tr('思考中…', 'Thinking…') : tr('下一步', 'Next')}
@@ -151,7 +151,7 @@ export function StatementInterview({
           />
         ))}
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginLeft: 4 }}>
-          {statement ? tr('完成', 'done') : `${step}/${total}`}
+          {statement ? tr('完成', 'Done') : `${step}/${total}`}
         </span>
       </div>
 
@@ -159,8 +159,8 @@ export function StatementInterview({
         <div className="col gap8">
           <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
             {tr(
-              '按访谈内容写的英文描述——语料是英文论文摘要，中文描述会让匹配失准。可以直接改。',
-              'Written in English: the corpus is English paper abstracts, and a Chinese statement skews the matching. Edit freely.',
+              '用英文写成以便匹配英文论文，可直接修改。',
+              'Written in English to match English-language papers. You can edit it.',
             )}
           </div>
           <textarea
@@ -172,7 +172,7 @@ export function StatementInterview({
         </div>
       ) : busy && !question ? (
         <div className="empty" style={{ padding: 24 }}>
-          {tr('正在准备问题…', 'Preparing the question…')}
+          {tr('正在准备问题…', 'Preparing questions…')}
         </div>
       ) : question ? (
         <div className="col gap10">
@@ -219,15 +219,15 @@ export function StatementInterview({
             <span className="row gap6" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
               <Icon name="pen" size={11} />
               {question.options.length > 0
-                ? tr('其他（自己写，可与上面同时选）', 'Other — write your own, combines with the above')
-                : tr('请自己写（这次没能给出候选）', 'Write your own — no suggestions this time')}
+                ? tr('其他（可与上面同时选）', 'Other (can be combined with the above)')
+                : tr('请自己填写', 'Write your own')}
             </span>
             <textarea
               className="textarea"
               rows={2}
               value={custom}
               onChange={(e) => setCustom(e.target.value)}
-              placeholder={tr('补充这个环节的具体内容…', 'Add specifics for this step…')}
+              placeholder={tr('补充具体内容…', 'Add details…')}
             />
           </div>
         </div>

@@ -58,7 +58,7 @@ function ConceptRow({ c, active, onClick }: { c: ConceptRead; active: boolean; o
           {tr(meta.zh, meta.en)}
         </span>
         <span className="mono" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-3)' }}>
-          {c.paper_count} {tr('篇', 'papers')}
+          {tr(`${c.paper_count} 篇`, c.paper_count === 1 ? '1 paper' : `${c.paper_count} papers`)}
         </span>
       </div>
       <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3 }}>{c.name}</div>
@@ -103,38 +103,35 @@ function ConceptPairsPane({
       <div className="row gap8" style={{ marginBottom: 6 }}>
         <Icon name="sparkle" size={16} style={{ color: 'var(--accent)' }} />
         <h1 style={{ fontSize: 18, fontWeight: 680, margin: 0, letterSpacing: '-0.01em', flex: 1 }}>
-          {tr('未连接概念对', 'Unconnected concept pairs')}
+          {tr('潜在概念组合', 'Unexplored concept pairs')}
         </h1>
         <button className="icon-btn" style={{ width: 26, height: 26, borderRadius: 7 }} onClick={onClose}
-          title={tr('返回概念详情', 'Back to concept detail')}>
+          title={tr('返回概念', 'Back to concept')}>
           <Icon name="x" size={13} />
         </button>
       </div>
       <p className="muted" style={{ fontSize: 12.5, lineHeight: 1.6, margin: '0 0 18px' }}>
         {tr(
-          '这些概念组合可能有关联但还没人一起研究：两个概念各自都和同一些「桥」概念一起出现过，但它们俩从没出现在同一篇论文里。分数越高，值得一看的可能性越大。',
-          'Concept combinations that may be related but unexplored: both co-occur with the same “bridge” concepts, yet never appear together in one paper. Higher scores are more promising.',
+          '两个概念常与相同的概念一起出现，却从未出现在同一篇论文中。分数越高越值得一看。',
+          'Two concepts that share neighbours but never appear in the same paper. Higher scores are more promising.',
         )}
       </p>
 
       {isLoading ? (
-        <div className="empty">{tr('挖掘概念对…', 'Mining concept pairs…')}</div>
+        <div className="empty">{tr('加载中…', 'Loading…')}</div>
       ) : isError ? (
         <EmptyState
           compact
           icon="x"
-          title={tr('无法加载概念对', 'Failed to load concept pairs')}
-          desc={tr('后端不可用，稍后重试。', 'Backend unavailable — try again later.')}
+          title={tr('无法加载概念组合', 'Couldn’t load concept pairs')}
+          desc={tr('请确认本机引擎正在运行。', 'Check that the local engine is running.')}
         />
       ) : pairs.length === 0 ? (
         <EmptyState
           compact
           icon="layers"
-          title={tr('还挖不出概念对', 'No pairs to mine yet')}
-          desc={tr(
-            '概念多起来之后（多篇论文、多个共同话题）这里才会有结果。',
-            'Results appear once the library has more concepts appearing across papers.',
-          )}
+          title={tr('还没有潜在概念组合', 'No concept pairs yet')}
+          desc={tr('论文和概念多起来后会出现在这里。', 'They appear here once the library has more papers and concepts.')}
         />
       ) : (
         <div className="col gap8">
@@ -149,12 +146,12 @@ function ConceptPairsPane({
                   {p.concept_c.name}
                 </span>
                 <span className="mono" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-3)' }}>
-                  {tr(`关联分 ${p.strength}`, `score ${p.strength}`)}
+                  {tr(`分数 ${p.strength}`, `Score ${p.strength}`)}
                 </span>
               </div>
               {p.bridges.length > 0 && (
                 <div className="row gap6 wrap" style={{ marginTop: 8, alignItems: 'center' }}>
-                  <span className="muted" style={{ fontSize: 11.5 }}>{tr('牵线的概念：', 'Bridged by:')}</span>
+                  <span className="muted" style={{ fontSize: 11.5 }}>{tr('共同相关：', 'Shared:')}</span>
                   {p.bridges.map((b) => (
                     <span key={b.id} className="chip" {...clickable(() => onOpenConcept(b.id))}>
                       {b.name}
@@ -194,14 +191,14 @@ export function ConceptDetailPane({
     retry: false,
   });
 
-  if (isLoading) return <div className="empty">{tr('加载概念详情…', 'Loading concept…')}</div>;
+  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
   if (isError || !concept) {
     return (
       <EmptyState
         compact
         icon="x"
-        title={tr('无法加载概念详情', 'Failed to load concept')}
-        desc={tr('后端不可用或该概念不存在。', 'Backend unavailable or the concept does not exist.')}
+        title={tr('无法加载这个概念', 'Couldn’t load this concept')}
+        desc={tr('它可能已被删除，或本机引擎未运行。', 'It may have been deleted, or the local engine isn’t running.')}
       />
     );
   }
@@ -216,7 +213,7 @@ export function ConceptDetailPane({
           {tr(`${meta.zh}概念`, `${meta.en} concept`)}
         </span>
         <span className="mono muted" style={{ fontSize: 11 }}>
-          {tr(`${concept.paper_count} 篇论文引用`, `cited by ${concept.paper_count} papers`)}
+          {tr(`${concept.paper_count} 篇论文提到`, concept.paper_count === 1 ? 'In 1 paper' : `In ${concept.paper_count} papers`)}
         </span>
       </div>
       <h1 style={{ fontSize: 22, fontWeight: 680, lineHeight: 1.25, margin: '2px 0 0', letterSpacing: '-0.01em' }}>
@@ -239,7 +236,7 @@ export function ConceptDetailPane({
         </div>
       )}
 
-      <Section title={tr('出现于论文', 'Grounded in papers')}>
+      <Section title={tr('出现于论文', 'Appears in')}>
         {concept.papers.length ? (
           <div className="col gap8">
             {concept.papers.map((p) => (
@@ -263,7 +260,7 @@ export function ConceptDetailPane({
           </div>
         ) : (
           <span className="muted" style={{ fontSize: 12.5 }}>
-            {tr('暂无引用论文', 'No citing papers yet')}
+            {tr('还没有论文提到它', 'No papers mention it yet')}
           </span>
         )}
       </Section>
@@ -314,18 +311,18 @@ export function ConceptsTab({
     onSuccess: (r) => {
       // 报「收录了几个」而不是「新建了几个」：新建的绝大多数是还没够格的候选词条
       const dropped = r.concepts_rejected
-        ? tr(`，清掉 ${r.concepts_rejected} 个不是概念的词条`, `, removed ${r.concepts_rejected} non-concept entries`)
+        ? tr(`，移除 ${r.concepts_rejected} 个无效词条`, `, removed ${r.concepts_rejected} invalid entries`)
         : '';
       if (r.concepts_promoted === 0 && r.links_created === 0 && r.concepts_rejected === 0) {
         toast(
-          tr(`已检查 ${r.papers} 篇论文，概念关联都是全的`, `Checked ${r.papers} papers — concept links all complete`),
+          tr(`已检查 ${r.papers} 篇论文，没有遗漏`, `Checked ${r.papers} papers. Nothing was missing.`),
           'info',
         );
       } else {
         toast(
           tr(
-            `收录 ${r.concepts_promoted} 个概念（被 2 篇以上论文提到的才收录），补上 ${r.links_created} 条论文关联${dropped}`,
-            `Added ${r.concepts_promoted} concepts (only those cited by 2+ papers), ${r.links_created} paper links${dropped}`,
+            `新增 ${r.concepts_promoted} 个概念，补上 ${r.links_created} 条论文关联${dropped}`,
+            `Added ${r.concepts_promoted} concepts and ${r.links_created} paper links${dropped}`,
           ),
           'ok',
         );
@@ -343,7 +340,7 @@ export function ConceptsTab({
       void queryClient.invalidateQueries({ queryKey: ['paper'] });
     },
     onError: (e) =>
-      toast(`${tr('提取失败：', 'Extraction failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法提取概念：', 'Couldn’t extract concepts: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const firstId = concepts[0]?.id ?? null;
@@ -364,7 +361,7 @@ export function ConceptsTab({
               <button
                 className="icon-btn"
                 style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0 }}
-                title={tr('从已编译论文提取概念', 'Extract concepts from compiled papers')}
+                title={tr('从已解读的论文提取概念', 'Extract concepts from summarized papers')}
                 disabled={relinkMutation.isPending}
                 onClick={() => relinkMutation.mutate()}
               >
@@ -395,9 +392,9 @@ export function ConceptsTab({
               <div className="row gap8">
                 <Icon name="sparkle" size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 650 }}>{tr('未连接概念对', 'Unconnected concept pairs')}</div>
+                  <div style={{ fontSize: 12, fontWeight: 650 }}>{tr('潜在概念组合', 'Unexplored concept pairs')}</div>
                   <div className="muted" style={{ fontSize: 11, marginTop: 1 }}>
-                    {tr('可能有关联但还没人一起研究的概念组合', 'Combos that may be related but unexplored')}
+                    {tr('可能相关、但从未被一起研究的概念', 'Possibly related, never studied together')}
                   </div>
                 </div>
                 <Icon name="arrow" size={12} style={{ color: 'var(--text-4)', marginLeft: 'auto', flexShrink: 0 }} />
@@ -408,25 +405,25 @@ export function ConceptsTab({
 
         <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
           {isLoading ? (
-            <div className="empty">{tr('加载概念…', 'Loading concepts…')}</div>
+            <div className="empty">{tr('加载中…', 'Loading…')}</div>
           ) : isError ? (
             <EmptyState
               compact
               icon="x"
-              title={tr('无法加载概念列表', 'Failed to load concepts')}
-              desc={tr('后端不可用或接口尚未就绪，稍后重试。', 'Backend unavailable or API not ready — try again later.')}
+              title={tr('无法加载概念', 'Couldn’t load concepts')}
+              desc={tr('请确认本机引擎正在运行。', 'Check that the local engine is running.')}
             />
           ) : concepts.length === 0 ? (
             <EmptyState
               compact
               icon="layers"
-              title={q ? tr('没有匹配的概念', 'No matching concepts') : tr('概念库为空', 'No concepts yet')}
+              title={q ? tr('没有匹配的概念', 'No matching concepts') : tr('还没有概念', 'No concepts yet')}
               desc={
                 q
-                  ? tr('换个关键词试试。', 'Try a different keyword.')
+                  ? tr('试试其他关键词。', 'Try other keywords.')
                   : tr(
-                      '编译论文解读时会自动提取概念。',
-                      'Concepts are extracted automatically when papers are compiled.',
+                      '生成论文解读时会提取概念。',
+                      'Concepts are extracted when paper summaries are generated.',
                     )
               }
               action={
@@ -439,7 +436,7 @@ export function ConceptsTab({
                     <Icon name="refresh" size={13} />
                     {relinkMutation.isPending
                       ? tr('提取中…', 'Extracting…')
-                      : tr('从已编译论文提取概念', 'Extract concepts from compiled papers')}
+                      : tr('提取概念', 'Extract concepts')}
                   </button>
                 )
               }
@@ -481,7 +478,7 @@ export function ConceptsTab({
           />
         ) : (
           <div className="empty" style={{ margin: 'auto' }}>
-            {tr('从列表中选择一个概念', 'Pick a concept from the list')}
+            {tr('从列表中选择一个概念', 'Select a concept from the list')}
           </div>
         )}
       </div>

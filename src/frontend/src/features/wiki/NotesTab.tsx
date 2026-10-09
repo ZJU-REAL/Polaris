@@ -25,12 +25,12 @@ function NoteItem({ note, onOpenPaper }: { note: NoteWithPaper; onOpenPaper: () 
         <span style={{ fontSize: 12.5, fontWeight: 650 }}>{note.author_name}</span>
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
           {fmtTime(note.created_at)}
-          {edited ? ` · ${tr('已编辑', 'edited')}` : ''}
+          {edited ? ` · ${tr('已编辑', 'Edited')}` : ''}
         </span>
         <span
           className="row gap6"
           onClick={onOpenPaper}
-          title={tr('打开这篇论文的阅读页', 'Open the reading page for this paper')}
+          title={tr('阅读原文', 'Read paper')}
           style={{
             marginLeft: 'auto',
             minWidth: 0,
@@ -91,20 +91,20 @@ export function NotesTab({ pid, libraryId }: { pid?: string; libraryId?: string 
           <SearchInput value={qInput} onChange={setQInput} placeholder={tr('搜索笔记内容…', 'Search notes…')} />
         </div>
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
-          {data ? tr(`共 ${data.total} 条`, `${data.total} total`) : ''}
+          {data ? tr(`共 ${data.total} 条`, `${data.total} notes`) : ''}
         </span>
       </div>
 
       {/* —— 列表 —— */}
       <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
         {notesQuery.isLoading ? (
-          <div className="empty">{tr('加载笔记…', 'Loading notes…')}</div>
+          <div className="empty">{tr('加载中…', 'Loading…')}</div>
         ) : notesQuery.isError ? (
           <EmptyState
             compact
             icon="x"
-            title={tr('笔记暂时加载不出来', 'Notes failed to load')}
-            desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
+            title={tr('无法加载笔记', 'Couldn’t load notes')}
+            desc={tr('请确认本机引擎正在运行。', 'Check that the local engine is running.')}
           />
         ) : notes.length === 0 ? (
           <EmptyState
@@ -113,10 +113,10 @@ export function NotesTab({ pid, libraryId }: { pid?: string; libraryId?: string 
             title={q ? tr('没有匹配的笔记', 'No matching notes') : tr('还没有笔记', 'No notes yet')}
             desc={
               q
-                ? tr('换个关键词试试。', 'Try a different keyword.')
+                ? tr('试试其他关键词。', 'Try other keywords.')
                 : tr(
-                    '打开一篇论文的阅读页，在右侧笔记面板写下第一条笔记。',
-                    'Open a paper reading page and write your first note in the notes panel.',
+                    '在论文阅读页的笔记面板中添加。',
+                    'Add them from the notes panel when reading a paper.',
                   )
             }
           />
@@ -146,7 +146,7 @@ export function NotesTab({ pid, libraryId }: { pid?: string; libraryId?: string 
         >
           <button className="btn btn-ghost sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
             <Icon name="chevron" size={12} style={{ transform: 'rotate(180deg)' }} />
-            {tr('上一页', 'Prev')}
+            {tr('上一页', 'Previous')}
           </button>
           <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
             {tr(`第 ${page} / ${totalPages} 页`, `Page ${page} / ${totalPages}`)}

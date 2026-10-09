@@ -9,10 +9,10 @@ import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 
 const STATUS_LABELS: Record<string, [string, string]> = {
-  queued: ['等待扩展', 'Waiting for extension'],
+  queued: ['等待扩展领取', 'Waiting for extension'],
   running: ['处理中', 'In progress'],
   completed: ['已完成', 'Completed'],
-  partial: ['部分完成', 'Partially completed'],
+  partial: ['部分完成', 'Partly done'],
   failed: ['失败', 'Failed'],
 };
 
@@ -29,14 +29,14 @@ function BatchRow({ batch }: { batch: DownloadBatchRead }) {
       </div>
       <div className="row gap6 wrap" style={{ marginTop: 9 }}>
         <span className="pill sm">{tr(`共 ${counts.total} 篇`, `${counts.total} papers`)}</span>
-        {!!counts.active && <span className="pill sm">{tr(`处理中 ${counts.active}`, `${counts.active} active`)}</span>}
-        {!!counts.cached && <span className="pill sm" style={{ color: 'var(--ok-tx)' }}>{tr(`已有 PDF ${counts.cached}`, `${counts.cached} cached`)}</span>}
-        {!!counts.uploaded && <span className="pill sm" style={{ color: 'var(--ok-tx)' }}>{tr(`已归档 ${counts.uploaded}`, `${counts.uploaded} archived`)}</span>}
-        {!!counts.failed && <span className="pill sm" style={{ color: 'var(--danger-tx)' }}>{tr(`需处理 ${counts.failed}`, `${counts.failed} need attention`)}</span>}
+        {!!counts.active && <span className="pill sm">{tr(`处理中 ${counts.active}`, `${counts.active} in progress`)}</span>}
+        {!!counts.cached && <span className="pill sm" style={{ color: 'var(--ok-tx)' }}>{tr(`已有 PDF ${counts.cached}`, `${counts.cached} already had PDFs`)}</span>}
+        {!!counts.uploaded && <span className="pill sm" style={{ color: 'var(--ok-tx)' }}>{tr(`已下载 ${counts.uploaded}`, `${counts.uploaded} downloaded`)}</span>}
+        {!!counts.failed && <span className="pill sm" style={{ color: 'var(--danger-tx)' }}>{tr(`失败 ${counts.failed}`, `${counts.failed} failed`)}</span>}
       </div>
       {!!counts.failed && (
         <p style={{ margin: '8px 0 0', color: 'var(--text-3)', fontSize: 11.5, lineHeight: 1.55 }}>
-          {tr('打开 Polaris 扩展查看失败原因并重试对应论文。', 'Open the Polaris extension to inspect and retry the affected papers.')}
+          {tr('在浏览器扩展中查看原因并重试。', 'Open the browser extension to see why and retry.')}
         </p>
       )}
     </div>
@@ -65,14 +65,14 @@ export function ExtensionBatchHistoryModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={tr('最近扩展任务', 'Recent extension batches')}
-      sub={tr('一个任务可包含多篇论文，每篇保持独立归档绑定。', 'One batch can contain multiple independently bound papers.')}
+      title={tr('扩展下载记录', 'Extension downloads')}
+      sub={tr('通过浏览器扩展下载 PDF 的记录。', 'PDFs downloaded through the browser extension.')}
       width={680}
       footer={(
         <div className="row gap8" style={{ justifyContent: 'space-between', width: '100%' }}>
           <button className="btn btn-ghost sm" onClick={() => { onClose(); navigate('/settings?tab=extension'); }}>
             <Icon name="settings" size={13} />
-            {tr('扩展连接设置', 'Extension settings')}
+            {tr('扩展设置', 'Extension settings')}
           </button>
           <button className="btn btn-primary sm" onClick={onClose}>{tr('完成', 'Done')}</button>
         </div>
@@ -87,11 +87,11 @@ export function ExtensionBatchHistoryModal({
         <EmptyState
           compact
           icon="x"
-          title={tr('无法加载扩展任务', 'Could not load extension batches')}
+          title={tr('无法加载下载记录', 'Couldn’t load downloads')}
           action={<button className="btn btn-soft sm" onClick={() => void batchesQuery.refetch()}>{tr('重试', 'Retry')}</button>}
         />
       ) : !batchesQuery.data?.length ? (
-        <EmptyState compact icon="download" title={tr('还没有扩展任务', 'No extension batches yet')} />
+        <EmptyState compact icon="download" title={tr('还没有下载记录', 'No downloads yet')} />
       ) : (
         <div>{batchesQuery.data.map((batch) => <BatchRow batch={batch} key={batch.id} />)}</div>
       )}

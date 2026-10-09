@@ -3,6 +3,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Icon } from '../../components/ui/Icon';
 import { Modal } from '../../components/ui/Modal';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { toast } from '../../components/ui/Toast';
 import {
   api,
@@ -26,10 +27,10 @@ const PAGE_SIZE = 20;
 type HitSort = 'relevance' | 'novelty' | 'impact' | 'recent' | 'title';
 
 const STATUS_LABELS: Record<string, [string, string]> = {
-  queued: ['等待执行', 'Queued'],
-  running: ['检索中', 'Running'],
+  queued: ['排队中', 'Queued'],
+  running: ['检索中', 'Searching'],
   completed: ['已完成', 'Completed'],
-  partial: ['部分完成', 'Partial'],
+  partial: ['部分完成', 'Partly done'],
   failed: ['失败', 'Failed'],
   cancelled: ['已取消', 'Cancelled'],
 };
@@ -52,7 +53,7 @@ const SCORE_DIMENSIONS: Array<[string, string, string]> = [
   ['relevance', '主题相关性', 'Relevance'],
   ['evidence_quality', '证据质量', 'Evidence quality'],
   ['impact', '学术影响', 'Impact'],
-  ['novelty', '创新潜力', 'Novelty'],
+  ['novelty', '新颖性', 'Novelty'],
   ['recency', '时效性', 'Recency'],
 ];
 
@@ -95,7 +96,10 @@ function venueLabels(hit: LiteratureSearchHit): string[] {
   const impactFactor = metrics.impact_factor;
   if (typeof quartile === 'string' && quartile.trim()) values.push(`JCR ${quartile.toUpperCase()}`);
   if ((typeof casZone === 'string' || typeof casZone === 'number') && String(casZone).trim()) {
-    values.push(`中科院 ${String(casZone).includes('区') ? casZone : `${casZone}区`}`);
+    values.push(tr(
+      `中科院 ${String(casZone).includes('区') ? casZone : `${casZone}区`}`,
+      `CAS zone ${String(casZone).replace('区', '')}`,
+    ));
   }
   if (metrics.cas_top === true) values.push('Top');
   if (typeof impactFactor === 'number') values.push(`IF ${impactFactor.toFixed(2)}`);
@@ -126,27 +130,27 @@ function progressPercent(run: LiteratureSearchRunDetail): number {
 function progressMessage(run: LiteratureSearchRunDetail): string {
   const progress = run.progress ?? {};
   const phase = String(progress.phase ?? run.status);
-  if (phase === 'queued') return tr('任务已保存，等待检索 Worker 接收', 'Saved and waiting for a search worker');
+  if (phase === 'queued') return tr('排队中…', 'Waiting to start…');
   if (phase === 'retrieving') {
     const source = typeof progress.source === 'string' ? sourceName(progress.source) : null;
     const done = numeric(progress.query_completed);
     const total = numeric(progress.query_total);
     const suffix = done !== null && total !== null ? ` · ${done}/${total}` : '';
     return source
-      ? tr(`正在从 ${source} 检索${suffix}`, `Searching ${source}${suffix}`)
-      : tr('正在执行多源检索', 'Searching multiple sources');
+      ? tr(`正在检索 ${source}${suffix}`, `Searching ${source}${suffix}`)
+      : tr('正在检索各来源', 'Searching sources');
   }
   if (phase === 'ranking') {
     const count = numeric(progress.pending_rerank) ?? numeric(progress.deduplicated);
     return count !== null
-      ? tr(`正在复核与精排 ${count} 篇候选文献`, `Reranking ${count} candidates`)
-      : tr('正在复核候选文献并生成分层结果', 'Reranking and tiering candidates');
+      ? tr(`正在排序 ${count} 篇候选论文`, `Ranking ${count} candidates`)
+      : tr('正在排序候选论文', 'Ranking candidates');
   }
-  if (run.status === 'completed') return tr('检索完成，结果已持久化', 'Search completed and results saved');
-  if (run.status === 'partial') return tr('部分来源失败，其余结果已保存', 'Some sources failed; available results were saved');
-  if (run.status === 'failed') return tr('检索失败，请查看来源状态', 'Search failed; inspect source status');
+  if (run.status === 'completed') return tr('检索完成', 'Search complete');
+  if (run.status === 'partial') return tr('部分来源未能检索，其余结果已保存', 'Some sources failed. The other results were saved.');
+  if (run.status === 'failed') return tr('检索失败，请查看下方各来源的状态', 'Search failed. Check each source below.');
   if (run.status === 'cancelled') return tr('检索已取消', 'Search cancelled');
-  return tr('正在准备检索', 'Preparing search');
+  return tr('正在准备…', 'Preparing…');
 }
 
 export function eligibleExtensionHits(
@@ -272,9 +276,9 @@ export function LiteratureDiscoveryPanel({
     onSuccess: (run) => {
       setActiveRunId(run.id);
       void queryClient.invalidateQueries({ queryKey: ['literature-runs', libraryId] });
-      toast(tr('检索任务已进入队列', 'Search queued'), 'ok');
+      toast(tr('已开始检索', 'Search started'), 'ok');
     },
-    onError: (error) => toast(error instanceof Error ? error.message : tr('无法开始检索', 'Could not start search'), 'error'),
+    onError: (error) => toast(error instanceof Error ? error.message : tr('无法开始检索', 'Couldn’t start the search'), 'error'),
   });
   const translateMutation = useMutation({
     mutationFn: (hitIds: string[]) => api.translateLiteratureHits(libraryId, selectedRunId!, hitIds),
@@ -284,9 +288,9 @@ export function LiteratureDiscoveryPanel({
         ['literature-translation', libraryId, selectedRunId, row.hit_id],
         row,
       ));
-      toast(tr('翻译任务已提交', 'Translation queued'), 'ok');
+      toast(tr('正在翻译…', 'Translating…'), 'ok');
     },
-    onError: (error) => toast(error instanceof Error ? error.message : tr('翻译失败', 'Translation failed'), 'error'),
+    onError: (error) => toast(error instanceof Error ? error.message : tr('无法翻译', 'Couldn’t translate'), 'error'),
   });
   const promoteMutation = useMutation({
     mutationFn: (hitIds: string[]) => api.promoteLiteratureHits(libraryId, selectedRunId!, hitIds),
@@ -294,18 +298,18 @@ export function LiteratureDiscoveryPanel({
       setSelected(new Set());
       void queryClient.invalidateQueries({ queryKey: ['literature-hits', libraryId, selectedRunId] });
       void queryClient.invalidateQueries({ queryKey: ['library-papers', libraryId] });
-      toast(tr(`已将 ${items.length} 篇文献加入论文库`, `${items.length} papers added to the library`), 'ok');
+      toast(tr(`已将 ${items.length} 篇加入本库`, `Added ${items.length} papers to the library`), 'ok');
     },
-    onError: () => toast(tr('筛选入库失败', 'Could not add selected papers'), 'error'),
+    onError: () => toast(tr('无法加入本库', 'Couldn’t add the papers'), 'error'),
   });
   const cacheMutation = useMutation({
     mutationFn: (hitIds: string[]) => api.cacheLiteratureOaPdfs(libraryId, selectedRunId!, hitIds),
     onSuccess: (items) => {
       void queryClient.invalidateQueries({ queryKey: ['literature-oa-cache', libraryId, selectedRunId] });
       const ready = items.filter((item) => item.status === 'ready').length;
-      toast(tr(`开放 PDF 缓存完成：${ready}/${items.length}`, `OA cache complete: ${ready}/${items.length}`), 'ok');
+      toast(tr(`已下载 ${ready}/${items.length} 篇 PDF`, `Downloaded ${ready} of ${items.length} PDFs`), 'ok');
     },
-    onError: () => toast(tr('开放 PDF 缓存失败', 'OA PDF caching failed'), 'error'),
+    onError: () => toast(tr('无法下载 PDF', 'Couldn’t download the PDFs'), 'error'),
   });
   const extensionMutation = useMutation({
     mutationFn: async (items: LiteratureSearchHit[]) => {
@@ -334,28 +338,28 @@ export function LiteratureDiscoveryPanel({
       const skipped = batch.items.filter((item) => item.status === 'skipped').length;
       toast(
         dispatchedCount === 0
-          ? tr('所选论文均已有可读 PDF，未向扩展发送重复下载任务', 'Every selected paper already has a readable PDF; no duplicate extension task was sent')
+          ? tr('所选论文都已有 PDF，无需下载', 'All selected papers already have PDFs')
           : acknowledged
-          ? tr(`已推送 1 个扩展任务，共 ${batch.item_count} 篇${skipped ? `，后端跳过 ${skipped} 篇已有 PDF` : ''}`, `Sent one extension batch with ${batch.item_count} papers`)
-          : tr('下载批次已保存；扩展未即时确认，可稍后通过 API Key 认领', 'Batch saved; the extension can claim it later with the API key'),
+          ? tr(`已发送 ${batch.item_count} 篇到浏览器扩展${skipped ? `，${skipped} 篇已有 PDF` : ''}`, `Sent ${batch.item_count} papers to the browser extension${skipped ? `. ${skipped} already had PDFs.` : ''}`)
+          : tr('已保存，浏览器扩展连接后会领取', 'Saved. The browser extension will pick it up when it connects.'),
         dispatchedCount === 0 || acknowledged ? 'ok' : 'info',
       );
     },
-    onError: () => toast(tr('无法创建扩展下载批次', 'Could not create extension batch'), 'error'),
+    onError: () => toast(tr('无法发送到浏览器扩展', 'Couldn’t send to the browser extension'), 'error'),
   });
   const deleteMutation = useMutation({
     mutationFn: (runId: string) => api.deleteLiteratureRun(libraryId, runId),
     onSuccess: (_result, runId) => {
       if (activeRunId === runId) setActiveRunId(null);
       void queryClient.invalidateQueries({ queryKey: ['literature-runs', libraryId] });
-      toast(tr('检索历史已永久删除', 'Search history permanently deleted'), 'ok');
+      toast(tr('已删除检索记录', 'Search deleted'), 'ok');
     },
-    onError: () => toast(tr('删除失败；运行中的检索需先取消', 'Delete failed; cancel an active run first'), 'error'),
+    onError: () => toast(tr('无法删除，请先取消正在运行的检索', 'Couldn’t delete. Cancel the running search first.'), 'error'),
   });
   const cancelMutation = useMutation({
     mutationFn: (runId: string) => api.cancelLiteratureRun(libraryId, runId),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['literature-run', libraryId, selectedRunId] }),
-    onError: () => toast(tr('取消失败', 'Could not cancel the run'), 'error'),
+    onError: () => toast(tr('无法取消检索', 'Couldn’t cancel the search'), 'error'),
   });
 
   const hits = hitsQuery.data?.items ?? [];
@@ -374,23 +378,18 @@ export function LiteratureDiscoveryPanel({
     else next.add(hitId);
     return next;
   });
-  const confirmDelete = (run: LiteratureSearchRun) => {
-    if (window.confirm(tr(
-      '永久删除本次检索及其候选结果？此操作不可恢复，已经入库的论文和 PDF 不受影响。',
-      'Permanently delete this run and its candidates? Imported papers and PDFs are kept.',
-    ))) deleteMutation.mutate(run.id);
-  };
+  const [pendingDeleteRun, setPendingDeleteRun] = useState<LiteratureSearchRun | null>(null);
+  const confirmDelete = (run: LiteratureSearchRun) => setPendingDeleteRun(run);
 
   return (
     <div className="literature-discovery">
       <header className="literature-discovery-header">
         <div className="literature-discovery-heading">
           <div className="row gap8">
-            <Icon name="compass" size={17} />
-            <h2>{tr('多源文献发现', 'Literature discovery')}</h2>
+            <h2>{tr('发现文献', 'Discover papers')}</h2>
             
           </div>
-          <p>{tr('检索结果先进入待筛选池；只有入库后的 PDF 才会解析、向量化并进入 AI 证据链。', 'Results enter a review pool first. PDF parsing and indexing start only after import.')}</p>
+          <p>{tr('从多个来源检索论文，挑选后加入本库。', 'Search several sources, then add the papers you choose.')}</p>
         </div>
         <button className="btn btn-ghost sm" onClick={() => setHistoryOpen(true)}>
           <Icon name="clock" size={14} />
@@ -400,26 +399,26 @@ export function LiteratureDiscoveryPanel({
 
       <section className="literature-search-launcher">
         <label className="literature-search-topic">
-          <span>{tr('检索主题补充', 'Topic override')}</span>
+          <span>{tr('检索主题', 'Topic')}</span>
           <input
             className="input"
             value={topic}
             onChange={(event) => setTopic(event.target.value)}
-            placeholder={tr('留空时使用文献库名称与方向定义', 'Uses the library name and definition when empty')}
+            placeholder={tr('留空则使用文献库的方向说明', 'Leave empty to use the library’s scope')}
             maxLength={4000}
           />
         </label>
         <label>
-          <span>{tr('返回数量', 'Results')}</span>
+          <span>{tr('结果数', 'Results')}</span>
           <input className="input" type="number" min={1} max={200} value={requestedCount} onChange={(event) => setRequestedCount(Math.max(1, Math.min(200, Number(event.target.value) || 1)))} />
         </label>
         <label>
-          <span>{tr('起始年份', 'Start year')}</span>
+          <span>{tr('起始年份', 'From year')}</span>
           <input className="input" type="number" min={1800} max={CURRENT_YEAR} value={startYear} onChange={(event) => setStartYear(Math.max(1800, Math.min(CURRENT_YEAR, Number(event.target.value) || CURRENT_YEAR)))} />
         </label>
         <button className="btn btn-primary" disabled={startMutation.isPending} onClick={() => startMutation.mutate()}>
           <Icon name={startMutation.isPending ? 'refresh' : 'search'} size={15} style={startMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
-          {startMutation.isPending ? tr('正在创建', 'Starting') : tr('开始检索', 'Start search')}
+          {startMutation.isPending ? tr('正在开始…', 'Starting…') : tr('开始检索', 'Start search')}
         </button>
       </section>
 
@@ -432,7 +431,7 @@ export function LiteratureDiscoveryPanel({
               <span>{progressMessage(runQuery.data)}</span>
             </div>
             <div className="row gap8">
-              <span>{runQuery.data.requested_count} {tr('篇', 'papers')}</span>
+              <span>{tr(`${runQuery.data.requested_count} 篇`, `${runQuery.data.requested_count} papers`)}</span>
               <span>{runQuery.data.start_year ?? '—'}–{runQuery.data.end_year ?? '—'}</span>
               {!TERMINAL.has(runQuery.data.status) && (
                 <button className="btn btn-ghost sm" disabled={cancelMutation.isPending} onClick={() => cancelMutation.mutate(runQuery.data!.id)}>
@@ -465,19 +464,19 @@ export function LiteratureDiscoveryPanel({
               <option value="">{tr('全部来源', 'All sources')}</option>
               {sourceOptions.map((value) => <option key={value} value={value}>{sourceName(value)}</option>)}
             </select>
-            <select className="input" value={hitStatus} onChange={(event) => setHitStatus(event.target.value as typeof hitStatus)} aria-label={tr('入库状态', 'Import status')}>
+            <select className="input" value={hitStatus} onChange={(event) => setHitStatus(event.target.value as typeof hitStatus)} aria-label={tr('状态', 'Status')}>
               <option value="">{tr('全部状态', 'All statuses')}</option>
-              <option value="candidate">{tr('待筛选', 'Candidate')}</option>
-              <option value="promoted">{tr('已入库', 'Imported')}</option>
+              <option value="candidate">{tr('未加入', 'Not added')}</option>
+              <option value="promoted">{tr('已加入', 'Added')}</option>
             </select>
             <input className="input literature-year-input" type="number" min={1800} max={CURRENT_YEAR} value={yearFrom} placeholder={tr('起始年', 'From')} onChange={(event) => setYearFrom(event.target.value ? Number(event.target.value) : '')} />
             <input className="input literature-year-input" type="number" min={1800} max={CURRENT_YEAR} value={yearTo} placeholder={tr('截止年', 'To')} onChange={(event) => setYearTo(event.target.value ? Number(event.target.value) : '')} />
             <select className="input" value={sort} onChange={(event) => setSort(event.target.value as HitSort)} aria-label={tr('排序', 'Sort')}>
-              <option value="relevance">{tr('相关度排序', 'Relevance')}</option>
-              <option value="novelty">{tr('新颖度排序', 'Novelty')}</option>
-              <option value="impact">{tr('影响力排序', 'Impact')}</option>
-              <option value="recent">{tr('最近发现', 'Recent')}</option>
-              <option value="title">{tr('标题排序', 'Title')}</option>
+              <option value="relevance">{tr('按相关度', 'Relevance')}</option>
+              <option value="novelty">{tr('按新颖性', 'Novelty')}</option>
+              <option value="impact">{tr('按影响力', 'Impact')}</option>
+              <option value="recent">{tr('最新发现', 'Newest')}</option>
+              <option value="title">{tr('按标题', 'Title')}</option>
             </select>
           </section>
 
@@ -486,37 +485,36 @@ export function LiteratureDiscoveryPanel({
               <input type="checkbox" checked={allVisibleSelected} onChange={() => setSelected(allVisibleSelected ? new Set() : new Set(hits.map((hit) => hit.id)))} />
               <span>{tr(`已选 ${selected.size} 篇`, `${selected.size} selected`)}</span>
             </label>
-            <div className="row gap8">
+            <div className="row gap8 wrap">
               <button className="btn btn-soft sm" disabled={!selectedHits.length || translateMutation.isPending} onClick={() => translateMutation.mutate(selectedHits.map((hit) => hit.id))}>
                 <Icon name={translateMutation.isPending ? 'refresh' : 'chat'} size={13} style={translateMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
-                {tr('译为中文', 'Translate')}
+                {tr('译为中文', 'Translate to Chinese')}
               </button>
-              <button className="btn btn-soft sm" disabled={!oaCandidateIds.length || cacheMutation.isPending} onClick={() => cacheMutation.mutate(oaCandidateIds)}>
+              <button className="btn btn-soft sm" disabled={!oaCandidateIds.length || cacheMutation.isPending} title={tr('仅限开放获取的论文', 'Open-access papers only')} onClick={() => cacheMutation.mutate(oaCandidateIds)}>
                 <Icon name="download" size={13} />
-                {tr(`缓存 OA PDF · ${oaCandidateIds.length}`, `Cache OA PDFs · ${oaCandidateIds.length}`)}
+                {tr(`下载 PDF · ${oaCandidateIds.length}`, `Download PDFs · ${oaCandidateIds.length}`)}
               </button>
-              <button className="btn btn-soft sm" disabled={!extensionHits.length || extensionMutation.isPending} title={!extensionHits.length && selected.size ? tr('只有已入库且尚无缓存 PDF 的文献可以推送扩展', 'Only imported papers without a cached PDF can be sent') : undefined} onClick={() => extensionMutation.mutate(extensionHits)}>
+              <button className="btn btn-soft sm" disabled={!extensionHits.length || extensionMutation.isPending} title={!extensionHits.length && selected.size ? tr('只能发送已加入本库、且还没有 PDF 的论文', 'Only papers already added and without a PDF can be sent') : undefined} onClick={() => extensionMutation.mutate(extensionHits)}>
                 <Icon name="share" size={13} />
-                {tr(`推送扩展 · ${extensionHits.length}`, `Send to extension · ${extensionHits.length}`)}
+                {tr(`发送到浏览器扩展 · ${extensionHits.length}`, `Send to browser extension · ${extensionHits.length}`)}
               </button>
               <button className="btn btn-primary sm" disabled={!candidateIds.length || promoteMutation.isPending} onClick={() => promoteMutation.mutate(candidateIds)}>
                 <Icon name="plus" size={13} />
-                {tr(`筛选入库 · ${candidateIds.length}`, `Import · ${candidateIds.length}`)}
+                {tr(`加入本库 · ${candidateIds.length}`, `Add to library · ${candidateIds.length}`)}
               </button>
             </div>
           </section>
 
           <div className="literature-results-meta">
-            <span>{tr(`共 ${hitsQuery.data?.total ?? 0} 篇结果`, `${hitsQuery.data?.total ?? 0} results`)}</span>
-            <span>{tr('评分口径：相关性 45% · 证据质量 20% · 影响力 15% · 创新 10% · 时效性 10%', 'Scoring: relevance 45%, evidence 20%, impact 15%, novelty 10%, recency 10%')}</span>
+            <span>{tr(`共 ${hitsQuery.data?.total ?? 0} 篇`, `${hitsQuery.data?.total ?? 0} results`)}</span>
           </div>
 
           {hitsQuery.isLoading ? (
             <div className="literature-result-list">{Array.from({ length: 4 }, (_, index) => <div className="skel" style={{ height: 190 }} key={index} />)}</div>
           ) : hitsQuery.isError ? (
-            <EmptyState icon="x" title={tr('无法加载检索结果', 'Could not load results')} desc={tr('请检查后端连接后重试。', 'Check the backend connection and retry.')} action={<button className="btn btn-soft sm" onClick={() => void hitsQuery.refetch()}>{tr('重试', 'Retry')}</button>} />
+            <EmptyState icon="x" title={tr('无法加载检索结果', 'Couldn’t load results')} desc={tr('请确认本机引擎正在运行。', 'Check that the local engine is running.')} action={<button className="btn btn-soft sm" onClick={() => void hitsQuery.refetch()}>{tr('重试', 'Retry')}</button>} />
           ) : !hits.length ? (
-            <EmptyState icon="search" title={tr('没有匹配结果', 'No matching papers')} desc={tr('调整搜索、年份、来源或状态筛选条件。', 'Adjust the search, year, source, or status filters.')} />
+            <EmptyState icon="search" title={tr('没有匹配的论文', 'No matching papers')} desc={tr('试试调整筛选条件。', 'Try adjusting the filters.')} />
           ) : (
             <div className="literature-result-list">
               {hits.map((hit) => {
@@ -529,7 +527,7 @@ export function LiteratureDiscoveryPanel({
                 const reasons = translated?.inclusion_rationale ?? scoreReasons(hit);
                 return (
                   <article className={`literature-result${selected.has(hit.id) ? ' is-selected' : ''}`} key={hit.id}>
-                    {<input className="literature-result-check" type="checkbox" checked={selected.has(hit.id)} onChange={() => toggleHit(hit.id)} aria-label={tr('选择文献', 'Select paper')} />}
+                    {<input className="literature-result-check" type="checkbox" checked={selected.has(hit.id)} onChange={() => toggleHit(hit.id)} aria-label={tr('选择论文', 'Select paper')} />}
                     <div className="literature-result-main">
                       <div className="literature-result-kicker">
                         <span className="literature-source-badge">{sourceName(hit.source)}</span>
@@ -540,19 +538,19 @@ export function LiteratureDiscoveryPanel({
                       </div>
                       <h3>{translated?.title || hit.title}</h3>
                       <div className="literature-result-authors">{authorNames(hit)}</div>
-                      <p className="literature-result-abstract">{translated?.abstract || hit.abstract || tr('该来源未提供摘要。', 'No abstract supplied by this source.')}</p>
+                      <p className="literature-result-abstract">{translated?.abstract || hit.abstract || tr('没有摘要', 'No abstract')}</p>
                       <div className="literature-result-links">
                         {hit.doi && <a href={`https://doi.org/${hit.doi}`} target="_blank" rel="noreferrer">DOI {hit.doi}</a>}
                         {hit.url && <a href={hit.url} target="_blank" rel="noreferrer">{tr('来源页面', 'Source page')}</a>}
                         {hit.pdf_url && <a href={hit.pdf_url} target="_blank" rel="noreferrer">PDF</a>}
                         <span className={`literature-asset-state is-${oa?.status ?? (hit.pdf_url ? 'available' : 'missing')}`}>
-                          {oa?.status === 'ready' ? tr('OA 已缓存', 'OA cached') : oa?.status === 'failed' ? tr('OA 缓存失败', 'OA cache failed') : hit.pdf_url ? tr('发现开放 PDF', 'OA PDF found') : tr('未发现 PDF', 'No PDF found')}
+                          {oa?.status === 'ready' ? tr('PDF 已下载', 'PDF downloaded') : oa?.status === 'failed' ? tr('PDF 下载失败', 'PDF download failed') : hit.pdf_url ? tr('有开放 PDF', 'Open PDF available') : tr('没有 PDF', 'No PDF')}
                         </span>
-                        {hit.status === 'promoted' && <span className="literature-imported"><Icon name="check" size={11} />{tr('已入库', 'Imported')}</span>}
+                        {hit.status === 'promoted' && <span className="literature-imported"><Icon name="check" size={11} />{tr('已加入', 'Added')}</span>}
                       </div>
                       {!!reasons.length && (
                         <div className="literature-rationale">
-                          <strong>{tr('入选依据', 'Why it was selected')}</strong>
+                          <strong>{tr('推荐理由', 'Why it fits')}</strong>
                           <span>{reasons.join(' · ')}</span>
                         </div>
                       )}
@@ -565,9 +563,9 @@ export function LiteratureDiscoveryPanel({
                       })}
                       <button className="btn btn-ghost sm" disabled={translating || translateMutation.isPending} onClick={() => translateMutation.mutate([hit.id])}>
                         <Icon name={translating ? 'refresh' : 'chat'} size={12} style={translating ? { animation: 'spin 1s linear infinite' } : undefined} />
-                        {translating ? tr('翻译中', 'Translating') : translated ? tr('重新翻译', 'Translate again') : tr('译为中文', 'Translate')}
+                        {translating ? tr('翻译中…', 'Translating…') : translated ? tr('重新翻译', 'Translate again') : tr('译为中文', 'Translate to Chinese')}
                       </button>
-                      {translation?.status === 'failed' && <small>{translation.error_code || tr('翻译失败', 'Translation failed')}</small>}
+                      {translation?.status === 'failed' && <small>{tr('无法翻译', 'Couldn’t translate')}</small>}
                     </aside>
                   </article>
                 );
@@ -584,23 +582,35 @@ export function LiteratureDiscoveryPanel({
           )}
         </>
       ) : (
-        <EmptyState icon="compass" title={tr('还没有检索记录', 'No searches yet')} desc={tr('设置返回数量和起始年份，开始第一次多源检索。', 'Choose a result count and start year to begin.')} />
+        <EmptyState icon="compass" title={tr('还没有检索记录', 'No searches yet')} desc={tr('设置结果数和起始年份后开始检索。', 'Set the result count and start year, then start a search.')} />
       )}
 
-      <Modal open={historyOpen} onClose={() => setHistoryOpen(false)} title={tr('全部检索历史', 'Search history')} sub={libraryQuery.data?.name} width={780}>
+      <Modal open={historyOpen} onClose={() => setHistoryOpen(false)} title={tr('检索历史', 'Search history')} sub={libraryQuery.data?.name} width={780}>
         <div className="literature-history">
           {runs.map((run) => (
             <div className={`literature-history-row${selectedRunId === run.id ? ' is-active' : ''}`} key={run.id}>
               <button onClick={() => { setActiveRunId(run.id); setHistoryOpen(false); }}>
-                <span><strong>{run.topic}</strong><small>{new Date(run.created_at).toLocaleString()} · {run.trigger === 'scheduled' ? tr('每日增量', 'Scheduled') : tr('手动检索', 'Manual')} · {run.requested_count} {tr('篇', 'papers')} · {run.start_year ?? '—'}–{run.end_year ?? '—'}</small></span>
+                <span><strong>{run.topic}</strong><small>{new Date(run.created_at).toLocaleString()} · {run.trigger === 'scheduled' ? tr('每日自动', 'Daily') : tr('手动', 'Manual')} · {tr(`${run.requested_count} 篇`, `${run.requested_count} papers`)} · {run.start_year ?? '—'}–{run.end_year ?? '—'}</small></span>
                 <b>{tr(...(STATUS_LABELS[run.status] ?? [run.status, run.status]))}</b>
               </button>
-              {TERMINAL.has(run.status) && <button className="icon-btn danger" title={tr('永久删除', 'Delete permanently')} onClick={() => confirmDelete(run)}><Icon name="trash" size={14} /></button>}
+              {TERMINAL.has(run.status) && <button className="icon-btn danger" title={tr('删除', 'Delete')} onClick={() => confirmDelete(run)}><Icon name="trash" size={14} /></button>}
             </div>
           ))}
-          {!runs.length && <div className="empty">{tr('暂无检索历史', 'No search history')}</div>}
+          {!runs.length && <div className="empty">{tr('还没有检索记录', 'No searches yet')}</div>}
         </div>
       </Modal>
+      <ConfirmModal
+        open={!!pendingDeleteRun}
+        onClose={() => setPendingDeleteRun(null)}
+        title={tr('删除这次检索？', 'Delete this search?')}
+        message={tr('其中的候选结果会被删除，已加入本库的论文不受影响。', 'Its candidates are removed. Papers already added stay in the library.')}
+        confirmText={tr('删除', 'Delete')}
+        danger
+        onConfirm={() => {
+          if (pendingDeleteRun) deleteMutation.mutate(pendingDeleteRun.id);
+          setPendingDeleteRun(null);
+        }}
+      />
     </div>
   );
 }

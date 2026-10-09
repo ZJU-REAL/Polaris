@@ -35,6 +35,9 @@ const PresentationModal = lazy(() =>
    从哪个课题建的，如今仅用来决定要不要显示课题域的 PPT。
    ============================================================ */
 
+/** 运行中状态点：8px 圆点 + 一个词，不用彩色胶囊。 */
+const RUN_DOT = { width: 8, height: 8, borderRadius: '50%', background: 'var(--ok)', display: 'inline-block', flexShrink: 0 } as const;
+
 type WikiTab = 'discover' | 'papers' | 'concepts' | 'methods' | 'graph' | 'gaps' | 'digest' | 'chat' | 'qa' | 'ingest' | 'notes' | 'govern';
 
 export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: string }) {
@@ -118,7 +121,7 @@ export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: st
   useEffect(() => {
     if (!pendingConceptName) return;
     if (resolveQuery.isError) {
-      toast(tr('概念解析失败（后端不可用）', 'Concept lookup failed (backend unavailable)'), 'error');
+      toast(tr('无法查找概念，请确认本机引擎正在运行', 'Couldn’t look up the concept. Check that the local engine is running.'), 'error');
       setPendingConceptName(null);
       return;
     }
@@ -129,7 +132,7 @@ export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: st
       setTab('concepts');
     } else {
       toast(
-        tr(`概念「${pendingConceptName}」还没入库`, `“${pendingConceptName}” is not in the knowledge base yet`),
+        tr(`还没有概念「${pendingConceptName}」`, `No concept named “${pendingConceptName}” yet`),
         'info',
       );
     }
@@ -157,21 +160,21 @@ export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: st
         <Segmented<WikiTab>
           options={[
             ...(libraryId ? [{ v: 'discover' as const, label: tr('发现文献', 'Discover') }] : []),
-            { v: 'papers', label: `${tr('论文库', 'Papers')}${total !== undefined ? ` · ${total}` : ''}` },
-            { v: 'concepts', label: tr('概念库', 'Concepts') },
+            { v: 'papers', label: `${tr('论文', 'Papers')}${total !== undefined ? ` · ${total}` : ''}` },
+            { v: 'concepts', label: tr('概念', 'Concepts') },
             // 方法库走 /libraries/{id}/methods，只有库作用域有这个端点
-            ...(libraryId ? [{ v: 'methods' as const, label: tr('方法库', 'Methods') }] : []),
+            ...(libraryId ? [{ v: 'methods' as const, label: tr('方法', 'Methods') }] : []),
             { v: 'graph', label: tr('图谱', 'Graph') },
             // 研究缺口台账（#665）走 /libraries/{id}/gaps，只有库作用域有这个端点
             ...(libraryId ? [{ v: 'gaps' as const, label: tr('研究缺口', 'Research gaps') }] : []),
             ...(libraryId ? [{ v: 'digest' as const, label: tr('每日简报', 'Daily digest') }] : []),
-            { v: 'chat', label: tr('文献对话', 'Chat') },
+            { v: 'chat', label: tr('对话', 'Chat') },
             // 深度问答走 /libraries/{id}/qa，只有库作用域有这个端点
             ...(libraryId ? [{ v: 'qa' as const, label: tr('深度问答', 'Deep Q&A') }] : []),
             { v: 'notes', label: tr('笔记', 'Notes') },
-            ...(libraryId ? [{ v: 'govern' as const, label: tr('文献库配置', 'Library config') }] : []),
+            ...(libraryId ? [{ v: 'govern' as const, label: tr('设置', 'Settings') }] : []),
             // 建库与同步放到最后一个标签
-            { v: 'ingest', label: tr('建库与同步', 'Ingest & sync') },
+            { v: 'ingest', label: tr('检索与同步', 'Search & sync') },
           ]}
           value={tab}
           onChange={setTab}
@@ -180,25 +183,26 @@ export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: st
           {/* 无权打开任务详情时只报状态、不给跳转（点了会 404） */}
           {ingestQuery.data?.running_voyage_id && tab !== 'ingest' && (
             ingestQuery.data.can_open_running_voyage ? (
-              <span
-                className="pill hoverable"
-                style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}
+              <button
+                type="button"
+                className="btn btn-ghost sm"
                 onClick={() => navigate(`/voyages/${ingestQuery.data?.running_voyage_id ?? ''}`)}
               >
-                <span className="dot pulse" />
-                {tr('文献任务运行中 →', 'Literature task running →')}
-              </span>
+                <span className="pulse" style={RUN_DOT} />
+                {tr('任务运行中', 'Task running')}
+                <Icon name="arrow" size={12} />
+              </button>
             ) : (
-              <span className="pill" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-                <span className="dot pulse" />
-                {tr('文献任务运行中', 'Literature task running')}
+              <span className="row gap6" style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                <span className="pulse" style={RUN_DOT} />
+                {tr('任务运行中', 'Task running')}
               </span>
             )
           )}
           {hasTopic && (
             <button className="btn btn-ghost sm" onClick={() => setPresentOpen(true)}>
               <Icon name="chart" size={13} />
-              {tr('论文分享 PPT', 'Paper sharing PPT')}
+              {tr('论文分享 PPT', 'Paper slides')}
             </button>
           )}
           {/* 导出走库作用域端点；没有库时（理论上不会发生）回落课题端点 */}

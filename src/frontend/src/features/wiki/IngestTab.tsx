@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Segmented } from '../../components/ui/Segmented';
-import { FormField } from '../../components/ui/FormField';
+import { Switch } from '../../components/ui/Switch';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
@@ -21,6 +21,7 @@ import {
 import { recognizePaperRef, refInput, refKey, refLabel } from '../../lib/paper-ref';
 import { tr } from '../../lib/i18n';
 import { splitPaperInput } from './paperInput';
+import { PanelHint, PanelSection as Section } from './shared';
 
 /* ============================================================
    文献收集 Tab：
@@ -42,17 +43,65 @@ export interface IngestTabProps {
 
 // 模块级常量只存 zh/en 两份文案，渲染处再 tr（import 时求值不会随语言切换更新）
 const COUNT_ROWS: { key: keyof NonNullable<IngestState['paper_counts']>; zh: string; en: string }[] = [
-  { key: 'library', zh: '库内文献', en: 'In library' },
-  { key: 'compiled', zh: '已编译', en: 'Compiled' },
-  { key: 'pending_compile', zh: '待编译', en: 'To compile' },
-  { key: 'included', zh: '人工精选', en: 'Hand-picked' },
+  { key: 'library', zh: '在库', en: 'In library' },
+  { key: 'compiled', zh: '已解读', en: 'Summarized' },
+  { key: 'pending_compile', zh: '待解读', en: 'Awaiting summary' },
+  { key: 'included', zh: '手动精选', en: 'Hand-picked' },
   { key: 'candidate', zh: '未筛选', en: 'Unscreened' },
   { key: 'excluded', zh: '已删除', en: 'Deleted' },
 ];
 
+/** 设置行：左边标签（+ 一行说明），右边控件。 */
+function Row({
+  label,
+  hint,
+  title,
+  warn,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  title?: string;
+  warn?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="settings-row" style={{ flexWrap: 'wrap', rowGap: 8 }}>
+      <div className="settings-row-text" style={{ minWidth: 180 }} title={title}>
+        <div style={{ fontSize: 13 }}>{label}</div>
+        {hint && (
+          <div style={{ fontSize: 12, color: warn ? 'var(--warn-tx)' : 'var(--text-3)', marginTop: 2, lineHeight: 1.5 }}>
+            {hint}
+          </div>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** 等宽数值（表格数字）。 */
+function Value({ children }: { children: ReactNode }) {
+  return (
+    <span className="mono" style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+      {children}
+    </span>
+  );
+}
+
+/** 8px 状态点（配一个词用，不用彩色胶囊）。 */
+function StatusDot({ tone, pulse }: { tone: 'ok' | 'warn' | 'idle'; pulse?: boolean }) {
+  const color = tone === 'ok' ? 'var(--ok)' : tone === 'warn' ? 'var(--warn)' : 'var(--text-4)';
+  return (
+    <span
+      className={pulse ? 'pulse' : undefined}
+      style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }}
+    />
+  );
+}
+
 function KnobRange({
   label,
-  en,
   hint,
   value,
   min,
@@ -64,7 +113,6 @@ function KnobRange({
   disabledText,
 }: {
   label: string;
-  en: string;
   hint?: string;
   value: number;
   min: number;
@@ -76,8 +124,8 @@ function KnobRange({
   disabledText?: string;
 }) {
   return (
-    <FormField label={label} en={en} hint={hint}>
-      <div className="row gap12" style={disabled ? { opacity: 0.45 } : undefined}>
+    <Row label={label} hint={hint}>
+      <div className="row gap12" style={{ width: 280, maxWidth: '100%', ...(disabled ? { opacity: 0.45 } : {}) }}>
         <input
           type="range"
           min={min}
@@ -85,17 +133,18 @@ function KnobRange({
           step={step}
           value={value}
           disabled={disabled}
+          aria-label={label}
           onChange={(e) => onChange(Number(e.target.value))}
-          style={{ flex: 1 }}
+          style={{ flex: 1, minWidth: 0 }}
         />
         <span
           className="mono"
-          style={{ fontSize: 12.5, fontWeight: 650, minWidth: 44, textAlign: 'right', whiteSpace: 'nowrap' }}
+          style={{ fontSize: 12, fontWeight: 600, minWidth: 44, textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}
         >
           {disabled && disabledText ? disabledText : format ? format(value) : value}
         </span>
       </div>
-    </FormField>
+    </Row>
   );
 }
 
@@ -155,8 +204,8 @@ function AnchorEditor({
     if (unknown.length > 0) {
       toast(
         tr(
-          `认不出这些编号：${unknown.join('、')}。请用 arXiv 编号、DOI 或 PMID。`,
-          `Not recognisable: ${unknown.join(', ')}. Use arXiv IDs, DOIs or PMIDs.`,
+          `无法识别：${unknown.join('、')}。请填写 arXiv 编号、DOI 或 PMID`,
+          `Couldn’t recognise ${unknown.join(', ')}. Use arXiv IDs, DOIs or PMIDs.`,
         ),
         'error',
       );
@@ -167,14 +216,14 @@ function AnchorEditor({
       return ref ? !existing.has(refKey(refInput(ref))) : false;
     });
     if (ids.length === 0) {
-      toast(tr('这篇已经在列表里了', 'Already in the list'), 'info');
+      toast(tr('已在列表中', 'Already in the list'), 'info');
       return;
     }
     if (anchors.length + ids.length > MAX_ANCHOR_PAPERS) {
       toast(
         tr(
-          `锚点论文最多 ${MAX_ANCHOR_PAPERS} 篇；当前已有 ${anchors.length} 篇。`,
-          `Anchor papers are limited to ${MAX_ANCHOR_PAPERS}; ${anchors.length} already exist.`,
+          `锚点论文最多 ${MAX_ANCHOR_PAPERS} 篇，已有 ${anchors.length} 篇`,
+          `You can add up to ${MAX_ANCHOR_PAPERS} anchor papers. You have ${anchors.length}.`,
         ),
         'error',
       );
@@ -188,7 +237,10 @@ function AnchorEditor({
       onChange([...anchors, ...additions]);
       if (failed > 0) {
         toast(
-          tr(`${failed} 篇未解析出题目，已按编号添加。`, `${failed} titles could not be resolved; the IDs were added.`),
+          tr(
+            `已添加，其中 ${failed} 篇未找到题目`,
+            `Added. Couldn’t find ${failed === 1 ? 'the title for 1 paper' : `titles for ${failed} papers`}.`,
+          ),
           'info',
         );
       }
@@ -197,7 +249,7 @@ function AnchorEditor({
       onChange([...anchors, ...ids.map((raw) => anchorFromResolved(raw, undefined))]);
       setDraft('');
       toast(
-        tr('题目批量解析暂时不可用，已按编号添加。', 'Title resolution is unavailable; the IDs were added.'),
+        tr('已按编号添加，暂时无法查询题目', 'Added by ID. Titles couldn’t be looked up.'),
         'info',
       );
     } finally {
@@ -215,7 +267,7 @@ function AnchorEditor({
                 {refLabel(a)}
               </span>
               <span style={{ fontSize: 12.5, flex: 1, minWidth: 0 }} className="ellipsis">
-                {a.title || <span className="muted">{tr('（题目未解析）', '(title unresolved)')}</span>}
+                {a.title || <span className="muted">{tr('（无题目）', '(no title)')}</span>}
               </span>
               {!disabled && (
                 <button
@@ -234,7 +286,7 @@ function AnchorEditor({
         <div className="col gap8">
           <textarea
             className="textarea mono"
-            style={{ width: '100%', minHeight: 94, resize: 'vertical', fontSize: 12 }}
+            style={{ width: '100%', minHeight: 72, resize: 'vertical', fontSize: 12 }}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -244,8 +296,8 @@ function AnchorEditor({
               }
             }}
             placeholder={tr(
-              '多个 arXiv 编号、DOI 或 PMID（也可粘贴链接）用空格、逗号或换行分隔\n2005.11401, 10.1038/s41586-020-2649-2, PMID:31452104',
-              'Separate arXiv IDs, DOIs or PMIDs (links work too) with spaces, commas, or new lines\n2005.11401, 10.1038/s41586-020-2649-2, PMID:31452104',
+              '例如 2005.11401, 10.1038/s41586-020-2649-2, PMID:31452104',
+              'e.g. 2005.11401, 10.1038/s41586-020-2649-2, PMID:31452104',
             )}
           />
           <div className="row" style={{ justifyContent: 'flex-end' }}>
@@ -253,7 +305,7 @@ function AnchorEditor({
               {busy
                 ? tr('解析中…', 'Resolving…')
                 : parseAnchorRefs(draft).refs.length > 1
-                  ? tr(`添加 ${parseAnchorRefs(draft).refs.length} 篇`, `Add ${parseAnchorRefs(draft).refs.length}`)
+                  ? tr(`添加 ${parseAnchorRefs(draft).refs.length} 篇`, `Add ${parseAnchorRefs(draft).refs.length} papers`)
                   : tr('添加', 'Add')}
             </button>
           </div>
@@ -261,8 +313,7 @@ function AnchorEditor({
       )}
       {libraryId && anchors.length === 0 && (
         <div className="muted" style={{ fontSize: 11.5 }}>
-          {tr('还没有锚点论文。填几篇这个方向的代表作，扩展会从它们的引用与参考文献往外走。',
-              'No anchor papers yet. Add a few representative works — the expansion walks outward from their citations and references.')}
+          {tr('还没有锚点论文。添加几篇这个方向的代表作。', 'No anchor papers yet. Add a few key papers in this area.')}
         </div>
       )}
     </div>
@@ -296,7 +347,7 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
       void queryClient.invalidateQueries({ queryKey: ['library', libraryId] });
     },
     onError: (e) =>
-      toast(`${tr('保存锚点失败', 'Failed to save anchors')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法保存锚点论文', 'Couldn’t save anchor papers')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   const noKeywords = libraryId
     ? !!libDef && (libDef.definition?.keywords?.include?.length ?? 0) === 0
@@ -322,10 +373,10 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
     onSuccess: (v, input) => {
       toast(
         {
-          search: tr('检索入库已开始，跳转任务详情…', 'Search started — opening task detail…'),
-          snowball: tr('锚点扩展已开始，跳转任务详情…', 'Anchor expansion started — opening task detail…'),
-          incremental: tr('同步已开始，跳转任务详情…', 'Sync started — opening task detail…'),
-          bootstrap: tr('检索入库已开始，跳转任务详情…', 'Search started — opening task detail…'),
+          search: tr('已开始检索', 'Search started'),
+          snowball: tr('已开始扩展', 'Expansion started'),
+          incremental: tr('已开始同步', 'Sync started'),
+          bootstrap: tr('已开始检索', 'Search started'),
         }[input.mode],
         'ok',
       );
@@ -335,17 +386,17 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409 && e.message === 'LIBRARY_BUDGET_EXHAUSTED') {
         toast(
-          tr('这个文献库本月 AI 预算已用尽，同步已暂停；下月自动恢复，或请管理员调高预算。', 'This library has used up its monthly AI budget — syncing is paused until next month, or ask an admin to raise the budget.'),
+          tr('本月用量预算已用完，下月自动恢复', 'This month’s usage budget is used up. It resets next month.'),
           'error',
         );
       } else if (e instanceof ApiError && e.status === 409) {
         toast(
-          tr('该文献库已有一个文献任务在运行，请等待其完成。', 'A literature task is already running for this library — wait for it to finish.'),
+          tr('这个文献库已有任务在运行，请等它完成', 'A task is already running for this library. Wait for it to finish.'),
           'error',
         );
         void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
       } else {
-        toast(`${tr('启动失败：', 'Failed to start: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('无法启动：', 'Couldn’t start: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -391,308 +442,185 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
   }
 
   const counts = state?.paper_counts;
+  const fmtShort = (iso: string) =>
+    new Date(iso).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   return (
-    <div className="scroll" style={{ overflowY: 'auto', flex: 1, padding: '22px 24px 60px' }}>
-      <div className="row gap20" style={{ alignItems: 'flex-start' }}>
-        {/* —— 左：状态 —— */}
-        <div className="col gap16" style={{ flex: 1, minWidth: 0 }}>
-          {/* 进行中航程；无权打开详情时只显示状态、不给跳转（点了会 404） */}
-          {running && state?.running_voyage_id && (
-            <div
-              className={canOpenRunning ? 'card card-pad hoverable' : 'card card-pad'}
-              onClick={canOpenRunning ? () => navigate(`/voyages/${state.running_voyage_id}`) : undefined}
-              style={{ borderColor: 'var(--accent-soft-2)', background: 'var(--accent-soft)' }}
-            >
-              <div className="row gap10">
-                <span className="pill" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-                  <span className="dot pulse" />
-                  {tr('运行中', 'Running')}
+    <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
+      <div className="col" style={{ gap: 20, maxWidth: 760, margin: '0 auto', padding: '4px 24px 48px' }}>
+        {/* —— 概况 —— */}
+        <Section
+          first
+          label={tr('概况', 'Overview')}
+          action={
+            running && state?.running_voyage_id ? (
+              // 无权打开详情时只显示状态、不给跳转（点了会 404）
+              canOpenRunning ? (
+                <button className="btn btn-ghost sm" onClick={() => navigate(`/voyages/${state.running_voyage_id}`)}>
+                  <StatusDot tone="ok" pulse />
+                  {tr('任务运行中', 'Task running')}
+                  <Icon name="arrow" size={12} />
+                </button>
+              ) : (
+                <span className="row gap6" style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                  <StatusDot tone="ok" pulse />
+                  {tr('任务运行中', 'Task running')}
                 </span>
-                <span style={{ fontSize: 13.5, fontWeight: 650 }}>{tr('文献任务进行中', 'Literature task in progress')}</span>
-                {canOpenRunning && (
-                  <Icon name="arrow" size={14} style={{ marginLeft: 'auto', color: 'var(--accent-text)' }} />
+              )
+            ) : undefined
+          }
+        >
+          {stateLoading ? (
+            <div className="skel" style={{ height: 120 }} />
+          ) : stateError ? (
+            <EmptyState
+              compact
+              icon="x"
+              title={tr('无法加载概况', 'Couldn’t load the overview')}
+              desc={tr('请确认本机引擎正在运行。', 'Check that the local engine is running.')}
+            />
+          ) : (
+            <div className="settings-list">
+              <Row label={tr('论文', 'Papers')} hint={COUNT_ROWS.map((r) => `${tr(r.zh, r.en)} ${counts?.[r.key] ?? 0}`).join(' · ')}>
+                <Value>{counts?.total ?? '—'}</Value>
+              </Row>
+              <Row label={tr('上次同步时间', 'Last synced')} hint={state?.watermark ? undefined : tr('尚未初始建库', 'Not built yet')}>
+                <Value>{state?.watermark ? state.watermark.slice(0, 10) : '—'}</Value>
+              </Row>
+              <Row
+                label={tr('预计下次同步', 'Next sync (est.)')}
+                hint={state?.next_sync_at ? undefined : tr('初始建库后，按每日节奏自动同步', 'Runs daily after the first build')}
+                title={tr(
+                  '跟随每日论文抓取，有新论文才同步，时间为估计',
+                  'Follows the daily paper fetch and runs only when there are new papers, so the time is an estimate',
                 )}
-              </div>
-              <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 8 }}>
-                voyage {state.running_voyage_id.slice(0, 8)}…
-              </div>
-            </div>
-          )}
-
-          {/* 状态卡 */}
-          <div className="card" style={{ overflow: 'hidden' }}>
-            <div className="card-pad row" style={{ paddingBottom: 12, justifyContent: 'space-between' }}>
-              <span className="section-h">
-                <Icon name="clock" size={15} style={{ color: 'var(--accent)' }} />
-                {tr('知识库状态', 'Ingest state')}
-              </span>
-            </div>
-            {stateLoading ? (
-              <div className="empty" style={{ padding: 24 }}>{tr('加载状态…', 'Loading state…')}</div>
-            ) : stateError ? (
-              <EmptyState
-                compact
-                icon="x"
-                title={tr('无法加载状态', 'Failed to load state')}
-                desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or API not ready.')}
-              />
-            ) : (
-              <div style={{ padding: '0 22px 20px' }}>
-                <div className="row gap16" style={{ marginBottom: 16 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>{tr('上次同步时间', 'Last sync')}</div>
-                    <div className="mono" style={{ fontSize: 16, fontWeight: 700 }}>
-                      {state?.watermark ? state.watermark.slice(0, 10) : '—'}
-                    </div>
-                    {!state?.watermark && (
-                      <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>
-                        {tr('尚未运行过初始建库', 'Initial library build has not run yet')}
-                      </div>
-                    )}
-                    <div
-                      style={{ fontSize: 11, color: 'var(--text-3)', margin: '10px 0 4px' }}
-                      title={tr(
-                        '同步跟着每日论文抓取走：抓完且有新论文才同步，所以这是估计时刻，不是准点',
-                        'Sync follows the daily paper fetch and only runs if new papers arrived, so this is an estimate',
-                      )}
-                    >
-                      {tr('下次自动同步（约）', 'Next auto sync (approx.)')}
-                    </div>
-                    <div className="mono" style={{ fontSize: 13, fontWeight: 650 }}>
-                      {state?.next_sync_at
-                        ? new Date(state.next_sync_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-                        : '—'}
-                    </div>
-                    {!state?.next_sync_at && (
-                      <div style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 2 }}>
-                        {tr(
-                          '运行节奏为每日且完成初始建库后，才会自动同步',
-                          'Auto sync starts only after the initial build is done and the schedule is daily',
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>{tr('论文总数', 'Total papers')}</div>
-                    <div className="mono" style={{ fontSize: 16, fontWeight: 700 }}>{counts?.total ?? '—'}</div>
-                  </div>
-                </div>
-
-                <div className="row gap8 wrap">
-                  {COUNT_ROWS.map((r) => (
-                    <span key={String(r.key)} className="pill sm" style={{ background: 'var(--surface-2)' }}>
-                      {tr(r.zh, r.en)}
-                      <span className="mono" style={{ fontWeight: 700 }}>{counts?.[r.key] ?? 0}</span>
-                    </span>
-                  ))}
-                </div>
-
-                <div className="hr" style={{ margin: '16px 0 12px' }} />
-                <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>{tr('上次运行', 'Last run')}</div>
+              >
+                <Value>{state?.next_sync_at ? fmtShort(state.next_sync_at) : '—'}</Value>
+              </Row>
+              <Row label={tr('上次运行', 'Last run')}>
                 {state?.last_run ? (
-                  <div
-                    className={state.last_run.can_open ? 'row gap10 hoverable' : 'row gap10'}
-                    onClick={
-                      state.last_run.can_open
-                        ? () => navigate(`/voyages/${state.last_run?.voyage_id ?? ''}`)
-                        : undefined
-                    }
-                    style={{
-                      border: '0.5px solid var(--border)',
-                      borderRadius: 9,
-                      padding: '9px 12px',
-                      background: 'var(--surface-2)',
-                    }}
+                  <button
+                    type="button"
+                    className="btn btn-ghost sm"
+                    disabled={!state.last_run.can_open}
+                    style={{ gap: 8 }}
+                    onClick={() => navigate(`/voyages/${state.last_run?.voyage_id ?? ''}`)}
                   >
                     <StatusPill status={state.last_run.status} sm />
-                    <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                    <span className="mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>
                       {fmtTime(state.last_run.finished_at)}
                     </span>
-                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginLeft: 'auto' }}>
-                      {state.last_run.voyage_id.slice(0, 8)}…
-                    </span>
-                    {state.last_run.can_open && (
-                      <Icon name="chevron" size={13} style={{ color: 'var(--text-4)' }} />
-                    )}
-                  </div>
+                    {state.last_run.can_open && <Icon name="chevron" size={12} style={{ color: 'var(--text-3)' }} />}
+                  </button>
                 ) : (
-                  <span className="muted" style={{ fontSize: 12.5 }}>{tr('暂无运行记录', 'No runs yet')}</span>
+                  <span className="muted" style={{ fontSize: 13 }}>{tr('还没有运行过', 'No runs yet')}</span>
                 )}
-              </div>
-            )}
-          </div>
-
-          {/* 增量同步 */}
-          <div className="card card-pad">
-            <div className="row gap10" style={{ marginBottom: 8 }}>
-              <span className="section-h">
-                <Icon name="refresh" size={15} style={{ color: 'var(--accent)' }} />
-                {tr('增量同步', 'Incremental sync')}
-              </span>
-            </div>
-            <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 14px' }}>
-              {tr(
-                '从每日论文池里挑出与本库方向相关的新论文，打分后自动入库；本步骤不再检索 arXiv。已建库的文献库每天都会自动同步一次。',
-                'Picks papers relevant to this library from the daily pool and adds the ones that score well; this step no longer queries arXiv. Built libraries sync once a day automatically.',
-              )}
-            </p>
-            <button className="btn btn-ghost" disabled={busy || !state?.watermark} onClick={runIncremental}>
-              <Icon name="refresh" size={14} />
-              {tr('立即增量同步', 'Sync now')}
-            </button>
-            {!state?.watermark && !stateError && !stateLoading && (
-              <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 8 }}>
-                {tr('需先完成一次初始建库。', 'Run the initial library build first.')}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* —— 右：冷启动表单 —— */}
-        <div className="card card-pad" style={{ flex: 1.2, minWidth: 0 }}>
-          <div className="row gap10" style={{ marginBottom: 6 }}>
-            <span className="section-h">
-              <Icon name="play" size={15} style={{ color: 'var(--accent)' }} />
-              {tr('按查询词检索入库', 'Search and admit')}
-            </span>
-          </div>
-          <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 18px' }}>
-            {tr(
-              '按查询词走 arXiv 检索，打分筛选后精读编译。建库和日后扩充都用它；下面的选项控制本次开销。',
-              'Searches arXiv by query terms, then scores, filters and compiles. Used both to build a library and to expand it later; the knobs below control this run’s cost.',
-            )}
-          </p>
-
-          <FormField
-            label={tr('查询词', 'Query terms')}
-            en="query_terms"
-            hint={tr(
-              '留空就用收录设置里的「包括关键词」。多个词用逗号分隔。',
-              'Leave empty to use the library’s include terms. Separate multiple terms with commas.',
-            )}
-          >
-            <input
-              className="input"
-              value={queryTerms}
-              onChange={(e) => setQueryTerms(e.target.value)}
-              placeholder={tr('如 world model, video prediction', 'e.g. world model, video prediction')}
-            />
-          </FormField>
-          <FormField label={tr('时间范围', 'Time range')} en="time_range">
-            <Segmented<IngestTimeRange>
-              options={[
-                { v: '1w', label: tr('近一周', '1 week') },
-                { v: '3m', label: tr('近三个月', '3 months') },
-                { v: '6m', label: tr('近半年', '6 months') },
-                { v: '1y', label: tr('近一年', '1 year') },
-              ]}
-              value={timeRange}
-              onChange={setTimeRange}
-            />
-          </FormField>
-          <KnobRange
-            label={tr('相关度阈值', 'Relevance threshold')}
-            en="relevance_threshold"
-            hint={tr('LLM 相关性打分低于该阈值的论文将被过滤。', 'Papers scoring below this relevance threshold are filtered out.')}
-            value={threshold}
-            min={0}
-            max={1}
-            step={0.05}
-            format={(v) => v.toFixed(2)}
-            onChange={setThreshold}
-          />
-          <FormField label={tr('最大化（不限篇数）', 'Maximize (no paper cap)')} en="unlimited">
-            <label className="row gap10" style={{ cursor: 'pointer', userSelect: 'none' }}>
-              <input
-                type="checkbox"
-                checked={unlimited}
-                onChange={(e) => setUnlimited(e.target.checked)}
-                style={{ width: 15, height: 15, accentColor: 'var(--accent)' }}
-              />
-              <span style={{ fontSize: 12.5, fontWeight: 650 }}>
-                {unlimited ? tr('已开启：不限篇数', 'On: no cap') : tr('未开启', 'Off')}
-              </span>
-            </label>
-            {unlimited && (
-              <div
-                style={{
-                  marginTop: 8,
-                  padding: '8px 10px',
-                  borderRadius: 8,
-                  background: 'var(--warn-bg)',
-                  color: 'var(--warn-tx)',
-                  fontSize: 11.5,
-                  fontWeight: 600,
-                  lineHeight: 1.55,
-                }}
-              >
-                {tr(
-                  '注意：将抓取时间窗口内全部相关论文并全部精读编译，耗时与 LLM 费用可能显著增加，且不再受预算限制自动停止。',
-                  'Note: every relevant paper in the window will be fetched and compiled. Time and LLM cost may increase substantially, and the run will not stop on a budget limit.',
-                )}
-              </div>
-            )}
-          </FormField>
-          <KnobRange
-            label={tr('最大检索篇数', 'Max papers')}
-            en="max_papers"
-            hint={tr(
-              '本次最多检索并打分的论文数。',
-              'How many papers this run retrieves and scores at most.',
-            )}
-            value={maxPapers}
-            min={10}
-            max={500}
-            step={10}
-            onChange={setMaxPapers}
-            disabled={unlimited}
-            disabledText={tr('无上限', 'No cap')}
-          />
-          <KnobRange
-            label={tr('最大编译篇数', 'Max compiled papers')}
-            en="compile_top_n"
-            hint={tr(
-              '打分排序后取前 N 篇下载 PDF 并精读编译，不超过最大检索篇数。',
-              'Top N papers by score get their PDFs downloaded and compiled; capped by max papers.',
-            )}
-            value={compileTopN}
-            min={5}
-            max={200}
-            step={5}
-            onChange={setCompileTopN}
-            disabled={unlimited}
-            disabledText={tr('无上限', 'No cap')}
-          />
-
-          {noKeywords && (
-            <div
-              style={{
-                margin: '0 0 12px',
-                padding: '10px 12px',
-                borderRadius: 8,
-                background: 'var(--warn-bg)',
-                color: 'var(--warn-tx)',
-                fontSize: 12,
-                fontWeight: 600,
-                lineHeight: 1.55,
-              }}
-            >
-              {tr(
-                '这个文献库还没有配置检索关键词，无法启动文献追踪——先去收录设置配置关键词。',
-                'This library has no search terms configured yet, so literature tracking cannot start — configure them in inclusion settings first.',
-              )}
-              <button
-                className="btn btn-soft sm"
-                style={{ marginTop: 8, display: 'flex' }}
-                onClick={() => onGoGovern?.()}
-              >
-                <Icon name="sliders" size={13} />
-                {tr('去收录设置配置关键词', 'Configure terms in inclusion settings')}
-              </button>
+              </Row>
             </div>
           )}
-          <div className="row gap10" style={{ marginTop: 6 }}>
+        </Section>
+
+        {/* —— 同步新论文 —— */}
+        <Section
+          label={tr('同步新论文', 'Sync new papers')}
+          action={
+            <button
+              className="btn btn-ghost sm"
+              disabled={busy || !state?.watermark}
+              title={!state?.watermark ? tr('完成初始建库后可用', 'Available after the first build') : undefined}
+              onClick={runIncremental}
+            >
+              <Icon name="refresh" size={13} />
+              {tr('立即同步', 'Sync now')}
+            </button>
+          }
+        >
+          <PanelHint>
+            {tr(
+              '从每天的新论文中挑出相关的加入本库，每天自动运行一次。',
+              'Adds relevant papers from each day’s new arrivals. Runs once a day on its own.',
+            )}
+          </PanelHint>
+        </Section>
+
+        {/* —— 检索论文 —— */}
+        <Section label={tr('检索论文', 'Search for papers')}>
+          <PanelHint>
+            {tr(
+              '按关键词检索 arXiv，把相关论文加入本库并生成解读。',
+              'Searches arXiv by keyword, adds relevant papers and generates their summaries.',
+            )}
+          </PanelHint>
+          <div className="settings-list">
+            <Row
+              label={tr('关键词', 'Keywords')}
+              hint={tr('留空则用收录设置中的关键词', 'Leave empty to use the library’s keywords')}
+            >
+              <input
+                className="input"
+                style={{ width: 280, maxWidth: '100%' }}
+                value={queryTerms}
+                onChange={(e) => setQueryTerms(e.target.value)}
+                placeholder={tr('例如 world model, video prediction', 'e.g. world model, video prediction')}
+              />
+            </Row>
+            <Row label={tr('时间范围', 'Time range')}>
+              <Segmented<IngestTimeRange>
+                options={[
+                  { v: '1w', label: tr('近一周', 'Past week') },
+                  { v: '3m', label: tr('近三个月', 'Past 3 months') },
+                  { v: '6m', label: tr('近半年', 'Past 6 months') },
+                  { v: '1y', label: tr('近一年', 'Past year') },
+                ]}
+                value={timeRange}
+                onChange={setTimeRange}
+              />
+            </Row>
+            <KnobRange
+              label={tr('相关度阈值', 'Relevance threshold')}
+              hint={tr('低于此分数的论文不加入', 'Papers scoring below this are skipped')}
+              value={threshold}
+              min={0}
+              max={1}
+              step={0.05}
+              format={(v) => v.toFixed(2)}
+              onChange={setThreshold}
+            />
+            <Row
+              label={tr('不限篇数', 'No paper limit')}
+              hint={
+                unlimited
+                  ? tr('耗时和用量可能大幅增加，且不受预算限制', 'Time and usage may rise sharply, with no budget limit')
+                  : undefined
+              }
+              warn={unlimited}
+            >
+              <Switch checked={unlimited} onChange={setUnlimited} aria-label={tr('不限篇数', 'No paper limit')} />
+            </Row>
+            <KnobRange
+              label={tr('最多检索篇数', 'Max papers to search')}
+              value={maxPapers}
+              min={10}
+              max={500}
+              step={10}
+              onChange={setMaxPapers}
+              disabled={unlimited}
+              disabledText={tr('不限', 'No limit')}
+            />
+            <KnobRange
+              label={tr('最多生成解读篇数', 'Max summaries')}
+              hint={tr('按相关度取前几篇', 'Taken from the most relevant papers')}
+              value={compileTopN}
+              min={5}
+              max={200}
+              step={5}
+              onChange={setCompileTopN}
+              disabled={unlimited}
+              disabledText={tr('不限', 'No limit')}
+            />
+          </div>
+
+          <div className="row gap10 wrap" style={{ marginTop: 4 }}>
             <button className="btn btn-primary" disabled={bootstrapBusy} onClick={runSearch}>
               {ingestMutation.isPending ? (
                 <>
@@ -702,75 +630,67 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
               ) : (
                 <>
                   <Icon name="play" size={14} />
-                  {tr('开始检索入库', 'Run search')}
+                  {tr('开始检索', 'Start search')}
                 </>
               )}
             </button>
-            {running && (
-              <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-                {tr('已有任务运行中，暂不可启动', 'A task is already running — cannot start another')}
+            {noKeywords ? (
+              <span className="row gap8" style={{ fontSize: 12, color: 'var(--warn-tx)' }}>
+                {tr('还没有设置关键词，无法检索。', 'Set keywords before searching.')}
+                <button className="btn btn-ghost sm" onClick={() => onGoGovern?.()}>
+                  {tr('设置关键词', 'Set keywords')}
+                </button>
               </span>
-            )}
+            ) : running ? (
+              <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                {tr('已有任务在运行', 'A task is already running')}
+              </span>
+            ) : null}
           </div>
+        </Section>
 
-          {/* —— 模式二：从锚点论文扩展 —— */}
-          <div className="hr" style={{ margin: '20px 0 16px' }} />
-          <div className="row gap10" style={{ marginBottom: 6 }}>
-            <span className="section-h">
-              <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
-              {tr('从锚点论文扩展', 'Expand from anchor papers')}
-            </span>
-          </div>
-          <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 14px' }}>
-            {tr(
-              '从收录设置里的锚点论文出发，沿引用与参考文献往外走，打分筛选后精读编译。不检索 arXiv。',
-              'Walks citations and references outward from the library’s anchor papers, then scores, filters and compiles. Does not query arXiv.',
-            )}
-          </p>
-          <FormField
-            label={tr('跳数', 'Hops')}
-            en="snowball_depth"
-            hint={tr(
-              '沿引用关系往外走几层。每多一跳调用量成倍增长，3 跳很重，先试 1 跳。',
-              'How many hops to walk. Each hop multiplies the API calls — 3 is heavy, start with 1.',
-            )}
-          >
-            <Segmented<'1' | '2' | '3'>
-              options={[
-                { v: '1', label: tr('1 跳', '1 hop') },
-                { v: '2', label: tr('2 跳', '2 hops') },
-                { v: '3', label: tr('3 跳', '3 hops') },
-              ]}
-              value={hops}
-              onChange={setHops}
-            />
-          </FormField>
-          <FormField
-            label={tr('锚点论文', 'Anchor papers')}
-            en="anchor_papers"
-            hint={tr(
-              '只需填 arXiv id，题目由系统自动补上。扩展从这些论文的引用与参考文献往外走。',
-              'Just the arXiv id — the title is filled in automatically. The expansion walks outward from these papers.',
-            )}
-          >
-            <AnchorEditor
-              libraryId={libraryId}
-              anchors={anchors}
-              onChange={(next) => saveAnchors.mutate(next)}
-              disabled={saveAnchors.isPending}
-            />
-          </FormField>
-          <div className="row gap10" style={{ marginTop: 6 }}>
-            <button
-              className="btn btn-ghost"
-              disabled={busy || !anchorCount}
-              onClick={runSnowball}
-            >
-              <Icon name="layers" size={14} />
-              {tr('开始锚点扩展', 'Run anchor expansion')}
+        {/* —— 从锚点论文扩展 —— */}
+        <Section
+          label={tr('从锚点论文扩展', 'Expand from anchor papers')}
+          action={
+            <button className="btn btn-ghost sm" disabled={busy || !anchorCount} onClick={runSnowball}>
+              <Icon name="layers" size={13} />
+              {tr('开始扩展', 'Start expansion')}
             </button>
+          }
+        >
+          <PanelHint>
+            {tr(
+              '沿锚点论文的引用和参考文献找到相关论文，加入本库并生成解读。',
+              'Follows the citations and references of your anchor papers to find related work.',
+            )}
+          </PanelHint>
+          <div className="settings-list">
+            <Row
+              label={tr('扩展层数', 'Depth')}
+              hint={tr('每多一层，耗时和用量成倍增加', 'Each level multiplies time and usage')}
+            >
+              <Segmented<'1' | '2' | '3'>
+                options={[
+                  { v: '1', label: tr('1 层', '1 level') },
+                  { v: '2', label: tr('2 层', '2 levels') },
+                  { v: '3', label: tr('3 层', '3 levels') },
+                ]}
+                value={hops}
+                onChange={setHops}
+              />
+            </Row>
+            <div className="col" style={{ gap: 8, padding: '12px 0 4px' }}>
+              <div style={{ fontSize: 13 }}>{tr('锚点论文', 'Anchor papers')}</div>
+              <AnchorEditor
+                libraryId={libraryId}
+                anchors={anchors}
+                onChange={(next) => saveAnchors.mutate(next)}
+                disabled={saveAnchors.isPending}
+              />
+            </div>
           </div>
-        </div>
+        </Section>
       </div>
     </div>
   );

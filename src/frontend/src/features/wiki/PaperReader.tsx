@@ -74,14 +74,14 @@ export function PaperReader({
 
   const venueYear = [paper.venue, paper.year].filter(Boolean).join(' · ');
   const sourceUrl = paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : paper.url ?? null;
-  const sourceLabel = paper.arxiv_id ? `arXiv:${paper.arxiv_id}` : tr('论文源链接', 'Source');
+  const sourceLabel = paper.arxiv_id ? `arXiv:${paper.arxiv_id}` : tr('原文链接', 'Source');
 
   return createPortal(
     <div className="paper-reader">
       <div className="paper-reader-topbar">
         <button className="btn btn-ghost sm" onClick={onClose}>
           <Icon name="chevron" size={13} style={{ transform: 'rotate(180deg)' }} />
-          {tr('退出阅览', 'Exit reading')}
+          {tr('退出阅读模式', 'Exit reading mode')}
         </button>
         <span className="paper-reader-topbar-title">{paper.title}</span>
         <button className="btn btn-primary sm" onClick={() => window.print()}>
@@ -105,7 +105,7 @@ export function PaperReader({
                         className="author-link"
                         role="button"
                         tabIndex={0}
-                        title={tr(`只看 ${a.name} 的论文`, `Show only ${a.name}'s papers`)}
+                        title={tr(`只看 ${a.name} 的论文`, `Show only papers by ${a.name}`)}
                         onClick={() => onFilterAuthor(a.name)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
@@ -151,7 +151,7 @@ export function PaperReader({
             </div>
           ) : (
             <p className="muted" style={{ fontSize: 13 }}>
-              {tr('这篇论文还没有编译出图文介绍。', 'No compiled intro for this paper yet.')}
+              {tr('这篇论文还没有解读。', 'This paper has no summary yet.')}
             </p>
           )}
         </article>

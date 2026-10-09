@@ -72,15 +72,15 @@ type ViewFilter = 'all' | 'compiled' | 'starred' | 'today';
 
 // 模块级常量存 zh/en 两份文案，渲染处再 tr（import 时求值不会随语言切换更新）
 const VIEW_FILTERS: { v: ViewFilter; zh: string; en: string; hintZh: string; hintEn: string }[] = [
-  { v: 'all', zh: '全部', en: 'All', hintZh: '已纳入知识库的全部文献', hintEn: 'Every paper included in the library' },
-  { v: 'compiled', zh: '已编译', en: 'Compiled', hintZh: 'AI 已精读编译出介绍', hintEn: 'Papers the AI has compiled an intro for' },
-  { v: 'starred', zh: '已星标', en: 'Starred', hintZh: '我加了星标的文献', hintEn: 'Papers I starred' },
+  { v: 'all', zh: '全部', en: 'All', hintZh: '本库的全部论文', hintEn: 'Every paper in this library' },
+  { v: 'compiled', zh: '已解读', en: 'Summarized', hintZh: '已生成解读的论文', hintEn: 'Papers with a generated summary' },
+  { v: 'starred', zh: '已星标', en: 'Starred', hintZh: '加了星标的论文', hintEn: 'Papers you starred' },
   {
     v: 'today',
     zh: '最新收录',
-    en: 'Latest batch',
-    hintZh: '上次同步新增的文献（这次没新增就是 0 篇）',
-    hintEn: 'Papers added by the most recent sync (0 if it added none)',
+    en: 'Latest',
+    hintZh: '上次同步新增的论文',
+    hintEn: 'Papers added by the last sync',
   },
 ];
 
@@ -238,14 +238,14 @@ function AddPaperModal({
     onError: (e) => {
       if (e instanceof ApiError && e.status === 422) {
         setParseError(
-          tr('输入格式不正确，或一次超过 50 篇。', 'Invalid input, or more than 50 papers were submitted.'),
+          tr('格式不正确，或超过 50 篇', 'The input isn’t valid, or has more than 50 papers.'),
         );
       } else if (e instanceof ApiError && e.status === 503) {
         setParseError(
-          tr('后台任务服务暂时不可用，请稍后再试。', 'The background task service is temporarily unavailable.'),
+          tr('本机引擎暂时无法处理，请稍后再试', 'The local engine is busy. Try again shortly.'),
         );
       } else {
-        toast(`${tr('添加失败：', 'Failed to add: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('无法添加：', 'Couldn’t add: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -263,16 +263,16 @@ function AddPaperModal({
     onError: (e) => {
       if (e instanceof ApiError && e.status === 422) {
         setParseError(
-          tr('无法从这个 .bib 文件解析出文献条目，或条目超过 500 条。', 'No entries could be parsed from this .bib file, or it holds more than 500 entries.'),
+          tr('这个 .bib 文件里没有可识别的条目，或超过 500 条', 'No entries found in this .bib file, or it has more than 500.'),
         );
       } else if (e instanceof ApiError && e.status === 413) {
-        setParseError(tr('文件太大，请在 Zotero 里分批导出后再试。', 'The file is too large; export smaller batches from Zotero.'));
+        setParseError(tr('文件太大，请在 Zotero 中分批导出', 'The file is too large. Export smaller batches from Zotero.'));
       } else if (e instanceof ApiError && e.status === 503) {
         setParseError(
-          tr('后台任务服务暂时不可用，请稍后再试。', 'The background task service is temporarily unavailable.'),
+          tr('本机引擎暂时无法处理，请稍后再试', 'The local engine is busy. Try again shortly.'),
         );
       } else {
-        toast(`${tr('导入失败：', 'Import failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('无法导入：', 'Couldn’t import: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -282,7 +282,7 @@ function AddPaperModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={tr('添加文献', 'Add paper')}
+      title={tr('添加论文', 'Add papers')}
       width={520}
       footer={
         <>
@@ -318,7 +318,7 @@ function AddPaperModal({
               <>
                 <Icon name="plus" size={13} />
                 {batchItems.length > 1
-                  ? tr(`添加 ${batchItems.length} 篇`, `Add ${batchItems.length}`)
+                  ? tr(`添加 ${batchItems.length} 篇`, `Add ${batchItems.length} papers`)
                   : tr('添加', 'Add')}
               </>
             )}
@@ -328,12 +328,12 @@ function AddPaperModal({
     >
       <Segmented<ImportMethod>
         options={[
-          { v: 'arxiv', label: 'arXiv ID' },
+          { v: 'arxiv', label: 'arXiv' },
           { v: 'doi', label: 'DOI' },
           { v: 'pmid', label: 'PMID' },
           { v: 'corpus', label: 'Corpus ID' },
-          { v: 'bibtex', label: tr('BibTeX 粘贴', 'Paste BibTeX') },
-          ...(libraryId ? [{ v: 'zotero' as const, label: tr('Zotero 导入', 'Zotero import') }] : []),
+          { v: 'bibtex', label: 'BibTeX' },
+          ...(libraryId ? [{ v: 'zotero' as const, label: 'Zotero' }] : []),
         ]}
         value={method}
         onChange={(m) => {
@@ -348,8 +348,8 @@ function AddPaperModal({
               className="textarea mono"
               style={{ width: '100%', minHeight: 112, resize: 'vertical', fontSize: 12 }}
               placeholder={tr(
-                '多个 arXiv ID 可用空格、逗号或换行分隔\n2405.01234, 2405.01235v2',
-                'Separate multiple arXiv IDs with spaces, commas, or new lines\n2405.01234, 2405.01235v2',
+                '例如 2405.01234, 2405.01235v2',
+                'e.g. 2405.01234, 2405.01235v2',
               )}
               value={arxivId}
               onChange={(e) => {
@@ -357,6 +357,9 @@ function AddPaperModal({
                 setParseError(null);
               }}
             />
+            <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
+              {tr('可一次粘贴多个，最多 50 篇', 'Paste several at once, up to 50')}
+            </div>
           </>
         ) : method === 'doi' ? (
           <>
@@ -364,8 +367,8 @@ function AddPaperModal({
               className="textarea mono"
               style={{ width: '100%', minHeight: 112, resize: 'vertical', fontSize: 12 }}
               placeholder={tr(
-                '多个 DOI 可用空格、逗号或换行分隔\n10.1145/3567890.1234567, 10.1000/example',
-                'Separate multiple DOIs with spaces, commas, or new lines\n10.1145/3567890.1234567, 10.1000/example',
+                '例如 10.1145/3567890.1234567',
+                'e.g. 10.1145/3567890.1234567',
               )}
               value={doi}
               onChange={(e) => {
@@ -374,7 +377,7 @@ function AddPaperModal({
               }}
             />
             <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              {tr('适合期刊 / 会议论文；最多 50 篇。', 'Best for journal and conference papers; up to 50.')}
+              {tr('可一次粘贴多个，最多 50 篇', 'Paste several at once, up to 50')}
             </div>
           </>
         ) : method === 'pmid' ? (
@@ -383,8 +386,8 @@ function AddPaperModal({
               className="textarea mono"
               style={{ width: '100%', minHeight: 112, resize: 'vertical', fontSize: 12 }}
               placeholder={tr(
-                '多个 PubMed 编号（PMID）可用空格、逗号或换行分隔\n31452104, PMID:33301246',
-                'Separate multiple PubMed IDs (PMIDs) with spaces, commas, or new lines\n31452104, PMID:33301246',
+                '例如 31452104, PMID:33301246',
+                'e.g. 31452104, PMID:33301246',
               )}
               value={pmid}
               onChange={(e) => {
@@ -393,7 +396,7 @@ function AddPaperModal({
               }}
             />
             <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              {tr('生物医学论文用它；元数据经 OpenAlex 解析，最多 50 篇。', 'For biomedical papers; metadata is resolved through OpenAlex, up to 50.')}
+              {tr('可一次粘贴多个，最多 50 篇', 'Paste several at once, up to 50')}
             </div>
           </>
         ) : method === 'corpus' ? (
@@ -402,8 +405,8 @@ function AddPaperModal({
               className="textarea mono"
               style={{ width: '100%', minHeight: 112, resize: 'vertical', fontSize: 12 }}
               placeholder={tr(
-                '多个 Semantic Scholar Corpus ID 可用空格、逗号或换行分隔\n13756489, CorpusId:215416146',
-                'Separate Semantic Scholar Corpus IDs with spaces, commas, or new lines\n13756489, CorpusId:215416146',
+                '例如 13756489, CorpusId:215416146',
+                'e.g. 13756489, CorpusId:215416146',
               )}
               value={corpusId}
               onChange={(e) => {
@@ -412,13 +415,13 @@ function AddPaperModal({
               }}
             />
             <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              {tr('支持纯数字或 CorpusId: 前缀；最多 50 篇。', 'Numeric IDs and the CorpusId: prefix are supported; up to 50.')}
+              {tr('Semantic Scholar 编号，可一次粘贴多个，最多 50 篇', 'Semantic Scholar IDs. Paste several at once, up to 50.')}
             </div>
           </>
         ) : method === 'zotero' ? (
           <>
             <label className="col" style={{ gap: 6, fontSize: 12 }}>
-              <span>{tr('BibTeX 文件（Zotero / Better BibTeX 导出的 .bib）', 'BibTeX file (.bib exported from Zotero / Better BibTeX)')}</span>
+              <span>{tr('BibTeX 文件（.bib）', 'BibTeX file (.bib)')}</span>
               <input
                 type="file"
                 accept=".bib,text/x-bibtex"
@@ -429,7 +432,7 @@ function AddPaperModal({
               />
             </label>
             <label className="col" style={{ gap: 6, fontSize: 12, marginTop: 12 }}>
-              <span>{tr('附件压缩包（可选：把带 files/ 目录的导出文件夹打包成 zip）', 'Attachments archive (optional: zip the export folder that contains files/)')}</span>
+              <span>{tr('附件压缩包（可选，.zip）', 'Attachments (optional, .zip)')}</span>
               <input
                 type="file"
                 accept=".zip,application/zip"
@@ -438,8 +441,8 @@ function AddPaperModal({
             </label>
             <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
               {tr(
-                '在 Zotero 中右键分类 → 导出分类，格式选 BibTeX；勾选「导出文件」可连 PDF 一起带上。已在库里的文献（按 DOI / arXiv / 标题判断）会自动跳过。',
-                'In Zotero right-click a collection and choose Export Collection with the BibTeX format; check “Export Files” to include PDFs. Papers already in the library (matched by DOI / arXiv / title) are skipped automatically.',
+                '在 Zotero 中右键分类，选「导出分类」，格式选 BibTeX；勾选「导出文件」并把导出文件夹压缩成 zip 可带上 PDF。已有的论文会跳过。',
+                'In Zotero, right-click a collection, choose Export Collection and pick BibTeX. To include PDFs, check “Export Files” and zip the exported folder. Papers already here are skipped.',
               )}
             </div>
           </>
@@ -449,8 +452,8 @@ function AddPaperModal({
               className="textarea mono"
               style={{ width: '100%', minHeight: 150, resize: 'vertical', fontSize: 12 }}
               placeholder={tr(
-                '可连续粘贴多条 BibTeX：\n@inproceedings{smith2024example,\n  title = {...},\n  year = {2024},\n}\n\n@article{doe2025example, ...}',
-                'Paste multiple BibTeX entries:\n@inproceedings{smith2024example,\n  title = {...},\n  year = {2024},\n}\n\n@article{doe2025example, ...}',
+                '例如\n@inproceedings{smith2024example,\n  title = {...},\n  year = {2024},\n}',
+                'e.g.\n@inproceedings{smith2024example,\n  title = {...},\n  year = {2024},\n}',
               )}
               value={bibtex}
               onChange={(e) => {
@@ -460,15 +463,15 @@ function AddPaperModal({
             />
             <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
               {tr(
-                '最多 50 条；title 必填。无效条目不会阻断其它条目。',
-                'Up to 50 entries; title is required. Invalid entries do not block the others.',
+                '可一次粘贴多条，最多 50 条，每条需有 title',
+                'Paste several entries, up to 50. Each needs a title.',
               )}
             </div>
           </>
         )}
         {tooMany && (
           <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--danger-tx)' }}>
-            {tr(`当前识别到 ${batchItems.length} 篇，一次最多 50 篇。`, `${batchItems.length} detected; the limit is 50.`)}
+            {tr(`识别到 ${batchItems.length} 篇，一次最多 50 篇`, `Found ${batchItems.length}. The limit is 50 at a time.`)}
           </div>
         )}
         {parseError && (
@@ -483,7 +486,7 @@ function AddPaperModal({
               lineHeight: 1.6,
             }}
           >
-            {tr('解析失败：', 'Parse failed: ')}{parseError}
+            {parseError}
           </div>
         )}
       </div>
@@ -523,10 +526,10 @@ export function ExportMenu({
       libraryId ? api.downloadLibraryObsidianExport(libraryId) : api.downloadObsidianExport(pid!),
     onSuccess: (blob) => {
       saveBlob(blob, 'polaris-wiki.zip');
-      toast(tr('Obsidian 笔记库已导出', 'Obsidian vault exported'), 'ok');
+      toast(tr('已导出 Obsidian 笔记库', 'Obsidian vault exported'), 'ok');
     },
     onError: (e) =>
-      toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法导出：', 'Couldn’t export: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const citationsMutation = useMutation({
@@ -537,12 +540,12 @@ export function ExportMenu({
     onSuccess: (blob, format) => {
       saveBlob(blob, format === 'bibtex' ? 'polaris-references.bib' : 'polaris-references.json');
       toast(
-        format === 'bibtex' ? tr('BibTeX 文件已导出', 'BibTeX file exported') : tr('CSL-JSON 文件已导出', 'CSL-JSON file exported'),
+        format === 'bibtex' ? tr('已导出 BibTeX', 'BibTeX exported') : tr('已导出 CSL-JSON', 'CSL-JSON exported'),
         'ok',
       );
     },
     onError: (e) =>
-      toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法导出：', 'Couldn’t export: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const busy = obsidianMutation.isPending || citationsMutation.isPending;
@@ -563,14 +566,14 @@ export function ExportMenu({
           key: 'bibtex',
           icon: 'book',
           label: tr('BibTeX 引用', 'BibTeX citations'),
-          hint: tr('.bib · 全部库内文献', '.bib · whole library'),
+          hint: tr('.bib · 全部论文', '.bib · all papers'),
           onSelect: () => citationsMutation.mutate('bibtex'),
         },
         {
           key: 'csl-json',
           icon: 'layers',
           label: 'CSL-JSON',
-          hint: tr('Zotero 可直接导入', 'imports straight into Zotero'),
+          hint: tr('可导入 Zotero', 'For Zotero'),
           onSelect: () => citationsMutation.mutate('csl-json'),
         },
       ]}
@@ -614,11 +617,11 @@ function PapersTrashModal({ pid, libraryId, open, onClose }: { pid: string; libr
     mutationFn: (id: string) =>
       libraryId ? api.restoreLibraryPaper(libraryId, id) : api.restoreProjectPaper(pid, id),
     onSuccess: (p) => {
-      toast(`${tr('已召回：', 'Restored: ')}${p.title.slice(0, 30)}`, 'ok');
+      toast(`${tr('已恢复：', 'Restored: ')}${p.title.slice(0, 30)}`, 'ok');
       invalidate();
     },
     onError: (e) =>
-      toast(`${tr('召回失败：', 'Restore failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法恢复：', 'Couldn’t restore: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const purgeMutation = useMutation({
@@ -630,17 +633,17 @@ function PapersTrashModal({ pid, libraryId, open, onClose }: { pid: string; libr
       invalidate();
     },
     onError: (e) =>
-      toast(`${tr('删除失败：', 'Delete failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法删除：', 'Couldn’t delete: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const emptyMutation = useMutation({
     mutationFn: () => (libraryId ? api.emptyLibraryTrash(libraryId) : api.emptyTrash(pid)),
     onSuccess: (res) => {
-      toast(tr(`回收站已清空（${res.deleted} 篇）`, `Trash emptied (${res.deleted} papers)`), 'ok');
+      toast(tr(`已清空回收站，共 ${res.deleted} 篇`, `Trash emptied: ${res.deleted} papers`), 'ok');
       invalidate();
     },
     onError: (e) =>
-      toast(`${tr('清空失败：', 'Empty failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法清空：', 'Couldn’t empty the trash: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // 论文行 → 共享回收站行的展示模型（相关度条 + 删除原因标签 + tldr）
@@ -656,7 +659,7 @@ function PapersTrashModal({ pid, libraryId, open, onClose }: { pid: string; libr
         tags:
           trashReasonOf(p) === 'irrelevant' ? (
             <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
-              {tr('不相关', 'Irrelevant')}
+              {tr('不相关', 'Not relevant')}
             </span>
           ) : (
             <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
@@ -674,8 +677,8 @@ function PapersTrashModal({ pid, libraryId, open, onClose }: { pid: string; libr
       open={open}
       onClose={onClose}
       sub={tr(
-        '相关性不足自动淘汰与手动删除的文献',
-        'Papers auto-dropped for low relevance or deleted manually',
+        '不相关或手动删除的论文',
+        'Papers marked not relevant or deleted by you',
       )}
       items={items}
       total={trashQuery.data?.total}
@@ -687,8 +690,8 @@ function PapersTrashModal({ pid, libraryId, open, onClose }: { pid: string; libr
       onEmpty={() => emptyMutation.mutate()}
       emptyWarning={(n) =>
         tr(
-          `将彻底删除全部 ${n} 篇及其文件，无法恢复`,
-          `This permanently deletes all ${n} papers and their files — no undo`,
+          `${n} 篇论文及其文件将被永久删除。`,
+          `${n} papers and their files will be permanently deleted.`,
         )
       }
     />
@@ -870,7 +873,7 @@ function PaperDetailPane({
         ? api.batchDeleteLibraryPapers(libraryId, [paperId])
         : api.batchDeletePapers(scopeId, [paperId]),
     onSuccess: () => {
-      toast(tr('已移入回收站，可在列表底部的回收站中召回', 'Moved to trash — restore it from the trash any time'), 'ok');
+      toast(tr('已移入回收站', 'Moved to trash'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['paper', scopeId, paperId] });
       void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
       void queryClient.invalidateQueries({ queryKey: ['papers-trash', scopeId] });
@@ -879,7 +882,7 @@ function PaperDetailPane({
       onDeleted();
     },
     onError: (e) =>
-      toast(`${tr('删除失败：', 'Delete failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法删除：', 'Couldn’t delete: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // 星标 / 阅读状态（个人视角）
@@ -892,7 +895,7 @@ function PaperDetailPane({
       void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
     },
     onError: (e) =>
-      toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法更新：', 'Couldn’t update: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // 换论文时收起本地开合状态（面板不再随选中项重挂载，得自己收）。
@@ -926,14 +929,14 @@ function PaperDetailPane({
     [evidenceArtifact.refs, libraryId, paper?.title, paperId],
   );
 
-  if (isLoading) return <div className="empty">{tr('加载论文详情…', 'Loading paper…')}</div>;
+  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
   if (isError || !paper) {
     return (
       <EmptyState
         compact
         icon="x"
-        title={tr('无法加载论文详情', 'Failed to load paper')}
-        desc={tr('后端不可用或该论文不存在。', 'Backend unavailable or the paper does not exist.')}
+        title={tr('无法加载这篇论文', 'Couldn’t load this paper')}
+        desc={tr('它可能已被删除，或本机引擎未运行。', 'It may have been deleted, or the local engine isn’t running.')}
       />
     );
   }
@@ -950,27 +953,23 @@ function PaperDetailPane({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="row gap8 wrap" style={{ marginBottom: 8 }}>
             <PaperStatusPill status={paper.status} hasWiki={paper.has_wiki} sm />
-            {paper.venue && (
-              <span className="pill sm" style={{ background: 'var(--surface-3)' }}>
-                {paper.venue}
-              </span>
-            )}
-            {paper.has_wiki && (
-              <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-                <Icon name="sparkle" size={11} />
-                wiki
-              </span>
-            )}
+            {/* 徽标最多两个：状态 + PDF；期刊与笔记数改成纯文字元信息 */}
             {paper.pdf_available && (
               <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
                 <Icon name="file" size={11} />
                 PDF
               </span>
             )}
-            {(paper.note_count ?? 0) > 0 && (
-              <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
-                <Icon name="pen" size={10} />
-                {tr(`${paper.note_count} 条笔记`, `${paper.note_count} notes`)}
+            {(paper.venue || (paper.note_count ?? 0) > 0) && (
+              <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                {[
+                  paper.venue,
+                  (paper.note_count ?? 0) > 0
+                    ? tr(`${paper.note_count} 条笔记`, paper.note_count === 1 ? '1 note' : `${paper.note_count} notes`)
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               </span>
             )}
           </div>
@@ -989,14 +988,14 @@ function PaperDetailPane({
       <div className="row gap8 wrap" style={{ marginTop: 14 }}>
         <button className="btn btn-primary sm" onClick={() => navigate(`/papers/${paper.id}/read`, { state: readerFrom(location, 'wiki') })}>
           <Icon name="file" size={13} />
-          {tr('阅读原文', 'Read original')}
+          {tr('阅读原文', 'Read paper')}
         </button>
         <button
           className="btn btn-soft sm"
           title={
             paper.has_wiki
-              ? tr('用最新的图文模式重写这篇介绍', 'Rewrite this intro with the latest text+figures mode')
-              : tr('AI 精读并编译图文介绍', 'Have the AI read and compile an illustrated intro')
+              ? tr('重新生成这篇论文的解读', 'Regenerate this paper’s summary')
+              : tr('为这篇论文生成图文解读', 'Generate an illustrated summary of this paper')
           }
           disabled={compiling}
           onClick={() => (paper.has_wiki ? setRecompileConfirm(true) : onRecompile(paperId))}
@@ -1004,38 +1003,28 @@ function PaperDetailPane({
           {compiling ? (
             <>
               <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-              {tr('AI 编译中，约 1 分钟…', 'Compiling — about a minute…')}
+              {tr('正在生成，约 1 分钟…', 'Generating, about a minute…')}
             </>
           ) : (
             <>
               <Icon name="sparkle" size={13} />
-              {paper.has_wiki ? tr('重新编译', 'Recompile') : tr('编译', 'Compile')}
+              {paper.has_wiki ? tr('重新生成', 'Regenerate') : tr('生成解读', 'Generate summary')}
             </>
           )}
         </button>
         {paper.has_wiki && paper.wiki_content && (
           <button
             className="btn btn-soft sm"
-            title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
+            title={tr('全屏阅读解读，可导出 PDF', 'Read the summary full screen and export it as PDF')}
             onClick={() => {
               setReaderPrint(false);
               setReaderOpen(true);
             }}
           >
             <Icon name="book" size={13} />
-            {tr('阅览模式', 'Reading mode')}
+            {tr('阅读模式', 'Reading mode')}
           </button>
         )}
-        <button
-          className="btn btn-ghost sm"
-          style={{ color: 'var(--danger-tx)' }}
-          title={tr('移入回收站（可召回）', 'Move to trash (restorable)')}
-          disabled={deleteMutation.isPending}
-          onClick={() => deleteMutation.mutate()}
-        >
-          <Icon name="x" size={13} />
-          {tr('删除', 'Delete')}
-        </button>
         {arxivUrl && (
           <a
             className="btn btn-ghost sm"
@@ -1057,7 +1046,7 @@ function PaperDetailPane({
             style={{ textDecoration: 'none' }}
           >
             <Icon name="link" size={13} />
-            {tr('原文链接', 'Source link')}
+            {tr('原文链接', 'Source')}
           </a>
         )}
         {libraryId && (
@@ -1067,15 +1056,25 @@ function PaperDetailPane({
             title={
               canSendToExtension(paper.status)
                 ? undefined
-                : tr('这篇还是候选，先收录进库才能推送', 'Still a candidate; include it in the library first')
+                : tr('加入本库后才能发送', 'Add it to the library first')
             }
             onClick={() => onSendToExtension(paper)}
           >
             <Icon name={sendingToExtension ? 'refresh' : 'share'} size={13} style={sendingToExtension ? { animation: 'spin 1s linear infinite' } : undefined} />
-            {tr('推送扩展', 'Send to extension')}
+            {tr('发送到浏览器扩展', 'Send to browser extension')}
           </button>
         )}
           {!libraryId && <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />}
+          <button
+            className="btn btn-ghost sm"
+            style={{ color: 'var(--text-3)', marginLeft: 'auto' }}
+            title={tr('移入回收站', 'Move to trash')}
+            disabled={deleteMutation.isPending}
+            onClick={() => deleteMutation.mutate()}
+          >
+            <Icon name="trash" size={13} />
+            {tr('删除', 'Delete')}
+          </button>
         </div>
 
         {libraryId && (
@@ -1174,23 +1173,23 @@ function PaperDetailPane({
           <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>{paper.abstract}</div>
         ) : (
           <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
-            {tr('这篇还没有摘要。', 'No abstract for this paper.')}
+            {tr('没有摘要', 'No abstract')}
           </p>
         )}
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '0.5px solid var(--border)' }}>
-        <MetaItem label="arxiv_id">{paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}</MetaItem>
-        <MetaItem label="doi">{paper.doi ? <span className="mono">{paper.doi}</span> : <span className="muted">—</span>}</MetaItem>
-        <MetaItem label="published">
+        <MetaItem label={tr('arXiv 编号', 'arXiv ID')}>{paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}</MetaItem>
+        <MetaItem label="DOI">{paper.doi ? <span className="mono">{paper.doi}</span> : <span className="muted">—</span>}</MetaItem>
+        <MetaItem label={tr('发表日期', 'Published')}>
           {paper.published_at ? <span className="mono">{paper.published_at.slice(0, 10)}</span> : <span className="muted">—</span>}
         </MetaItem>
-        <MetaItem label="relevance">
+        <MetaItem label={tr('相关度', 'Relevance')}>
           {relevance !== null ? (
             <RelevanceBar value={relevance} width={140} />
           ) : (
-            <span className="muted">{tr('未打分', 'not scored')}</span>
+            <span className="muted">{tr('未评分', 'Not scored')}</span>
           )}
         </MetaItem>
-        <MetaItem label={tr('入库时间', 'added at')}>
+        <MetaItem label={tr('加入时间', 'Added')}>
           <span className="mono">{fmtTime(paper.created_at)}</span>
         </MetaItem>
       
@@ -1218,36 +1217,37 @@ function PaperDetailPane({
         {paper.wiki_content ? (
           <>
             <div
-              className="row"
+              className="row wrap"
               style={{
                 justifyContent: 'space-between',
                 alignItems: 'center',
+                gap: 8,
                 paddingBottom: 10,
                 marginBottom: 16,
                 borderBottom: '0.5px solid var(--border)',
               }}
             >
-              <div className="row gap8">
-                <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
-                  {tr('AI 图文介绍', 'AI intro')}
+              <div className="row gap8" style={{ minWidth: 0 }}>
+                <span style={{ fontSize: 12, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
+                  {tr('AI 生成的解读', 'AI-generated summary')}
                 </span>
                 <CompileBadge model={paper.compiled_model} at={paper.compiled_at} />
               </div>
               <div className="row gap6">
                 <button
                   className="btn btn-soft sm"
-                  title={tr('全屏专注阅读', 'Full-screen focused reading')}
+                  title={tr('全屏阅读', 'Read full screen')}
                   onClick={() => {
                     setReaderPrint(false);
                     setReaderOpen(true);
                   }}
                 >
                   <Icon name="book" size={13} />
-                  {tr('阅览模式', 'Reading mode')}
+                  {tr('阅读模式', 'Reading mode')}
                 </button>
                 <button
                   className="btn btn-ghost sm"
-                  title={tr('打开阅览页并唤起打印，另存为 PDF', 'Open the reader and print to save as PDF')}
+                  title={tr('打印或另存为 PDF', 'Print or save as PDF')}
                   onClick={() => {
                     setReaderPrint(true);
                     setReaderOpen(true);
@@ -1269,8 +1269,8 @@ function PaperDetailPane({
           <EmptyState
             compact
             icon="pen"
-            title={tr('还没有 AI 介绍', 'No AI intro yet')}
-            desc={tr('点上方的编译让 AI 精读并生成。', 'Use “Compile” above to have the AI read it and write one.')}
+            title={tr('还没有解读', 'No summary yet')}
+            desc={tr('点击上方「生成解读」。', 'Select “Generate summary” above.')}
           />
         )}
       </div>
@@ -1294,12 +1294,9 @@ function PaperDetailPane({
       <ConfirmModal
         open={recompileConfirm}
         onClose={() => setRecompileConfirm(false)}
-        title={tr('重新编译解读', 'Recompile the wiki')}
-        message={tr(
-          `现有解读由 ${paper.compiled_by_name ?? '未知用户'} 在 ${paper.compiled_at ? fmtTime(paper.compiled_at) : '未知时间'} 用 ${paper.compiled_model ?? '未知模型'} 编译，重新编译会覆盖它，旧的找不回来。`,
-          `The current wiki was compiled by ${paper.compiled_by_name ?? 'an unknown user'} at ${paper.compiled_at ? fmtTime(paper.compiled_at) : 'an unknown time'} with ${paper.compiled_model ?? 'an unknown model'}. Recompiling overwrites it — the old one cannot be recovered.`,
-        )}
-        confirmText={tr('重新编译', 'Recompile')}
+        title={tr('重新生成解读？', 'Regenerate the summary?')}
+        message={tr('现有解读会被替换，无法恢复。', 'The current summary will be replaced and can’t be recovered.')}
+        confirmText={tr('重新生成', 'Regenerate')}
         danger
         onConfirm={() => {
           setRecompileConfirm(false);
@@ -1350,9 +1347,9 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
     setAdvOpen(true);
     onSelect('');
     if (patch.author) {
-      toast(tr(`已筛选作者：${patch.author}`, `Filtered by author: ${patch.author}`), 'info');
+      toast(tr(`已筛选作者：${patch.author}`, `Showing papers by ${patch.author}`), 'info');
     } else if (patch.affiliation) {
-      toast(tr(`已筛选机构：${patch.affiliation}`, `Filtered by affiliation: ${patch.affiliation}`), 'info');
+      toast(tr(`已筛选机构：${patch.affiliation}`, `Showing papers from ${patch.affiliation}`), 'info');
     }
   }, [onSelect]);
 
@@ -1390,12 +1387,12 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
       void compilePending.run(paperId, async () => {
         try {
           await api.recompilePaper(paperId);
-          toast(tr('编译完成，介绍已更新', 'Compiled — the intro has been updated'), 'ok');
+          toast(tr('解读已更新', 'Summary updated'), 'ok');
           void queryClient.invalidateQueries({ queryKey: ['paper', scopeId, paperId] });
           void queryClient.invalidateQueries({ queryKey: ['paper-figures', paperId] });
           void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
         } catch (e) {
-          toast(`${tr('重新编译失败：', 'Recompile failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+          toast(`${tr('无法生成解读：', 'Couldn’t generate the summary: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
         }
       });
     },
@@ -1405,7 +1402,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
   const bulkDeleteMutation = useMutation({
     mutationFn: () => (libraryId ? api.batchDeleteLibraryPapers(libraryId, [...selected]) : api.batchDeletePapers(scopeId, [...selected])),
     onSuccess: (res) => {
-      toast(tr(`已把 ${res.deleted} 篇移入回收站，可召回`, `Moved ${res.deleted} papers to trash — restorable`), 'ok');
+      toast(tr(`已将 ${res.deleted} 篇移入回收站`, `Moved ${res.deleted} papers to trash`), 'ok');
       if (selectedId && selected.has(selectedId)) onSelect('');
       setSelected(new Set());
       setSelectMode(false);
@@ -1414,7 +1411,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
       void queryClient.invalidateQueries({ queryKey: ['project-graph', scopeId] });
     },
     onError: (e) =>
-      toast(`${tr('删除失败：', 'Delete failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法删除：', 'Couldn’t delete: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const bulkExportMutation = useMutation({
@@ -1427,7 +1424,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
       toast(tr(`已导出 ${selected.size} 篇`, `Exported ${selected.size} papers`), 'ok');
     },
     onError: (e) =>
-      toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法导出：', 'Couldn’t export: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const extensionBatchMutation = useMutation({
@@ -1438,23 +1435,23 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
     onSuccess: ({ batch, acknowledged, dispatchedCount }) => {
       const skipped = batch.items.filter((item) => item.status === 'skipped').length;
       if (dispatchedCount === 0) {
-        toast(tr('所选论文均已有可读 PDF，未发送重复下载任务', 'Every selected paper already has a readable PDF; no duplicate task was sent'), 'ok');
+        toast(tr('所选论文都已有 PDF，无需下载', 'All selected papers already have PDFs'), 'ok');
       } else if (acknowledged) {
         toast(
           tr(
-            `已向扩展推送 1 个任务，共 ${dispatchedCount} 篇${skipped ? `；另有 ${skipped} 篇已有 PDF` : ''}`,
-            `Sent one extension batch with ${dispatchedCount} papers${skipped ? `; ${skipped} already had PDFs` : ''}`,
+            `已发送 ${dispatchedCount} 篇到浏览器扩展${skipped ? `，${skipped} 篇已有 PDF` : ''}`,
+            `Sent ${dispatchedCount} papers to the browser extension${skipped ? `. ${skipped} already had PDFs.` : ''}`,
           ),
           'ok',
         );
       } else {
-        toast(tr('批次已保存；扩展未即时确认，可稍后通过 API Key 认领', 'The batch was saved; the extension can claim it later with the API key'), 'info');
+        toast(tr('已保存，浏览器扩展连接后会领取', 'Saved. The browser extension will pick it up when it connects.'), 'info');
       }
       setSelected(new Set());
       void queryClient.invalidateQueries({ queryKey: ['download-batches', libraryId] });
     },
     onError: (error) => toast(
-      `${tr('无法创建扩展任务：', 'Could not create extension batch: ')}${error instanceof Error ? error.message : String(error)}`,
+      `${tr('无法发送到浏览器扩展：', 'Couldn’t send to the browser extension: ')}${error instanceof Error ? error.message : String(error)}`,
       'error',
     ),
   });
@@ -1513,7 +1510,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
   // 「今日新收录」的顶行说明：这批是什么时候进来的。取最早/最晚的入库时间，
   // 一次同步的论文时间挨得很近，所以多数时候就是一个时刻。
   const fmtClock = (ms: number) =>
-    new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    new Date(ms).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   const todayRange = useMemo(() => {
     if (view !== 'today' || papers.length === 0) return null;
     const times = papers
@@ -1549,8 +1546,8 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
               onChange={setQInput}
               placeholder={
                 mode === 'semantic'
-                  ? tr('语义检索（自然语言描述）…', 'Semantic search (natural language)…')
-                  : tr('搜索标题 / 关键词…', 'Search title / keywords…')
+                  ? tr('用一句话描述要找的内容…', 'Describe what you’re looking for…')
+                  : tr('搜索标题或关键词…', 'Search titles or keywords…')
               }
             />
             <Segmented<SearchMode>
@@ -1570,7 +1567,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                 position: 'relative',
                 ...(advOpen || advActive ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : {}),
               }}
-              title={tr('高级检索', 'Advanced search')}
+              title={tr('更多筛选', 'More filters')}
               onClick={() => setAdvOpen((o) => !o)}
             >
               <Icon name="sliders" size={14} />
@@ -1604,21 +1601,21 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                 <input
                   className="input"
                   style={{ flex: 1, minWidth: 0, height: 28, fontSize: 11.5 }}
-                  placeholder={tr('作者姓名…', 'Author name…')}
+                  placeholder={tr('作者', 'Author')}
                   value={advAuthor}
                   onChange={(e) => setAdvAuthor(e.target.value)}
                 />
                 <input
                   className="input"
                   style={{ flex: 1, minWidth: 0, height: 28, fontSize: 11.5 }}
-                  placeholder={tr('发表机构…', 'Affiliation…')}
-                  title={tr('需要论文元数据带有机构信息', 'Needs affiliation metadata on the paper')}
+                  placeholder={tr('机构', 'Affiliation')}
+                  title={tr('仅匹配列出机构的论文', 'Matches papers that list affiliations')}
                   value={advAffiliation}
                   onChange={(e) => setAdvAffiliation(e.target.value)}
                 />
               </div>
               <div className="row gap6" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                <span style={{ width: 52, flexShrink: 0 }}>{tr('发表时间', 'Published')}</span>
+                <span style={{ width: 60, flexShrink: 0 }}>{tr('发表时间', 'Published')}</span>
                 <input className="input" type="date" style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11 }}
                   value={advPubFrom} onChange={(e) => setAdvPubFrom(e.target.value)} />
                 <span>—</span>
@@ -1626,7 +1623,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                   value={advPubTo} onChange={(e) => setAdvPubTo(e.target.value)} />
               </div>
               <div className="row gap6" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                <span style={{ width: 52, flexShrink: 0 }}>{tr('入库时间', 'Added')}</span>
+                <span style={{ width: 60, flexShrink: 0 }}>{tr('加入时间', 'Added')}</span>
                 <input className="input" type="date" style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11 }}
                   value={advCreatedFrom} onChange={(e) => setAdvCreatedFrom(e.target.value)} />
                 <span>—</span>
@@ -1646,7 +1643,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                     setAdvCreatedTo('');
                   }}
                 >
-                  {tr('清空高级条件', 'Clear advanced filters')}
+                  {tr('清除筛选', 'Clear filters')}
                 </button>
               )}
             </div>
@@ -1677,12 +1674,12 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
               {todayRange ? (
                 <span>
                   {tr(
-                    `${papers.length} 篇于今天 ${fmtClock(todayRange.first)}${
+                    `上次同步加入 ${papers.length} 篇 · ${fmtClock(todayRange.first)}${
                       fmtClock(todayRange.last) === fmtClock(todayRange.first)
                         ? ''
                         : `–${fmtClock(todayRange.last)}`
-                    } 从每日论文自动收录`,
-                    `${papers.length} papers auto-collected from the daily feed today at ${fmtClock(
+                    }`,
+                    `${papers.length} papers added by the last sync · ${fmtClock(
                       todayRange.first,
                     )}${
                       fmtClock(todayRange.last) === fmtClock(todayRange.first)
@@ -1694,8 +1691,8 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
               ) : (
                 <span>
                   {tr(
-                    '今天还没有从每日论文自动收录进来的文献。',
-                    'Nothing has been auto-collected from the daily feed today.',
+                    '上次同步没有新增论文',
+                    'The last sync added no papers',
                   )}
                 </span>
               )}
@@ -1709,9 +1706,9 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
               style={{ height: 26, fontSize: 11.5, flex: 1, minWidth: 0, padding: '0 6px' }}
               value={myTagFilter}
               onChange={(e) => setMyTagFilter(e.target.value)}
-              title={tr('按我的标签过滤（只有你自己看得到）', 'Filter by my tag (only you can see these)')}
+              title={tr('按我的标签筛选', 'Filter by my tags')}
             >
-              <option value="">{tr('全部我的标签', 'All my tags')}</option>
+              <option value="">{tr('全部标签', 'All tags')}</option>
               {myTags.map((t) => (
                 <option key={t.name} value={t.name}>
                   {t.name}（{t.paper_count}）
@@ -1723,12 +1720,12 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
               style={{ height: 26, fontSize: 11.5, width: 88, padding: '0 6px' }}
               value={readingFilter}
               onChange={(e) => setReadingFilter(e.target.value as '' | ReadingStatus)}
-              title={tr('按阅读状态过滤', 'Filter by reading status')}
+              title={tr('按阅读状态筛选', 'Filter by reading status')}
             >
-              <option value="">{tr('读没读', 'Read?')}</option>
+              <option value="">{tr('全部状态', 'Any status')}</option>
               {READING_STATUS.map((m) => (
                 <option key={m.v} value={m.v}>
-                  {m.label}
+                  {tr(m.label, m.en)}
                 </option>
               ))}
             </select>
@@ -1744,7 +1741,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
             />
             <button className="btn btn-primary sm" style={{ height: 26, marginLeft: 'auto' }} onClick={() => setAddOpen(true)}>
               <Icon name="plus" size={12} />
-              {tr('添加文献', 'Add paper')}
+              {tr('添加论文', 'Add papers')}
             </button>
           </div>
           {fallbackNotice && (
@@ -1759,32 +1756,32 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                 lineHeight: 1.5,
               }}
             >
-              {tr('语义检索暂不可用，已回退为关键词匹配。', 'Semantic search unavailable — fell back to keyword matching.')}
+              {tr('语义搜索暂不可用，已改用关键词搜索', 'Semantic search is unavailable, so keyword search was used')}
             </div>
           )}
         </div>
 
         <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
           {isLoading ? (
-            <div className="empty">{tr('加载论文…', 'Loading papers…')}</div>
+            <div className="empty">{tr('加载中…', 'Loading…')}</div>
           ) : isError ? (
             <EmptyState
               compact
               icon="x"
-              title={tr('无法加载论文列表', 'Failed to load papers')}
-              desc={tr('后端不可用或接口尚未就绪，稍后重试。', 'Backend unavailable or API not ready — try again later.')}
+              title={tr('无法加载论文', 'Couldn’t load papers')}
+              desc={tr('请确认本机引擎正在运行。', 'Check that the local engine is running.')}
             />
           ) : papers.length === 0 ? (
             <EmptyState
               compact
               icon="book"
-              title={hasFilter ? tr('没有匹配的论文', 'No matching papers') : tr('论文库为空', 'Library is empty')}
+              title={hasFilter ? tr('没有匹配的论文', 'No matching papers') : tr('还没有论文', 'No papers yet')}
               desc={
                 hasFilter
-                  ? tr('换个关键词或过滤条件试试。', 'Try a different keyword or filter.')
+                  ? tr('试试其他关键词或筛选条件。', 'Try other keywords or filters.')
                   : tr(
-                      '先到建库与同步运行初始建库。',
-                      'Run the initial library build under “Ingest & sync”.',
+                      '在「检索与同步」中检索论文，或手动添加。',
+                      'Search for papers under “Search & sync”, or add them yourself.',
                     )
               }
             />
@@ -1835,12 +1832,12 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
 
         {/* —— 底部固定操作栏 —— */}
         <div
-          className="row gap8"
+          className="row gap8 wrap"
           style={{ padding: '9px 14px', borderTop: '0.5px solid var(--border)', flexShrink: 0 }}
         >
           <button
             className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
-            title={tr('批量删除 / 导出', 'Bulk delete / export')}
+            title={tr('选择多篇论文', 'Select several papers')}
             onClick={() => {
               setSelectMode((m) => !m);
               setSelected(new Set());
@@ -1877,7 +1874,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                   title={
                     selected.size > 10
                       ? tr('一次最多对比 10 篇', 'Compare at most 10 papers at once')
-                      : tr('按抽取字段并排对比所选论文', 'Compare the selected papers field by field')
+                      : tr('并排对比所选论文', 'Compare the selected papers side by side')
                   }
                   onClick={() => setCompareOpen(true)}
                 >
@@ -1892,7 +1889,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                   onClick={() => extensionBatchMutation.mutate(papers.filter((paper) => selected.has(paper.id)))}
                 >
                   <Icon name={extensionBatchMutation.isPending ? 'refresh' : 'share'} size={12} style={extensionBatchMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
-                  {tr('推送扩展', 'Send to extension')}
+                  {tr('发送到浏览器扩展', 'Send to browser extension')}
                 </button>
               )}
             </>
@@ -1900,7 +1897,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
           {libraryId && (
             <button className="btn btn-ghost sm" onClick={() => setExtensionHistoryOpen(true)}>
               <Icon name="clock" size={13} />
-              {tr('扩展任务', 'Extension batches')}
+              {tr('扩展下载记录', 'Extension downloads')}
             </button>
           )}
           <button
@@ -1933,7 +1930,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
           />
         ) : (
           <div className="empty" style={{ margin: 'auto' }}>
-            {tr('从列表中选择一篇论文', 'Pick a paper from the list')}
+            {tr('从列表中选择一篇论文', 'Select a paper from the list')}
           </div>
         )}
       </div>

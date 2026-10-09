@@ -26,9 +26,11 @@ export interface DisciplineSelectProps {
   disabled?: boolean;
   /** 建库弹窗里横向空间有限，不必撑到 360。 */
   maxWidth?: number;
+  /** 紧凑：只留选择框（与「已移除」警告），说明交给所在行。设置页的行内用。 */
+  compact?: boolean;
 }
 
-export function DisciplineSelect({ value, onChange, disabled, maxWidth = 360 }: DisciplineSelectProps) {
+export function DisciplineSelect({ value, onChange, disabled, maxWidth = 360, compact }: DisciplineSelectProps) {
   const packs = useQuery({
     queryKey: ['disciplines'],
     queryFn: () => api.listDisciplines(),
@@ -44,25 +46,25 @@ export function DisciplineSelect({ value, onChange, disabled, maxWidth = 360 }: 
   if (packs.isError) {
     return (
       <p className="muted" style={{ fontSize: 12 }}>
-        {tr('学科清单读取失败。', 'Could not load the discipline list.')}
+        {tr('无法加载学科列表。', 'Couldn’t load disciplines.')}
       </p>
     );
   }
 
   return (
-    <div className="col gap8">
+    <div className="col gap8" style={{ width: maxWidth, maxWidth: '100%' }}>
       <select
         className="input"
         value={value}
         disabled={disabled || packs.isLoading}
         onChange={(e) => onChange(e.target.value)}
-        style={{ maxWidth }}
+        style={{ width: '100%' }}
       >
-        <option value="">{tr('通用（不限学科）', 'General (no discipline)')}</option>
+        <option value="">{tr('通用', 'General')}</option>
         {missing && (
           <option value={value}>
             {value}
-            {tr('（学科包已不在）', ' (pack no longer installed)')}
+            {tr('（已移除）', ' (removed)')}
           </option>
         )}
         {options.map((p) => (
@@ -71,7 +73,7 @@ export function DisciplineSelect({ value, onChange, disabled, maxWidth = 360 }: 
           </option>
         ))}
       </select>
-      {(current?.description || current?.description_en) && current && (
+      {!compact && (current?.description || current?.description_en) && current && (
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
           {tr(current.description, current.description_en || current.description)}
         </p>
@@ -79,26 +81,26 @@ export function DisciplineSelect({ value, onChange, disabled, maxWidth = 360 }: 
       {missing && (
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
           {tr(
-            '选的学科包已经不在数据目录里了，抽取已回到通用口径。把 YAML 放回去，或改选一个别的。',
-            'The selected pack is no longer in the data directory, so extraction has fallen back to the general fields. Put the YAML back, or pick another.',
+            '这个学科包已被移除，暂按通用字段提取。请重新安装或改选其他学科。',
+            'This discipline pack was removed, so general fields are used. Reinstall it or choose another.',
           )}
         </p>
       )}
       {/* 没有自己的抽取 schema 的包（如计算机科学）只换文献口径，方法卡沿用内置字段。
           说清楚，免得人以为选了它方法卡会变 */}
-      {current && current.schema_count === 0 && (
+      {!compact && current && current.schema_count === 0 && !(current.description || current.description_en) && (
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
           {tr(
-            '方法卡沿用通用字段；这个学科决定的是默认文献来源与 arXiv 分类快捷项。',
-            'Method cards keep the general fields; this discipline sets the default literature sources and arXiv category shortcuts.',
+            '方法卡使用通用字段，学科只影响默认来源和 arXiv 分类。',
+            'Method cards use the general fields. The discipline sets default sources and arXiv categories.',
           )}
         </p>
       )}
       {!packs.isLoading && options.length === 0 && (
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
           {tr(
-            '还没有装任何学科包。把 YAML 放进数据目录的 disciplines/ 下就会出现在这里。',
-            'No discipline packs installed. Drop a YAML into disciplines/ in the data directory and it shows up here.',
+            '还没有安装学科包。',
+            'No discipline packs installed.',
           )}
         </p>
       )}
