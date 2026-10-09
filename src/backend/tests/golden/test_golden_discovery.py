@@ -54,7 +54,15 @@ DIRECTION = "structured agent planning"
 pytestmark = pytest.mark.asyncio
 
 
-async def test_discovery_chain_matches_golden(client, queue_stub):
+async def test_discovery_chain_matches_golden(client, queue_stub, monkeypatch):
+    # 加论文会在后台起补全任务（进程内 redis 让它总能起来，#842）。它与录制链并发跑：
+    # 任务号随机、建索引的先后看时机，transcript 就不再确定。golden 只钉这条链本身，
+    # 补全有自己的测试，这里关掉它。
+    async def _no_enrichment(**_kwargs):
+        return None
+
+    monkeypatch.setattr("app.services.paper_enrich.launch_paper_enrichment", _no_enrichment)
+    monkeypatch.setattr("app.services.paper_enrich.launch_paper_batch_import", _no_enrichment)
     n = Normalizer()
     transcript: dict[str, object] = {}
 

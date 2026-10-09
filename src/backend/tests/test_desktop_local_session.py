@@ -41,9 +41,7 @@ async def test_local_session_provisions_admin_and_is_idempotent(client, monkeypa
     assert project.status_code == 201, project.text
 
 
-async def test_capabilities_reports_local_session(client, monkeypatch):
-    resp = await client.get("/api/auth/capabilities")
-    assert resp.json()["local_session"] is False
-    monkeypatch.setattr("app.api.auth.get_settings", _desktop_settings)
+async def test_capabilities_reports_local_session(client):
+    # 本地会话是进入引擎的唯一方式（#842），不再分档位
     resp = await client.get("/api/auth/capabilities")
     assert resp.json()["local_session"] is True

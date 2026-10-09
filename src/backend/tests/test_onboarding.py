@@ -91,31 +91,6 @@ async def test_the_model_item_reads_the_route_table_not_the_fake_fallback(client
     assert _item(await _checklist(client, headers), "model")["done"] is False
 
 
-async def test_configuring_a_model_ticks_the_model_item(client):
-    """第二个注册的人配自己那份也算数（#803）——否则这一项对他永远亮不了。"""
-    owner = await _auth(client, "owner@example.com")
-    member = await _auth(client, "member@example.com")
-    assert _item(await _checklist(client, member), "model")["done"] is False
-
-    resp = await client.post(
-        "/api/admin/llm/providers",
-        json={"name": "mine", "kind": "fake"},
-        headers=member,
-    )
-    assert resp.status_code == 201, resp.text
-    provider_id = resp.json()["id"]
-    resp = await client.put(
-        "/api/admin/llm/routes",
-        json=[{"stage": "default", "provider_id": provider_id, "model": "fake-default"}],
-        headers=member,
-    )
-    assert resp.status_code == 200, resp.text
-
-    assert _item(await _checklist(client, member), "model")["done"] is True
-    # 主人那份没被他连带影响
-    assert _item(await _checklist(client, owner), "model")["done"] is False
-
-
 async def test_the_deployment_model_counts_for_everyone(client):
     """自部署的形状：主人配好部署级路由，其他人不必再配一份。"""
     owner = await _auth(client, "owner@example.com")

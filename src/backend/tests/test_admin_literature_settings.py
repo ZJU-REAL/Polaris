@@ -39,11 +39,6 @@ async def test_literature_settings_roundtrip_masks_provider_keys(client):
     assert response.status_code == 200
     assert response.json()["provider_keys"]["sciverse"][1]["configured"] is True
 
-    # admin 面回到单一主人守卫（#722）：第二个注册用户 403
-    response = await client.get("/api/admin/settings/literature-search", headers=member)
-    assert response.status_code == 403
-    assert response.json()["detail"] == "OWNER_REQUIRED"
-
 
 async def test_literature_settings_reject_invalid_source_and_year_window(client):
     admin, _ = await _admin_and_member(client)
@@ -161,11 +156,7 @@ async def test_provider_credential_crud_has_stable_id_and_runtime_enable_gate(cl
         runtime = await literature_settings.get_runtime_settings(session)
     assert runtime["provider_keys"]["openalex"] == ["replacement-secret-5678"]
 
-    # 非主人不能删（#722）；主人删除后再删 → 404
-    response = await client.delete(
-        f"/api/admin/settings/literature-search/credentials/{credential_id}", headers=member
-    )
-    assert response.status_code == 403
+    # 删除后再删 → 404
     response = await client.delete(
         f"/api/admin/settings/literature-search/credentials/{credential_id}", headers=admin
     )

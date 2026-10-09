@@ -34,7 +34,14 @@ fake librarian compile, and index bookkeeping with zero network access.}
 pytestmark = pytest.mark.asyncio
 
 
-async def test_import_wiki_chain_matches_golden(client):
+async def test_import_wiki_chain_matches_golden(client, monkeypatch):
+    # 加论文会在后台起补全任务（进程内 redis 让它总能起来，#842），与录制链并发跑、
+    # 结果看时机。golden 只钉这条链本身，补全有自己的测试，这里关掉它。
+    async def _no_enrichment(**_kwargs):
+        return None
+
+    monkeypatch.setattr("app.services.paper_enrich.launch_paper_enrichment", _no_enrichment)
+    monkeypatch.setattr("app.services.paper_enrich.launch_paper_batch_import", _no_enrichment)
     n = Normalizer()
     transcript: dict[str, object] = {}
 

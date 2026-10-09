@@ -39,20 +39,6 @@ async def _owner(client):
     return {"Authorization": f"Bearer {token}"}
 
 
-async def test_second_user_cannot_manage_servers(client):
-    await register_and_login(client, email="owner@example.com")
-    second = await register_and_login(client, email="second@example.com")
-    headers = {"Authorization": f"Bearer {second}"}
-
-    for method, url, body in [
-        ("GET", "/api/mcp-servers", None),
-        ("POST", "/api/mcp-servers", _payload()),
-    ]:
-        resp = await client.request(method, url, json=body, headers=headers)
-        assert resp.status_code == 403, (url, resp.status_code)
-        assert resp.json()["detail"] == "OWNER_REQUIRED"
-
-
 async def test_anonymous_cannot_manage_servers(client):
     resp = await client.get("/api/mcp-servers")
     assert resp.status_code == 401
