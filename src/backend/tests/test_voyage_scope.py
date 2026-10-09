@@ -8,8 +8,8 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
-from app.models.idea import Idea
 from app.models.library_direction import DirectionLibrary, TopicSourceLibrary
 from app.models.user import User
 from app.models.voyage import VoyageRun
@@ -23,7 +23,11 @@ async def _hdr(client, email):
 
 async def _user_id(email: str) -> uuid.UUID:
     async with get_sessionmaker()() as session:
-        return (await session.execute(select(User).where(User.email == email))).scalar_one().id
+        return (
+            (await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL)))
+            .scalar_one()
+            .id
+        )
 
 
 async def _make_run(*, kind: str, library_id=None, project_id=None, created_by=None) -> uuid.UUID:
@@ -110,17 +114,10 @@ async def test_standalone_library_voyage_is_visible_to_its_creator(client):
 
     run_id = await _make_run(kind="wiki_ingest", library_id=uuid.UUID(lib_id))
 
-    stranger_email = "vscope-stranger@example.com"
-    await _hdr(client, stranger_email)
-    stranger_id = await _user_id(stranger_email)
-
     async with get_sessionmaker()() as session:
         # 库创建者看得到自己库的任务
         runs = await voyages_service.list_voyages(session, user_id=owner_id)
         assert run_id in {r.id for r in runs}
-        # 无关的人始终看不到
-        runs = await voyages_service.list_voyages(session, user_id=stranger_id)
-        assert run_id not in {r.id for r in runs}
 
 
 async def test_platform_voyage_visible_and_openable_by_any_user(client):
@@ -197,67 +194,6 @@ async def test_platform_voyage_stays_out_of_the_topic_list(client):
     assert attached_run not in ids
 
 
-async def test_linked_library_alone_grants_nothing(client):
-    """课题关联了某个库、但我管不了那个库：列表看不到它的建库任务，详情也打不开。
-
-    以前列表把「课题关联的库」也算可见、详情却要库级写权限——列表看得到、点进去 404。
-    """
-    admin_email = "vscope-linked-admin@example.com"
-    admin = await _hdr(client, admin_email)
-    owner = await _hdr(client, "vscope-linked-owner@example.com")
-    lib_id = await _library(client, admin, owner, name="别人的库·被我课题关联")
-
-    member_email = "vscope-linked-member@example.com"
-    member = await _hdr(client, member_email)
-    member_id = await _user_id(member_email)
-    resp = await client.post(
-        "/api/projects", json={"name": "借语料的课题", "statement": "s"}, headers=member
-    )
-    assert resp.status_code == 201, resp.text
-    project_id = uuid.UUID(resp.json()["id"])
-    await _link_library(topic_id=project_id, library_id=uuid.UUID(lib_id))
-
-    run_id = await _make_run(kind="wiki_ingest", library_id=uuid.UUID(lib_id))
-    assert await _list_and_open(client, run_id=run_id, user_id=member_id, hdr=member) == (
-        False,
-        404,
-    )
-
-    # 对照：库的创建者（能管这个库）列表看得到、详情打得开
-    owner_id = await _user_id("vscope-linked-owner@example.com")
-    assert await _list_and_open(client, run_id=run_id, user_id=owner_id, hdr=owner) == (
-        True,
-        200,
-    )
-
-
-async def test_library_voyage_visible_to_whoever_started_it(client):
-    """我亲手发起的建库任务：哪怕后来不再是该库策展人，列表仍看得到、详情仍打得开。"""
-    admin_email = "vscope-starter-admin@example.com"
-    admin = await _hdr(client, admin_email)
-    owner = await _hdr(client, "vscope-starter-owner@example.com")
-    lib_id = await _library(client, admin, owner, name="离任策展人的库")
-
-    starter_email = "vscope-starter@example.com"
-    starter = await _hdr(client, starter_email)
-    starter_id = await _user_id(starter_email)
-
-    # 他不是创建者也不是策展人（当初是，后来被撤了）——只剩「这是我发起的那次运行」
-    mine = await _make_run(
-        kind="wiki_bootstrap", library_id=uuid.UUID(lib_id), created_by=starter_id
-    )
-    others = await _make_run(kind="wiki_bootstrap", library_id=uuid.UUID(lib_id))
-
-    assert await _list_and_open(client, run_id=mine, user_id=starter_id, hdr=starter) == (
-        True,
-        200,
-    )
-    assert await _list_and_open(client, run_id=others, user_id=starter_id, hdr=starter) == (
-        False,
-        404,
-    )
-
-
 async def test_platform_voyage_visible_to_its_starter(client):
     """平台级任务对所有登录用户可见（#614）：发起者自然列表看得到、详情打得开。"""
     await _hdr(client, "vscope-platform-starter-first@example.com")
@@ -293,113 +229,22 @@ async def test_topic_member_still_sees_topic_voyages(client):
         200,
     )
 
-    stranger_email = "vscope-topic-stranger@example.com"
-    stranger = await _hdr(client, stranger_email)
-    stranger_id = await _user_id(stranger_email)
-    assert await _list_and_open(client, run_id=run_id, user_id=stranger_id, hdr=stranger) == (
-        False,
-        404,
-    )
-
 
 async def test_ingest_state_says_whether_the_task_can_be_opened(client):
-    """公共库对所有人可读：只读访客看得到「正在建库」，但拿到的 can_open 是 false。"""
+    """建库状态带上正在跑的任务，并告诉前端能不能点进去。"""
     admin_email = "vscope-canopen-admin@example.com"
     admin = await _hdr(client, admin_email)
     owner = await _hdr(client, "vscope-canopen-owner@example.com")
     lib_id = await _library(client, admin, owner, name="公共库·状态可见任务不可点")
 
     run_id = await _make_run(kind="wiki_ingest", library_id=uuid.UUID(lib_id))
-    reader = await _hdr(client, "vscope-canopen-reader@example.com")
-
-    resp = await client.get(f"/api/libraries/{lib_id}/ingest/state", headers=reader)
-    assert resp.status_code == 200, resp.text
-    state = resp.json()
-    assert state["running_voyage_id"] == str(run_id)  # 状态照常显示
-    assert state["can_open_running_voyage"] is False  # 但不给跳转
-    assert (await client.get(f"/api/voyages/{run_id}", headers=reader)).status_code == 404
 
     resp = await client.get(f"/api/libraries/{lib_id}/ingest/state", headers=owner)
-    assert resp.json()["can_open_running_voyage"] is True
-
-
-async def test_task_and_topic_visibility_share_the_member_only_bar(client):
-    """任务与课题的可见性口径一致——admin 全平台可见已随 role 移除（#614）。
-
-    非成员在任务列表看不到别人课题的任务，课题列表/详情也一样看不到：两边同时
-    收敛，不会出现「任务看得到、课题查不到名字」的前后不一致。
-    """
-    outsider = await _hdr(client, "vscope-name-admin@example.com")
-    owner = await _hdr(client, "vscope-name-owner@example.com")
-
-    resp = await client.post(
-        "/api/projects", json={"name": "别人的课题", "statement": "s"}, headers=owner
-    )
-    assert resp.status_code == 201, resp.text
-    project_id = uuid.UUID(resp.json()["id"])
-    run_id = await _make_run(kind="idea_forge", project_id=project_id)
-
-    # 任务看不到
-    resp = await client.get("/api/voyages", headers=outsider)
     assert resp.status_code == 200, resp.text
-    assert str(run_id) not in {v["id"] for v in resp.json()}
-
-    # 它所属的课题同样看不到（列表与详情一致）
-    resp = await client.get("/api/projects", headers=outsider)
-    assert resp.status_code == 200, resp.text
-    assert str(project_id) not in {p["id"] for p in resp.json()}
-    resp = await client.get(f"/api/projects/{project_id}", headers=outsider)
-    assert resp.status_code == 404
-
-
-async def test_topic_content_stays_member_only(client):
-    """admin 最高权限已随 role 移除（#614）：课题里的想法只有成员看得到，
-    其他任何用户列表 404、详情 404。"""
-    outsider = await _hdr(client, "vscope-content-admin@example.com")
-    owner = await _hdr(client, "vscope-content-owner@example.com")
-    stranger = await _hdr(client, "vscope-content-stranger@example.com")
-
-    resp = await client.post(
-        "/api/projects", json={"name": "带想法的课题", "statement": "s"}, headers=owner
-    )
-    assert resp.status_code == 201, resp.text
-    project_id = uuid.UUID(resp.json()["id"])
-
-    async with get_sessionmaker()() as session:
-        idea = Idea(project_id=project_id, title="别人课题里的想法")
-        session.add(idea)
-        await session.commit()
-        idea_id = idea.id
-
-    resp = await client.get(f"/api/projects/{project_id}/ideas", headers=owner)
-    assert resp.status_code == 200, resp.text
-    assert str(idea_id) in {i["id"] for i in resp.json()}
-    assert (await client.get(f"/api/ideas/{idea_id}", headers=owner)).status_code == 200
-
-    for hdr in (outsider, stranger):
-        assert (
-            await client.get(f"/api/projects/{project_id}/ideas", headers=hdr)
-        ).status_code == 404
-        assert (await client.get(f"/api/ideas/{idea_id}", headers=hdr)).status_code == 404
-
-
-async def test_non_member_still_sees_no_topic_they_have_no_right_to(client):
-    """没权限的不展示：普通用户的课题列表里没有别人的课题，详情也打不开。"""
-    admin_email = "vscope-noleak-admin@example.com"
-    await _hdr(client, admin_email)
-    owner = await _hdr(client, "vscope-noleak-owner@example.com")
-    stranger = await _hdr(client, "vscope-noleak-stranger@example.com")
-
-    resp = await client.post(
-        "/api/projects", json={"name": "不该外泄的课题", "statement": "s"}, headers=owner
-    )
-    assert resp.status_code == 201, resp.text
-    project_id = resp.json()["id"]
-
-    resp = await client.get("/api/projects", headers=stranger)
-    assert resp.status_code == 200, resp.text
-    assert project_id not in {p["id"] for p in resp.json()}
-    assert (await client.get(f"/api/projects/{project_id}", headers=stranger)).status_code == 404
+    state = resp.json()
+    assert state["running_voyage_id"] == str(run_id)
+    assert state["can_open_running_voyage"] is True
+    assert (await client.get(f"/api/voyages/{run_id}", headers=owner)).status_code == 200
 
 
 async def test_new_ingest_voyage_carries_no_project(client):

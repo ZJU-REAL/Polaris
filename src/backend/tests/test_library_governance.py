@@ -1,4 +1,4 @@
-"""库治理：库级写权限助手（admin ∪ 创建者）与库定义编辑（收录配置权威源）。
+"""库治理：库级写权限助手（创建者）与库定义编辑（收录配置权威源）。
 
 策展人任命与转公共审批流已随实验室定位移除（P1 去实验室化）。
 """
@@ -7,6 +7,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.library_direction import DirectionLibrary
 from app.models.project import Project
@@ -21,50 +22,27 @@ async def _register(client, email):
 
 
 async def _setup(client):
-    """第一个注册者自动成为平台 admin；owner 建课题（隐式库）。"""
-    admin = await _register(client, "gov-admin@example.com")
+    """owner 建课题（隐式库）。"""
     owner = await _register(client, "gov-owner@example.com")
-    stranger = await _register(client, "gov-stranger@example.com")
     # P9c：课题不再自动建库——显式建课题 + 关联一条 active 起源库（project_id 回指）。
     project_id, library_id = await make_project_with_library(client, owner, name="治理方向")
-    return admin, owner, stranger, project_id, str(library_id)
+    return owner, project_id, str(library_id)
 
 
-async def test_can_manage_library_identities(client):
-    _admin, _owner, _stranger, _project_id, library_id = await _setup(client)
+async def test_creator_can_manage_library(client):
+    _owner, _project_id, library_id = await _setup(client)
     async with get_sessionmaker()() as session:
         library = await session.get(DirectionLibrary, uuid.UUID(library_id))
-        admin_user = (
-            await session.execute(select(User).where(User.email == "gov-admin@example.com"))
-        ).scalar_one()
         owner_user = (
-            await session.execute(select(User).where(User.email == "gov-owner@example.com"))
+            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
-        stranger_user = (
-            await session.execute(select(User).where(User.email == "gov-stranger@example.com"))
-        ).scalar_one()
-
-        # admin 旁路已随 role 移除（#614）：非创建者一律不可管
-        assert not await libraries_service.can_manage_library(
-            session, user=admin_user, library=library
-        )
         assert await libraries_service.can_manage_library(session, user=owner_user, library=library)
-        assert not await libraries_service.can_manage_library(
-            session, user=stranger_user, library=library
-        )
         # 批量版与逐库版规则一字不差
         assert libraries_service.can_manage_library_row(user=owner_user, library=library)
-        assert not libraries_service.can_manage_library_row(user=stranger_user, library=library)
 
 
 async def test_patch_library_permission_and_definition_authority(client):
-    _admin, owner, stranger, project_id, library_id = await _setup(client)
-
-    # 无关用户 403
-    resp = await client.patch(
-        f"/api/libraries/{library_id}", json={"name": "hijack"}, headers=stranger
-    )
-    assert resp.status_code == 403
+    owner, project_id, library_id = await _setup(client)
 
     resp = await client.patch(
         f"/api/libraries/{library_id}",
@@ -110,13 +88,7 @@ async def test_patch_library_permission_and_definition_authority(client):
     assert resp.json()["monthly_budget"] is None
 
 
-async def test_project_paper_endpoints_visibility(client):
-    admin, owner, stranger, project_id, _library_id = await _setup(client)
-    # 无关用户：project 作用域文献端点视为不存在
-    resp = await client.get(f"/api/projects/{project_id}/papers", headers=stranger)
-    assert resp.status_code == 404
-    # 课题所有者放行；非成员（含此前的平台 admin）一律视为不存在（#614）
+async def test_project_paper_endpoints_readable_by_owner(client):
+    owner, project_id, _library_id = await _setup(client)
     resp = await client.get(f"/api/projects/{project_id}/papers", headers=owner)
     assert resp.status_code == 200, resp.text
-    resp = await client.get(f"/api/projects/{project_id}/papers", headers=admin)
-    assert resp.status_code == 404

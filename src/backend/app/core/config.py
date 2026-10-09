@@ -26,10 +26,8 @@ class Settings(BaseSettings):
     # 以前的 server 档位（uvicorn + arq worker + 外部 Redis/Postgres）已删除。
     secret_key: str = "dev-only-secret-key-change-me"  # JWT 签名
     encryption_key: str = ""  # Fernet key；为空时 security.py 会从 secret_key 派生（仅限 dev）
-    invite_code: str = "polaris-lab"  # 注册邀请码（部署级静态码，见 api/auth.py 注册端点）
-    # 登录会话有效期。默认 30 天：桌面端与网页都希望「登录一次就一直在」，
-    # 24h 会让用户每天重登一次。没有 refresh token 机制，所以直接给长有效期；
-    # 想收紧就调小这个值（单位：秒）。
+    # 本地会话（/auth/local-session 签发的 JWT）有效期，默认 30 天。过期了前端
+    # 收到 401 会自动重新取一次，用户无感；想收紧就调小这个值（单位：秒）。
     session_lifetime_seconds: int = 60 * 60 * 24 * 30
     # stdio MCP 没有 HTTP 请求 URL；需要返回绝对图片链接时通过这里提供服务根地址。
     # HTTP MCP 始终复用当前 /mcp 请求的 origin，不读取此项。
@@ -218,18 +216,6 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("POLARIS_MINERU_URL", "MINERU_URL"),
     )
 
-    # ---- 邮件（密码重置等事务邮件）----
-    # smtp_host 为空 = 关闭发信：忘记密码入口在前端自动隐藏（见 /auth/capabilities）。
-    smtp_host: str = ""
-    smtp_port: int = 465
-    # ssl=建连即 TLS（465/994）｜starttls=明文建连后升级（587/25）｜none=不加密（仅内网调试）
-    smtp_security: Literal["ssl", "starttls", "none"] = "ssl"
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""  # 发件地址；留空回退 smtp_user
-    smtp_from_name: str = "Polaris"
-    smtp_timeout: int = 20
-
     # ---- 文件卷（PDF/全文等产物；容器内挂 /srv/data）----
     data_dir: str = "./data"
     # 常驻文件投影（#719 file-over-app 一期）：在 <data_dir>/workspace/ 下维护一份
@@ -283,15 +269,6 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
-
-    @property
-    def email_enabled(self) -> bool:
-        """配了发信服务器才算开启；未开启时忘记密码入口整条链路都不暴露。"""
-        return bool(self.smtp_host and self.email_from_address)
-
-    @property
-    def email_from_address(self) -> str:
-        return self.smtp_from or self.smtp_user
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -11,6 +11,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
 from app.models.experiment import Experiment
@@ -37,7 +38,7 @@ async def _seed(client) -> tuple[uuid.UUID, str, str]:
     ).json()
     async with get_sessionmaker()() as session:
         user_id = (
-            await session.execute(select(User.id).where(User.email == "scope@example.com"))
+            await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         idea = Idea(project_id=uuid.UUID(project["id"]), title="An idea", content="c")
         session.add(idea)

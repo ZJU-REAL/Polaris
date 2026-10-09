@@ -118,12 +118,3 @@ async def test_arxiv_export_keeps_figure_pdfs(client, monkeypatch):
     resp = await client.get(f"/api/manuscripts/{ms_id}/export/arxiv", headers=headers)
     assert resp.status_code == 200, resp.text
     assert "img/plot.pdf" in _members(resp.content)
-
-
-async def test_source_bundle_requires_membership(client):
-    from tests.test_manuscripts import _setup_project
-
-    headers, ms_id = await _new_ms(client)
-    _, other_headers = await _setup_project(client, email="mallory@example.com")
-    resp = await client.get(f"/api/manuscripts/{ms_id}/source-bundle", headers=other_headers)
-    assert resp.status_code in (403, 404)

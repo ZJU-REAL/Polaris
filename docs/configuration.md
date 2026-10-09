@@ -99,7 +99,7 @@ table when you need figure tools to return absolute download URLs.
 
 | Variable | Purpose | Example |
 | --- | --- | --- |
-| `POLARIS_MCP_USER_EMAIL` | Email of a registered user the stdio MCP process acts as. | `you@example.com` |
+| `POLARIS_MCP_USER_EMAIL` | Optional. Email of the user the stdio MCP process acts as. Unset, it acts as the local user (`local@polaris.desktop`). | `local@polaris.desktop` |
 
 ## Model routing
 

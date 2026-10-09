@@ -6,6 +6,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.paper import Paper, PaperChunk
 from app.models.user import User
@@ -28,7 +29,9 @@ def _parse_sse(text: str) -> list[tuple[str, dict]]:
 
 async def _user_id(email: str) -> uuid.UUID:
     async with get_sessionmaker()() as session:
-        return (await session.execute(select(User.id).where(User.email == email))).scalar_one()
+        return (
+            await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
+        ).scalar_one()
 
 
 # ---- personal_paper_ids（纯业务） ----
@@ -180,15 +183,6 @@ async def test_shelf_chat_sse(client):
     assert items[0]["status"] is None and items[0]["relevance"] is None
     answer = "".join(d["text"] for e, d in events if e == "delta")
     assert "fake 文献综合" in answer
-
-    # 非成员 404
-    other = await register_and_login(client, email="scoped-outsider@example.com")
-    resp = await client.post(
-        f"/api/projects/{project_id}/shelf/chat",
-        json={"question": "hi"},
-        headers={"Authorization": f"Bearer {other}"},
-    )
-    assert resp.status_code == 404
 
 
 async def test_shelf_chat_covers_linked_library_corpus(client):

@@ -1,7 +1,8 @@
 """stdio 传输入口：``python -m app.mcp``，给本地 MCP 客户端（如 Claude Desktop）。
 
 逐行读 stdin 的 JSON-RPC 消息，经 ``dispatch.handle_rpc`` 处理后把响应逐行写 stdout。
-本地进程视为可信：用户由环境变量 ``POLARIS_MCP_USER_EMAIL`` 指定（该用户须已注册）；
+本地进程视为可信，默认以本机唯一的本地用户（local@polaris.desktop）身份执行；
+环境变量 ``POLARIS_MCP_USER_EMAIL`` 可选，用来改成以别的已有用户身份执行。
 项目级工具仍需在参数里带 project_id，服务端照常校验访问权。
 """
 
@@ -15,6 +16,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.mcp.dispatch import handle_rpc
@@ -22,14 +24,31 @@ from app.models.user import User
 
 
 async def _resolve_user_id() -> uuid.UUID:
-    email = os.environ.get("POLARIS_MCP_USER_EMAIL")
-    if not email:
-        raise SystemExit("需设置环境变量 POLARIS_MCP_USER_EMAIL（MCP 请求以该用户身份执行）")
+    """MCP 请求以谁的身份执行：显式指定 > 本地用户 > 最早的活跃用户。"""
+    email = os.environ.get("POLARIS_MCP_USER_EMAIL", "").strip()
     async with get_sessionmaker()() as session:
-        user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
-    if user is None:
-        raise SystemExit(f"用户不存在：{email}")
-    return user.id
+        if email:
+            user_id = (
+                await session.execute(select(User.id).where(User.email == email))
+            ).scalar_one_or_none()
+            if user_id is None:
+                raise SystemExit(f"用户不存在：{email}（POLARIS_MCP_USER_EMAIL）")
+            return user_id
+        user_id = (
+            await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
+        ).scalar_one_or_none()
+        if user_id is None:
+            user_id = (
+                await session.execute(
+                    select(User.id)
+                    .where(User.is_active.is_(True))
+                    .order_by(User.created_at.asc(), User.id.asc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+    if user_id is None:
+        raise SystemExit("还没有本地用户：先打开一次 Polaris 桌面端，再启动 MCP")
+    return user_id
 
 
 async def _serve() -> None:

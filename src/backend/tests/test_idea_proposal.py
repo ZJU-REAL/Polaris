@@ -392,7 +392,7 @@ async def test_deep_duplicate_auto_pivots_without_gate_by_default(client, queue_
         assert "（fake 修订设计）" in idea.content
 
 
-async def test_deep_seed_validation_and_permissions(client, queue_stub):
+async def test_deep_seed_validation(client, queue_stub):
     project_id, headers = await _setup_project(client)
     await _seed_searchable_papers(project_id, STATEMENT, n=1)
 
@@ -442,22 +442,6 @@ async def test_deep_seed_validation_and_permissions(client, queue_stub):
         assert any(e["source"] == "signal" for e in proposal.evidence)
     resp = await client.get(f"/api/ideas/{proposal.id}", headers=headers)
     assert resp.json()["seed_idea"] == {"id": sketch_id, "title": "草案想法"}
-
-    # 非项目成员一律 404
-    token_b = await register_and_login(client, email="outsider@example.com")
-    headers_b = {"Authorization": f"Bearer {token_b}"}
-    for method, url, body in (
-        (
-            "post",
-            f"/api/projects/{project_id}/ideas/deep",
-            {"seed": {"type": "text", "value": "x"}},
-        ),
-        ("get", f"/api/projects/{project_id}/ideas/deep/state", None),
-    ):
-        resp = await getattr(client, method)(
-            url, **({"json": body} if body is not None else {}), headers=headers_b
-        )
-        assert resp.status_code == 404, (method, url, resp.status_code)
 
 
 async def test_deep_needs_differentiation_reworks_design(client, queue_stub):

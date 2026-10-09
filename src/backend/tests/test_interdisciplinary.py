@@ -112,29 +112,6 @@ async def test_scope_confirmation_creates_one_dedicated_library(client):
     assert {item["role"] for item in queries} >= {"primary", "related", "bridge"}
 
 
-@pytest.mark.asyncio
-async def test_interdisciplinary_scope_is_owner_managed(client):
-    owner_token = await register_and_login(client, email="interdisciplinary-owner-2@example.com")
-    other_token = await register_and_login(client, email="interdisciplinary-viewer@example.com")
-    project = await client.post(
-        "/api/projects",
-        headers={"Authorization": f"Bearer {owner_token}"},
-        json={"name": "Private cross domain topic", "research_mode": "interdisciplinary"},
-    )
-    project_id = project.json()["id"]
-    response = await client.put(
-        f"/api/projects/{project_id}/interdisciplinary/scope",
-        headers={"Authorization": f"Bearer {other_token}"},
-        json={
-            "research_scope": "An unauthorized profile must not be writable.",
-            "core_questions": ["Q"],
-            "primary_domain": "Engineering",
-            "related_domains": ["Computing"],
-        },
-    )
-    assert response.status_code in {403, 404}
-
-
 async def test_confirmation_reuses_an_existing_dedicated_library(client):
     """课题下已经有跨学科库时，确认要复用它，且不会多出第二个。
 

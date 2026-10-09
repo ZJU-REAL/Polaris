@@ -8,6 +8,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.hypothesis import HypothesisNode
 from app.models.user import User
@@ -22,7 +23,11 @@ async def _hdr(client, email):
 
 async def _user_id(email: str) -> uuid.UUID:
     async with get_sessionmaker()() as session:
-        return (await session.execute(select(User).where(User.email == email))).scalar_one().id
+        return (
+            (await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL)))
+            .scalar_one()
+            .id
+        )
 
 
 async def _make_run(*, project_id=None, created_by=None) -> uuid.UUID:
@@ -224,7 +229,7 @@ async def test_setters_update_columns(client):
 
 
 async def test_tree_read_api_and_visibility(client):
-    """GET 树 / 单节点：主人可读；外人 404（不泄露存在性）；跨 run 节点 404。"""
+    """GET 树 / 单节点：主人可读；跨 run 节点 404。"""
     owner = await _hdr(client, "hyptree-owner@example.com")
     owner_id = await _user_id("hyptree-owner@example.com")
     project_id = await _project(client, owner)
@@ -261,11 +266,4 @@ async def test_tree_read_api_and_visibility(client):
 
     # 节点必须属于路径里的 run：跨 run 直取 404
     resp = await client.get(f"/api/voyages/{run_id}/hypothesis-tree/{other_root.id}", headers=owner)
-    assert resp.status_code == 404
-
-    # 外人（非课题主人、非创建者）：树与单节点都 404
-    stranger = await _hdr(client, "hyptree-stranger@example.com")
-    resp = await client.get(f"/api/voyages/{run_id}/hypothesis-tree", headers=stranger)
-    assert resp.status_code == 404
-    resp = await client.get(f"/api/voyages/{run_id}/hypothesis-tree/{root.id}", headers=stranger)
     assert resp.status_code == 404

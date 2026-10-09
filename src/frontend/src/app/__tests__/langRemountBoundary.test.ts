@@ -18,13 +18,12 @@ const code = (source: string) =>
 
 const app = read('../../App.tsx');
 const shell = read('../AppShell.tsx');
-const login = read('../../features/auth/LoginPage.tsx');
 const engineUnavailable = read('../../features/desktop/EngineUnavailablePage.tsx');
 
 describe('语言切换的重挂载边界', () => {
   it('根部不再整树重挂载', () => {
     // 这是 issue #377 的病灶：RouterProvider 被 key={lang} 一裹，换语言等于把
-    // 登录页连同用户刚输入的内容一起重建。
+    // 页面连同用户刚输入的内容一起重建。
     expect(code(app)).not.toContain('key={lang}');
     expect(code(app)).not.toContain('useLang');
   });
@@ -42,19 +41,10 @@ describe('语言切换的重挂载边界', () => {
   });
 });
 
-describe('带表单的独立页面就地重渲染', () => {
-  it.each([
-    ['登录页', login],
-    ['桌面端本机引擎兜底页', engineUnavailable],
-  ])('%s 订阅了语言', (_name, source) => {
+describe('独立页面就地重渲染', () => {
+  it.each([['桌面端本机引擎兜底页', engineUnavailable]])('%s 订阅了语言', (_name, source) => {
     expect(source).toContain('useLang');
     // 反面：自己再套一层 key={lang} 就等于把刚修好的状态又丢一次
     expect(code(source)).not.toContain('key={lang}');
-  });
-
-  it('登录页的输入仍然是组件内状态（没有为了绕开重挂载改存全局）', () => {
-    // 修法应该是「不重建这一页」，而不是「把密码搬到模块级变量里躲开重建」。
-    expect(login).toContain('const [mode, setMode] = useState<Mode>');
-    expect(login).toContain('const [password, setPassword] = useState');
   });
 });

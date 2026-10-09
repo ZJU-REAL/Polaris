@@ -7,6 +7,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.core.security import decrypt_secret
 from app.models.resource import Resource, ResourceLease
@@ -27,7 +28,9 @@ async def _auth(client, email="alice@example.com"):
 
 async def _user_id(email="alice@example.com") -> uuid.UUID:
     async with get_sessionmaker()() as session:
-        return (await session.execute(select(User.id).where(User.email == email))).scalar_one()
+        return (
+            await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
+        ).scalar_one()
 
 
 async def _make_run(session) -> VoyageRun:
@@ -125,43 +128,13 @@ async def test_resource_kind_and_config_validation(client):
     assert resp.status_code == 422
 
 
-async def test_resource_owner_isolation(client):
-    headers_a = await _auth(client, "alice@example.com")
-    headers_b = await _auth(client, "bob@example.com")
-    resp = await client.post(
-        "/api/resources", json={"name": "mine", "kind": "host"}, headers=headers_a
-    )
-    resource_id = resp.json()["id"]
-
-    resp = await client.get("/api/resources", headers=headers_b)
-    assert resp.json() == []
-    for method, url in (
-        ("get", f"/api/resources/{resource_id}"),
-        ("delete", f"/api/resources/{resource_id}"),
-    ):
-        resp = await getattr(client, method)(url, headers=headers_b)
-        assert resp.status_code == 404
-    resp = await client.patch(
-        f"/api/resources/{resource_id}", json={"name": "hijack"}, headers=headers_b
-    )
-    assert resp.status_code == 404
-
-
-async def test_resource_credential_ref_must_be_owned(client):
-    headers_a = await _auth(client, "alice@example.com")
-    headers_b = await _auth(client, "bob@example.com")
-    resp = await client.post(
-        "/api/connection-credentials",
-        json={"name": "b-token", "kind": "http", "host": "api.lab", "payload": {"token": "t"}},
-        headers=headers_b,
-    )
-    other_cred = resp.json()["id"]
-
-    # 引用他人凭据 → 404（不泄露存在性）
+async def test_resource_credential_ref_must_exist(client):
+    headers = await _auth(client)
+    # 引用不存在的凭据 → 404
     resp = await client.post(
         "/api/resources",
-        json={"name": "x", "kind": "host", "credential_id": other_cred},
-        headers=headers_a,
+        json={"name": "x", "kind": "host", "credential_id": str(uuid.uuid4())},
+        headers=headers,
     )
     assert resp.status_code == 404
 

@@ -352,7 +352,7 @@ async def test_discussion_and_human_context_injection(client, queue_stub, bus_re
     assert resp.status_code == 201, resp.text
     message = resp.json()
     assert message["author_type"] == "human"
-    assert message["author_name"] == "Alice"
+    assert message["author_name"] == "Local"
     assert message["round"] == 1
     ws_messages = [m for _, m in bus_recorder.notify if m["type"] == "review.message"]
     assert len(ws_messages) == 1
@@ -362,16 +362,6 @@ async def test_discussion_and_human_context_injection(client, queue_stub, bus_re
 
     resp = await client.get(f"/api/sessions/{discussion_id}/messages", headers=headers)
     assert [m["content"] for m in resp.json()] == [comment]
-
-    # 非成员对 session 一律 404
-    token_b = await register_and_login(client, email="stranger@example.com")
-    headers_b = {"Authorization": f"Bearer {token_b}"}
-    resp = await client.get(f"/api/sessions/{discussion_id}/messages", headers=headers_b)
-    assert resp.status_code == 404
-    resp = await client.post(
-        f"/api/sessions/{discussion_id}/messages", json={"content": "x"}, headers=headers_b
-    )
-    assert resp.status_code == 404
 
     # 锦标赛：human 评论注入辩论 agent 上下文（fake LLM 收到的 prompt 含该评论）
     resp = await client.post(
@@ -388,7 +378,7 @@ async def test_discussion_and_human_context_injection(client, queue_stub, bus_re
     assert resp.json()["status"] == "done"
     debate_prompts = [p for p in provider.prompts if "人类评审意见" in p]
     assert debate_prompts, "辩论 prompt 应包含人类评审意见区块"
-    assert any(comment in p and "Alice" in p for p in debate_prompts)
+    assert any(comment in p and "Local" in p for p in debate_prompts)
 
 
 async def test_custom_personas_used_in_messages(client, queue_stub):
@@ -438,12 +428,6 @@ async def test_promote_gate_approve_links_idea_status(client, queue_stub, bus_re
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id, "待晋级想法", status="under_review")
 
-    # 别人（非课题主人）连想法都看不到：promote 404（成员机制已随 #625 移除）
-    bob_token = await register_and_login(client, email="bob@example.com")
-    headers_bob = {"Authorization": f"Bearer {bob_token}"}
-    resp = await client.post(f"/api/ideas/{idea_id}/promote", headers=headers_bob)
-    assert resp.status_code == 404
-
     # owner promote → 创建 idea_promotion 闸门（pending）+ gate.created 通知
     resp = await client.post(f"/api/ideas/{idea_id}/promote", headers=headers)
     assert resp.status_code == 201, resp.text
@@ -486,15 +470,6 @@ async def test_patch_idea_rejected_only(client, queue_stub, bus_recorder):
     assert resp.json()["status"] == "rejected"
     status_events = [m for _, m in bus_recorder.notify if m["type"] == "idea.status"]
     assert {"type": "idea.status", "idea_id": idea_id, "status": "rejected"} in status_events
-
-    # 非成员 → 404
-    token_b = await register_and_login(client, email="nobody@example.com")
-    resp = await client.patch(
-        f"/api/ideas/{idea_id}",
-        json={"status": "rejected"},
-        headers={"Authorization": f"Bearer {token_b}"},
-    )
-    assert resp.status_code == 404
 
 
 async def test_idea_counts_exclude_the_recycle_bin(client, queue_stub):

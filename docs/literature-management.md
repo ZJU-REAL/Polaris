@@ -144,7 +144,7 @@ A pool paper is created (deduped first) by one of:
   (`paper_import.resolve_or_create_pool_paper`; a parse failure is `422 PARSE_FAILED`) but **no
   membership row at all** — the paper only gets a `user_library_entries` row (`saved=True`; an entry
   sitting in the caller's trash is revived instead of duplicated). Enrichment runs with no library and
-  no topic, so nothing is scored. Login is the only requirement, and the response carries a `task_id`
+  no topic, so nothing is scored. It needs no library or topic, and the response carries a `task_id`
   for the progress stream.
 - **Daily sync** (`daily_feed_sync` task, steps `daily.fetch` → `daily.upsert`): fetches each
   subscribed category's new arXiv announcements into the pool as **lightweight rows — no PDF, no

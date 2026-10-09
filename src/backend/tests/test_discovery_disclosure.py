@@ -368,14 +368,6 @@ async def test_artifact_endpoint_whitelist_and_visibility(client, queue_stub):
         assert resp.status_code == 404, name
         assert resp.json()["detail"] in ("ARTIFACT_NOT_FOUND", "Not Found")
 
-    # 别人的 run：404，与任务详情同口径（不泄露存在性）
-    other = await register_and_login(client, email="other@example.com")
-    resp = await client.get(
-        f"/api/voyages/{run_id}/artifacts/discovery-disclosure.json",
-        headers={"Authorization": f"Bearer {other}"},
-    )
-    assert resp.status_code == 404
-
     # run 不存在：404
     resp = await client.get(
         f"/api/voyages/{uuid.uuid4()}/artifacts/discovery-disclosure.json", headers=headers

@@ -167,25 +167,6 @@ async def test_shelf_readd_after_trash_revives_row(client):
     assert (await _shelf(client, headers, other_id))["total"] == 0
 
 
-async def test_shelf_trash_requires_project_ownership(client):
-    project_id, headers = await _setup(client, name="trash-authz")
-    paper_id = await _seed_paper(project_id, title="Members Only", status="scored")
-    await client.post(
-        f"/api/projects/{project_id}/shelf", json={"paper_id": paper_id}, headers=headers
-    )
-    outsider = await register_and_login(client, email="trash-outsider@example.com")
-    outsider_headers = {"Authorization": f"Bearer {outsider}"}
-
-    for method, url in (
-        ("get", f"/api/projects/{project_id}/shelf?trashed=true"),
-        ("post", f"/api/projects/{project_id}/shelf/{paper_id}/restore"),
-        ("post", f"/api/projects/{project_id}/shelf/trash/empty"),
-        ("delete", f"/api/projects/{project_id}/shelf/{paper_id}?hard=true"),
-    ):
-        resp = await getattr(client, method)(url, headers=outsider_headers)
-        assert resp.status_code == 404, (method, url, resp.text)
-
-
 # ---- 任务 B：我的文献库 ----
 
 

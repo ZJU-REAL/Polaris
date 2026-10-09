@@ -117,15 +117,6 @@ async def test_register_runner_host_api(client):
     assert resp.status_code == 201
     assert resp.json()["config"]["ephemeral"] is False
 
-    # 他人凭据 → 404（不泄露存在性）
-    headers_b = await _auth(client, "bob@example.com")
-    resp = await client.post(
-        "/api/resources/runner-hosts",
-        json={"name": "steal", "credential_id": cred_id},
-        headers=headers_b,
-    )
-    assert resp.status_code == 404
-
     # 非 ssh 凭据 → 422（tier-1 只吃 SSH 直连）
     resp = await client.post(
         "/api/connection-credentials",

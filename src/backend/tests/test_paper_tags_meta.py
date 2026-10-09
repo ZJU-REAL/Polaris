@@ -113,7 +113,7 @@ async def test_orphan_tags_pruned_on_single_hard_delete(client):
     assert resp.json() == []
 
 
-async def test_my_meta_upsert_and_per_user_view(client):
+async def test_my_meta_upsert_and_view(client):
     project_id, headers, ids = await _setup(client)
 
     resp = await client.put(
@@ -134,11 +134,9 @@ async def test_my_meta_upsert_and_per_user_view(client):
     )
     assert resp.status_code == 422
 
-    # 个人视角互不影响：另一用户（经公共库路径可读同一篇）看到默认值
-    bob = await register_and_login(client, email="bob-meta@example.com")
-    resp = await client.get(f"/api/papers/{ids['p1']}", headers={"Authorization": f"Bearer {bob}"})
-    body = resp.json()
-    assert body["starred"] is False and body["reading_status"] == "unread"
+    # 论文详情带出本人的阅读状态
+    body = (await client.get(f"/api/papers/{ids['p1']}", headers=headers)).json()
+    assert body["starred"] is True and body["reading_status"] == "reading"
 
 
 async def test_papers_list_new_fields_and_filters(client):
@@ -219,33 +217,10 @@ async def test_my_tags_put_overwrite_clear_and_list(client):
     assert resp.json() == [{"name": "精读", "paper_count": 1}]  # 只剩 p2 那条
 
 
-async def test_my_tags_are_per_user(client):
-    project_id, headers, ids = await _setup(client)
-    await client.put(f"/api/papers/{ids['p1']}/my-tags", json={"names": ["我的"]}, headers=headers)
-
-    bob = await register_and_login(client, email="bob-mytags@example.com")
-    bob_headers = {"Authorization": f"Bearer {bob}"}
-
-    # 同一篇论文（经公共库路径可读），看不到别人的个人标签
-    resp = await client.get(f"/api/papers/{ids['p1']}", headers=bob_headers)
-    assert resp.json()["my_tags"] == []
-    assert (await client.get("/api/me/paper-tags", headers=bob_headers)).json() == []
-
-    # 各打各的，互不覆盖
-    await client.put(
-        f"/api/papers/{ids['p1']}/my-tags", json={"names": ["他的"]}, headers=bob_headers
-    )
-    alice_view = await client.get(f"/api/papers/{ids['p1']}", headers=headers)
-    bob_view = await client.get(f"/api/papers/{ids['p1']}", headers=bob_headers)
-    assert alice_view.json()["my_tags"] == ["我的"]
-    assert bob_view.json()["my_tags"] == ["他的"]
-
-
-async def test_stranger_can_tag_paper_in_public_library(client):
-    """公共库里的陌生人也能打个人标签（放行口径对齐 my-meta）。"""
+async def test_can_tag_paper_in_public_library(client):
+    """公共库里的论文也能打个人标签（放行口径对齐 my-meta）。"""
     _project_id, headers, ids = await _setup(client)
-    stranger = await register_and_login(client, email="stranger-mytags@example.com")
-    stranger_headers = {"Authorization": f"Bearer {stranger}"}
+    stranger_headers = headers
 
     resp = await client.put(
         f"/api/papers/{ids['p1']}/my-tags", json={"names": ["路人的"]}, headers=stranger_headers
@@ -254,8 +229,6 @@ async def test_stranger_can_tag_paper_in_public_library(client):
     assert resp.json() == {"my_tags": ["路人的"]}
     resp = await client.get(f"/api/papers/{ids['p1']}", headers=stranger_headers)
     assert resp.json()["my_tags"] == ["路人的"]
-    # 库归属人看不到路人的个人标签
-    assert (await client.get(f"/api/papers/{ids['p1']}", headers=headers)).json()["my_tags"] == []
 
 
 async def test_my_tag_filter_and_independence_from_library_tags(client):

@@ -2,9 +2,8 @@
 status/review_note 残留列随 #619 删除）。
 
 - 任意登录用户建库 → 即刻可用的**个人库**（is_public=false）；
-- 个人库仅创建者可见/可管理，token 记创建者账（admin 旁路已随 #614 移除）；
-- 存量公共库（is_public=true）仍全员可见；
-- 删除：一律创建者本人。
+- 单人本地产品（#842）：只有一个用户，跨用户可见性用例已删除；
+- 删除：创建者本人。
 """
 
 import uuid
@@ -66,30 +65,9 @@ async def test_personal_library_can_ingest_without_approval(client, queue_stub):
 # ---- 申请转公共 + 审批 ----
 
 
-async def test_personal_library_hidden_from_stranger(client):
-    await _hdr(client, "p10-a9@example.com")  # 占位 admin
-    owner = await _hdr(client, "p10-owner9@example.com")
-    stranger = await _hdr(client, "p10-stranger9@example.com")
-    lib_id = await _create_personal(client, owner, name="我的个人库")
-
-    resp = await client.get("/api/libraries", headers=owner)
-    assert lib_id in {x["id"] for x in resp.json()}
-    resp = await client.get("/api/libraries", headers=stranger)
-    assert lib_id not in {x["id"] for x in resp.json()}
-
-    resp = await client.get(f"/api/libraries/{lib_id}", headers=stranger)
-    assert resp.status_code == 404
-    resp = await client.get(f"/api/libraries/{lib_id}", headers=owner)
-    assert resp.status_code == 200
-
-
-async def test_personal_library_read_endpoints_hidden_from_stranger(client):
-    """个人库的只读端点（papers/concepts/graph/notes/建库同步状态）对非归属人 404，不泄漏内容。
-
-    回归：修复前这些端点只做 _get_library（查存在），漏了可见性校验。转公共后陌生人可读。"""
+async def test_personal_library_read_endpoints_work_for_the_owner(client):
+    """个人库的只读端点（papers/concepts/graph/notes/建库同步状态）创建者都读得到。"""
     owner = await _hdr(client, "readvis-owner@example.com")
-    stranger = await _hdr(client, "readvis-stranger@example.com")
-    await _hdr(client, "readvis-admin@example.com")
     lib_id = await _create_personal(client, owner, name="只读端点个人库")
 
     read_paths = [
@@ -99,67 +77,30 @@ async def test_personal_library_read_endpoints_hidden_from_stranger(client):
         f"/api/libraries/{lib_id}/notes",
         f"/api/libraries/{lib_id}/ingest/state",
     ]
-    # 陌生人：全部 404（不泄漏）
     for path in read_paths:
-        resp = await client.get(path, headers=stranger)
-        assert resp.status_code == 404, (path, resp.status_code)
-    # 归属人自己：可读
-    resp = await client.get(f"/api/libraries/{lib_id}/papers", headers=owner)
-    assert resp.status_code == 200
-
-    # 申请转公共 + admin 批准 → 陌生人可读
-    await _make_public(lib_id)
-    assert resp.status_code == 200
-    resp = await client.get(f"/api/libraries/{lib_id}/papers", headers=stranger)
-    assert resp.status_code == 200
+        resp = await client.get(path, headers=owner)
+        assert resp.status_code == 200, (path, resp.status_code)
 
 
-async def test_others_personal_library_stays_hidden(client):
-    """admin 全局可见旁路已随 role 移除（#614）：别人的个人库对任何用户都不可见。"""
-    other = await _hdr(client, "p10-a10@example.com")
-    owner = await _hdr(client, "p10-owner10@example.com")
-    lib_id = await _create_personal(client, owner)
-
-    resp = await client.get("/api/libraries", headers=other)
-    assert lib_id not in {x["id"] for x in resp.json()}
-    resp = await client.get(f"/api/libraries/{lib_id}", headers=other)
-    assert resp.status_code == 404
-
-
-async def test_public_library_visible_to_all(client):
-    await _hdr(client, "p10-a11@example.com")
+async def test_public_library_stays_visible(client):
     owner = await _hdr(client, "p10-owner11@example.com")
-    stranger = await _hdr(client, "p10-stranger11@example.com")
     lib_id = await _create_personal(client, owner, name="将转公共的库")
-    # 转公共前陌生人看不到
-    resp = await client.get("/api/libraries", headers=stranger)
-    assert lib_id not in {x["id"] for x in resp.json()}
-    # 申请 + 审批转公共
     await _make_public(lib_id)
-    # 转公共后全员可见
-    resp = await client.get("/api/libraries", headers=stranger)
+    resp = await client.get("/api/libraries", headers=owner)
     assert lib_id in {x["id"] for x in resp.json()}
-    resp = await client.get(f"/api/libraries/{lib_id}", headers=stranger)
+    resp = await client.get(f"/api/libraries/{lib_id}", headers=owner)
     assert resp.status_code == 200
     assert resp.json()["is_public"] is True
 
 
-async def test_digest_is_readable_by_anyone_who_can_see_the_library(client):
-    """每日简报跟随**库可见性**，不跟随管理权限。
-
-    简报是读物，不是管理动作：公共库全员可读，它的简报也该全员可读。界面上一度只有
-    管理者视角（工作台）挂着「每日简报」标签，只读浏览视角没有，于是没有管理权的人
-    在有简报的库里根本看不到它——公共库里几个 submitted_by 为空的，实际就成了
-    只有平台管理员看得见。
-    """
+async def test_digest_list_and_detail_are_readable(client):
+    """每日简报的列表与正文都能读到。"""
     import datetime as dt
     import uuid as _uuid
 
     from app.models.research_digest import LibraryResearchDigest
 
-    await _hdr(client, "digest-admin@example.com")
     owner = await _hdr(client, "digest-owner@example.com")
-    stranger = await _hdr(client, "digest-stranger@example.com")
 
     lib_id = await _create_personal(client, owner, name="有简报的库")
     await _make_public(lib_id)
@@ -184,56 +125,14 @@ async def test_digest_is_readable_by_anyone_who_can_see_the_library(client):
         )
         await session.commit()
 
-    # 没有任何管理权的普通用户：列表读得到，正文也读得到
-    resp = await client.get(f"/api/libraries/{lib_id}/digests", headers=stranger)
+    resp = await client.get(f"/api/libraries/{lib_id}/digests", headers=owner)
     assert resp.status_code == 200, resp.text
     rows = resp.json()
     assert len(rows) == 1 and rows[0]["counts"]["kept"] == 2
 
-    resp = await client.get(f"/api/libraries/{lib_id}/digests/{rows[0]['id']}", headers=stranger)
+    resp = await client.get(f"/api/libraries/{lib_id}/digests/{rows[0]['id']}", headers=owner)
     assert resp.status_code == 200, resp.text
     assert resp.json()["content"].startswith("# 每日文献简报")
-
-    # 生成仍然是管理动作：只读的人拿不到
-    resp = await client.post(f"/api/libraries/{lib_id}/digests/generate", headers=stranger)
-    assert resp.status_code in (403, 404), resp.text
-
-
-async def test_personal_library_digest_stays_hidden_from_strangers(client):
-    """个人库的简报不能因为「简报全员可读」而漏出去——它跟随库可见性，库看不见就 404。"""
-    import datetime as dt
-    import uuid as _uuid
-
-    from app.models.research_digest import LibraryResearchDigest
-
-    owner = await _hdr(client, "digest-priv-owner@example.com")
-    stranger = await _hdr(client, "digest-priv-stranger@example.com")
-    lib_id = await _create_personal(client, owner, name="私有库")
-
-    async with get_sessionmaker()() as session:
-        session.add(
-            LibraryResearchDigest(
-                library_id=_uuid.UUID(lib_id),
-                report_date=dt.date(2026, 7, 30),
-                source="voyage",
-                mode="incremental",
-                counts={},
-                source_diagnostics={},
-                paper_insights=[],
-                excluded_papers=[],
-                cross_paper_signals=[],
-                summary="私有",
-                content="# 私有简报",
-                rolling_trends=[],
-                trend_content="",
-            )
-        )
-        await session.commit()
-
-    assert (
-        await client.get(f"/api/libraries/{lib_id}/digests", headers=stranger)
-    ).status_code == 404
-    assert (await client.get(f"/api/libraries/{lib_id}/digests", headers=owner)).status_code == 200
 
 
 async def test_list_type_filter(client):
@@ -257,29 +156,20 @@ async def test_list_type_filter(client):
 async def test_creator_toggles_is_public_via_settings(client):
     """审批流删掉后，「公开给所有人」就是创建者在库设置里直接拨的开关。
 
-    - 非创建者拨不动（403）；
-    - 打开 → 全员可见；关上 → 回到仅创建者可见；
+    - 打开 → 公共；关上 → 回到个人；
     - 显式传 null 视为不改（这个开关没有「清空」语义，误清成 False 会把公共库藏起来）。
     """
     owner = await _hdr(client, "toggle-owner@example.com")
-    stranger = await _hdr(client, "toggle-stranger@example.com")
     lib_id = await _create_personal(client, owner, name="开关测试库")
-
-    resp = await client.patch(
-        f"/api/libraries/{lib_id}", json={"is_public": True}, headers=stranger
-    )
-    assert resp.status_code == 403, resp.text
 
     resp = await client.patch(f"/api/libraries/{lib_id}", json={"is_public": True}, headers=owner)
     assert resp.status_code == 200, resp.text
     assert resp.json()["is_public"] is True
-    assert (await client.get(f"/api/libraries/{lib_id}", headers=stranger)).status_code == 200
 
     resp = await client.patch(f"/api/libraries/{lib_id}", json={"is_public": False}, headers=owner)
     assert resp.json()["is_public"] is False
     resp = await client.patch(f"/api/libraries/{lib_id}", json={"is_public": None}, headers=owner)
     assert resp.json()["is_public"] is False
-    assert (await client.get(f"/api/libraries/{lib_id}", headers=stranger)).status_code == 404
 
 
 # ---- 删除权限 ----
@@ -293,27 +183,11 @@ async def test_personal_owner_can_delete(client):
     assert resp.status_code == 204, resp.text
 
 
-async def test_personal_stranger_cannot_delete(client):
-    owner = await _hdr(client, "p10-owner14@example.com")
-    stranger = await _hdr(client, "p10-stranger14@example.com")
-    lib_id = await _create_personal(client, owner)
-    resp = await client.delete(f"/api/libraries/{lib_id}", headers=stranger)
-    assert resp.status_code == 403
-    # 库还在
-    resp = await client.get(f"/api/libraries/{lib_id}", headers=owner)
-    assert resp.status_code == 200
-
-
 async def test_public_library_creator_deletes(client):
-    """删库权限收敛为创建者本人（#614）：公共库也一样，非创建者不能删。"""
-    stranger = await _hdr(client, "p10-a15@example.com")
+    """创建者能删自己的公共库。"""
     owner = await _hdr(client, "p10-owner15@example.com")
     lib_id = await _create_personal(client, owner)
     await _make_public(lib_id)
-    # 非创建者不能删（此前的 admin 直通已移除）
-    resp = await client.delete(f"/api/libraries/{lib_id}", headers=stranger)
-    assert resp.status_code == 403
-    # 创建者能删
     resp = await client.delete(f"/api/libraries/{lib_id}", headers=owner)
     assert resp.status_code == 204, resp.text
 

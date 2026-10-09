@@ -66,46 +66,6 @@ async def wiki_of_str(paper_id: str) -> PaperWiki:
         return wiki
 
 
-async def test_second_user_recompile_overwrites_and_takes_over_compiled_by(client):
-    """谁都能重编、以最新为准：内容被覆盖，compiled_by 换成最后编译的人。"""
-    project_id, _library_id, headers = await _setup(
-        client, name="overwrite-proj", email="wiki-owner@example.com"
-    )
-    async with get_sessionmaker()() as session:
-        paper = await add_paper(
-            session,
-            project_id=uuid.UUID(project_id),
-            title="Overwritten Paper",
-            abstract="abstract",
-            status="scored",
-        )
-        await session.commit()
-        paper_id = str(paper.id)
-
-    await client.post(f"/api/papers/{paper_id}/recompile", headers=headers)
-    first = await wiki_of_str(paper_id)
-
-    # bob 不是课题成员（机制已随 #625 移除）：他用自己的课题关联同一个公共库，
-    # 由此拿到库可见性——重编译是写路径，只认「我的课题关联的库 ∪ 我建的库」
-    bob = await register_and_login(client, email="wiki-bob@example.com")
-    bob_headers = {"Authorization": f"Bearer {bob}"}
-    resp = await client.post("/api/projects", json={"name": "bob-overwrite"}, headers=bob_headers)
-    assert resp.status_code == 201, resp.text
-    bob_project_id = resp.json()["id"]
-    resp = await client.put(
-        f"/api/projects/{bob_project_id}/source-libraries",
-        json={"library_ids": [str(_library_id)]},
-        headers=bob_headers,
-    )
-    assert resp.status_code == 200, resp.text
-
-    resp = await client.post(f"/api/papers/{paper_id}/recompile", headers=bob_headers)
-    assert resp.status_code == 200, resp.text
-    assert await _wiki_row_count(paper_id) == 1
-    second = await wiki_of_str(paper_id)
-    assert second.compiled_by != first.compiled_by  # 编译者换成最后那个人
-
-
 # ---- 三条路径读到同一份 ----
 
 

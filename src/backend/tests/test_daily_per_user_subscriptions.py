@@ -14,6 +14,7 @@
 import datetime as dt
 import uuid
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.daily_feed import DailyFeedEntry
 from app.models.paper import Paper
@@ -57,82 +58,35 @@ async def _feed_titles(client, headers) -> list[str]:
 # ---------------------------------------------------------------- 各看各的
 
 
-async def test_each_user_sees_only_their_own_fields(client):
-    owner = await _auth(client, "owner@example.com")
-    member = await _auth(client, "member@example.com")
-    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=owner)
-    await client.put("/api/daily/categories", json={"categories": ["q-bio.NC"]}, headers=member)
-
-    await _add_entry("Agent planning", "cs.AI")
-    await _add_entry("Cortical circuits", "q-bio.NC")
-
-    assert await _feed_titles(client, owner) == ["Agent planning"]
-    assert await _feed_titles(client, member) == ["Cortical circuits"]
-
-
-async def test_a_cross_listed_entry_reaches_everyone_who_subscribed_a_matching_term(client):
+async def test_a_cross_listed_entry_reaches_a_matching_subscription(client):
     """交叉命中的条目按 categories 里累积的全部词算，不只看主分类。
 
     只看 primary_category 的话，一篇因为交叉列表进池的论文会在订了那个交叉词的人
     那里凭空消失。
     """
-    owner = await _auth(client, "owner@example.com")
-    member = await _auth(client, "member@example.com")
-    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=owner)
-    await client.put("/api/daily/categories", json={"categories": ["stat.ML"]}, headers=member)
+    me = await _auth(client, "me@example.com")
+    await client.put("/api/daily/categories", json={"categories": ["stat.ML"]}, headers=me)
 
     await _add_entry("Shared work", "cs.AI", extra=["stat.ML"])
 
-    assert await _feed_titles(client, owner) == ["Shared work"]
-    assert await _feed_titles(client, member) == ["Shared work"]
+    assert await _feed_titles(client, me) == ["Shared work"]
 
 
-async def test_no_subscription_means_an_empty_feed_not_everyone_elses(client):
-    """没订阅 = 什么都不给看。
-
-    反过来（不过滤）就是把别人订的领域倒进这个人的信息流——正是这次要修的那件事。
-    界面对空订阅另有「先去订阅」的提示。
-    """
-    owner = await _auth(client, "owner@example.com")
-    newcomer = await _auth(client, "newcomer@example.com")
-    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=owner)
+async def test_no_subscription_means_an_empty_feed(client):
+    """没订阅 = 什么都不给看，哪怕池子里有论文。界面对空订阅另有「先去订阅」的提示。"""
+    me = await _auth(client, "me@example.com")
     await _add_entry("Agent planning", "cs.AI")
 
-    assert await _feed_titles(client, newcomer) == []
-
-
-async def test_a_new_user_does_not_inherit_the_first_users_fields(client):
-    """新注册的人订阅为空，而不是继承 owner 的那份——回退到 owner 正是旧行为。"""
-    owner = await _auth(client, "owner@example.com")
-    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=owner)
-
-    newcomer = await _auth(client, "newcomer@example.com")
-    body = (await client.get("/api/daily/categories", headers=newcomer)).json()
-    assert body["categories"] == []
+    assert await _feed_titles(client, me) == []
 
 
 # ---------------------------------------------------------------- 共享池仍然共享
 
 
-async def test_the_pool_fetches_the_union_of_everyone(client):
-    """一个人加订 q-bio，那批论文照样进池；否则第二个人的信息流永远是空的。"""
-    owner = await _auth(client, "owner@example.com")
-    member = await _auth(client, "member@example.com")
-    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=owner)
-    await client.put("/api/daily/categories", json={"categories": ["q-bio.NC"]}, headers=member)
-
-    async with get_sessionmaker()() as session:
-        union = await daily_feed.all_subscriptions(session)
-    arxiv = next(s for s in union if s.source == "arxiv")
-    assert set(arxiv.terms) == {"cs.AI", "q-bio.NC"}
-
-
 async def test_the_union_merges_the_same_term_once(client):
-    """两个人订了同一个词：抓一次就够，不该抓两遍。"""
+    """同一个词只抓一次。"""
     a = await _auth(client, "a@example.com")
-    b = await _auth(client, "b@example.com")
-    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=a)
-    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=b)
+    await client.put("/api/daily/categories", json={"categories": ["cs.AI", "cs.AI"]}, headers=a)
 
     async with get_sessionmaker()() as session:
         union = await daily_feed.all_subscriptions(session)
@@ -141,14 +95,18 @@ async def test_the_union_merges_the_same_term_once(client):
 
 
 async def test_the_union_spans_sources(client):
-    a = await _auth(client, "a@example.com")
-    b = await _auth(client, "b@example.com")
-    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=a)
-    await client.put(
+    me = await _auth(client, "a@example.com")
+    resp = await client.put(
         "/api/daily/subscriptions",
-        json={"subscriptions": [{"source": "pubmed", "terms": ["glioma"]}]},
-        headers=b,
+        json={
+            "subscriptions": [
+                {"source": "arxiv", "terms": ["cs.AI"]},
+                {"source": "pubmed", "terms": ["glioma"]},
+            ]
+        },
+        headers=me,
     )
+    assert resp.status_code == 200, resp.text
 
     async with get_sessionmaker()() as session:
         union = {s.source: s.terms for s in await daily_feed.all_subscriptions(session)}
@@ -158,10 +116,8 @@ async def test_the_union_spans_sources(client):
 
 async def test_a_deactivated_user_stops_costing_fetches(client):
     """停用的账号不该继续让平台每天替他抓。"""
-    a = await _auth(client, "a@example.com")
-    b = await _auth(client, "b@example.com")
-    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=a)
-    await client.put("/api/daily/categories", json={"categories": ["q-bio.NC"]}, headers=b)
+    me = await _auth(client, "a@example.com")
+    await client.put("/api/daily/categories", json={"categories": ["cs.AI"]}, headers=me)
 
     from sqlalchemy import select
 
@@ -169,14 +125,14 @@ async def test_a_deactivated_user_stops_costing_fetches(client):
 
     async with get_sessionmaker()() as session:
         gone = (
-            await session.execute(select(User).where(User.email == "b@example.com"))
+            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         gone.is_active = False
         await session.commit()
 
     async with get_sessionmaker()() as session:
         union = {s.source: s.terms for s in await daily_feed.all_subscriptions(session)}
-    assert union["arxiv"] == ("cs.AI",)
+    assert "arxiv" not in union
 
 
 # ---------------------------------------------------------------- 单人部署不变

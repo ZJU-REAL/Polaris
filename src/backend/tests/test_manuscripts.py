@@ -6,7 +6,6 @@
 import uuid
 
 import pytest_asyncio
-from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
 from app.models.experiment import Experiment, ExperimentRun
@@ -239,13 +238,7 @@ async def test_manuscript_permissions_and_delete(client):
     resp = await _create_manuscript(client, headers, project_id)
     ms_id = resp.json()["id"]
 
-    # 非成员一律 404
-    outsider = await register_and_login(client, email="mallory@example.com")
-    outsider_headers = {"Authorization": f"Bearer {outsider}"}
-    resp = await client.get(f"/api/manuscripts/{ms_id}", headers=outsider_headers)
-    assert resp.status_code == 404
-
-    # PATCH 标题（owner），owner 可删（成员档位已随 #625 移除，非本人一律 404）
+    # PATCH 标题，可删
     resp = await client.patch(
         f"/api/manuscripts/{ms_id}", json={"title": "New Title"}, headers=headers
     )
@@ -419,17 +412,3 @@ async def test_manuscript_list(client):
     # 未知模板 404
     resp = await _create_manuscript(client, headers, project_id, template="unknown")
     assert resp.status_code == 404 and resp.json()["detail"] == "TEMPLATE_NOT_FOUND"
-
-
-async def test_manuscripts_query_helper(client):
-    """列表按创建时间倒序 + 非成员项目列表 404。"""
-    project_id, headers = await _setup_project(client)
-    outsider = await register_and_login(client, email="eve@example.com")
-    resp = await client.get(
-        f"/api/projects/{project_id}/manuscripts",
-        headers={"Authorization": f"Bearer {outsider}"},
-    )
-    assert resp.status_code == 404
-    async with get_sessionmaker()() as session:
-        rows = (await session.execute(select(Manuscript))).scalars().all()
-        assert rows == []

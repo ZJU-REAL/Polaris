@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import INVITE_CODE
 from tests.golden.normalize import Normalizer
 
 GOLDEN_PATH = Path(__file__).parent / "data" / "import_wiki.json"
@@ -51,26 +50,15 @@ async def test_import_wiki_chain_matches_golden(client, monkeypatch):
         transcript[name] = n.normalize(body)
         return body
 
-    await step(
-        "register",
-        await client.post(
-            "/api/auth/register",
-            json={
-                "email": "golden@example.com",
-                "password": "str0ng-password",
-                "display_name": "Golden Probe",
-                "username": "goldenprobe",
-                "invite_code": INVITE_CODE,
-            },
-        ),
-        201,
-    )
-    login = await client.post(
-        "/api/auth/jwt/login",
-        data={"username": "golden@example.com", "password": "str0ng-password"},
-    )
+    # 单人本地产品（#842）：会话只能经本地会话端点取得，再给本地用户起个名字
+    login = await client.post("/api/auth/local-session")
     await step("login", login, 200)
     headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    await step(
+        "profile",
+        await client.patch("/api/users/me", json={"display_name": "Golden Probe"}, headers=headers),
+        200,
+    )
 
     library = await step(
         "create_library",

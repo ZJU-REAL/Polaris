@@ -9,6 +9,7 @@ import zipfile
 
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.core.events import paper_task_log_key
 from app.models.library_direction import LibraryPaper
@@ -96,7 +97,7 @@ async def _seed_library(client):
     _project_id, library_id = await make_project_with_library(client, headers, name="zotero-lib")
     async with get_sessionmaker()() as session:
         user_id = (
-            await session.execute(select(User.id).where(User.email == "zotero@example.com"))
+            await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         seeds = [
             {"title": "Existing DOI Paper", "doi": "10.4000/existing", "arxiv_id": None},
@@ -245,8 +246,8 @@ async def test_zotero_import_within_file_duplicate(client, fake_redis, tmp_path,
     assert items[1]["status"] == "existing" and items[1]["reason"] == "doi"
 
 
-async def test_zotero_import_endpoint_enqueues_and_authz(client, fake_redis, queue_stub):
-    """API：202 回 task_id/total 并入队；坏文件 422；非库管理者拒绝。"""
+async def test_zotero_import_endpoint_enqueues(client, fake_redis, queue_stub):
+    """API：202 回 task_id/total 并入队；坏文件 422。"""
     token = await register_and_login(client, email="zotero-api@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     resp = await client.post(
@@ -283,14 +284,6 @@ async def test_zotero_import_endpoint_enqueues_and_authz(client, fake_redis, que
         headers=headers,
     )
     assert resp.status_code == 422
-
-    outsider = await register_and_login(client, email="zotero-outsider@example.com")
-    resp = await client.post(
-        f"/api/libraries/{library_id}/import/zotero",
-        files=files,
-        headers={"Authorization": f"Bearer {outsider}"},
-    )
-    assert resp.status_code in (403, 404)
 
 
 async def test_zotero_import_endpoint_accepts_zip(client, fake_redis, queue_stub, tmp_path):

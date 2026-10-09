@@ -2,7 +2,7 @@
 
 Polaris keeps two **golden transcripts** under `src/backend/tests/golden/data/`:
 
-- `import_wiki.json` — register → create library → create project → bibtex import →
+- `import_wiki.json` — local session → create library → create project → bibtex import →
   wiki compile → index status (`tests/golden/test_golden_import_wiki.py`)
 - `discovery_run.json` — the full hypothesis-discovery chain: papers → library index →
   discovery voyage → tree + disclosure artifacts (`tests/golden/test_golden_discovery.py`)

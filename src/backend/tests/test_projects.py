@@ -98,44 +98,6 @@ async def test_delete_project(client):
         assert pool == 1
 
 
-async def test_delete_project_requires_owner(client):
-    token_a = await register_and_login(client, email="owner@example.com")
-    headers_a = {"Authorization": f"Bearer {token_a}"}
-    resp = await client.post("/api/projects", json={"name": "guarded"}, headers=headers_a)
-    project_id = resp.json()["id"]
-
-    # 非本人：404（不泄露存在性；成员机制已随 #625 移除，没有 403 档）
-    token_c = await register_and_login(client, email="stranger@example.com")
-    resp = await client.delete(
-        f"/api/projects/{project_id}", headers={"Authorization": f"Bearer {token_c}"}
-    )
-    assert resp.status_code == 404
-
-    # owner 可删
-    resp = await client.delete(f"/api/projects/{project_id}", headers=headers_a)
-    assert resp.status_code == 204
-
-
-async def test_get_project_not_member_404(client):
-    token_a = await register_and_login(client, email="a@example.com")
-    resp = await client.post(
-        "/api/projects",
-        json={"name": "private"},
-        headers={"Authorization": f"Bearer {token_a}"},
-    )
-    project_id = resp.json()["id"]
-
-    token_b = await register_and_login(client, email="b@example.com")
-    resp = await client.get(
-        f"/api/projects/{project_id}", headers={"Authorization": f"Bearer {token_b}"}
-    )
-    assert resp.status_code == 404
-
-    # 非成员列表为空
-    resp = await client.get("/api/projects", headers={"Authorization": f"Bearer {token_b}"})
-    assert resp.json() == []
-
-
 async def test_create_project_empty_corpus_consumers_ok(client):
     """P9c：空关联课题（无库、无语料）——论文列表 / ingest 状态等消费端优雅空态，不报错。"""
     token = await register_and_login(client)

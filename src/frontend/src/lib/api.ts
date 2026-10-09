@@ -6,9 +6,7 @@ import { handleUnauthorized } from './local-session';
    Polaris API client — thin fetch wrapper.
    baseURL /api (proxied to FastAPI at :8000 in dev), JSON,
    Bearer token from localStorage.
-   Backend auth is fastapi-users:
-     POST /api/auth/jwt/login    form-encoded username/password
-     POST /api/auth/register     JSON
+   Session: POST /api/auth/local-session（见 local-session.ts，单人本地产品没有登录）
      GET  /api/users/me
    M1 契约见 docs/task-system.md §7（原 api-m1.md）（Projects / Voyages / Gates / Admin LLM）。
    ============================================================ */
@@ -223,30 +221,6 @@ export interface TTSUserSettingsUpdate {
   model: string | null;
   voice: string | null;
   speed: number | null;
-}
-
-export interface RegisterInput {
-  email: string;
-  password: string;
-  display_name: string;
-  username: string;
-  invite_code: string;
-  /** 邮箱验证码；未开启邮件系统的部署可省略 */
-  email_code?: string;
-}
-
-export interface AuthCapabilities {
-  email: boolean;
-  password_reset: boolean;
-  register_email_code: boolean;
-  /** true = desktop 档位免登录：前端自动取本地会话、不渲染登录页、隐藏退出入口 */
-  local_session: boolean;
-}
-
-export interface SendCodeResult {
-  sent: boolean;
-  /** 冷却中的剩余秒数 */
-  retry_after: number;
 }
 
 // ============================================================
@@ -3544,49 +3518,6 @@ export type ChatBackend =
   | { id: string; name: string; kind: 'acp'; template?: string; permission_policy?: AcpPermissionPolicy };
 
 export const api = {
-  /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
-  async login(email: string, password: string): Promise<string> {
-    const body = new URLSearchParams({ username: email, password });
-    const data = await request<{ access_token: string; token_type: string }>('/auth/jwt/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-    });
-    return data.access_token;
-  },
-
-  /** fastapi-users register — JSON body, invite_code is a Polaris extension. */
-  register(input: RegisterInput): Promise<UserRead> {
-    return requestJson<UserRead>('/auth/register', 'POST', input);
-  },
-
-  /** 注册表单实时检查用户名是否可用。 */
-  usernameAvailable(username: string): Promise<{ available: boolean }> {
-    return request<{ available: boolean }>(
-      `/auth/username-available?username=${encodeURIComponent(username)}`,
-    );
-  },
-
-  /** 邮件系统是否可用（决定验证码与「忘记密码」入口是否显示）。 */
-  authCapabilities(): Promise<AuthCapabilities> {
-    return request<AuthCapabilities>('/auth/capabilities');
-  },
-
-
-  /** 申请邮箱验证码；冷却中返回 sent=false 与剩余秒数。 */
-  sendAuthCode(email: string, purpose: 'register' | 'reset'): Promise<SendCodeResult> {
-    return requestJson<SendCodeResult>('/auth/send-code', 'POST', { email, purpose });
-  },
-
-  /** 凭邮箱验证码重设密码。 */
-  resetPassword(email: string, code: string, password: string): Promise<{ ok: boolean }> {
-    return requestJson<{ ok: boolean }>('/auth/reset-password', 'POST', {
-      email,
-      code,
-      password,
-    });
-  },
-
   /** 健康检查：{status, version}（反馈上下文里带版本号用）。 */
   health(): Promise<HealthInfo> {
     return request<HealthInfo>('/health');

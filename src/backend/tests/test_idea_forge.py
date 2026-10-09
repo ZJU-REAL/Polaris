@@ -302,36 +302,6 @@ async def test_forge_resume_does_not_regenerate(client, queue_stub):
         assert count == 2  # 不重复入库
 
 
-async def test_forge_api_permissions(client, queue_stub):
-    """非项目成员对 forge/ideas 一律 404（不泄露存在性）。"""
-    project_id, headers = await _setup_project(client)
-    await _seed_compiled_papers(project_id, n=1)
-    resp = await client.post(
-        f"/api/projects/{project_id}/forge", json={"knobs": KNOBS}, headers=headers
-    )
-    run_id = resp.json()["id"]
-    engine, _ = _make_engine()
-    await engine.run(uuid.UUID(run_id))
-    resp = await client.get(f"/api/projects/{project_id}/ideas", headers=headers)
-    idea_id = resp.json()[0]["id"]
-
-    token_b = await register_and_login(client, email="outsider@example.com")
-    headers_b = {"Authorization": f"Bearer {token_b}"}
-    for method, url, body in (
-        ("post", f"/api/projects/{project_id}/forge", {"knobs": KNOBS}),
-        ("get", f"/api/projects/{project_id}/forge/state", None),
-        ("get", f"/api/projects/{project_id}/ideas", None),
-        ("get", f"/api/ideas/{idea_id}", None),
-        ("get", f"/api/ideas/{idea_id}/sessions", None),
-        ("get", f"/api/projects/{project_id}/review/leaderboard", None),
-        ("post", f"/api/projects/{project_id}/review/tournament", {}),
-    ):
-        resp = await getattr(client, method)(
-            url, **({"json": body} if body is not None else {}), headers=headers_b
-        )
-        assert resp.status_code == 404, (method, url, resp.status_code)
-
-
 async def test_collect_signals_concept_holes_and_trends(client, queue_stub):
     """确定性信号：method×problem 零共现概念对 + 近 90 天概念趋势（纯代码，无 LLM）。"""
     from app.agents.voyage.actions import ActionContext

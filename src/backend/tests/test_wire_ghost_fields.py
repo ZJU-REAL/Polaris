@@ -5,54 +5,21 @@
 从响应面上彻底移除。这里钉住「确实没了」，防止哪个序列化路径把它们带回来。
 """
 
-from tests.conftest import INVITE_CODE
+from tests.conftest import register_and_login
 
 
 async def test_user_responses_have_no_ghost_fields(client):
-    resp = await client.post(
-        "/api/auth/register",
-        json={
-            "email": "ghost-probe@example.com",
-            "password": "str0ng-password",
-            "display_name": "Ghost Probe",
-            "username": "ghostprobe",
-            "invite_code": INVITE_CODE,
-        },
-    )
-    assert resp.status_code == 201, resp.text
-    body = resp.json()
-    # 恒 False 的自管轨残留（#621 删列后只剩 wire 兼容）
-    assert "llm_self_managed" not in body
-    # 单人产品没有「超管」概念：fastapi-users 基类字段不再随响应下发
-    assert "is_superuser" not in body
-
-    login = await client.post(
-        "/api/auth/jwt/login",
-        data={"username": "ghost-probe@example.com", "password": "str0ng-password"},
-    )
-    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
     me = (await client.get("/api/users/me", headers=headers)).json()
+    # 恒 False 的自管轨残留（#621 删列后只剩 wire 兼容）
     assert "llm_self_managed" not in me
+    # 单人产品没有「超管」概念：fastapi-users 基类字段不再随响应下发
     assert "is_superuser" not in me
 
 
 async def test_library_responses_have_no_ghost_fields(client):
-    resp = await client.post(
-        "/api/auth/register",
-        json={
-            "email": "ghost-lib@example.com",
-            "password": "str0ng-password",
-            "display_name": "Ghost Lib",
-            "username": "ghostlib",
-            "invite_code": INVITE_CODE,
-        },
-    )
-    assert resp.status_code == 201, resp.text
-    login = await client.post(
-        "/api/auth/jwt/login",
-        data={"username": "ghost-lib@example.com", "password": "str0ng-password"},
-    )
-    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
     created = await client.post(
         "/api/libraries",
         json={"name": "Ghost Library", "statement": "ghost-field retirement probe"},

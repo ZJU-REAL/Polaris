@@ -56,27 +56,22 @@ async def _stranger(client, email="lib-stranger@example.com"):
     return {"Authorization": f"Bearer {token}"}
 
 
-async def test_library_list_and_detail_readable_by_all(client):
+async def test_library_list_and_detail(client):
     project_id, headers, _paper_id, library_id = await _setup_library(client)
-    stranger = await _stranger(client)
 
-    # 列表：全员可读；is_mine 只对背后课题成员为 True
-    resp = await client.get("/api/libraries", headers=stranger)
+    resp = await client.get("/api/libraries", headers=headers)
     assert resp.status_code == 200, resp.text
     row = next(x for x in resp.json() if x["id"] == library_id)
-    assert row["is_mine"] is False
+    assert row["is_mine"] is True
     assert row["name"] == "共享方向"
     assert row["paper_count"] == 1  # excluded 不计入
     assert row["concept_count"] == 1
-    resp = await client.get("/api/libraries", headers=headers)
-    assert next(x for x in resp.json() if x["id"] == library_id)["is_mine"] is True
 
-    # 详情：非成员 200
-    resp = await client.get(f"/api/libraries/{library_id}", headers=stranger)
+    resp = await client.get(f"/api/libraries/{library_id}", headers=headers)
     assert resp.status_code == 200, resp.text
     detail = resp.json()
     assert detail["project_id"] == project_id
-    assert detail["is_mine"] is False and detail["paper_count"] == 1
+    assert detail["is_mine"] is True and detail["paper_count"] == 1
 
 
 async def test_library_papers_concepts_search_readable_by_all(client):
@@ -118,62 +113,3 @@ async def test_library_papers_concepts_search_readable_by_all(client):
     # 不存在的库 → 404
     resp = await client.get("/api/libraries/00000000-0000-0000-0000-000000000000", headers=stranger)
     assert resp.status_code == 404
-
-
-async def test_library_member_paper_readable_by_all(client):
-    """阅读链路扩展：任何库的成员论文全员可读（详情带库版 wiki；无课题上下文）。"""
-    _project_id, _headers, paper_id, _library_id = await _setup_library(
-        client, email="lib-owner3@example.com"
-    )
-    stranger = await _stranger(client, email="lib-stranger3@example.com")
-
-    resp = await client.get(f"/api/papers/{paper_id}", headers=stranger)
-    assert resp.status_code == 200, resp.text
-    detail = resp.json()
-    assert detail["project_id"] is None  # 非成员读共享库论文：无课题上下文
-    assert detail["status"] == "compiled"
-    assert detail["wiki_content"].startswith("# 解读")
-    # 子资源：图片列表可读；PDF 未落盘 → PDF_NOT_AVAILABLE（而非 PAPER_NOT_FOUND）
-    resp = await client.get(f"/api/papers/{paper_id}/figures", headers=stranger)
-    assert resp.status_code == 200 and resp.json() == []
-    resp = await client.get(f"/api/papers/{paper_id}/pdf", headers=stranger)
-    assert resp.status_code == 404 and resp.json()["detail"] == "PDF_NOT_AVAILABLE"
-    # 个人维度的读写（笔记/星标）归个人，允许
-    resp = await client.get(f"/api/papers/{paper_id}/notes", headers=stranger)
-    assert resp.status_code == 200 and resp.json() == []
-    resp = await client.put(
-        f"/api/papers/{paper_id}/my-meta", json={"starred": True}, headers=stranger
-    )
-    assert resp.status_code == 200 and resp.json()["starred"] is True
-
-
-async def test_library_write_and_manage_still_member_only(client):
-    """写/管理端点保持课题成员校验：非成员一律 404。"""
-    project_id, _headers, paper_id, _library_id = await _setup_library(
-        client, email="lib-owner4@example.com"
-    )
-    stranger = await _stranger(client, email="lib-stranger4@example.com")
-
-    # 库成员行写路径（人工纳入/删除/召回/标签）
-    resp = await client.patch(
-        f"/api/papers/{paper_id}", json={"status": "excluded"}, headers=stranger
-    )
-    assert resp.status_code == 404
-    resp = await client.delete(f"/api/papers/{paper_id}", headers=stranger)
-    assert resp.status_code == 404
-    resp = await client.post(f"/api/papers/{paper_id}/restore", headers=stranger)
-    assert resp.status_code == 404
-    resp = await client.put(f"/api/papers/{paper_id}/tags", json={"names": ["x"]}, headers=stranger)
-    assert resp.status_code == 404
-
-    # project 作用域管理端点
-    for method, url, payload in (
-        ("GET", f"/api/projects/{project_id}/papers", None),
-        ("POST", f"/api/projects/{project_id}/papers/batch-delete", {"paper_ids": [paper_id]}),
-        ("GET", f"/api/projects/{project_id}/concepts", None),
-        ("POST", f"/api/projects/{project_id}/concepts/relink", None),
-        ("GET", f"/api/projects/{project_id}/ingest/state", None),
-        ("POST", f"/api/projects/{project_id}/ingest", {"mode": "bootstrap"}),
-    ):
-        resp = await client.request(method, url, json=payload, headers=stranger)
-        assert resp.status_code == 404, url

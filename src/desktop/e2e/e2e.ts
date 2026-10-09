@@ -182,8 +182,8 @@ async function groupEngine(): Promise<void> {
     app = r.app;
     const { page } = r;
 
-    // 免登录（#601）：desktop 档后端 local_session=true，RequireAuth 应静默
-    // 换会话直接进工作台。等 AppShell 的侧栏出现即视为「进了应用」；
+    // 免登录（#601、#842）：没有登录页，RequireAuth 经 /auth/local-session 静默
+    // 取会话直接进工作台。等 AppShell 的侧栏出现即视为「进了应用」；
     // 全新数据库没有课题，会被 RequireTopic 送到 /start。
     // #721 起窗口先起：docker 引擎首启的迁移（最长 120s）发生在首启等待页
     // 期间，等待页就绪后整页 reload 再进应用，这条超时必须盖过全程。

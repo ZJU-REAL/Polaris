@@ -162,14 +162,11 @@ async def test_delete_library_requires_force_when_topics_linked(client):
     assert resp.status_code == 404
 
 
-async def test_delete_library_stranger_forbidden_creator_allowed(client):
-    """删库权限收敛为创建者本人（#614）：公共库创建者也能删；无关用户 403。"""
-    stranger = await _register(client, "p7-admin4@example.com")
+async def test_delete_library_with_topics_needs_force(client):
+    """创建者删库：有课题关联时先 409，force 才删。"""
     member = await _register(client, "p7-member4@example.com")
     _project_id, library_id = await make_project_with_library(client, member, name="P7 课题四")
 
-    resp = await client.delete(f"/api/libraries/{library_id}", headers=stranger)
-    assert resp.status_code == 403
     # 创建者本人：有课题关联 → 先 409，force 才删
     resp = await client.delete(f"/api/libraries/{library_id}", headers=member)
     assert resp.status_code == 409

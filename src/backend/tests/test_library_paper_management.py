@@ -308,29 +308,3 @@ async def test_standalone_chat_sse(client):
     events = _parse_sse(body)
     kinds = [e for e, _ in events]
     assert kinds[0] == "sources" and kinds[-1] == "done" and "error" not in kinds
-
-
-async def test_manage_endpoints_forbidden_for_non_manager(client):
-    creator, _admin, lib_id = await _setup(client, prefix="p9d-403")
-    p1 = await _seed_paper(lib_id, title="Guarded")
-    stranger = await _hdr(client, "p9d-403-stranger@example.com")
-
-    resp = await client.get(f"/api/libraries/{lib_id}/papers", headers=stranger)
-    assert resp.status_code == 200
-
-    resp = await client.post(
-        f"/api/libraries/{lib_id}/papers/batch-delete",
-        json={"paper_ids": [p1]},
-        headers=stranger,
-    )
-    assert resp.status_code == 403
-    resp = await client.post(f"/api/libraries/{lib_id}/trash/empty", headers=stranger)
-    assert resp.status_code == 403
-    resp = await client.post(
-        f"/api/libraries/{lib_id}/papers", json={"bibtex": BIBTEX_ENTRY}, headers=stranger
-    )
-    assert resp.status_code == 403
-    # 建库/同步状态是只读端点，按库可见性放行（公共库全员可读，见 #66 的只读同步视图）；
-    # 个人库对陌生人 404 的回归在 test_library_approval 里覆盖。
-    resp = await client.get(f"/api/libraries/{lib_id}/ingest/state", headers=stranger)
-    assert resp.status_code == 200

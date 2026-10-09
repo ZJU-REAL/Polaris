@@ -1,10 +1,10 @@
-"""用户 schema（基于 fastapi-users），注册额外要求邀请码。"""
+"""用户 schema（读取沿用 fastapi-users 的 BaseUser；单人产品没有注册/改密）。"""
 
 import uuid
-from typing import Any, Literal
+from typing import Any
 
 from fastapi_users import schemas
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 USERNAME_PATTERN = r"^[a-z0-9_]{3,32}$"
 
@@ -21,50 +21,10 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     is_superuser: bool = Field(default=False, exclude=True)
 
 
-class UserCreate(schemas.BaseUserCreate):
-    # 姓名与用户名注册时必填；用户名小写字母/数字/下划线 3-32 位、全局唯一
-    display_name: str = Field(min_length=1, max_length=255)
-    username: str = Field(pattern=USERNAME_PATTERN)
-    invite_code: str  # 与 settings.invite_code 比对，见 api/auth.py
-    # 邮箱验证码（先 POST /auth/send-code 获取）；未开启邮件系统时可留空
-    email_code: str = ""
+class UserUpdate(BaseModel):
+    """PATCH /users/me：本人能改的只有显示名。"""
 
-    def create_update_dict(self) -> dict[str, Any]:
-        d = super().create_update_dict()
-        for k in ("invite_code", "email_code"):  # 非表字段，入库前剔除
-            d.pop(k, None)
-        return d
-
-    def create_update_dict_superuser(self) -> dict[str, Any]:
-        d = super().create_update_dict_superuser()
-        for k in ("invite_code", "email_code"):
-            d.pop(k, None)
-        return d
-
-
-class SendCodeRequest(BaseModel):
-    """申请邮箱验证码。"""
-
-    email: EmailStr
-    purpose: Literal["register", "reset"]
-
-
-class SendCodeResult(BaseModel):
-    sent: bool
-    # 冷却中时的剩余秒数（前端据此倒计时）
-    retry_after: int = 0
-
-
-class ResetPasswordRequest(BaseModel):
-    """凭邮箱验证码重设密码。"""
-
-    email: EmailStr
-    code: str = Field(min_length=4, max_length=8)
-    password: str = Field(min_length=8, max_length=128)
-
-
-class UserUpdate(schemas.BaseUserUpdate):
-    display_name: str | None = None
+    display_name: str | None = Field(default=None, max_length=255)
 
 
 class UsernameUpdate(BaseModel):

@@ -126,17 +126,11 @@ async def test_csl_json_export_structure_and_filters(client):
     )
     assert [i["title"] for i in json.loads(resp.text)] == ["The Great Agent Benchmark"]
 
-    # 非法 format → 422；非成员 404
+    # 非法 format → 422
     resp = await client.get(
         f"/api/projects/{project_id}/export/citations?format=ris", headers=headers
     )
     assert resp.status_code == 422
-    other = await register_and_login(client, email="cite-outsider@example.com")
-    resp = await client.get(
-        f"/api/projects/{project_id}/export/citations",
-        headers={"Authorization": f"Bearer {other}"},
-    )
-    assert resp.status_code == 404
 
 
 def test_split_author_name_formats():

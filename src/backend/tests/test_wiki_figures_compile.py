@@ -258,16 +258,6 @@ async def test_recompile_without_pdf_text_only_keeps_status(client):
     assert detail["figures"] == [] and detail["status"] == "included"  # included 不动
 
 
-async def test_recompile_non_member_404(client):
-    _, _headers, paper_id = await _setup_paper(client)
-    outsider = await register_and_login(client, email="outsider@example.com")
-    resp = await client.post(
-        f"/api/papers/{paper_id}/recompile", headers={"Authorization": f"Bearer {outsider}"}
-    )
-    assert resp.status_code == 404
-    assert resp.json()["detail"] == "PAPER_NOT_FOUND"
-
-
 # ---- 4. Obsidian 导出：figure 打包 + 标记重写 ----
 
 

@@ -278,16 +278,6 @@ async def test_link_paper_concepts_without_membership(client):
         assert concept.definition == "池内概念 的一句话定义（fake）"
 
 
-async def test_relink_requires_membership(client):
-    project_id, _ = await _setup(client)
-    other = await register_and_login(client, email="bob@example.com")
-    resp = await client.post(
-        f"/api/projects/{project_id}/concepts/relink",
-        headers={"Authorization": f"Bearer {other}"},
-    )
-    assert resp.status_code == 404
-
-
 async def test_auto_sweep_backfills_placeholders_capped(client):
     # voyage 自动上链（backfill=False）也应做有上限的占位回填（偶发失败自愈）
     from app.core.llm.router import LLMRouter

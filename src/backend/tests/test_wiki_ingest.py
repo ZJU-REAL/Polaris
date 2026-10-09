@@ -16,6 +16,7 @@ import respx
 from sqlalchemy import func, select
 
 from app.agents.voyage.engine import VoyageEngine
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.core.llm.fake import EMBEDDING_DIM, FakeProvider
 from app.core.llm.router import LLMRouter
@@ -1200,24 +1201,6 @@ async def test_standalone_library_ingest_ignores_monthly_budget(client, queue_st
     assert ("run_voyage", (voyage_id,), {}) in queue_stub.jobs
 
 
-async def test_standalone_library_ingest_forbidden_for_stranger(client, queue_stub):
-    """非管理者不能触发库级 ingest（成员/策展人/admin 之外 → 403）。"""
-    token = await register_and_login(client, email="lib-owner2@example.com")
-    headers = {"Authorization": f"Bearer {token}"}
-    library_id = await _create_standalone_library(client, headers, name="独立库-权限")
-
-    stranger = await register_and_login(client, email="lib-stranger@example.com")
-    sh = {"Authorization": f"Bearer {stranger}"}
-    resp = await client.post(
-        f"/api/libraries/{library_id}/ingest/run",
-        json={"mode": "bootstrap"},
-        headers=sh,
-    )
-    assert resp.status_code == 403
-    assert resp.json()["detail"] == "LIBRARY_MANAGE_FORBIDDEN"
-    assert queue_stub.jobs == []
-
-
 async def test_project_ingest_run_carries_library_id(client, queue_stub, wiki_mocks):
     """课题触发的 ingest 也只挂库：建库归实验室，不进课题的任务列表。"""
     project_id, headers = await _setup_project(client)
@@ -1298,7 +1281,7 @@ async def test_one_manual_sync_does_not_cancel_everyone_elses_daily_sync(
     async with get_sessionmaker()() as session:
         # 有人手动同步了第一个库（created_by 非空，且已跑完）
         me = (
-            await session.execute(select(User).where(User.email == "fanout-manual@example.com"))
+            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
         session.add(
             VoyageRun(

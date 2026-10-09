@@ -5,6 +5,7 @@ import uuid
 import pytest
 
 import app.tools as tools
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
 from app.models.idea import Idea
@@ -255,7 +256,7 @@ async def test_cross_project_isolation(client):
 
     async with get_sessionmaker()() as session:
         user_a = (
-            await session.execute(select(User).where(User.email == "a@example.com"))
+            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
         ).scalar_one()
     ctx_a_with_identity = ToolContext(project_id=proj_a, llm=LLMRouter(), user_id=user_a.id)
     with pytest.raises(ValueError, match="读不到这篇论文"):

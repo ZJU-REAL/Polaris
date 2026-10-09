@@ -99,19 +99,6 @@ async def test_post_message_terminal_voyage_409(client, bus_recorder):
     assert resp.json()["detail"] == "VOYAGE_ALREADY_FINISHED"
 
 
-async def test_messages_require_view_permission(client, bus_recorder):
-    project_id, _headers = await _make_project(client)
-    run_id = await _manual_run(project_id, kind="custom", plan=[_SLEEP_OK])
-    outsider = await register_and_login(client, email="mallory@example.com")
-    outsider_headers = {"Authorization": f"Bearer {outsider}"}
-    resp = await client.get(f"/api/voyages/{run_id}/messages", headers=outsider_headers)
-    assert resp.status_code == 404
-    resp = await client.post(
-        f"/api/voyages/{run_id}/messages", json={"text": "hi"}, headers=outsider_headers
-    )
-    assert resp.status_code == 404
-
-
 # ---- 引擎消费 ----
 
 

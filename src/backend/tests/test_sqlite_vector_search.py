@@ -310,18 +310,9 @@ async def test_chunk_search_by_paper_ids_ignores_membership(client):
     assert [c.id for c, _ in rows] == [chunk_ids["trashed"], chunk_ids["good"]]
 
 
-async def test_saved_entries_search_scopes_to_owner_saved_untrashed(client):
+async def test_saved_entries_search_scopes_to_saved_untrashed(client):
     _headers, _pid, owner_id, ids, _library_ids = await _corpus(client)
-    other_token = await register_and_login(client, email="bob@example.com")
-    assert other_token
     async with get_sessionmaker()() as session:
-        from sqlalchemy import select
-
-        from app.models.user import User
-
-        bob = (
-            await session.execute(select(User).where(User.email == "bob@example.com"))
-        ).scalar_one()
 
         def entry(name, *, user_id=owner_id, saved=True, trashed=False):
             return UserLibraryEntry(
@@ -341,7 +332,6 @@ async def test_saved_entries_search_scopes_to_owner_saved_untrashed(client):
                 entry("bad-dim"),
                 entry("best", saved=False),  # 只是浏览过
                 entry("trashed", trashed=True),  # 收藏进了回收站
-                entry("elsewhere", user_id=bob.id),  # 别人的收藏
             ]
         )
         await session.commit()

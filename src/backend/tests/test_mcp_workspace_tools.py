@@ -247,28 +247,6 @@ async def test_list_and_get_library(client):
     assert "不存在或无权访问" in message
 
 
-async def test_library_not_visible_to_stranger(client):
-    """别人的个人库（非公共）：不可见与不存在同一口径，不泄露存在性。"""
-    project_a, headers_a = await _setup(client, email="owner@example.com")
-    resp = await client.post(
-        "/api/libraries",
-        json={"name": "owner-private", "statement": "只有我自己看得到的方向库"},
-        headers=headers_a,
-    )
-    assert resp.status_code in (200, 201), resp.text
-    private_id = resp.json()["id"]
-    mine = await _call(client, headers_a, "list_libraries", {"project_id": project_a})
-    assert private_id in [lib["library_id"] for lib in mine["libraries"]]
-
-    project_b, headers_b = await _setup(client, email="stranger@example.com")
-    message = await _call_expect_error(
-        client, headers_b, "get_library", {"project_id": project_b, "library_id": private_id}
-    )
-    assert "不存在或无权访问" in message
-    theirs = await _call(client, headers_b, "list_libraries", {"project_id": project_b})
-    assert private_id not in [lib["library_id"] for lib in theirs["libraries"]]
-
-
 # ---- 稿件 ----
 
 

@@ -96,26 +96,6 @@ async def test_search_matches_are_case_insensitive_and_scoped(client):
     assert resp.json()["hits"] == []
 
 
-async def test_search_never_leaks_other_peoples_work(client):
-    """搜索范围 = 我够得着的一切，**一点都不能多**。
-
-    这条以前靠「路由上带课题 id，非成员回 404」来保证。现在搜索不挂课题了，那道
-    门没有了，可见性判据成了唯一的防线——所以它必须被直接钉住，而不是顺带成立。
-
-    越权比漏搜严重得多：漏搜用户会抱怨，越权没人会发现。
-    """
-    await _setup(client)
-    other = await register_and_login(client, email="bob@example.com")
-
-    resp = await client.get(
-        "/api/global-search",
-        params={"q": "graph"},
-        headers={"Authorization": f"Bearer {other}"},
-    )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["hits"] == [], "陌生人不该搜到别人课题里的任何东西"
-
-
 async def test_search_spans_every_topic_i_can_reach(client):
     """跨课题：搜索不再只看「当前课题」。
 

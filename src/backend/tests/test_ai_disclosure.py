@@ -296,14 +296,6 @@ async def test_manuscript_disclosure_endpoint(client):
     resp = await client.get(f"/api/manuscripts/{ms_id}/ai-disclosure?style=nature", headers=headers)
     assert resp.status_code == 422
 
-    # 非课题主人 404（与稿件详情同口径，不泄露存在性）
-    other = await register_and_login(client, "disclose5b@example.com")
-    resp = await client.get(
-        f"/api/manuscripts/{ms_id}/ai-disclosure",
-        headers={"Authorization": f"Bearer {other}"},
-    )
-    assert resp.status_code == 404
-
 
 async def test_voyage_disclosure_endpoint(client):
     project_id, headers = await _setup_project(client, email="disclose6@example.com")
@@ -317,10 +309,3 @@ async def test_voyage_disclosure_endpoint(client):
     data = resp.json()
     assert "ICMJE 建议" in data["statement"]
     assert data["facts"]["subject"]["type"] == "voyage"
-
-    other = await register_and_login(client, "disclose6b@example.com")
-    resp = await client.get(
-        f"/api/voyages/{run_id}/ai-disclosure",
-        headers={"Authorization": f"Bearer {other}"},
-    )
-    assert resp.status_code == 404

@@ -1380,11 +1380,9 @@ async def test_create_experiment_validation(client, queue_stub, fake_ssh):
     assert resp.status_code == 404
     assert resp.json()["detail"] == "IDEA_NOT_FOUND"
 
-    # 他人的凭据 → 404（不泄露存在性）
-    _other_project, headers_b = await _setup_project(client, email="bob@example.com")
-    cred_b = await _create_credential(client, headers_b)
+    # 凭据不存在 → 404
     promoted_id = await _seed_idea(project_id)
-    resp = await _create_experiment(client, headers, project_id, promoted_id, cred_b)
+    resp = await _create_experiment(client, headers, project_id, promoted_id, str(uuid.uuid4()))
     assert resp.status_code == 404
     assert resp.json()["detail"] == "CREDENTIAL_NOT_FOUND"
 
@@ -1392,32 +1390,6 @@ async def test_create_experiment_validation(client, queue_stub, fake_ssh):
     resp = await _create_experiment(client, headers, project_id, promoted_id, cred_id)
     assert resp.status_code == 201
     assert resp.json()["budget"] == {"max_hours": 0, "max_runs": 10, "no_improve_stop": 2}
-
-
-async def test_experiment_member_permissions(client, queue_stub, fake_ssh):
-    """非项目成员对 experiments 一律 404（不泄露存在性）。"""
-    project_id, headers = await _setup_project(client)
-    idea_id = await _seed_idea(project_id)
-    cred_id = await _create_credential(client, headers)
-    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
-    exp_id = resp.json()["id"]
-
-    token_b = await register_and_login(client, email="outsider@example.com")
-    headers_b = {"Authorization": f"Bearer {token_b}"}
-    for method, url in (
-        ("get", f"/api/projects/{project_id}/experiments"),
-        ("post", f"/api/projects/{project_id}/experiments"),
-        ("get", f"/api/experiments/{exp_id}"),
-        ("post", f"/api/experiments/{exp_id}/cancel"),
-        ("get", f"/api/experiments/{exp_id}/logs"),
-        ("get", f"/api/experiments/{exp_id}/logs/stream"),
-        ("get", f"/api/experiments/{exp_id}/figures/0/image"),
-    ):
-        kwargs = {"headers": headers_b}
-        if method == "post" and url.endswith("/experiments"):
-            kwargs["json"] = {"idea_id": idea_id, "credential_id": cred_id}
-        resp = await getattr(client, method)(url, **kwargs)
-        assert resp.status_code == 404, (method, url, resp.status_code)
 
 
 async def test_code_browser_live_listing_and_read(client, queue_stub, fake_ssh, bus_recorder):

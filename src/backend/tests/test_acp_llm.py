@@ -194,29 +194,6 @@ async def test_an_agent_takes_over_when_no_model_api_is_configured(client, no_fa
         await router.resolve("relevance")
 
 
-async def test_other_accounts_only_get_shared_agents(client, no_fake_fallback):
-    from app.core.llm.router import LLMNotConfiguredError, get_llm_router
-
-    owner = {"Authorization": f"Bearer {await register_and_login(client)}"}
-    agent = await _register(client, owner)
-    await register_and_login(client, email="member@example.com")
-    from sqlalchemy import select
-
-    from app.core.db import get_sessionmaker
-    from app.models.user import User
-
-    async with get_sessionmaker()() as session:
-        member_id = (
-            await session.execute(select(User.id).where(User.email == "member@example.com"))
-        ).scalar_one()
-    router = get_llm_router()
-    with pytest.raises(LLMNotConfiguredError):
-        await router.resolve("relevance", member_id)
-    await client.patch(f"/api/acp-agents/{agent['id']}", json={"shared": True}, headers=owner)
-    _, route = await router.resolve("relevance", member_id)
-    assert route.provider_kind == "acp"
-
-
 async def test_routes_can_target_an_agent(client):
     from app.core.llm.router import get_llm_router
 

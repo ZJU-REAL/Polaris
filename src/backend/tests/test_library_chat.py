@@ -145,15 +145,6 @@ async def test_library_chat_falls_back_without_chunks(client):
     assert events[0][0] == "sources"
     assert len(events[0][1]["items"]) == 2  # 两篇高分论文兜底
 
-    # 非成员 404
-    other = await register_and_login(client, email="lib-outsider@example.com")
-    resp = await client.post(
-        f"/api/projects/{project_id}/chat",
-        json={"question": "hi"},
-        headers={"Authorization": f"Bearer {other}"},
-    )
-    assert resp.status_code == 404
-
 
 async def test_library_chat_survives_chunk_search_failure(client, monkeypatch):
     """检索层任何异常（如 paper_chunks 表未迁移）都不 500：降级论文摘要兜底。"""

@@ -132,7 +132,6 @@ async def test_the_panel_answers_a_request_over_the_api(client, agent_on):
     agent = resp.json()
     assert agent["permission_policy"] == "ask"  # 新登记默认 ask
     conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
-    other = {"Authorization": f"Bearer {await register_and_login(client, email='x@example.com')}"}
 
     # 测试用的 ASGI 传输会把流式响应攒到结束才交出来，所以不能边读边答：
     # 这一轮放到后台跑，从活会话上找到正在等的请求号，经接口回答。
@@ -157,9 +156,6 @@ async def test_the_panel_answers_a_request_over_the_api(client, agent_on):
         await asyncio.sleep(0.02)
     assert rid, "the agent never asked"
     url = f"/api/chat/conversations/{conv_id}/permissions/{rid}"
-    # 别人答不了：对话不是他的
-    r = await client.post(url, json={"option_id": "yes"}, headers=other)
-    assert r.status_code == 404
     r = await client.post(url, json={"option_id": "nope"}, headers=headers)
     assert r.status_code == 400, r.text
     r = await client.post(url, json={"option_id": "yes"}, headers=headers)

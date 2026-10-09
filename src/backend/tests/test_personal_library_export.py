@@ -84,7 +84,7 @@ async def test_personal_export_ids_subset(client):
     assert "Second Saved" not in resp.text
 
 
-async def test_personal_export_excludes_other_users_and_unsaved(client):
+async def test_personal_export_excludes_unsaved_and_unknown(client):
     token = await register_and_login(client, email="pexport-owner@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     project_id = await _make_project(client, headers)
@@ -101,20 +101,13 @@ async def test_personal_export_excludes_other_users_and_unsaved(client):
     assert resp.status_code == 200, resp.text
     assert json.loads(resp.text) == []
 
-    # 传入别人的论文 id（陌生 uuid）→ 不含
+    # 传入陌生论文 id → 不含
     stranger = str(uuid.uuid4())
     resp = await client.get(
         f"/api/me/library/export/citations?format=csl-json&ids={stranger}", headers=headers
     )
     assert resp.status_code == 200, resp.text
     assert json.loads(resp.text) == []
-
-    # 另一个用户的个人库导出看不到本人收藏
-    other = await register_and_login(client, email="pexport-other@example.com")
-    other_headers = {"Authorization": f"Bearer {other}"}
-    resp = await client.get("/api/me/library/export/citations?format=bibtex", headers=other_headers)
-    assert resp.status_code == 200, resp.text
-    assert "Mine Saved" not in resp.text
 
 
 async def test_personal_export_csl_and_invalid_format(client):

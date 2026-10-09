@@ -1,11 +1,12 @@
 """池级可见性（P5b 修复）：个人补充入库（零库成员行）的论文，
 本人经书架 / 个人库可读（详情 / 子资源 / 个人 wiki 全链路）；
-他人（未入架未收藏）与写库端点维持 404。"""
+未入架未收藏的论文与写库端点维持 404。"""
 
 import uuid
 
 import pytest
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.paper import Paper
 from tests.conftest import register_and_login
@@ -106,26 +107,13 @@ async def test_pool_paper_visible_via_personal_library_after_shelf_removal(clien
     assert resp.status_code == 200
 
 
-async def test_pool_paper_hidden_from_others_and_write_paths(client):
+async def test_pool_paper_write_paths_stay_404(client):
     project_id, headers = await _setup(client, name="pool-proj-3", email="pool-carol@example.com")
     paper_id = await _seed_pool_only_paper(title="Private Chain Paper")
     resp = await client.post(
         f"/api/projects/{project_id}/shelf", json={"paper_id": paper_id}, headers=headers
     )
     assert resp.status_code == 201
-
-    # 其他用户（未入架未收藏）：详情与子资源一律 404
-    stranger = await register_and_login(client, email="pool-stranger@example.com")
-    sh = {"Authorization": f"Bearer {stranger}"}
-    for url in (
-        f"/api/papers/{paper_id}",
-        f"/api/papers/{paper_id}/notes",
-        f"/api/papers/{paper_id}/highlights",
-        f"/api/papers/{paper_id}/figures",
-        f"/api/papers/{paper_id}/pdf",
-    ):
-        resp = await client.get(url, headers=sh)
-        assert resp.status_code == 404, url
 
     # 写库成员行的端点不开池级兜底：对本人也维持 404（应走个人 wiki / 书架操作）
     resp = await client.patch(
@@ -222,7 +210,9 @@ async def _buddy_ctx(client, email: str):
 
     await register_and_login(client, email=email)
     async with get_sessionmaker()() as session:
-        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
+        user = (
+            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
+        ).scalar_one()
         user_id = user.id
     return ToolContext(project_id=None, llm=LLMRouter(), library_ids=(), user_id=user_id)
 

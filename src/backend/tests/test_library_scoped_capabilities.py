@@ -191,16 +191,9 @@ async def test_standalone_library_concepts_relink(client):
 # ---- 4. 维护端点鉴权 ----
 
 
-async def test_library_maintenance_endpoints_forbidden_for_non_manager(client):
-    creator, _admin, lib_id = await _setup(client, prefix="libscope-403")
-    await _seed_paper(lib_id, title="Guarded", wiki="正文 [[概念甲]]。")
-    stranger = await _hdr(client, "libscope-403-stranger@example.com")
-
-    resp = await client.post(f"/api/libraries/{lib_id}/concepts/relink", headers=stranger)
-    assert resp.status_code == 403
-    resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=stranger)
-    assert resp.status_code == 403
-    # 库不存在 → 404（管理端点同样不泄漏）
+async def test_library_maintenance_endpoints_404_for_missing_library(client):
+    creator, _admin, _lib_id = await _setup(client, prefix="libscope-404")
+    # 库不存在 → 404
     resp = await client.post(f"/api/libraries/{uuid.uuid4()}/index/rebuild", headers=creator)
     assert resp.status_code == 404
     resp = await client.post(f"/api/libraries/{uuid.uuid4()}/concepts/relink", headers=creator)

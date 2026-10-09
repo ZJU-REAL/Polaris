@@ -260,7 +260,7 @@ async def test_enrich_error_continues_and_still_done(client, fake_redis, monkeyp
     assert events[-1]["event"] == "done"
 
 
-# ---- 3. SSE 端点鉴权：非归属用户拿不到流 ----
+# ---- 3. SSE 端点：不存在的任务拿不到流 ----
 
 
 async def test_paper_task_events_auth(client, fake_redis):
@@ -276,14 +276,6 @@ async def test_paper_task_events_auth(client, fake_redis):
     task_id = resp.json()["task_id"]
     assert task_id
     await paper_enrich.await_task(task_id)
-
-    # 非归属用户 → 404
-    token_b = await register_and_login(client, email="intruder@example.com")
-    resp = await client.get(
-        f"/api/paper-tasks/{task_id}/events",
-        headers={"Authorization": f"Bearer {token_b}"},
-    )
-    assert resp.status_code == 404
 
     # 不存在的 task_id → 404
     resp = await client.get(f"/api/paper-tasks/{uuid.uuid4().hex}/events", headers=headers_a)

@@ -66,7 +66,7 @@ async def test_create_list_detail_cancel(client, queue_stub):
     assert resp.status_code == 409
 
 
-async def test_voyage_invalid_kind_and_membership(client, queue_stub):
+async def test_voyage_invalid_kind(client, queue_stub):
     token_a = await register_and_login(client, email="a@example.com")
     headers_a = {"Authorization": f"Bearer {token_a}"}
     project_id = await _create_project(client, headers_a)
@@ -84,21 +84,7 @@ async def test_voyage_invalid_kind_and_membership(client, queue_stub):
         json={"kind": "demo", "project_id": project_id, "goal": "x"},
         headers=headers_a,
     )
-    voyage_id = resp.json()["id"]
-
-    # 非成员：创建 404 / 详情 404 / 列表为空
-    token_b = await register_and_login(client, email="b@example.com")
-    headers_b = {"Authorization": f"Bearer {token_b}"}
-    resp = await client.post(
-        "/api/voyages",
-        json={"kind": "demo", "project_id": project_id, "goal": "y"},
-        headers=headers_b,
-    )
-    assert resp.status_code == 404
-    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers_b)
-    assert resp.status_code == 404
-    resp = await client.get("/api/voyages", headers=headers_b)
-    assert resp.json() == []
+    assert resp.status_code == 201, resp.text
 
 
 async def test_voyage_events_sse_smoke(client, queue_stub, fake_redis):
@@ -128,10 +114,3 @@ async def test_voyage_events_sse_smoke(client, queue_stub, fake_redis):
         assert data_line.startswith("data: ")
         payload = json.loads(data_line[len("data: ") :])
         assert payload == {"status": "cancelled", "cursor": 0}
-
-    # 非成员拿不到事件流
-    token_b = await register_and_login(client, email="sse-b@example.com")
-    resp = await client.get(
-        f"/api/voyages/{voyage_id}/events", headers={"Authorization": f"Bearer {token_b}"}
-    )
-    assert resp.status_code == 404

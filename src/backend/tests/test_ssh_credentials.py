@@ -1,4 +1,4 @@
-"""SSH 凭据 API：CRUD + 加密落库 + 权限（非本人 404）+ test 端点（MockSSH）。"""
+"""SSH 凭据 API：CRUD + 加密落库 + 不存在 404 + test 端点（MockSSH）。"""
 
 import uuid
 
@@ -82,25 +82,6 @@ async def test_credential_crud_and_encryption(client):
     assert resp.json() == []
 
 
-async def test_credential_isolation_between_users(client):
-    headers_a = await _auth(client, "alice@example.com")
-    headers_b = await _auth(client, "bob@example.com")
-
-    resp = await client.post("/api/ssh-credentials", json=PAYLOAD, headers=headers_a)
-    cred_id = resp.json()["id"]
-
-    # 他人列表看不到、删不掉、测不了（404 不泄露存在性）
-    resp = await client.get("/api/ssh-credentials", headers=headers_b)
-    assert resp.json() == []
-    resp = await client.delete(f"/api/ssh-credentials/{cred_id}", headers=headers_b)
-    assert resp.status_code == 404
-    resp = await client.post(f"/api/ssh-credentials/{cred_id}/test", headers=headers_b)
-    assert resp.status_code == 404
-    # 本人仍在
-    resp = await client.get("/api/ssh-credentials", headers=headers_a)
-    assert len(resp.json()) == 1
-
-
 async def test_credential_test_endpoint_success(client, fake_ssh):
     headers = await _auth(client)
     resp = await client.post("/api/ssh-credentials", json=PAYLOAD, headers=headers)
@@ -164,13 +145,10 @@ async def test_credential_sysinfo_unreachable(client, fake_ssh):
     assert body["ok"] is False and "no route to host" in body["detail"]
 
 
-async def test_credential_sysinfo_not_owned_404(client, fake_ssh):
-    """他人凭据 404（不泄露存在性），与其余端点一致。"""
-    headers_a = await _auth(client, "alice@example.com")
-    resp = await client.post("/api/ssh-credentials", json=PAYLOAD, headers=headers_a)
-    cred_id = resp.json()["id"]
-    headers_b = await _auth(client, "bob@example.com")
-    resp = await client.get(f"/api/ssh-credentials/{cred_id}/sysinfo", headers=headers_b)
+async def test_credential_sysinfo_unknown_404(client, fake_ssh):
+    """不存在的凭据 404，与其余端点一致。"""
+    headers = await _auth(client)
+    resp = await client.get(f"/api/ssh-credentials/{uuid.uuid4()}/sysinfo", headers=headers)
     assert resp.status_code == 404
 
 

@@ -54,9 +54,8 @@ def test_normalize_robot_id_accepts_only_fixed_official_webhooks():
             raise AssertionError(f"unsafe webhook accepted: {value}")
 
 
-async def test_config_crud_is_encrypted_write_only_and_per_user(client):
+async def test_config_crud_is_encrypted_and_write_only(client):
     alice, alice_id = await _auth(client)
-    bob, _ = await _auth(client, "bob@example.com")
     webhook = "https://oapi.dingtalk.com/robot/send?access_token=ding_token_0123456789abcdef"
 
     empty = await client.get("/api/chat-bots", headers=alice)
@@ -106,23 +105,20 @@ async def test_config_crud_is_encrypted_write_only_and_per_user(client):
         assert decrypt_secret(row.robot_id_encrypted) == "ding_token_replaced_0123456789"
         assert decrypt_secret(row.secret_encrypted or "") == "SEC-ding-signing-secret"
 
-    # 另一用户既看不到，也不能借用 Alice 的配置发送。
-    other = await client.get("/api/chat-bots", headers=bob)
-    assert all(not item["configured"] for item in other.json())
-    missing = await client.post(
-        "/api/chat-bots/dingtalk/messages",
-        headers=bob,
-        json={"text": "should not send"},
-    )
-    assert missing.status_code == 409
-    assert missing.json()["detail"] == "CHAT_BOT_NOT_CONFIGURED"
-
     deleted = await client.delete("/api/chat-bots/dingtalk", headers=alice)
     assert deleted.status_code == 204
     assert all(
         not item["configured"]
         for item in (await client.get("/api/chat-bots", headers=alice)).json()
     )
+    # 删掉之后就发不出去了
+    missing = await client.post(
+        "/api/chat-bots/dingtalk/messages",
+        headers=alice,
+        json={"text": "should not send"},
+    )
+    assert missing.status_code == 409
+    assert missing.json()["detail"] == "CHAT_BOT_NOT_CONFIGURED"
 
 
 async def test_config_rejects_arbitrary_webhook_host(client):

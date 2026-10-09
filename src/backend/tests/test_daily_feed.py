@@ -230,10 +230,8 @@ async def test_list_filters_by_author_and_affiliation(client, monkeypatch):
 
 
 async def test_like_toggle_facepile_and_sort(client, monkeypatch):
-    token_a = await register_and_login(client)  # 首个 = admin
-    token_b = await register_and_login(client, email="bob@example.com")
+    token_a = await register_and_login(client)
     ha = {"Authorization": f"Bearer {token_a}"}
-    hb = {"Authorization": f"Bearer {token_b}"}
     await _run_sync(
         monkeypatch,
         {"cs.AI": [_rss_entry("2607.00021", "Hot Paper"), _rss_entry("2607.00022", "Cold Paper")]},
@@ -242,35 +240,34 @@ async def test_like_toggle_facepile_and_sort(client, monkeypatch):
     hot = next(i for i in resp.json()["items"] if i["title"] == "Hot Paper")
     eid = hot["entry_id"]
 
-    # 双人点赞；重复点幂等
+    # 点赞；重复点幂等
     r1 = await client.put(f"/api/daily/papers/{eid}/like", headers=ha)
     assert r1.json()["like_count"] == 1 and r1.json()["liked_by_me"] is True
-    await client.put(f"/api/daily/papers/{eid}/like", headers=hb)
-    r2 = await client.put(f"/api/daily/papers/{eid}/like", headers=hb)
-    assert r2.json()["like_count"] == 2
+    r2 = await client.put(f"/api/daily/papers/{eid}/like", headers=ha)
+    assert r2.json()["like_count"] == 1
 
-    # facepile：本人永远排最前（display_name 夹具里都叫 Alice，按 id 断言）
+    # facepile：本人在列
     preview = r2.json()["likers_preview"]
-    assert len(preview) == 2
-    me = await client.get("/api/users/me", headers=hb)
+    assert len(preview) == 1
+    me = await client.get("/api/users/me", headers=ha)
     assert preview[0]["id"] == me.json()["id"]
 
     # 默认按赞数排序：Hot 在前
     resp = await client.get("/api/daily/papers", headers=ha)
     assert resp.json()["items"][0]["title"] == "Hot Paper"
-    assert resp.json()["items"][0]["like_count"] == 2
+    assert resp.json()["items"][0]["like_count"] == 1
 
     # 完整名单
     resp = await client.get(f"/api/daily/papers/{eid}/likers", headers=ha)
-    assert resp.status_code == 200 and len(resp.json()) == 2
-
-    # 取消赞
-    r3 = await client.delete(f"/api/daily/papers/{eid}/like", headers=hb)
-    assert r3.json()["like_count"] == 1 and r3.json()["liked_by_me"] is False
-    resp = await client.get("/api/daily/liked", headers=hb)
-    assert resp.json()["total"] == 0
+    assert resp.status_code == 200 and len(resp.json()) == 1
     resp = await client.get("/api/daily/liked", headers=ha)
     assert resp.json()["total"] == 1
+
+    # 取消赞
+    r3 = await client.delete(f"/api/daily/papers/{eid}/like", headers=ha)
+    assert r3.json()["like_count"] == 0 and r3.json()["liked_by_me"] is False
+    resp = await client.get("/api/daily/liked", headers=ha)
+    assert resp.json()["total"] == 0
 
 
 async def test_collect_to_library_topic_personal(client, monkeypatch):
@@ -357,17 +354,6 @@ async def test_collect_to_library_topic_personal(client, monkeypatch):
     assert str(library_id) in data["direction_library_ids"]
     assert project_id in data["topic_ids"]
     assert data["in_personal"] is True
-
-    # 非成员课题 → forbidden，不整体失败
-    other = await register_and_login(client, email="eve@example.com")
-    oh = {"Authorization": f"Bearer {other}"}
-    resp = await client.post(
-        "/api/daily/collect",
-        json={"paper_ids": [item["paper_id"]], "topic_ids": [project_id]},
-        headers=oh,
-    )
-    assert resp.status_code == 200
-    assert resp.json()["results"][0]["forbidden"] is True
 
 
 async def test_compile_entry_and_collect(client, monkeypatch):

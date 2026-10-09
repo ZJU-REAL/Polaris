@@ -195,19 +195,3 @@ async def test_source_libraries_read_write_api(client):
     )
     assert resp.status_code == 200
     assert resp.json() == []
-
-
-async def test_source_libraries_requires_membership(client):
-    """非课题成员不能读/写别人课题的关联库。"""
-    owner = await _hdr(client, "p7u-owner7@example.com")
-    resp = await client.post("/api/projects", json={"name": "私有课题"}, headers=owner)
-    project_id = resp.json()["id"]
-    outsider = await _hdr(client, "p7u-outsider7@example.com")
-    resp = await client.get(f"/api/projects/{project_id}/source-libraries", headers=outsider)
-    assert resp.status_code == 404
-    resp = await client.put(
-        f"/api/projects/{project_id}/source-libraries",
-        json={"library_ids": []},
-        headers=outsider,
-    )
-    assert resp.status_code == 404

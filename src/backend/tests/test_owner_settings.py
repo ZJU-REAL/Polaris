@@ -2,6 +2,7 @@
 
 from sqlalchemy import select
 
+from app.api.auth import LOCAL_USER_EMAIL
 from app.models.system_setting import SystemSetting
 from app.models.user import User
 from tests.conftest import register_and_login
@@ -16,27 +17,48 @@ async def _owner_settings_snapshot(session) -> dict:
 
 
 async def test_owner_is_earliest_active_user(client):
+    """偏好落在最早的活跃用户上——单机就是本地用户。
+
+    老安装库里可能还留着更晚的别的用户行（以前注册过的），直接入库模拟。
+    """
+    import datetime as dt
+
+    from fastapi_users.password import PasswordHelper
+
     from app.core.db import get_sessionmaker
     from app.services import owner_settings
     from app.services.owner import reset_owner_cache
 
-    await register_and_login(client, email="first@e.com")
-    await register_and_login(client, email="second@e.com")
+    await register_and_login(client)
     async with get_sessionmaker()() as session:
+        local = await session.scalar(select(User).where(User.email == LOCAL_USER_EMAIL))
+        session.add(
+            User(
+                email="later@e.com",
+                hashed_password=PasswordHelper().hash("x"),
+                is_active=True,
+                is_superuser=False,
+                is_verified=True,
+                display_name="Later",
+                username="later",
+                created_at=local.created_at + dt.timedelta(days=1),
+            )
+        )
+        await session.commit()
+
         owner = await owner_settings.owner_user(session)
-        assert owner is not None and owner.email == "first@e.com"
+        assert owner is not None and owner.email == LOCAL_USER_EMAIL
 
         # 与 #722 的 owner 守卫共用同一事实源：进程内缓存，首用户失活也不换主……
-        first = await session.scalar(select(User).where(User.email == "first@e.com"))
-        first.is_active = False
+        local.is_active = False
         await session.commit()
         owner = await owner_settings.owner_user(session)
-        assert owner is not None and owner.email == "first@e.com"
+        assert owner is not None and owner.email == LOCAL_USER_EMAIL
 
         # ……重启进程（这里用 reset 模拟）后顺延到下一位活跃用户
         reset_owner_cache()
         owner = await owner_settings.owner_user(session)
-        assert owner is not None and owner.email == "second@e.com"
+        assert owner is not None and owner.email == "later@e.com"
 
 
 async def test_daily_preferences_live_on_the_owner(client):
@@ -152,6 +174,6 @@ async def test_tts_and_affiliation_settings_live_on_the_owner(client):
         # 个人 TTS 偏好与全局档互不覆盖（同住一个 settings 字典的不同键）
         _, effective = await tts.effective_settings(
             session,
-            await session.scalar(select(User).where(User.email == "alice@example.com")),
+            await session.scalar(select(User).where(User.email == LOCAL_USER_EMAIL)),
         )
         assert effective["effective_model"] == "my-voice-model"
