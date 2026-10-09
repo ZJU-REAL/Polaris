@@ -1373,7 +1373,7 @@ export interface ConceptRelinkResult {
 }
 
 // ============================================================
-// P5c · 共享方向库（/libraries，全实验室可读）
+// 方向文献库（/libraries）
 // ============================================================
 
 /** 一条每日订阅：在哪个源上、订哪些词。 */
@@ -1446,20 +1446,8 @@ export interface DirectionLibrarySummary {
    */
   discipline: string | null;
   statement: string | null;
-  /** 背后课题（过渡期隐式库 1:1 回指；未来共享库可为 null） */
+  /** 背后课题（过渡期隐式库 1:1 回指；独立建的库为 null） */
   project_id: string | null;
-  /** 是否「我的课题的库」（请求者是背后课题成员 → 显示管理页签） */
-  is_mine: boolean;
-  /** 是否可管理本库：成员 ∪ 文献库管理员 ∪ 创建者 ∪ 平台管理员（P6/P9b） */
-  can_manage: boolean;
-  /** 共享开关：false = 仅创建者可见的个人库 | true = 对本部署所有用户可见 */
-  is_public: boolean;
-  /** 归属人名（个人库=创建者；公共库=原创建者/策展人；可能为空） */
-  owner_name: string | null;
-  /** 请求者是否本库归属人（submitted_by==我）：个人库删除入口据此判定 */
-  is_owner: boolean;
-  /** 库创建者 */
-  submitted_by: string | null;
   paper_count: number;
   concept_count: number;
   last_compiled_at: string | null;
@@ -3421,7 +3409,6 @@ export interface ResolvedPaperBatchItem extends ResolvedPaper {
 export interface CollectingLibrary {
   library_id: string;
   name: string;
-  is_public: boolean;
   status: string;
   relevance_score: number | null;
 }
@@ -3479,7 +3466,6 @@ export interface AcpAgentRead {
   args: string[] | null;
   permission_policy: AcpPermissionPolicy;
   enabled: boolean;
-  shared: boolean;
   last_probe: AcpProbeInfo | null;
   last_error: string | null;
   last_probed_at: string | null;
@@ -3498,7 +3484,6 @@ export interface AcpAgentCreate {
   env?: Record<string, string>;
   permission_policy?: AcpPermissionPolicy;
   enabled?: boolean;
-  shared?: boolean;
 }
 
 export interface AcpAgentUpdate {
@@ -3509,7 +3494,6 @@ export interface AcpAgentUpdate {
   env?: Record<string, string>;
   permission_policy?: AcpPermissionPolicy;
   enabled?: boolean;
-  shared?: boolean;
 }
 
 /** 助手能用的「谁来答」：Polaris 自己，或一个外部 agent。 */
@@ -4053,15 +4037,10 @@ export const api = {
     return request<SearchResult>(`/projects/${projectId}/search?${params.toString()}`);
   },
 
-  // —— P5c · 共享方向库（全实验室可读） ——
-  /** 文献库列表；可按归属类型（个人/公共）过滤（仅有值才拼进 query）。 */
-  listLibraries(filters?: {
-    type?: 'personal' | 'public' | 'all';
-  }): Promise<DirectionLibrarySummary[]> {
-    const params = new URLSearchParams();
-    if (filters?.type && filters.type !== 'all') params.set('type', filters.type);
-    const qs = params.toString();
-    return request<DirectionLibrarySummary[]>(`/libraries${qs ? `?${qs}` : ''}`);
+  // —— 方向文献库 ——
+  /** 文献库列表。 */
+  listLibraries(): Promise<DirectionLibrarySummary[]> {
+    return request<DirectionLibrarySummary[]>('/libraries');
   },
   /**
    * 装了哪些学科包。**每次现问后端**而不是在前端写死一份名单：包是磁盘上的数据，
@@ -4267,8 +4246,6 @@ export const api = {
       anchors?: AnchorPaper[] | null;
       keywords?: KeywordSpec | null;
       questions?: string[] | null;
-      /** 公开给所有人（创建者直接设置，无审批）；不传 = 不改 */
-      is_public?: boolean;
       /** 学科包名；传 null 清空（回到内置口径），不传 = 不改 */
       discipline?: string | null;
     },
@@ -4276,7 +4253,7 @@ export const api = {
     return requestJson<DirectionLibraryDetail>(`/libraries/${id}`, 'PATCH', input);
   },
   /**
-   * 删除文献库（仅平台 admin）。库仍有课题关联且未 force 时后端返回
+   * 删除文献库。库仍有课题关联且未 force 时后端返回
    * 409 LIBRARY_HAS_TOPICS；传 force=true 连同关联一起删除。返回 204 无 body。
    */
   deleteLibrary(id: string, force = false): Promise<void> {
@@ -4569,7 +4546,7 @@ export const api = {
   downloadObsidianExport(projectId: string): Promise<Blob> {
     return requestBlob(`/projects/${projectId}/export/obsidian`);
   },
-  /** 库作用域 Obsidian 导出（独立库也可用；只读端点，全实验室可读）。 */
+  /** 库作用域 Obsidian 导出（独立库也可用；只读端点）。 */
   downloadLibraryObsidianExport(libraryId: string): Promise<Blob> {
     return requestBlob(`/libraries/${libraryId}/export/obsidian`);
   },

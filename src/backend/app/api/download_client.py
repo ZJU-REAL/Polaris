@@ -94,14 +94,10 @@ def _identity_matches(metadata: DownloadArchiveMetadata, paper: Paper) -> bool:
     )
 
 
-async def _require_managed_library(
-    session: AsyncSession, *, library_id: uuid.UUID, user: User
-) -> DirectionLibrary:
+async def _require_library(session: AsyncSession, *, library_id: uuid.UUID) -> DirectionLibrary:
     library = await session.get(DirectionLibrary, library_id)
-    if library is None or not libraries_service.library_visible_to(library, user):
+    if library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
-    if not await libraries_service.can_manage_library(session, user=user, library=library):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="DOWNLOAD_LIBRARY_FORBIDDEN")
     return library
 
 
@@ -307,7 +303,7 @@ async def create_download_batch(
                 status.HTTP_422_UNPROCESSABLE_CONTENT, detail="DUPLICATE_DOWNLOAD_TARGET"
             )
         seen.add(pair)
-        library = await _require_managed_library(session, library_id=target.library_id, user=user)
+        library = await _require_library(session, library_id=target.library_id)
         paper = await session.get(Paper, target.paper_id)
         if paper is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
@@ -613,7 +609,7 @@ async def upload_downloaded_pdf(
             if key in item.result
         }
     _require_active_lease(item, x_polaris_lease_token, now=datetime.now(UTC))
-    library = await _require_managed_library(session, library_id=item.library_id, user=user)
+    library = await _require_library(session, library_id=item.library_id)
     paper = await session.get(Paper, item.paper_id)
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
@@ -670,7 +666,7 @@ async def archive_downloaded_pdf(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail="DOWNLOAD_ARCHIVE_METADATA_INVALID"
         ) from exc
-    library = await _require_managed_library(session, library_id=archive.library_id, user=user)
+    library = await _require_library(session, library_id=archive.library_id)
     paper = await session.get(Paper, archive.paper_id)
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")

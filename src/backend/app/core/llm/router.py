@@ -399,14 +399,11 @@ class LLMRouter:
     """
 
     def __init__(self) -> None:
-        # 路由表缓存，按归属分开：``None`` = 部署级（owner_id IS NULL），
-        # ``<user>`` = 该用户自己配的那份。#621 把自管轨并进平台配置，前提是
-        # 「只有一个用户，分两份纯属摩擦」；公有云正好推翻这个前提（#801），
-        # 所以这里恢复按 owner 取表，而部署级那份的行为一字不变。
-        self._routes: dict[uuid.UUID | None, dict[str, ResolvedRoute]] = {}
-        self._routes_loaded_at: dict[uuid.UUID | None, float] = {}
-        #: 外部 agent 接管的缓存：user → (加载时刻, 路由或 None)
-        self._fallback_agents: dict[uuid.UUID | None, tuple[float, ResolvedRoute | None]] = {}
+        # 路由表缓存（一张表：单用户本地应用，没有「谁的配置」之分）
+        self._routes: dict[str, ResolvedRoute] = {}
+        self._routes_loaded_at: float | None = None
+        #: 外部 agent 接管的缓存：(加载时刻, 路由或 None)
+        self._fallback_agent: tuple[float, ResolvedRoute | None] | None = None
         # 键含耐心档位（见 call_profile）：长/短两档各持一个客户端。键是实现细节，
         # 要在测试里替换 provider 请用 override_provider()，别直接往这个字典里塞。
         #
@@ -427,45 +424,29 @@ class LLMRouter:
         self._override = provider
 
     def invalidate_cache(self) -> None:
-        """设置页改动 providers/routes 后调用。
+        """设置页改动 providers/routes/agents 后调用。"""
+        self._routes_loaded_at = None
+        self._fallback_agent = None
 
-        一律清空所有归属，不只清改动的那一个：部署级的一条路由被改掉，
-        每个靠回退用到它的用户手上那份合并结果也就跟着过期了。
-        """
-        self._routes_loaded_at.clear()
-        self._fallback_agents.clear()
-
-    async def _load_routes(self, owner_id: uuid.UUID | None = None) -> dict[str, ResolvedRoute]:
+    async def _load_routes(self) -> dict[str, ResolvedRoute]:
+        from app.models.acp_agent import AcpAgent
         from app.models.llm_config import LLMProviderConfig, ModelRoute
 
         routes: dict[str, ResolvedRoute] = {}
         async with get_sessionmaker()() as session:
-            # 按归属取表，两边都是精确匹配：部署级只取 owner IS NULL，用户那份
-            # 只取他自己的行。少了这层过滤，某个用户的私有配置会混进全平台路由。
-            owner_clause = (
-                ModelRoute.owner_id.is_(None)
-                if owner_id is None
-                else ModelRoute.owner_id == owner_id
-            )
+            # owner_id 列还在（#801 遗留），迁移 3c7d9e1f5a20 已把行都并成 NULL；
+            # 这里仍只取 NULL 行，万一有漏网的旧行也不会混进来。
             stmt = (
                 select(ModelRoute, LLMProviderConfig)
                 .join(LLMProviderConfig, ModelRoute.provider_id == LLMProviderConfig.id)
-                .where(
-                    LLMProviderConfig.enabled.is_(True),
-                    owner_clause,
-                )
+                .where(LLMProviderConfig.enabled.is_(True), ModelRoute.owner_id.is_(None))
             )
-            # 指向外部 agent 的路由（#840）。别人自己的路由只能指向共享的 agent——
-            # agent 跑的是部署主人本机登录的订阅，没共享就不该被别人的任务花掉。
-            from app.models.acp_agent import AcpAgent
-
+            # 指向外部 agent 的路由（#840）
             agent_stmt = (
                 select(ModelRoute, AcpAgent)
                 .join(AcpAgent, ModelRoute.acp_agent_id == AcpAgent.id)
-                .where(AcpAgent.enabled.is_(True), owner_clause)
+                .where(AcpAgent.enabled.is_(True), ModelRoute.owner_id.is_(None))
             )
-            if owner_id is not None:
-                agent_stmt = agent_stmt.where(AcpAgent.shared.is_(True))
             for route, agent in (await session.execute(agent_stmt)).all():
                 routes[route.stage] = _acp_route(
                     agent, model=route.model, temperature=route.temperature
@@ -489,82 +470,51 @@ class LLMRouter:
                 )
         return routes
 
-    async def _cached_routes(self, owner_id: uuid.UUID | None) -> dict[str, ResolvedRoute]:
+    async def _get_routes(self) -> dict[str, ResolvedRoute]:
+        """路由表（缓存 60s，设置页改动时清空）。"""
         now = time.monotonic()
-        # 也看有没有这一项，不能只看时间戳：monotonic() 的零点是开机，进程恰好在
+        # 也看有没有加载过，不能只看时间戳：monotonic() 的零点是开机，进程恰好在
         # 开机 60 秒内起来时「now - 0.0 > TTL」为假，于是一条都还没加载就被当成
-        # 缓存有效——只按时间戳判断会在那种时候 KeyError。
-        loaded_at = self._routes_loaded_at.get(owner_id)
-        if loaded_at is None or now - loaded_at > _ROUTE_CACHE_TTL:
-            self._routes[owner_id] = await self._load_routes(owner_id)
-            self._routes_loaded_at[owner_id] = now
-        return self._routes[owner_id]
+        # 缓存有效。
+        if self._routes_loaded_at is None or now - self._routes_loaded_at > _ROUTE_CACHE_TTL:
+            self._routes = await self._load_routes()
+            self._routes_loaded_at = now
+        return self._routes
 
-    async def _get_routes(self, user_id: uuid.UUID | None = None) -> dict[str, ResolvedRoute]:
-        """这个用户实际可用的路由表：自己配的覆盖部署级的，按环节逐条合并。
-
-        逐条合并而不是整表二选一：只配了 ``default`` 的人，其余环节仍走部署级那份
-        ——否则「配了一个模型」会把他没碰过的环节一起变成未配置。
-
-        想让每个人都必须自带 key（公有云的常见口径），把部署级路由留空即可：
-        合并的底就是空表，谁没配谁就是未配置，不需要另一个开关。
-        """
-        platform = await self._cached_routes(None)
-        if user_id is None or await self._is_owner(user_id):
-            # 主人没有「自己那份」：他配的就是部署级那张表（见 api.admin_llm.config_scope）。
-            # 再给他叠一层私有表就自相矛盾了——那份配置他在界面上根本编辑不到，
-            # 却会压过他刚存下的那份。
-            return platform
-        own = await self._cached_routes(user_id)
-        if not own:
-            return platform
-        return {**platform, **own}
-
-    async def fallback_agent_route(self, user_id: uuid.UUID | None = None) -> ResolvedRoute | None:
+    async def fallback_agent_route(self) -> ResolvedRoute | None:
         """没配 default 时接管对话环节的外部 agent（#840）；没有可用的返回 None。
 
-        取最早登记、启用中的那个；不是主人的用户只能用标了共享的。缓存与路由表同一个
-        节奏（60s，设置页改动时清空）。
+        取最早登记、启用中的那个。缓存与路由表同一个节奏（60s，设置页改动时清空）。
         """
         now = time.monotonic()
-        cached = self._fallback_agents.get(user_id)
+        cached = self._fallback_agent
         if cached is not None and now - cached[0] <= _ROUTE_CACHE_TTL:
             return cached[1]
         from app.models.acp_agent import AcpAgent
 
-        owner = user_id is None or await self._is_owner(user_id)
         async with get_sessionmaker()() as session:
             stmt = select(AcpAgent).where(AcpAgent.enabled.is_(True))
-            if not owner:
-                stmt = stmt.where(AcpAgent.shared.is_(True))
             agent = (
                 await session.execute(stmt.order_by(AcpAgent.created_at, AcpAgent.id).limit(1))
             ).scalar_one_or_none()
         route = _acp_route(agent) if agent is not None else None
-        self._fallback_agents[user_id] = (now, route)
+        self._fallback_agent = (now, route)
         return route
 
-    async def has_chat_model(self, user_id: uuid.UUID | None = None) -> bool:
-        """这个用户能不能打到一个对话模型：配了 default，或者有外部 agent 可以接管。"""
-        if "default" in await self.configured_stages(user_id):
+    async def has_chat_model(self) -> bool:
+        """能不能打到一个对话模型：配了 default，或者有外部 agent 可以接管。"""
+        if "default" in await self.configured_stages():
             return True
-        return await self.fallback_agent_route(user_id) is not None
+        return await self.fallback_agent_route() is not None
 
-    async def configured_stages(self, user_id: uuid.UUID | None = None) -> set[str]:
-        """这个用户实际配了路由的环节。
+    async def configured_stages(self) -> set[str]:
+        """实际配了路由的环节。
 
         给「还没配模型」这类判断用：问的是路由表本身，不看
         ``llm_fake_fallback``——那个开关会让 resolve 在一条路由都没有时也返回
         一个 fake provider，拿它当「配好了」的依据，等于告诉用户一件没发生的事。
         """
-        return set(await self._get_routes(user_id))
-
-    async def _is_owner(self, user_id: uuid.UUID) -> bool:
-        """这个用户是不是部署主人（owner id 在 services.owner 里按进程缓存）。"""
-        from app.services.owner import resolve_owner_id
-
-        async with get_sessionmaker()() as session:
-            return await resolve_owner_id(session) == user_id
+        return set(await self._get_routes())
 
     def _provider_for(self, route: ResolvedRoute, stage: str = "") -> LLMProvider:
         if self._override is not None:
@@ -621,16 +571,11 @@ class LLMRouter:
                 raise ValueError(f"unknown LLM provider kind: {route.provider_kind}")
         return self._providers[key]
 
-    async def resolve(
-        self, stage: str, user_id: uuid.UUID | None = None
-    ) -> tuple[LLMProvider, ResolvedRoute]:
+    async def resolve(self, stage: str) -> tuple[LLMProvider, ResolvedRoute]:
         """查平台路由表（缓存 60s），无则回退 default 路由。
 
         没显式配的环节一律回退 ``default``，不存在「继承另一个环节」这回事——设置页
         就是这么告诉管理员的，界面显示跟随默认哪个模型，实际就得打那个模型。
-
-        ``user_id`` 同时决定选路与记账：先看这个用户自己配的路由，没配的环节
-        回退到部署级那份（#801）。传 None = 只用部署级配置，与单主人部署一致。
 
         能力型环节（``_CAPABILITY_STAGES``）不回退 default：对话模型没有
         embedding/rerank 能力，回退只会产生无意义调用；未显式配置时抛
@@ -644,7 +589,7 @@ class LLMRouter:
         完整命名空间串）→ 注册时声明的内置 fallback 环节的路由 → default 路由。
         耐心档不随回退变：始终按注册时声明的 tier（见 call_profile）。
         """
-        routes = await self._get_routes(user_id)
+        routes = await self._get_routes()
         route = routes.get(stage)
         if route is None:
             spec = _PLUGIN_STAGES.get(stage)
@@ -661,7 +606,7 @@ class LLMRouter:
                 if route is None:
                     # 没配 default：有外部 agent 就由它接管（#840）。能力型环节不在此列
                     # ——agent 产不出向量，那两个环节走上面的降级。
-                    route = await self.fallback_agent_route(user_id)
+                    route = await self.fallback_agent_route()
                 if route is None:
                     if not get_settings().llm_fake_fallback:
                         raise LLMNotConfiguredError(
@@ -671,21 +616,21 @@ class LLMRouter:
                     route = _FALLBACK_ROUTE
         return self._provider_for(route, stage), route
 
-    async def input_budget(self, spec: InputBudget, user_id: uuid.UUID | None = None) -> int:
-        """这个用户在该环节此刻生效的输入预算（字符），见 core/llm/budgets.py。
+    async def input_budget(self, spec: InputBudget) -> int:
+        """该环节此刻生效的输入预算（字符），见 core/llm/budgets.py。
 
         覆盖值只认这个环节**自己**那一行：跟随 default 的环节没有自己的预算，用登记的
         默认值——default 那行上存的是 default 自己的键，与别的环节无关。
         窗口封顶则看实际会被调用的那一行（自己的，没有就是 default 的），因为封顶
         说的是「这次调用的模型能收多少」。
         """
-        routes = await self._get_routes(user_id)
+        routes = await self._get_routes()
         own = routes.get(spec.stage)
         configured = dict(own.input_budgets).get(spec.key) if own is not None else None
         called = own if own is not None else routes.get("default")
         return spec.effective(configured, called.context_window if called is not None else None)
 
-    async def model_name(self, stage: str, user_id: uuid.UUID | None = None) -> str | None:
+    async def model_name(self, stage: str) -> str | None:
         """该环节实际会用到的模型名；未配置/不可用时 None（调用方只用于展示）。
 
         ``embed()`` 只返回向量，模型名留在路由里；要把「这批向量是谁建的」记进库
@@ -693,7 +638,7 @@ class LLMRouter:
         额外开销可忽略。
         """
         try:
-            _, route = await self.resolve(stage, user_id)
+            _, route = await self.resolve(stage)
         except (NotImplementedError, LLMNotConfiguredError):
             return None
         return route.model
@@ -796,7 +741,7 @@ class LLMRouter:
         library_id: uuid.UUID | None = None,
         voyage_id: uuid.UUID | None = None,
     ) -> CompletionResult:
-        provider, route = await self.resolve(stage, user_id)
+        provider, route = await self.resolve(stage)
         temp = route.temperature if temperature is None else temperature
         eff = route.effort if effort is None else effort
         log_enabled = await call_log.logging_enabled()
@@ -980,7 +925,7 @@ class LLMRouter:
         voyage_id: uuid.UUID | None = None,
     ) -> list[list[float]]:
         """文本嵌入（stage 默认 embedding）。provider 不支持时抛 NotImplementedError。"""
-        provider, route = await self.resolve(stage, user_id)
+        provider, route = await self.resolve(stage)
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
         # 调用日志只记摘要（输入条数 + 首条截断），不存向量
@@ -1056,7 +1001,7 @@ class LLMRouter:
         provider 不支持时抛 NotImplementedError；记账优先用响应的
         billed_units.total_tokens，拿不到则按 len/4 估算。
         """
-        provider, route = await self.resolve(stage, user_id)
+        provider, route = await self.resolve(stage)
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
         # 调用日志只记摘要（query + 文档条数 + 首条截断），不存全部文档
@@ -1130,7 +1075,7 @@ class LLMRouter:
         library_id: uuid.UUID | None = None,
         voyage_id: uuid.UUID | None = None,
     ) -> AsyncIterator[str]:
-        provider, route = await self.resolve(stage, user_id)
+        provider, route = await self.resolve(stage)
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
         collected: list[str] = []
@@ -1214,7 +1159,7 @@ class LLMRouter:
         记账与 stream() 同口径：流正常结束后写一行 LLMUsage。provider 给了 usage 就用
         它的（Anthropic 现在也归一化过键名了），没给才按 len/4 估。
         """
-        provider, route = await self.resolve(stage, user_id)
+        provider, route = await self.resolve(stage)
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
         collected: list[str] = []

@@ -62,7 +62,6 @@ async def test_library_list_and_detail(client):
     resp = await client.get("/api/libraries", headers=headers)
     assert resp.status_code == 200, resp.text
     row = next(x for x in resp.json() if x["id"] == library_id)
-    assert row["is_mine"] is True
     assert row["name"] == "共享方向"
     assert row["paper_count"] == 1  # excluded 不计入
     assert row["concept_count"] == 1
@@ -71,7 +70,7 @@ async def test_library_list_and_detail(client):
     assert resp.status_code == 200, resp.text
     detail = resp.json()
     assert detail["project_id"] == project_id
-    assert detail["is_mine"] is True and detail["paper_count"] == 1
+    assert detail["paper_count"] == 1
 
 
 async def test_library_papers_concepts_search_readable_by_all(client):

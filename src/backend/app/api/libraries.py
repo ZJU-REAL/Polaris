@@ -1,10 +1,9 @@
 """共享方向库路由（docs-dev/workspace-ia-redesign.md §2/§5/§6/§7）。
 
-读端点按库可见性校验（公共库全员可读，个人库仅创建者）。管理端点（库定义编辑等）
-按库级写权限校验：创建者 ∪ 无主库（见 services/libraries.can_manage_library，#614 后
-无 admin 旁路）。集合级写/管理入口（ingest、论文管理、概念补建、全文索引重建等）
-本文件都有库作用域版本（独立库靠它们获得同等能力）；同名的 project 作用域端点仍在
-papers/wiki/concepts 路由里，鉴权同样接入库级写权限助手。
+单用户本地应用（#842）：每个库都是这个人的，端点只要求登录、库存在。
+集合级写/管理入口（ingest、论文管理、概念补建、全文索引重建等）本文件都有库作用域
+版本（独立库靠它们获得同等能力）；同名的 project 作用域端点仍在 papers/wiki/concepts
+路由里。
 个人文献库路由在 ``app/api/library.py``（/me/library），勿混淆。
 """
 
@@ -126,28 +125,6 @@ async def _get_library(session: AsyncSession, library_id: uuid.UUID) -> Directio
     return library
 
 
-async def _get_managed_library(
-    session: AsyncSession, library_id: uuid.UUID, user: User
-) -> DirectionLibrary:
-    """管理端点统一入口：库存在 + 请求者有库级写权限（创建者 ∪ 无主库），否则 403。"""
-    library = await _get_library(session, library_id)
-    if not await libraries_service.can_manage_library(session, user=user, library=library):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_MANAGE_FORBIDDEN")
-    return library
-
-
-async def _get_visible_library(
-    session: AsyncSession, library_id: uuid.UUID, user: User
-) -> DirectionLibrary:
-    """只读端点统一入口：库存在 + 对请求者可见（公共库与无主库全员，个人库仅创建者，
-    见 services/libraries.library_visible_to）；不可见按不存在处理（404），避免个人库经 id
-    泄漏内容。"""
-    library = await _get_library(session, library_id)
-    if not libraries_service.library_visible_to(library, user):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
-    return library
-
-
 async def _reads_with_extras(
     session: AsyncSession, papers: list, user_id: uuid.UUID, *, library_id: uuid.UUID
 ) -> list[PaperRead]:
@@ -163,15 +140,11 @@ async def _reads_with_extras(
 
 @router.get("/libraries", response_model=list[DirectionLibrarySummary])
 async def list_libraries(
-    type: str | None = Query(default=None, pattern="^(personal|public|all)$"),
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    _user: User = Depends(current_active_user),
 ) -> list[DirectionLibrarySummary]:
-    """可见方向库（P10）：自己的个人库 + 全部公共库 + 无主库。
-
-    可选 ``type``（personal|public|all，默认 all）在可见集合内进一步筛选。
-    """
-    rows = await libraries_service.list_libraries_overview(session, user=user, type=type)
+    """全部方向库。"""
+    rows = await libraries_service.list_libraries_overview(session)
     return [DirectionLibrarySummary(**row) for row in rows]
 
 
@@ -203,11 +176,7 @@ async def create_library(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
-    """用户独立新建方向文献库（任意登录用户，P10）：新库即刻可用的**个人库**
-    （is_public=false，仅创建者可见，token 记创建者账）。创建者记为 submitted_by；
-    想公开给所有人在库设置里直接打开 is_public（审批流已随 #593/#596 移除）。
-    不属于任何课题。
-    """
+    """新建方向文献库：即刻可用，不属于任何课题。"""
     _require_known_discipline(data.discipline)
     library = await libraries_service.create_library(
         session,
@@ -222,7 +191,7 @@ async def create_library(
         created_by=user.id,
     )
     await session.commit()
-    row = await libraries_service.library_overview(session, library=library, user=user)
+    row = await libraries_service.library_overview(session, library=library)
     return DirectionLibraryDetail(**row)
 
 
@@ -270,10 +239,7 @@ async def get_library(
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
     library = await _get_library(session, library_id)
-    # 可见性（P10）：个人库仅创建者可见，其余人视为不存在（404，不泄漏存在性）。
-    if not libraries_service.library_visible_to(library, user):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
-    row = await libraries_service.library_overview(session, library=library, user=user)
+    row = await libraries_service.library_overview(session, library=library)
     return DirectionLibraryDetail(**row)
 
 
@@ -285,7 +251,7 @@ async def list_library_digests(
     user: User = Depends(current_active_user),
 ) -> list[LibraryDigestSummary]:
     """按日期倒序列出文献库每日简报；正文由详情端点按需读取。"""
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     rows = await research_digest_service.list_digest_summaries(
         session, library_id=library.id, limit=limit
     )
@@ -304,7 +270,7 @@ async def generate_library_digest(
     queue: TaskQueue = Depends(get_task_queue),
 ) -> DigestGenerateRead:
     """生成今日简报：有今日更新则直接生成，否则先执行一次增量同步。"""
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     project = (
         await session.get(Project, library.project_id) if library.project_id is not None else None
     )
@@ -333,7 +299,7 @@ async def get_library_digest(
     user: User = Depends(current_active_user),
 ) -> LibraryDigestRead:
     """读取一份每日简报及该次同步形成的滚动趋势快照。"""
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     digest = await research_digest_service.get_digest(
         session, library_id=library.id, digest_id=digest_id
     )
@@ -349,18 +315,18 @@ async def update_library(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
-    """编辑库定义（可管理者）：name/monthly_budget/is_public（公开给所有人）、
-    学科口径（discipline，决定本库论文按哪套抽取 schema 走）与收录
-    配置（statement/cadence/rubric/anchors/keywords/goals/scope/questions）。
+    """编辑库定义：name/monthly_budget、学科口径（discipline，决定本库论文按哪套
+    抽取 schema 走）与收录配置（statement/cadence/rubric/anchors/keywords/goals/
+    scope/questions）。
 
     P8a：收录配置写入 library.definition（ingest 唯一权威源），不再写回起源课题。
     """
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     fields = data.model_dump(exclude_unset=True)
     _require_known_discipline(fields.get("discipline"))
     if fields:
         library = await libraries_service.update_library(session, library=library, fields=fields)
-    row = await libraries_service.library_overview(session, library=library, user=user)
+    row = await libraries_service.library_overview(session, library=library)
     return DirectionLibraryDetail(**row)
 
 
@@ -371,17 +337,14 @@ async def delete_library(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> None:
-    """删库（P10）：创建者本人可删，无主库谁都能删（否则 403，口径见
-    services/libraries.can_delete_library）。论文内容池行不动，库内论文行/概念一并清除。
+    """删库。论文内容池行不动，库内论文行/概念一并清除。
 
     仍有课题关联时默认拒绝（409 LIBRARY_HAS_TOPICS），带 ``?force=true`` 才会
     一并解除关联（不影响课题本身，课题只是失去这条语料来源）。
     """
     library = await _get_library(session, library_id)
     try:
-        await libraries_service.delete_library(session, library=library, user=user, force=force)
-    except libraries_service.LibraryDeleteForbiddenError as e:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_DELETE_FORBIDDEN") from e
+        await libraries_service.delete_library(session, library=library, force=force)
     except libraries_service.LibraryHasTopicsError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_HAS_TOPICS") from e
 
@@ -397,7 +360,7 @@ async def get_library_budget(
     #734 起纯展示：monthly_budget 只是参考上限，exhausted 也只是「用量超过了
     参考上限」的提示——不再有任何任务因此被拒绝或暂停。
     """
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     usage = await ingest_service.monthly_library_usage(session, library.id)
     budget = library.monthly_budget
     used = int(usage["total_tokens"])
@@ -429,7 +392,7 @@ async def start_library_ingest(
     独立建的库（project_id 为空）由此入口驱动 ingest；起源课题的隐式库同时
     带上 project 以兼容活动流/鉴权。互斥以库为准。
     """
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     project = (
         await session.get(Project, library.project_id) if library.project_id is not None else None
     )
@@ -481,7 +444,7 @@ async def list_library_papers(
     过滤参数与课题论文列表一致（星标/阅读状态/标签/作者/机构/发表与入库时间）；
     ``status=excluded`` 取该库回收站。P9e 起标签是库作用域，独立库同样可用。
     """
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     items, total = await papers_service.list_papers(
         session,
         library_id=library.id,
@@ -526,7 +489,7 @@ async def get_library_paper(
     跨库归并（对照 :func:`papers_service.get_paper_for_user` 的确定性归并）。库不含
     该论文 → 404。读端点按库可见性可读（同本文件其它读端点）。
     """
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     view = await papers_service.get_library_paper_view(
         session,
         library_id=library.id,
@@ -548,7 +511,7 @@ async def _managed_library_paper_view(
     with_concepts: bool = False,
 ) -> papers_service.PaperView:
     """可管理者精确锁定本库那份成员行（回收站召回/彻底删除用；不跨库归并）。"""
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     view = await papers_service.get_library_paper_view(
         session,
         library_id=library.id,
@@ -598,7 +561,7 @@ async def list_library_concepts(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[ConceptRead]:
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     rows = await concepts_service.list_concepts(
         session, library_ids=[library.id], category=category, q=q
     )
@@ -624,7 +587,7 @@ async def list_library_methods(
     user: User = Depends(current_active_user),
 ) -> list[MethodCardRead]:
     """方法库列表（#663）：库内已抽出方法卡的论文，按入库时间倒序。"""
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     cards = await method_index_service.list_methods(session, library.id, limit=limit)
     return [MethodCardRead.model_validate(card) for card in cards]
 
@@ -640,7 +603,7 @@ async def search_library_methods(
 ) -> MethodSearchResponse:
     """方法检索（#663）：same_purpose 找同类做法；different_mechanism 找「目的相近、
     机制不同」的类比做法。嵌入不可用时降级关键词匹配，mode_used 如实上报。"""
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     items, mode_used = await method_index_service.search_methods(
         session, library.id, q, mode=mode, limit=limit, user_id=user.id
     )
@@ -664,11 +627,11 @@ async def list_library_gaps(
 ) -> LibraryGapsRead:
     """库级缺口与负结果台账（#665）：聚合库内论文的 gaps@1 抽取产物。
 
-    只读端点走库可见性（公共库全员、个人库仅创建者）。没抽过就是空列表不是
+    没抽过就是空列表不是
     404——前端「研究缺口」页据此显示「还没有条目」。矛盾对是启发式配对
     （heuristic 恒 True），语义见 services/gap_ledger.py。
     """
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     entries = await gap_ledger_service.library_gaps(session, library.id, kind=kind, top=top)
     pairs = gap_ledger_service.find_contradiction_pairs(entries)
 
@@ -703,7 +666,7 @@ async def build_library_comparison(
     条数越界由 body 校验挡（422）；所选论文不属本库按 404——与库不可见同一
     口径，不泄漏内容池里该论文是否存在。
     """
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     try:
         table = await comparison_service.build_comparison(session, library.id, data.paper_ids)
     except comparison_service.PaperNotInLibraryError as exc:
@@ -724,7 +687,7 @@ async def search_library(
     user: User = Depends(current_active_user),
 ) -> SearchResponse:
     """库内检索（关键词/语义）。语义模式的 embed/rerank 记个人账（无课题上下文）。"""
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
 
     mode_used = "keyword"
     reranked = False
@@ -797,7 +760,7 @@ async def export_library_citations(
     不传 ids 导出全库在库论文（缺省 status in compiled/included）；ids 指定时按 id
     精确导出（多选导出），非成员/回收站（excluded）不含。
     """
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     paper_ids: list[uuid.UUID] | None = None
     if ids:
         try:
@@ -834,7 +797,7 @@ async def export_library_obsidian(
     语料 = 本库在库论文（compiled/included）+ 本库概念；笔记只含请求者本人的。
     与课题版同一套 vault 结构，只是范围换成单个库。
     """
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     content = await build_obsidian_zip_for_libraries(
         session, library_ids=[library.id], title=library.name, user_id=user.id
     )
@@ -869,7 +832,7 @@ async def add_library_paper_manually(
 
     同步只建元数据行；下载/抽取/向量化/打分由后台任务完成，响应回传 task_id。
     """
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     try:
         result = await paper_import_service.add_manual_paper_to_library(
             session,
@@ -935,7 +898,7 @@ async def add_library_papers_manually_batch(
     redis: Redis = Depends(get_redis_dep),
 ) -> PaperManualBatchTaskRead:
     """批量添加 1–50 篇文献到指定库；逐项结果通过 paper-task SSE 返回。"""
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     task_id = await paper_enrich_service.launch_paper_batch_import(
         redis=redis,
         items=[item.model_dump() for item in data.items],
@@ -979,7 +942,7 @@ async def import_library_zotero(
     三级去重、挂附件、后台补全都在 zotero_import 任务里做；进度与结果走
     /paper-tasks/{task_id}/events（与批量手动添加同一事件口径）。
     """
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     raw = await bib.read(MAX_ZOTERO_BIB_BYTES + 1)
     if len(raw) > MAX_ZOTERO_BIB_BYTES:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="ZOTERO_BIB_TOO_LARGE")
@@ -1047,7 +1010,7 @@ async def batch_delete_library_papers(
     user: User = Depends(current_active_user),
 ) -> dict[str, int]:
     """批量删除库内论文（非本库的 id 忽略），返回 {deleted}。默认软删；hard=true 彻底删除。"""
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     deleted = await papers_service.delete_library_papers(
         session, library=library, paper_ids=data.paper_ids, hard=data.hard
     )
@@ -1061,7 +1024,7 @@ async def empty_library_trash(
     user: User = Depends(current_active_user),
 ) -> dict[str, int]:
     """清空该库回收站：彻底删除库内全部已删除论文成员行。"""
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     deleted = await papers_service.empty_library_trash(session, library=library)
     return {"deleted": deleted}
 
@@ -1073,7 +1036,7 @@ async def list_library_tags(
     user: User = Depends(current_active_user),
 ) -> list[TagRead]:
     """库标签列表（含引用论文数）。"""
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     rows = await papers_service.list_library_tags(session, library_id=library.id)
     return [TagRead(**row) for row in rows]
 
@@ -1085,7 +1048,7 @@ async def get_library_ingest_state(
     user: User = Depends(current_active_user),
 ) -> IngestStateRead:
     """该库的建库/同步状态：上次同步时间、抓取进度计数、在跑任务、下次自动同步（可管理者）。"""
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     state = await ingest_service.library_ingest_state(session, library, user=user)
     return IngestStateRead(**state)
 
@@ -1101,7 +1064,7 @@ async def relink_library_concepts(
     幂等；面向历史数据（编译过但概念上链没跑到的论文）。新概念定义分批调 LLM，
     并回填此前留下的占位概念，失败降级为占位、不阻塞。计本库预算。
     """
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     stats, _papers = await concepts_service.link_all_paper_concepts(
         session,
         library_id=library.id,
@@ -1123,7 +1086,7 @@ async def rebuild_library_fulltext_index(
 
     幂等：已有分段的论文跳过；新入库论文由建库流水线自动处理，通常无需手动调用。
     """
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     try:
         return await chunks_service.rebuild_library_fulltext_index(
             session,
@@ -1146,7 +1109,7 @@ async def library_graph(
     user: User = Depends(current_active_user),
 ) -> GraphResponse:
     """库知识图谱：论文 / 作者 / 概念节点与关联边（确定性构建，不走 LLM；按库可见性可读）。"""
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     data = await graph_service.library_graph(session, library_id=library.id)
     return GraphResponse(**data)
 
@@ -1163,7 +1126,7 @@ async def list_library_concept_pairs(
     确定性挖掘（不走 LLM），随读即时计算——数据永远反映当前概念上链结果；
     鉴权与图谱同口径（按库可见性可读）。
     """
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     pairs = await concept_fuels_service.mine_unconnected_pairs(
         session, library_id=library.id, top_n=top
     )
@@ -1181,7 +1144,7 @@ async def library_notebook(
     user: User = Depends(current_active_user),
 ) -> NotebookPage:
     """库笔记本：我在该库论文上写的笔记聚合（搜索 + 分页 + 按论文过滤）。"""
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     rows, total = await notes_service.list_library_notes(
         session,
         library_id=library.id,
@@ -1218,7 +1181,7 @@ async def chat_with_library(
 
     事件：``sources``（引用来源清单）→ ``delta``* → ``done``；错误 ``error`` 后关流。
     """
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
     project_id = library.project_id
     history = library_chat_service.history_from_turns(data.history[-20:])  # 最多 10 轮
@@ -1245,7 +1208,7 @@ async def library_qa(
     引文图补召回 → 重排 → 证据先行作答），返回结构化证据集，每条引用都可回溯到
     库内片段。按库可见性可读，费用记个人。
     """
-    library = await _get_visible_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     try:
         result = await library_rag_service.answer(
             session,
@@ -1275,7 +1238,7 @@ async def list_duplicate_candidates(
     user: User = Depends(current_active_user),
 ) -> list[DuplicateCandidateGroup]:
     """库内疑似重复论文（可管理者）：arxiv/doi 同源不同行，或规范化标题相同。"""
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_library(session, library_id)
     groups = await paper_merge_service.duplicate_candidates(session, library_id=library.id)
     return [DuplicateCandidateGroup(**group) for group in groups]
 
@@ -1288,26 +1251,16 @@ async def merge_papers(
 ) -> PaperMergeResult:
     """合并重复论文（不可撤销）：drop 行的全部归属并入 keep 后删除 drop。
 
-    权限：keep/drop 任一所在方向库的可管理者。
+    只合并库里的论文：keep/drop 都不在任何方向库里时拒绝（403）。
     """
-    libraries = (
-        (
-            await session.execute(
-                select(DirectionLibrary)
-                .join(LibraryPaper, LibraryPaper.library_id == DirectionLibrary.id)
-                .where(LibraryPaper.paper_id.in_([data.keep_id, data.drop_id]))
-                .distinct()
-            )
+    in_a_library = (
+        await session.execute(
+            select(LibraryPaper.id)
+            .where(LibraryPaper.paper_id.in_([data.keep_id, data.drop_id]))
+            .limit(1)
         )
-        .scalars()
-        .all()
-    )
-    allowed = False
-    for library in libraries:
-        if await libraries_service.can_manage_library(session, user=user, library=library):
-            allowed = True
-            break
-    if not allowed:
+    ).first()
+    if in_a_library is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="PAPER_MERGE_FORBIDDEN")
     try:
         report = await paper_merge_service.merge_papers(

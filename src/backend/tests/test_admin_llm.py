@@ -592,11 +592,9 @@ async def test_routes_effort_roundtrip_and_validation(client):
 
 
 async def test_legacy_self_managed_rows_stay_invisible(client):
-    """自管轨退役（#621）后，存量 owner=<user> 私有行不得混进平台配置。
-
-    #621 只删了入口和 users.llm_self_managed，没有清 llm_providers/model_routes
-    里的私有数据行——老部署上它们还躺着。这条钉住三件事：管理端列表看不到、
-    按 id 摸不到（防止改到别人的旧 key）、resolve 也绝不选中它们。
+    """配置只有一张表（#842）：万一库里还留着 owner_id 非空的旧行（迁移 3c7d9e1f5a20
+    本该把它们并成 NULL），也不得混进来。钉住三件事：管理端列表看不到、按 id 摸不到、
+    resolve 也绝不选中它们。
     """
     from app.core.llm.router import get_llm_router
 
@@ -646,8 +644,6 @@ async def test_legacy_self_managed_rows_stay_invisible(client):
         headers=h,
     )
     assert resp.status_code == 400
-    # resolve 带不带 user_id 都只认平台配置
-    _, route = await router.resolve("default", user_id=me_id)
-    assert route.model == "g-model"
-    _, route = await router.resolve("default", user_id=None)
+    # resolve 只认 NULL 那张表
+    _, route = await router.resolve("default")
     assert route.model == "g-model"

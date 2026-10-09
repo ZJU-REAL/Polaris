@@ -23,7 +23,7 @@ from app.services import owner_settings
 
 logger = logging.getLogger(__name__)
 
-# TTS 全局档（上游地址/模型/默认音色）是用户偏好（#737 配置分层）：存 owner 用户的
+# TTS 全局档（上游地址/模型/默认音色）是用户偏好（#737 配置分层）：存本地用户的
 # settings['tts.admin']。
 # USER_SETTING_KEY 是另一层：每个用户各自的播放偏好（开关/语速），本来就在用户态。
 ADMIN_USER_KEY = "tts.admin"

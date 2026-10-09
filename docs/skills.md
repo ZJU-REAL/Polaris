@@ -96,8 +96,7 @@ Polaris, and nothing is distributed anywhere else. To share a skill across insta
 export/import (`polaris-skill@1` JSON packs).
 
 - **Publish to market** lists your skill's current version immediately — there is no review step.
-  On a single-user desktop install, publishing freezes a version as an installable snapshot; on a
-  multi-account server, other accounts can install it too.
+  Publishing freezes a version as an installable snapshot.
 - Listings can be **browsed, searched, and sorted** (newest or most-installed) and **installed to
   my skills** (installing copies the published version as your own editable skill).
 - A listing always points at the exact version that was published — later edits to your skill do not

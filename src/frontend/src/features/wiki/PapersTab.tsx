@@ -115,8 +115,6 @@ export interface PapersTabProps {
   pid?: string;
   /** 独立库作用域：给定时集合级调用走 /libraries/{id}/* 端点，并隐藏标签编辑/过滤 */
   libraryId?: string;
-  /** Whether the current user may upload and reprocess assets in this library. */
-  canManage?: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onOpenConcept: (id: string) => void;
@@ -815,7 +813,6 @@ function PaperDetailPane({
   paperId,
   pid,
   libraryId,
-  canManage,
   onOpenConcept,
   onWikiLink,
   onFilterAuthor,
@@ -829,7 +826,6 @@ function PaperDetailPane({
   paperId: string;
   pid: string;
     libraryId?: string;
-    canManage: boolean;
   onOpenConcept: (id: string) => void;
   onWikiLink: WikiLinkHandler;
   /** 点击作者名 → 论文库按该作者过滤 */
@@ -1064,7 +1060,7 @@ function PaperDetailPane({
             {tr('原文链接', 'Source link')}
           </a>
         )}
-        {libraryId && canManage && (
+        {libraryId && (
           <button
             className="btn btn-ghost sm"
             disabled={sendingToExtension || !canSendToExtension(paper.status)}
@@ -1087,7 +1083,6 @@ function PaperDetailPane({
             libraryId={libraryId}
             paperId={paper.id}
             doi={paper.doi}
-            canManage={canManage}
           />
         )}
 
@@ -1317,7 +1312,7 @@ function PaperDetailPane({
 
 /* ---------------- Tab 主体 ---------------- */
 
-export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSelect, onOpenConcept, onWikiLink, advSeed }: PapersTabProps) {
+export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept, onWikiLink, advSeed }: PapersTabProps) {
   const scopeId = libraryId ?? pid ?? '';
   const [view, setView] = useState<ViewFilter>('all');
   const [sort, setSort] = useState<PaperSort>('relevance');
@@ -1890,7 +1885,7 @@ export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSel
                   {tr('对比', 'Compare')}
                 </button>
               )}
-              {libraryId && canManage && (
+              {libraryId && (
                 <button
                   className="btn btn-soft sm"
                   disabled={selected.size === 0 || extensionBatchMutation.isPending}
@@ -1902,7 +1897,7 @@ export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSel
               )}
             </>
           )}
-          {libraryId && canManage && (
+          {libraryId && (
             <button className="btn btn-ghost sm" onClick={() => setExtensionHistoryOpen(true)}>
               <Icon name="clock" size={13} />
               {tr('扩展任务', 'Extension batches')}
@@ -1926,7 +1921,6 @@ export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSel
             paperId={selectedId}
             pid={pid ?? ''}
             libraryId={libraryId}
-            canManage={canManage}
             onOpenConcept={onOpenConcept}
             onWikiLink={onWikiLink}
             onFilterAuthor={filterByAuthor}
@@ -1949,7 +1943,7 @@ export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSel
 
       {/* —— 回收站 —— */}
       <PapersTrashModal pid={pid ?? ''} libraryId={libraryId} open={trashOpen} onClose={() => setTrashOpen(false)} />
-      {libraryId && canManage && (
+      {libraryId && (
         <ExtensionBatchHistoryModal
           libraryId={libraryId}
           open={extensionHistoryOpen}

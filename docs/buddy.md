@@ -98,7 +98,7 @@ Buddy cannot write to anything except its own opt-in memory.
 
 The bar above the input box shows what this question can reach. By default it follows the topic you
 are working in; click it to pick another topic, or choose **All assets** to search everything you can
-see. Lab-level assets (the daily feed, public libraries) are always included — they belong to no
+see. The daily feed and your direction libraries are always included — they belong to no
 topic. Once you pick a scope by hand, it stays put instead of following your navigation. Each
 conversation remembers the scope it was asked in.
 

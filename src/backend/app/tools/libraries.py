@@ -4,8 +4,7 @@
 「这个课题的语料从哪来、够不够、上游还有什么没收进来」，就需要看得到库清单、
 单库详情与上游的每日池——这三件事以前只有网页端有。
 
-可见范围完全复用 ``libraries_service`` 的既有口径（个人库仅本人 + 全部公共库），
-MCP 不放宽任何一寸。
+单用户本地应用：所有库都是这个人的，不按人筛。
 """
 
 from __future__ import annotations
@@ -15,7 +14,6 @@ import uuid
 from typing import Any
 
 from app.core.db import get_sessionmaker
-from app.models.user import User
 from app.services import daily_feed as daily_service
 from app.services import libraries as libraries_service
 from app.tools.context import ToolContext
@@ -28,38 +26,23 @@ _STATEMENT_CHARS = 1200
 _ABSTRACT_CHARS = 400
 
 
-async def _require_user(session: Any, ctx: ToolContext) -> User:
-    """库可见性判定要完整 User（归属判定），ToolContext 只带 user_id。"""
-    user = await session.get(User, ctx.user_id) if ctx.user_id is not None else None
-    if user is None:
-        raise ValueError("该工具需要用户身份（系统内部调用不可用）")
-    return user
-
-
 def _library_brief(row: dict[str, Any], *, linked: bool) -> dict[str, Any]:
     return {
         "library_id": str(row["id"]),
         "name": row["name"],
-        "is_public": row["is_public"],
         "paper_count": row["paper_count"],
         "concept_count": row["concept_count"],
         "linked_to_this_topic": linked,
-        "owner_name": row.get("owner_name"),
         "last_synced_at": row.get("last_synced_at"),
     }
 
 
 @tool(
     "list_libraries",
-    description="列出当前用户可见的方向文献库，含论文与概念计数，以及是否已关联到本课题",
+    description="列出方向文献库，含论文与概念计数，以及是否已关联到本课题",
     input_schema={
         "type": "object",
         "properties": {
-            "type": {
-                "type": "string",
-                "enum": ["all", "personal", "public"],
-                "description": "默认 all",
-            },
             "linked_only": {
                 "type": "boolean",
                 "description": "只看已关联到本课题的库（即本课题的语料来源），默认 false",
@@ -70,12 +53,10 @@ def _library_brief(row: dict[str, Any], *, linked: bool) -> dict[str, Any]:
     summarize=lambda a, r: f"文献库清单（{len(r.get('libraries') or [])} 个）",
 )
 async def list_libraries(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
-    want = str(args.get("type") or "all")
     linked_only = args.get("linked_only", False) is True
     limit = min(_MAX_LIBRARIES, max(1, int(args.get("limit") or 50)))
     async with get_sessionmaker()() as session:
-        user = await _require_user(session, ctx)
-        rows = await libraries_service.list_libraries_overview(session, user=user, type=want)
+        rows = await libraries_service.list_libraries_overview(session)
         linked_ids = set(await library_ids_for(session, ctx))
     briefs = [_library_brief(r, linked=r["id"] in linked_ids) for r in rows]
     if linked_only:
@@ -99,12 +80,10 @@ async def get_library(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     except (ValueError, TypeError) as e:
         raise ValueError(f"library_id 不是合法 uuid：{args.get('library_id')}") from e
     async with get_sessionmaker()() as session:
-        user = await _require_user(session, ctx)
         library = await libraries_service.get_library(session, library_id)
-        # 不可见与不存在一律同一口径，不泄露存在性
-        if library is None or not libraries_service.library_visible_to(library, user):
-            raise ValueError(f"文献库不存在或无权访问：{args.get('library_id')}")
-        row = await libraries_service.library_overview(session, library=library, user=user)
+        if library is None:
+            raise ValueError(f"文献库不存在：{args.get('library_id')}")
+        row = await libraries_service.library_overview(session, library=library)
         linked_ids = set(await library_ids_for(session, ctx))
     definition = row.get("definition") or {}
     return {

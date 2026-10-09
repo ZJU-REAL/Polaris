@@ -243,8 +243,8 @@ async def forge_read_context(ctx: ActionContext, params: dict[str, Any]) -> dict
     # 多长、整段知识库上下文总共多长。默认 800 / 12000，与改成可调之前一致。
     # 截断顺序：先按单篇截，再按总长截——总长截断会落在某一篇中间，排在后面（相关性
     # 更低）的论文先被挤掉。
-    excerpt_chars = await resolve_budget(ctx.llm, FORGE_EXCERPT, ctx.run.created_by)
-    context_chars = await resolve_budget(ctx.llm, FORGE_CONTEXT, ctx.run.created_by)
+    excerpt_chars = await resolve_budget(ctx.llm, FORGE_EXCERPT)
+    context_chars = await resolve_budget(ctx.llm, FORGE_CONTEXT)
     parts = []
     for paper in papers:
         excerpt = (wiki_of.get(paper.id) or "")[:excerpt_chars]

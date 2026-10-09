@@ -22,7 +22,7 @@ _LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
 
 
 class TranslationRouter(Protocol):
-    async def model_name(self, stage: str, user_id: uuid.UUID | None = None) -> str | None: ...
+    async def model_name(self, stage: str) -> str | None: ...
 
     async def complete(self, stage: str, messages: Sequence[Message], **kwargs: Any): ...
 
@@ -65,15 +65,15 @@ def source_hash(hit: LiteratureSearchHit) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-async def model_version(llm: TranslationRouter, user_id: uuid.UUID | None) -> str:
+async def model_version(llm: TranslationRouter) -> str:
     resolve = getattr(llm, "resolve", None)
     if callable(resolve):
-        _, route = await resolve(TRANSLATION_STAGE, user_id)
+        _, route = await resolve(TRANSLATION_STAGE)
         provider = str(getattr(route, "provider_name", "") or "default")
         model = str(getattr(route, "model", "") or "")
         if model:
             return f"{provider}:{model}"[:255]
-    model = await llm.model_name(TRANSLATION_STAGE, user_id)
+    model = await llm.model_name(TRANSLATION_STAGE)
     if not model:
         raise TranslationOutputError("TRANSLATION_MODEL_UNAVAILABLE")
     return str(model)[:255]
@@ -231,7 +231,7 @@ async def execute_translation(
         await session.commit()
         return row
     try:
-        current_model = await model_version(llm, user_id)
+        current_model = await model_version(llm)
         if current_model != row.model_version:
             raise TranslationOutputError("TRANSLATION_MODEL_CHANGED")
         source = source_fields(hit)

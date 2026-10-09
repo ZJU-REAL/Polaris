@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from sqlalchemy import Select, delete, func, or_, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.library_direction import (
@@ -255,50 +255,19 @@ def dedupe_member_rows(
     return list(best.values())
 
 
-def visible_library_clause(user_id: uuid.UUID):
-    """「这个库我够得着吗」——库作用域读取口的统一条件，作用于 ``DirectionLibrary.id``。
+def library_paper_stmt() -> Select:
+    """论文与其所在库的成员行：SELECT (Paper, LibraryPaper, project_id)。
 
-    够得着 = 库被我的某个课题关联 ∪ 我创建的库 ∪ 无主库。
-
-    「我课题的库」走关联表 ``topic_source_libraries`` —— 课题与库是多对多关联，
-    不是 project_id 回指。按 project_id 判会漏掉课题关联的独立库（那才是常态：
-    P9c 起建课题不再自动建库），也会算进已经不再关联的历史起源库。
-
-    单独抽出来是因为不止论文要用：全局搜索的论文与概念两支都得用同一条判据，
-    各写一遍迟早会分叉——而搜索一旦比列表页宽，就是越权，比漏搜严重得多。
-    """
-    my_projects = select(Project.id).where(Project.owner_id == user_id)
-    my_topic_libraries = select(TopicSourceLibrary.library_id).where(
-        TopicSourceLibrary.topic_id.in_(my_projects)
-    )
-    # admin 全局可见旁路已随 role 移除（#614）；无主库（submitted_by 为空）保持
-    # 全员可见——与 library_visible_to / can_manage_library 同口径，别让列表与详情打架
-    return or_(
-        DirectionLibrary.id.in_(my_topic_libraries),
-        DirectionLibrary.submitted_by == user_id,
-        DirectionLibrary.submitted_by.is_(None),
-    )
-
-
-def visible_library_ids_stmt(user_id: uuid.UUID) -> Select:
-    """用户够得着的库 id（子查询用）。判据见 :func:`visible_library_clause`。"""
-    return select(DirectionLibrary.id).where(visible_library_clause(user_id))
-
-
-def user_visible_paper_stmt(user_id: uuid.UUID) -> Select:
-    """用户可见论文的成员行：SELECT (Paper, LibraryPaper, project_id)。
-
-    可见性判据见 :func:`visible_library_clause`。
+    单用户本地应用（#842）：每个库都是这个人的，不再按人筛库。
     """
     return (
         select(Paper, LibraryPaper, DirectionLibrary.project_id)
         .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
         .join(DirectionLibrary, DirectionLibrary.id == LibraryPaper.library_id)
-        .where(visible_library_clause(user_id))
     )
 
 
-# ---- 共享方向库读视图（P5c：公共库全员可读，docs-dev/workspace-ia-redesign.md §2/§5） ----
+# ---- 方向库读视图 ----
 
 
 def _last_synced_of(ingest_state: Any) -> Any:
@@ -360,26 +329,12 @@ async def _library_stats(
     return paper_counts, last_compiled, concept_counts
 
 
-async def _my_linked_library_ids(session: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
-    """被我的课题关联的库 id（P7：is_mine 按关联判定，而非起源课题）。"""
-    rows = await session.execute(
-        select(TopicSourceLibrary.library_id)
-        .join(Project, Project.id == TopicSourceLibrary.topic_id)
-        .where(Project.owner_id == user_id)
-    )
-    return set(rows.scalars().all())
-
-
 def _overview_dict(
     library: DirectionLibrary,
     *,
-    my_linked: set[uuid.UUID],
-    can_manage: bool,
     paper_count: int,
     concept_count: int,
     last_compiled_at: Any,
-    owner_name: str | None = None,
-    is_owner: bool = False,
 ) -> dict[str, Any]:
     return {
         "id": library.id,
@@ -392,12 +347,6 @@ def _overview_dict(
         "monthly_budget": library.monthly_budget,
         "definition": library_definition(library),
         "project_id": library.project_id,
-        "is_public": library.is_public,
-        "submitted_by": library.submitted_by,
-        "owner_name": owner_name,
-        "is_owner": is_owner,
-        "is_mine": library.id in my_linked,
-        "can_manage": can_manage,
         "paper_count": paper_count,
         "concept_count": concept_count,
         "last_compiled_at": last_compiled_at,
@@ -407,112 +356,43 @@ def _overview_dict(
     }
 
 
-async def _owner_names(
-    session: AsyncSession, submitted_by: Iterable[uuid.UUID | None]
-) -> dict[uuid.UUID, str | None]:
-    """批量取库创建者的展示名（submitted_by → display_name），避免逐库 N+1。"""
-    ids = {uid for uid in submitted_by if uid is not None}
-    if not ids:
-        return {}
-    rows = await session.execute(select(User.id, User.display_name).where(User.id.in_(ids)))
-    return {uid: name for uid, name in rows.all()}
-
-
-async def list_libraries_overview(
-    session: AsyncSession,
-    *,
-    user: User,
-    type: str | None = None,
+async def _overviews(
+    session: AsyncSession, libraries: Sequence[DirectionLibrary]
 ) -> list[dict[str, Any]]:
-    """可见方向库 + 概要统计（P10）。
+    paper_counts, last_compiled, concept_counts = await _library_stats(
+        session, [lib.id for lib in libraries]
+    )
+    return [
+        _overview_dict(
+            lib,
+            paper_count=paper_counts.get(lib.id, 0),
+            concept_count=concept_counts.get(lib.id, 0),
+            last_compiled_at=last_compiled.get(lib.id),
+        )
+        for lib in libraries
+    ]
 
-    可见范围：自己的个人库（submitted_by==me 且非 public）∪ 全部公共库（is_public）
-    ∪ 无主库。可选 ``type``（personal|public|all，默认 all）在可见集合内进一步筛选
-    （不影响可见性边界）。
-    """
+
+async def list_libraries_overview(session: AsyncSession) -> list[dict[str, Any]]:
+    """全部方向库 + 概要统计（按创建先后）。"""
     libraries = (
         (await session.execute(select(DirectionLibrary).order_by(DirectionLibrary.created_at)))
         .scalars()
         .all()
     )
-    paper_counts, last_compiled, concept_counts = await _library_stats(
-        session, [lib.id for lib in libraries]
-    )
-    my_linked = await _my_linked_library_ids(session, user.id)
-    owner_names = await _owner_names(session, (lib.submitted_by for lib in libraries))
-    want = (type or "all").lower()
-    result: list[dict[str, Any]] = []
-    for lib in libraries:
-        if not library_visible_to(lib, user):
-            continue
-        if want == "personal" and lib.is_public:
-            continue
-        if want == "public" and not lib.is_public:
-            continue
-        result.append(
-            _overview_dict(
-                lib,
-                my_linked=my_linked,
-                can_manage=can_manage_library_row(user=user, library=lib),
-                paper_count=paper_counts.get(lib.id, 0),
-                concept_count=concept_counts.get(lib.id, 0),
-                last_compiled_at=last_compiled.get(lib.id),
-                owner_name=owner_names.get(lib.submitted_by),
-                is_owner=lib.submitted_by == user.id,
-            )
-        )
-    return result
+    return await _overviews(session, libraries)
 
 
-def library_visible_to(library: DirectionLibrary, user: User) -> bool:
-    """库对请求者是否可见（P10）：公共库（is_public）与无主库全员可读；个人库仅
-    创建者（admin 旁路已随 role 移除，#614；无主库口径与 can_manage_library 一致）。"""
-    if library.is_public or library.submitted_by is None:
-        return True
-    return library.submitted_by == user.id
-
-
-async def library_overview(
-    session: AsyncSession, *, library: DirectionLibrary, user: User
-) -> dict[str, Any]:
+async def library_overview(session: AsyncSession, *, library: DirectionLibrary) -> dict[str, Any]:
     """单库详情概要（同列表口径）。"""
-    paper_counts, last_compiled, concept_counts = await _library_stats(session, [library.id])
-    my_linked = await _my_linked_library_ids(session, user.id)
-    owner_names = await _owner_names(session, [library.submitted_by])
-    return _overview_dict(
-        library,
-        my_linked=my_linked,
-        can_manage=await can_manage_library(session, user=user, library=library),
-        paper_count=paper_counts.get(library.id, 0),
-        concept_count=concept_counts.get(library.id, 0),
-        last_compiled_at=last_compiled.get(library.id),
-        owner_name=owner_names.get(library.submitted_by),
-        is_owner=library.submitted_by == user.id,
-    )
+    return (await _overviews(session, [library]))[0]
 
 
 async def source_libraries_overview(
-    session: AsyncSession, *, topic_id: uuid.UUID, user: User
+    session: AsyncSession, *, topic_id: uuid.UUID
 ) -> list[dict[str, Any]]:
     """课题关联库 + 概要统计（同列表口径，按关联建立时间）。"""
-    libraries = await get_source_libraries(session, topic_id)
-    ids = [lib.id for lib in libraries]
-    paper_counts, last_compiled, concept_counts = await _library_stats(session, ids)
-    my_linked = await _my_linked_library_ids(session, user.id)
-    owner_names = await _owner_names(session, (lib.submitted_by for lib in libraries))
-    return [
-        _overview_dict(
-            lib,
-            my_linked=my_linked,
-            can_manage=can_manage_library_row(user=user, library=lib),
-            paper_count=paper_counts.get(lib.id, 0),
-            concept_count=concept_counts.get(lib.id, 0),
-            last_compiled_at=last_compiled.get(lib.id),
-            owner_name=owner_names.get(lib.submitted_by),
-            is_owner=lib.submitted_by == user.id,
-        )
-        for lib in libraries
-    ]
+    return await _overviews(session, await get_source_libraries(session, topic_id))
 
 
 async def default_library_sources(session: AsyncSession, discipline: str | None) -> list[str]:
@@ -542,9 +422,7 @@ async def create_library(
 ) -> DirectionLibrary:
     """用户独立新建方向文献库（P10；``project_id`` 恒为 NULL——不属于任何课题，靠关联被消费）。
 
-    任意登录用户可建，新库即刻可用、默认 ``is_public=false``（仅创建者可见，token 记
-    创建者账）。创建者记为 ``submitted_by``。想公开给所有人：创建者在库设置里直接打开
-    ``is_public``（审批流已随 #593/#596 移除）。
+    新库即刻可用。创建者记为 ``submitted_by``（只是记录，不再用于任何权限判断）。
 
     flush + refresh，不 commit（调用方 api 层负责事务收尾）。
     """
@@ -583,46 +461,14 @@ async def create_library(
     return library
 
 
-async def can_manage_library(
-    session: AsyncSession, *, user: User, library: DirectionLibrary
-) -> bool:
-    """库级写权限：创建者（submitted_by）；无主库（submitted_by 为空的存量/系统库）
-    谁都能管——此前它们靠 admin 兜底维护，admin 旁路随 role 移除（#614）后，单机
-    档位登录即主人，不该留下一批谁都动不了的库。
-
-    起源课题的成员**不再**因这层关系拿到管理权：库与课题解耦后 project_id 只是
-    「这个库当初从哪个课题建的」的历史指针，不是归属。
-    """
-    return library.submitted_by is None or library.submitted_by == user.id
-
-
-def can_manage_library_row(*, user: User, library: DirectionLibrary) -> bool:
-    """:func:`can_manage_library` 的同步批量版：规则一字不差（创建者 ∪ 无主库）。
-
-    规则**只能有一份**——两处各写各的正是此前「同一个库在列表里能管、点进
-    详情不能管」的来源。改动规则时两个函数一起改。
-    """
-    return library.submitted_by is None or library.submitted_by == user.id
-
-
 async def get_managed_project(
     session: AsyncSession, *, project_id: uuid.UUID, user: User
 ) -> Project | None:
-    """库管理入口的统一鉴权（project 作用域的文献管理端点用）：课题主人照常放行；
-    该课题隐式库的创建者同权；无权限视为不存在（返回 None）。"""
+    """project 作用域的文献管理端点取课题：不是这个用户的课题视为不存在（返回 None）。"""
     project = await session.get(Project, project_id)
-    if project is None:
+    if project is None or project.owner_id != user.id:
         return None
-    if project.owner_id == user.id:
-        return project
-    library = (
-        await session.execute(
-            select(DirectionLibrary).where(DirectionLibrary.project_id == project_id)
-        )
-    ).scalar_one_or_none()
-    if library is not None and library.submitted_by == user.id:
-        return project
-    return None
+    return project
 
 
 # PATCH 顶层便捷字段 → library.definition 的键（收录配置权威源）。statement/cadence/
@@ -652,7 +498,7 @@ async def update_library(
 ) -> DirectionLibrary:
     """编辑库定义（显式传 null 可清空）。P8a：库是收录配置的唯一权威源。
 
-    - name / monthly_budget / is_public 落标量列；
+    - name / monthly_budget / discipline 落标量列；
     - statement/cadence/rubric/anchors/keywords/questions/goals/scope 等收录配置写入
       library.definition（ingest 从这里取数），并把有对应标量列的键镜像回列供展示；
     - 允许整体传入 ``definition`` 一次性替换。
@@ -665,10 +511,6 @@ async def update_library(
     if "discipline" in fields:
         # 落标量列（不进 definition）：它不是收录配置，是抽取口径的选择
         library.discipline = fields["discipline"] or None
-    # 共享开关（#619）：审批流移除后由创建者直接设置；None（显式传 null）视为不改——
-    # 这个开关没有「清空」语义，误清成 False 会把公共库悄悄藏起来。
-    if fields.get("is_public") is not None:
-        library.is_public = bool(fields["is_public"])
 
     config_keys = [k for k in fields if k in _CONFIG_TO_DEFINITION]
     if "definition" in fields or config_keys:
@@ -700,31 +542,17 @@ class LibraryHasTopicsError(Exception):
     """库仍有课题关联，删除需要 force=true（先解绑或确认一并解除关联）。"""
 
 
-class LibraryDeleteForbiddenError(Exception):
-    """无权删除该库（仅创建者本人）。路由映射 403。"""
-
-
-def can_delete_library(library: DirectionLibrary, user: User) -> bool:
-    """删库权限：创建者本人；无主库谁都能删（与 can_manage_library 同口径，#614）。
-    公共/个人之分只剩历史语义，不再区分删除权限。"""
-    return library.submitted_by is None or library.submitted_by == user.id
-
-
 async def delete_library(
     session: AsyncSession,
     *,
     library: DirectionLibrary,
-    user: User,
     force: bool = False,
 ) -> None:
-    """删库：创建者本人可删，无主库谁都能删（口径同 ``can_delete_library``，#614 后无
-    admin 旁路；无权抛 ``LibraryDeleteForbiddenError`` → 403）。论文内容池行不动；
-    库内论文行/概念/课题关联行随库一并清除（DB ``ondelete=CASCADE``）。
+    """删库。论文内容池行不动；库内论文行/概念/课题关联行随库一并清除
+    （DB ``ondelete=CASCADE``）。
     有课题关联且未 ``force`` → 拒绝（``LibraryHasTopicsError``，路由映射 409，
     提示先解绑或带 force 确认）。
     """
-    if not can_delete_library(library, user):
-        raise LibraryDeleteForbiddenError(str(library.id))
     if not force:
         linked = (
             await session.execute(

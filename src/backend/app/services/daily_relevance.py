@@ -30,9 +30,7 @@ from app.core.embedding_space import EmbeddingSpace, active_space
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper
 from app.models.system_setting import SystemSetting
-from app.models.user import User
 from app.models.vectors import PaperVector
-from app.services.libraries import library_visible_to
 from app.services.papers import PAPER_STATUS_GROUPS
 from app.services.relevance import _include_keywords
 
@@ -76,10 +74,9 @@ def _anchor_setting_key(library_id: uuid.UUID) -> str:
     return f"{ANCHOR_SETTING_PREFIX}{library_id}"
 
 
-async def library_anchors(session: AsyncSession, *, user: User) -> list[LibraryAnchor]:
-    """请求者可见的库各出一个锚点；质心和关键词都没有的库不出（无从比较）。"""
-    libraries = (await session.execute(select(DirectionLibrary))).scalars().all()
-    visible = [lib for lib in libraries if library_visible_to(lib, user)]
+async def library_anchors(session: AsyncSession) -> list[LibraryAnchor]:
+    """每个库各出一个锚点；质心和关键词都没有的库不出（无从比较）。"""
+    visible = (await session.execute(select(DirectionLibrary))).scalars().all()
     if not visible:
         return []
     space = await active_space(session)

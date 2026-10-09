@@ -193,9 +193,9 @@ async def _resolve_library(session: AsyncSession, ctx: ActionContext) -> Directi
 
 
 def _ingest_billing_owner(library: DirectionLibrary) -> uuid.UUID | None:
-    """ingest LLM 调用的计费归属（P10）：公共库走全局/系统 key（None），个人库走
-    创建者 key（submitted_by）。token 记账仍按 library_id 落库（另经调用参数带上）。"""
-    return None if library.is_public else library.submitted_by
+    """ingest LLM 调用记在谁的用量上：建库的人（submitted_by）。token 记账另按
+    library_id 落库（经调用参数带上）。"""
+    return library.submitted_by
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -1635,7 +1635,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                 collect_affiliations=collect_affs,
             )
             # 解读全平台一份：写 paper_wikis（已有则覆盖成本次结果）。编译者记发起
-            # 本次同步的人（公共库的账记系统，billing_user_id 为空，但人是有的）
+            # 本次同步的人
             await upsert_wiki(
                 session,
                 paper=paper,

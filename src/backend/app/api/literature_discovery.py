@@ -46,19 +46,10 @@ router = APIRouter(tags=["literature-discovery"])
 logger = logging.getLogger(__name__)
 
 
-async def _library(session: AsyncSession, library_id: uuid.UUID, user: User) -> DirectionLibrary:
+async def _library(session: AsyncSession, library_id: uuid.UUID) -> DirectionLibrary:
     library = await libraries_service.get_library(session, library_id)
-    if library is None or not libraries_service.library_visible_to(library, user):
+    if library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
-    return library
-
-
-async def _managed_library(
-    session: AsyncSession, library_id: uuid.UUID, user: User
-) -> DirectionLibrary:
-    library = await _library(session, library_id, user)
-    if not await discovery_runs.can_manage_discovery(session, library=library, user=user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_DISCOVERY_FORBIDDEN")
     return library
 
 
@@ -80,7 +71,7 @@ async def create_run(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> SearchRunDetail:
-    library = await _managed_library(session, library_id, user)
+    library = await _library(session, library_id)
     run = await discovery_runs.create_discovery_run(
         session,
         library=library,
@@ -102,7 +93,7 @@ async def get_discovery_schedule(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> LiteratureDiscoveryScheduleRead:
-    library = await _library(session, library_id, user)
+    library = await _library(session, library_id)
     schedule = await discovery_schedules.get_schedule(session, library.id)
     if schedule is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LITERATURE_SCHEDULE_NOT_FOUND")
@@ -119,7 +110,7 @@ async def set_discovery_schedule(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> LiteratureDiscoveryScheduleRead:
-    library = await _managed_library(session, library_id, user)
+    library = await _library(session, library_id)
     try:
         schedule = await discovery_schedules.upsert_schedule(
             session, library=library, data=data, actor_id=user.id
@@ -141,7 +132,7 @@ async def remove_discovery_schedule(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> None:
-    library = await _managed_library(session, library_id, user)
+    library = await _library(session, library_id)
     schedule = await discovery_schedules.get_schedule(session, library.id)
     if schedule is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LITERATURE_SCHEDULE_NOT_FOUND")
@@ -159,7 +150,7 @@ async def trigger_discovery_schedule(
     queue: TaskQueue = Depends(get_task_queue),
     user: User = Depends(current_active_user),
 ) -> SearchRunRead:
-    library = await _managed_library(session, library_id, user)
+    library = await _library(session, library_id)
     schedule = await discovery_schedules.get_schedule(session, library.id)
     if schedule is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LITERATURE_SCHEDULE_NOT_FOUND")
@@ -200,7 +191,7 @@ async def start_run(
     user: User = Depends(current_active_user),
 ) -> SearchRunRead:
     """Queue a persisted run without changing its user-requested count."""
-    library = await _managed_library(session, library_id, user)
+    library = await _library(session, library_id)
     run = await discovery_runs.get_visible_run(session, library_id=library.id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
@@ -218,7 +209,7 @@ async def list_runs(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> SearchRunPage:
-    library = await _library(session, library_id, user)
+    library = await _library(session, library_id)
     base = select(LiteratureSearchRun).where(LiteratureSearchRun.library_id == library.id)
     total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0
     runs = list(
@@ -247,7 +238,7 @@ async def get_run(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> SearchRunDetail:
-    await _library(session, library_id, user)
+    await _library(session, library_id)
     run = await discovery_runs.get_visible_run(session, library_id=library_id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
@@ -287,7 +278,7 @@ async def list_hits(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="YEAR_RANGE_INVALID",
         )
-    await _library(session, library_id, user)
+    await _library(session, library_id)
     run = await discovery_runs.get_visible_run(session, library_id=library_id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
@@ -394,12 +385,12 @@ async def translate_hit(
     queue: TaskQueue = Depends(get_task_queue),
     user: User = Depends(current_active_user),
 ) -> LiteratureTranslationRead:
-    library = await _managed_library(session, library_id, user)
+    library = await _library(session, library_id)
     run = await discovery_runs.get_visible_run(session, library_id=library.id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
     hit = await _translation_hit(session, run_id=run.id, hit_id=hit_id)
-    model = await translations.model_version(get_llm_router(), user.id)
+    model = await translations.model_version(get_llm_router())
     return await _request_hit_translation(
         session,
         queue,
@@ -423,7 +414,7 @@ async def translate_hits(
     queue: TaskQueue = Depends(get_task_queue),
     user: User = Depends(current_active_user),
 ) -> list[LiteratureTranslationRead]:
-    library = await _managed_library(session, library_id, user)
+    library = await _library(session, library_id)
     run = await discovery_runs.get_visible_run(session, library_id=library.id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
@@ -440,7 +431,7 @@ async def translate_hits(
         .all()
     )
     by_id = {row.id: row for row in rows}
-    model = await translations.model_version(get_llm_router(), user.id)
+    model = await translations.model_version(get_llm_router())
     output = []
     for hit_id in dict.fromkeys(body.hit_ids):
         hit = by_id.get(hit_id)
@@ -471,7 +462,7 @@ async def get_hit_translation(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> LiteratureTranslationRead:
-    library = await _library(session, library_id, user)
+    library = await _library(session, library_id)
     run = await discovery_runs.get_visible_run(session, library_id=library.id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
@@ -505,7 +496,7 @@ async def cache_oa_pdfs(
     user: User = Depends(current_active_user),
 ) -> list[OaCacheRead]:
     """Cache OA PDFs for selected discovery candidates; this does not promote them."""
-    await _managed_library(session, library_id, user)
+    await _library(session, library_id)
     run = await discovery_runs.get_visible_run(session, library_id=library_id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
@@ -539,7 +530,7 @@ async def list_oa_cache(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[OaCacheRead]:
-    await _library(session, library_id, user)
+    await _library(session, library_id)
     run = await discovery_runs.get_visible_run(session, library_id=library_id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
@@ -572,7 +563,7 @@ async def promote_hits(
     user: User = Depends(current_active_user),
 ) -> list[SearchHitRead]:
     """Promote candidates into the library, then launch the normal enrichment pipeline."""
-    library = await _managed_library(session, library_id, user)
+    library = await _library(session, library_id)
     run = await discovery_runs.get_visible_run(session, library_id=library_id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
@@ -700,7 +691,7 @@ async def cancel_run(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> SearchRunRead:
-    library = await _managed_library(session, library_id, user)
+    library = await _library(session, library_id)
     run = await discovery_runs.get_visible_run(session, library_id=library.id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
@@ -722,7 +713,7 @@ async def delete_run(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> None:
-    library = await _managed_library(session, library_id, user)
+    library = await _library(session, library_id)
     run = await discovery_runs.get_visible_run(session, library_id=library.id, run_id=run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")

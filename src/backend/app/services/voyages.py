@@ -7,7 +7,6 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.library_direction import DirectionLibrary
 from app.models.project import Project
 from app.models.user import User
 from app.models.voyage import LIBRARY_KINDS, TERMINAL_STATUSES, VoyageRun
@@ -47,17 +46,14 @@ async def create_voyage(
 
 
 def _visible_filter(stmt, user_id: uuid.UUID):
-    """可见任务 = 我课题的任务 ∪ 我能管的库的任务 ∪ 我自己发起的任务。
+    """可见任务 = 我课题的任务 ∪ 库任务 ∪ 我自己发起的任务。
 
     这是 :func:`can_view_voyage` 的 SQL 镜像——列表里能看到的，点进去必须打得开。
     库任务不能只靠 project_id 判：独立库的任务 project_id 为空，按课题归属 join
     会把它们整个漏掉——而独立库是常态（P9c 起建课题不再自动建库）。
-
-    「课题关联了某个库」不给可见性：关联只是拿它的语料，管不了它的建库任务
-    （库级写权限 = 创建者，见 libraries.can_manage_library）。
+    单用户本地应用（#842）：每个库都是这个人的，库任务一律可见。
     """
     my_projects = select(Project.id).where(Project.owner_id == user_id)
-    my_libraries = select(DirectionLibrary.id).where(DirectionLibrary.submitted_by == user_id)
     # 平台级任务（两个作用域 id 都为空，如每日新论文抓取）此前是 admin-only；
     # admin 旁路随 role 移除（#614）后对所有登录用户可见——单机档位登录即主人，
     # 每日抓取这类平台任务本来就是替他跑的。
@@ -69,7 +65,7 @@ def _visible_filter(stmt, user_id: uuid.UUID):
     return stmt.where(
         or_(
             VoyageRun.project_id.in_(my_projects),
-            VoyageRun.library_id.in_(my_libraries),
+            VoyageRun.library_id.is_not(None),
             mine_scoped,
             platform_scoped,
         )
@@ -107,7 +103,7 @@ async def can_view_voyage(session: AsyncSession, *, run: VoyageRun, user: User) 
       （admin-only 口径随 role 移除，#614）；
     - 我发起的任务（``created_by``）：自己点的那次运行；
     - 课题作用域任务：课题主人；
-    - 库作用域任务：能管这个库的人（创建者，见 libraries.can_manage_library）。
+    - 库作用域任务：可见（每个库都是这个人的）。
 
     :func:`_visible_filter` 是它的 SQL 镜像，两边必须一起改。
     """
@@ -119,13 +115,7 @@ async def can_view_voyage(session: AsyncSession, *, run: VoyageRun, user: User) 
         session, project_id=run.project_id, user_id=user.id
     ):
         return True
-    if run.library_id is not None:
-        from app.services.libraries import can_manage_library, get_library
-
-        library = await get_library(session, run.library_id)
-        if library is not None and await can_manage_library(session, user=user, library=library):
-            return True
-    return False
+    return run.library_id is not None
 
 
 async def get_voyage(

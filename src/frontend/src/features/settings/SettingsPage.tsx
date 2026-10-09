@@ -1579,7 +1579,7 @@ function RoutesSection() {
   const providersQuery = useQuery({ queryKey: ['llm', 'providers'], queryFn: () => api.listLlmProviders(), retry: false });
   const routesQuery = useQuery({ queryKey: ['llm', 'routes'], queryFn: () => api.getLlmRoutes(), retry: false });
   const providers = providersQuery.data ?? [];
-  // 智能体也能当路由目标（#840）；非主人取不到时就只列模型 API
+  // 智能体也能当路由目标（#840）；取不到时就只列模型 API
   const agentsQuery = useQuery({ queryKey: AGENTS_KEY, queryFn: () => api.listAcpAgents(), retry: false });
   const agents = agentsQuery.data ?? [];
   // 可调输入预算的登记表来自后端；老后端没有这个接口时为空，界面就不画预算输入框

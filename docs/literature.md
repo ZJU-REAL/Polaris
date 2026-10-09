@@ -58,9 +58,7 @@ question, the subject of study, the sub-problems you care about, and the method 
 explicitly don't want — each with checkbox options plus free text, then drafts the statement for
 you. Accept it with **Use this statement**.
 
-A new library is **personal**: usable immediately, visible to you only. Its creator can flip it
-to **public** (visible to every account on the deployment) directly in **Library config** — the
-old request-and-approval flow is gone. Each library carries an optional **Monthly AI budget** in
+A new library is usable immediately. Each library carries an optional **Monthly AI budget** in
 tokens — syncs stop with a clear message when it is spent, and the **AI usage this month** card in
 **Library config** shows where you stand.
 

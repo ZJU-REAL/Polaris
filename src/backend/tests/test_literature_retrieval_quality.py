@@ -146,8 +146,7 @@ class RerankRouter:
         del query, documents, kwargs
         return [(1, 0.95), (0, 0.1)]
 
-    async def model_name(self, stage, user_id):
-        del user_id
+    async def model_name(self, stage):
         assert stage == "rerank"
         return "rerank-model"
 

@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "88a5bdc0aa15"  # 删掉邮箱验证码表：去掉账号层 (#842)
+HEAD_REVISION = "3c7d9e1f5a20"  # 单用户：LLM 配置并成一张表、agent 去掉共享列 (#842)
+NO_ACCOUNTS_REVISION = "88a5bdc0aa15"  # 删掉邮箱验证码表：去掉账号层 (#842)
 ROUTES_TO_AGENTS_REVISION = "a9c4e7d2f1b8"  # 路由可以指向外部 agent (#840)
 ACP_AGENTS_REVISION = "f6b2d8e04a17"  # 外部 agent（ACP 后端）登记表 (#836)
 LEGACY_PREFS_REVISION = "d3f9a1c7e2b4"  # 删掉偏好的旧 system_settings 行 (#821 E2)
@@ -209,10 +210,10 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert version == HEAD_REVISION
     # 外部 MCP 服务器登记（#754）：env 整体加密，命令可审计
     assert {"slug", "transport", "env_encrypted", "enabled"} <= columns["mcp_servers"]
-    # 外部 agent 登记（#836）：与 MCP 服务器同一套 env 加密约定，外加权限策略
-    assert {"slug", "command", "env_encrypted", "permission_policy", "shared"} <= columns[
-        "acp_agents"
-    ]
+    # 外部 agent 登记（#836）：与 MCP 服务器同一套 env 加密约定，外加权限策略；
+    # 「共享给其他账号」列随单用户化删掉（#842）
+    assert {"slug", "command", "env_encrypted", "permission_policy"} <= columns["acp_agents"]
+    assert "shared" not in columns["acp_agents"]
     # 学科包：文献库声明学科，决定本库论文按哪套 schema 抽
     assert "discipline" in columns["direction_libraries"]
     # 协同文档 CRDT 状态（#347）：房间重建靠它，不能只留纯文本投影
@@ -655,7 +656,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 账号层已删（#842）：邮箱验证码表不在 head 上
     assert "email_verification_codes" not in columns["_tables"]
 
-    # 先退掉「删验证码表」（#842）：表建回来（空表）。
+    # 先退掉单用户化（#842）：acp_agents.shared 建回来。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == NO_ACCOUNTS_REVISION
+    assert "shared" in columns["acp_agents"]
+
+    # 再退掉「删验证码表」（#842）：表建回来（空表）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == ROUTES_TO_AGENTS_REVISION
@@ -1682,3 +1689,113 @@ def test_acp_agents_table_roundtrip(tmp_path):
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
     assert "permission_policy" in columns["acp_agents"]
+
+
+def test_single_user_migration_folds_llm_rows_and_drops_agent_sharing(tmp_path):
+    """#842 第 7 步：按人配置的 LLM 行并进那一张表，外部 agent 的「共享」列删掉。
+
+    - model_routes：同一环节已有部署级路由时删掉按人的；没有的改成 NULL；好几个人
+      各配一条时留本地用户的；
+    - llm_providers：一律改成 NULL，撞名的加「 (2)」；
+    - acp_agents.shared：删列；降级建回来、一律 false。
+    """
+    db_path = tmp_path / "single-user.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, NO_ACCOUNTS_REVISION)
+
+    local = "00000000000000000000000000000001"
+    other = "00000000000000000000000000000002"
+    now = "2026-10-01 00:00:00"
+    later = "2026-10-02 00:00:00"
+    engine = create_engine(f"sqlite:///{db_path}")
+    user_cols = (
+        "id, email, hashed_password, is_active, is_superuser, is_verified, "
+        "display_name, username_locked, created_at, updated_at"
+    )
+    with engine.begin() as conn:
+        # 另一个人比本地用户先建：并路由时仍按邮箱认本地用户，不按先后
+        conn.execute(
+            text(
+                f"INSERT INTO users ({user_cols}) VALUES "
+                "(:other, 'old@e.com', 'x', 1, 0, 1, '', 0, '2026-01-01', '2026-01-01'), "
+                "(:local, 'local@polaris.desktop', 'x', 1, 0, 1, '', 0, '2026-02-01', '2026-02-01')"
+            ),
+            {"local": local, "other": other},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO llm_providers "
+                "(id, owner_id, name, kind, enabled, created_at, updated_at) VALUES "
+                "('prov-platform', NULL, 'openai', 'openai_compat', 1, :now, :now), "
+                "('prov-local', :local, 'openai', 'openai_compat', 1, :now, :now), "
+                "('prov-other', :other, 'openai', 'openai_compat', 1, :later, :later), "
+                "('prov-unique', :other, 'mine', 'openai_compat', 1, :now, :now)"
+            ),
+            {"local": local, "other": other, "now": now, "later": later},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO model_routes "
+                "(id, owner_id, stage, provider_id, model, created_at, updated_at) VALUES "
+                "('r-platform-default', NULL, 'default', 'prov-platform', 'a', :now, :now), "
+                "('r-local-default', :local, 'default', 'prov-local', 'b', :now, :now), "
+                "('r-other-librarian', :other, 'librarian', 'prov-other', 'c', :now, :now), "
+                "('r-local-librarian', :local, 'librarian', 'prov-local', 'd', :later, :later), "
+                "('r-other-digest', :other, 'digest', 'prov-unique', 'e', :now, :now)"
+            ),
+            {"local": local, "other": other, "now": now, "later": later},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO acp_agents "
+                "(id, slug, name, template, command, permission_policy, enabled, shared, "
+                " created_at, updated_at) VALUES "
+                "('agent-1', 'claude', 'Claude', 'claude', 'claude', 'ask', 1, 1, :now, :now)"
+            ),
+            {"now": now},
+        )
+    engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            routes = {
+                row[0]: (row[1], row[2])
+                for row in conn.execute(text("SELECT id, owner_id, stage FROM model_routes"))
+            }
+            providers = {
+                row[0]: (row[1], row[2])
+                for row in conn.execute(text("SELECT id, owner_id, name FROM llm_providers"))
+            }
+    finally:
+        engine.dispose()
+    # 部署级的 default 留着，按人的 default 删掉；librarian 留本地用户那条；digest 改成 NULL
+    assert routes == {
+        "r-platform-default": (None, "default"),
+        "r-local-librarian": (None, "librarian"),
+        "r-other-digest": (None, "digest"),
+    }
+    # 全部并到 NULL；撞名的按建表先后加后缀，不撞的不动
+    assert providers == {
+        "prov-platform": (None, "openai"),
+        "prov-local": (None, "openai (2)"),
+        "prov-other": (None, "openai (3)"),
+        "prov-unique": (None, "mine"),
+    }
+    version, columns = _inspect_db(db_path)
+    assert version == HEAD_REVISION
+    assert "shared" not in columns["acp_agents"]
+
+    # 降级：shared 列建回来、一律 false；agent 行本身不丢
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == NO_ACCOUNTS_REVISION
+    assert "shared" in columns["acp_agents"]
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT slug, shared FROM acp_agents")).all()
+    finally:
+        engine.dispose()
+    assert [(slug, bool(shared)) for slug, shared in rows] == [("claude", False)]

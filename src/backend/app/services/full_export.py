@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from redis.asyncio import Redis
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -37,10 +37,9 @@ from app import __version__
 from app.core.config import get_settings
 from app.models.experiment import Experiment
 from app.models.idea import Idea
-from app.models.library_direction import DirectionLibrary, LibraryPaper, TopicSourceLibrary
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.manuscript import Manuscript
 from app.models.paper import Paper, PaperHighlight, PaperNote
-from app.models.project import Project
 from app.models.voyage import VoyageRun
 from app.services.citations import (
     assign_citation_keys,
@@ -121,27 +120,9 @@ def _warn(manifest: dict[str, Any], facet: str, item: str, error: Exception) -> 
     logger.warning("full export: %s/%s failed: %s", facet, item, error)
 
 
-async def _user_libraries(session: AsyncSession, user_id: uuid.UUID) -> list[DirectionLibrary]:
-    """导出的库范围 = 我建的库 ∪ 我课题关联的库。
-
-    刻意不用 library_visible_to：可见范围含全部公共库，把别人策展的公共大库
-    整个塞进「我的数据」既臃肿也名不副实——带走的应当是自己的与自己在用的。
-    """
-    linked = (
-        select(TopicSourceLibrary.library_id)
-        .join(Project, Project.id == TopicSourceLibrary.topic_id)
-        .where(Project.owner_id == user_id)
-    )
-    stmt = (
-        select(DirectionLibrary)
-        .where(
-            or_(
-                DirectionLibrary.submitted_by == user_id,
-                DirectionLibrary.id.in_(linked),
-            )
-        )
-        .order_by(DirectionLibrary.created_at)
-    )
+async def _all_libraries(session: AsyncSession) -> list[DirectionLibrary]:
+    """导出的库范围 = 全部文献库（单用户本地应用，每个库都是这个人的）。"""
+    stmt = select(DirectionLibrary).order_by(DirectionLibrary.created_at)
     return list((await session.execute(stmt)).scalars().all())
 
 
@@ -150,7 +131,7 @@ async def _export_libraries(
 ) -> None:
     counts = manifest["counts"]
     used: set[str] = set()
-    for library in await _user_libraries(session, user_id):
+    for library in await _all_libraries(session):
         name = safe_name(library.name, used, fallback=str(library.id)[:8])
         lib_dir = root / "libraries" / name
         try:
@@ -169,7 +150,6 @@ async def _export_libraries(
                     "name": library.name,
                     "library_kind": library.library_kind,
                     "statement": library.statement,
-                    "is_public": library.is_public,
                     "cadence": library.cadence,
                     "monthly_budget": library.monthly_budget,
                     "definition": library_definition(library),
@@ -308,7 +288,7 @@ async def _export_wiki(
     """
     counts = manifest["counts"]
     used: set[str] = set()
-    for library in await _user_libraries(session, user_id):
+    for library in await _all_libraries(session):
         try:
             has_members = (
                 await session.execute(

@@ -1,10 +1,9 @@
-"""助手对话接外部 agent 的胶水层（#836）：谁能用哪个 agent、工作目录、把 Polaris 的
+"""助手对话接外部 agent 的胶水层（#836）：能选哪些 agent、工作目录、把 Polaris 的
 工具借给它、会话号落库。
 
-## 谁能用
+## 能选哪些
 
-登记 agent 的人（owner）总能用；其他账号只能用标了 ``shared`` 的——agent 跑的是
-登记者本机登录的订阅/额度，默认不该被别人花掉。
+登记了且启用着的都能选（单用户本地应用，没有「别人」）。
 
 ## 把 Polaris 的工具借给 agent
 
@@ -36,27 +35,24 @@ from app.models.user import User
 from app.services.acp.client import AcpClient
 from app.services.acp.pool import get_pool
 from app.services.acp.registry import spec_from_row
-from app.services.owner import is_owner
 
 logger = logging.getLogger("polaris.acp")
 
 MCP_TOKEN_DAYS = 1
 
 
-async def usable_agents(session: AsyncSession, user: User) -> list[AcpAgent]:
+async def usable_agents(session: AsyncSession) -> list[AcpAgent]:
+    """启用着的 agent，按登记先后。"""
     stmt = select(AcpAgent).where(AcpAgent.enabled.is_(True)).order_by(AcpAgent.created_at)
-    rows = list((await session.execute(stmt)).scalars().all())
-    if await is_owner(session, user):
-        return rows
-    return [r for r in rows if r.shared]
+    return list((await session.execute(stmt)).scalars().all())
 
 
-async def resolve_agent(session: AsyncSession, user: User, backend: str) -> AcpAgent | None:
+async def resolve_agent(session: AsyncSession, backend: str) -> AcpAgent | None:
     try:
         agent_id = uuid.UUID(backend)
     except ValueError:
         return None
-    for row in await usable_agents(session, user):
+    for row in await usable_agents(session):
         if row.id == agent_id:
             return row
     return None
@@ -70,7 +66,7 @@ async def agent_for_polaris_turn(session: AsyncSession, user: User) -> AcpAgent 
     from app.core.llm.router import LLMNotConfiguredError, get_llm_router
 
     try:
-        _provider, route = await get_llm_router().resolve("agent", user.id)
+        _provider, route = await get_llm_router().resolve("agent")
     except (LLMNotConfiguredError, NotImplementedError):
         return None
     if route.acp is None:

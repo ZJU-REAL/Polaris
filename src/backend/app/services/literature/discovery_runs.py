@@ -13,20 +13,12 @@ from app.models.literature_discovery import (
     LiteratureSearchRun,
     LiteratureSourceAttempt,
 )
-from app.models.user import User
 from app.schemas.literature_discovery import LiteratureSearchRequest
 from app.services import libraries as libraries_service
 from app.services import literature_settings as literature_settings_service
 from app.services.interdisciplinary_retrieval import apply_profile_to_query_plan
 from app.services.literature import sources as literature_sources
 from app.services.literature.discovery_ranking import normalized_score_weights
-
-
-async def can_manage_discovery(
-    session: AsyncSession, *, library: DirectionLibrary, user: User
-) -> bool:
-    """发现运行写权限：库创建者；无主库谁都能管（与 can_manage_library 同口径，#614）。"""
-    return library.submitted_by is None or library.submitted_by == user.id
 
 
 def enabled_sources(source_config: dict | None, query_plan: dict | None) -> list[str]:

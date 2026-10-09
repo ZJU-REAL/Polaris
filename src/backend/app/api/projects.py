@@ -92,9 +92,7 @@ async def list_source_libraries(
 ) -> list[DirectionLibrarySummary]:
     """课题关联的文献库（课题语料 = 这些库论文的并集，按关联建立时间）。"""
     await _get_my_project(session, project_id, user)
-    rows = await libraries_service.source_libraries_overview(
-        session, topic_id=project_id, user=user
-    )
+    rows = await libraries_service.source_libraries_overview(session, topic_id=project_id)
     return [DirectionLibrarySummary(**row) for row in rows]
 
 
@@ -114,7 +112,5 @@ async def set_source_libraries(
         session, topic_id=project_id, library_ids=data.library_ids
     )
     await session.commit()
-    rows = await libraries_service.source_libraries_overview(
-        session, topic_id=project_id, user=user
-    )
+    rows = await libraries_service.source_libraries_overview(session, topic_id=project_id)
     return [DirectionLibrarySummary(**row) for row in rows]

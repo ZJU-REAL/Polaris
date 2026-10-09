@@ -54,7 +54,7 @@ from app.services import owner_settings, paper_wiki, user_library, vector_search
 from app.services import projects as projects_service
 from app.services import topic_shelf as shelf_service
 from app.services.dedup import pool_dedup_key
-from app.services.libraries import can_manage_library, ensure_membership, find_pool_paper
+from app.services.libraries import ensure_membership, find_pool_paper
 from app.services.literature import get_arxiv_client
 from app.services.literature import sources as literature_sources
 from app.services.paper_import import _parse_iso
@@ -1009,7 +1009,7 @@ async def list_papers(
 
     anchors: list[daily_relevance.LibraryAnchor] = []
     if user is not None:
-        anchors = await daily_relevance.library_anchors(session, user=user)
+        anchors = await daily_relevance.library_anchors(session)
     if sort == "relevance" and not anchors:
         # 一个库都没有（或都空得没法当锚）：行为与现状一致，按时间排
         sort = "date"
@@ -1663,7 +1663,7 @@ async def collect_papers(
 
     for library_id in direction_library_ids:
         library = await session.get(DirectionLibrary, library_id)
-        if library is None or not await can_manage_library(session, user=user, library=library):
+        if library is None:
             results.append(
                 {
                     "target_type": "library",

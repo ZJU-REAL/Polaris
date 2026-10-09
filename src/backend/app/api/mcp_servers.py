@@ -1,8 +1,6 @@
 """外部 MCP 服务器的管理面（#754）。
 
-门槛是 **owner**，与插件市场同一条理由：登记一台 stdio 服务器等于声明「服务端进程
-可以拉起这条命令」。那是在服务器上执行任意程序的能力，对多账号部署而言这个风险
-属于所有人，不是登记者一个人的事。桌面档位下 owner 就是本人，行为无差别。
+登记一台 stdio 服务器等于声明「本地引擎可以拉起这条命令」。门槛是登录（本地会话）。
 
 env 只进不出：写入时加密落库，读取时**永不回传**——回传等于给任何能打开管理面的
 人一份明文密钥副本，而管理面的意义只是「改配置」，不是「看密钥」。
@@ -16,11 +14,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.models.mcp_server import MCP_TRANSPORTS, McpServer
 from app.models.user import User
 from app.services.mcp_hub import registry as mcp_registry
-from app.services.owner import require_owner
 
 router = APIRouter(prefix="/mcp-servers", tags=["mcp-servers"])
 
@@ -90,7 +88,7 @@ def _validate_shape(transport: str, command: str | None, url: str | None) -> Non
 @router.get("", response_model=list[McpServerRead])
 async def list_servers(
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> list[McpServerRead]:
     rows = await session.execute(select(McpServer).order_by(McpServer.slug))
     return [_read(row) for row in rows.scalars().all()]
@@ -100,7 +98,7 @@ async def list_servers(
 async def create_server(
     data: McpServerCreate,
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> McpServerRead:
     _validate_shape(data.transport, data.command, data.url)
     existing = await session.scalar(select(McpServer).where(McpServer.slug == data.slug))
@@ -139,7 +137,7 @@ async def update_server(
     server_id: uuid.UUID,
     data: McpServerUpdate,
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> McpServerRead:
     row = await _get(session, server_id)
     fields = data.model_dump(exclude_unset=True)
@@ -166,7 +164,7 @@ async def update_server(
 async def sync_server(
     server_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> McpServerRead:
     """手动重连并重新拉取工具。
 
@@ -186,7 +184,7 @@ async def sync_server(
 async def delete_server(
     server_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> None:
     row = await _get(session, server_id)
     await mcp_registry.forget_server(row)

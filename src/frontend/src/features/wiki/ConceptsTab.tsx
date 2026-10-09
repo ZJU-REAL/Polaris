@@ -32,11 +32,6 @@ export interface ConceptsTabProps {
   pid?: string;
   /** 库作用域：给定时列表与概念补建走 /libraries/{id}/* 端点。 */
   libraryId?: string;
-  /**
-   * 能否管理这个库。本组件同时被文献工作台和共享库只读浏览复用，两边都会传 libraryId，
-   * 所以管理操作（概念补建）只认这个开关，不能靠「有没有 libraryId」判断。
-   */
-  canManage?: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onOpenPaper: (id: string) => void;
@@ -291,7 +286,6 @@ export function ConceptDetailPane({
 export function ConceptsTab({
   pid,
   libraryId,
-  canManage = false,
   selectedId,
   onSelect,
   onOpenPaper,
@@ -314,7 +308,7 @@ export function ConceptsTab({
 
   // 全库概念补建：编译过但概念没上链的历史论文（比如批量任务中断）从这里补。
   // 只有能管理这个库的人看得到；库作用域优先走 /libraries 端点，否则回落课题端点。
-  const canRelink = canManage && !!(libraryId || pid);
+  const canRelink = !!(libraryId || pid);
   const relinkMutation = useMutation({
     mutationFn: () => (libraryId ? api.relinkLibraryConcepts(libraryId) : api.relinkConcepts(pid!)),
     onSuccess: (r) => {

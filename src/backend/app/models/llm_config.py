@@ -12,7 +12,8 @@ from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 
 class LLMProviderConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "llm_providers"
-    # name 按 owner 分别唯一（全局 owner NULL 与每个用户各自唯一）
+    # owner_id 是 #801「按人配置」的遗留列：迁移 3c7d9e1f5a20 已把所有行并到 NULL，
+    # 代码只读写 NULL 行。列和两条部分唯一索引都留着（删列在 sqlite 上要重建表，不值）。
     __table_args__ = (
         Index(
             "uq_providers_global_name",
@@ -31,8 +32,7 @@ class LLMProviderConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
     )
 
-    # 归属：NULL = 平台全局（管理员管）；<user> = 该用户自管的私有 provider。
-    # 唯一性按 owner 分别约束（见迁移的两条部分唯一索引），不再全局唯一。
+    # 遗留列，恒为 NULL（见 __table_args__ 上方注释）
     owner_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
@@ -60,7 +60,7 @@ class LLMProviderConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class ModelRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "model_routes"
-    # stage 按 owner 分别唯一
+    # owner_id 同 llm_providers：遗留列，恒为 NULL
     __table_args__ = (
         Index(
             "uq_routes_global_stage",
@@ -79,7 +79,7 @@ class ModelRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
     )
 
-    # 归属：NULL = 全局（管理员）；<user> = 该用户自管。每个 owner 的每个 stage 至多一条。
+    # 遗留列，恒为 NULL；每个 stage 至多一条
     owner_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )

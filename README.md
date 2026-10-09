@@ -122,8 +122,8 @@ plan-execute-verify loop) activates only for open-ended kinds such as experiment
   are decoupled from topics (many-to-many), own their own inclusion config, and come with governance:
   curators, monthly budgets, duplicate merge, user-created libraries under admin approval, and a
   recycle bin that stays out of search.
-- **Daily arXiv feed.** A lab-wide feed of each day's new papers, with likes and one-click collection
-  into any library you can write to. It is also the single arXiv entry point: libraries sync from the
+- **Daily arXiv feed.** A feed of each day's new papers, with likes and one-click collection
+  into any of your libraries. It is also the single arXiv entry point: libraries sync from the
   pool instead of querying arXiv themselves, on an admin-configurable schedule.
 - **Idea Forge.** Signal-driven gap analysis, four-axis scoring, semantic dedup, and a deep
   Research-Proposal builder with novelty double-checking against the library and external sources.

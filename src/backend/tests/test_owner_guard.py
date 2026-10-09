@@ -1,12 +1,8 @@
-"""设置面的守卫（#842）：单用户本地引擎里登录进来的就是主人；没登录一律 401。"""
+"""设置面的守卫（#842）：只要求登录（本地会话）；没登录一律 401。"""
 
 from tests.conftest import register_and_login
 
 # 每个 router 取一个探针端点：守卫挂在 router 级，一个通则全通、一个堵则全堵。
-#
-# LLM 那个 router 自 #801 起不再整体只对主人开放——providers/routes 改成了
-# 「谁打开就配谁的」，公有云里第二个用户本来连页面都进不去。仍然只对主人开放的
-# 是看整个部署的账的那两处，探针换成其中之一。
 ADMIN_PROBES = [
     ("GET", "/api/admin/settings/affiliation-mode"),
     ("GET", "/api/admin/llm/usage"),

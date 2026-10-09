@@ -21,6 +21,7 @@ from app.core.config import get_settings
 from app.core.db import get_session
 from app.models.user import User
 from app.schemas.user import UserRead, UserUpdate
+from app.services.local_user import LOCAL_USER_EMAIL
 
 
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
@@ -71,8 +72,8 @@ current_user_optional = fastapi_users.current_user(active=True, optional=True)
 router = APIRouter()
 
 
-# 本机唯一用户的身份。固定邮箱做幂等键（stdio MCP 也按它找人，见 app/mcp/__main__.py）。
-LOCAL_USER_EMAIL = "local@polaris.desktop"
+# 本机唯一用户的身份：固定邮箱 LOCAL_USER_EMAIL（定义在 services/local_user.py）做幂等键
+# （stdio MCP 也按它找人，见 app/mcp/__main__.py）。
 LOCAL_USERNAME = "local"
 
 

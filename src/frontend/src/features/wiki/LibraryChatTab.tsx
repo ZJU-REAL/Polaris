@@ -211,11 +211,6 @@ export interface LibraryChatTabProps {
   pid?: string;
   /** 独立库作用域（走 /libraries/{id}/chat）；与 pid 二选一 */
   libraryId?: string;
-  /**
-   * 能否管理这个库。本组件同时被文献工作台和共享库只读浏览复用，两边都会传 libraryId，
-   * 所以「补建索引」这类管理操作只认这个开关，不能靠「有没有 libraryId」判断。
-   */
-  canManage?: boolean;
   onOpenPaper: (id: string) => void;
   /** [[概念名]] 双链点击 → 按名称跳概念库 */
   onWikiLink?: WikiLinkHandler;
@@ -224,13 +219,12 @@ export interface LibraryChatTabProps {
 export function LibraryChatTab({
   pid,
   libraryId,
-  canManage = false,
   onOpenPaper,
   onWikiLink,
 }: LibraryChatTabProps) {
   const scopePid = pid ?? '';
   // 补建索引是管理操作：库作用域优先走 /libraries 端点，否则回落课题端点
-  const canRebuild = canManage && !!(libraryId || pid);
+  const canRebuild = !!(libraryId || pid);
   const rebuildMutation = useMutation({
     mutationFn: () =>
       libraryId ? api.rebuildLibraryFulltextIndex(libraryId) : api.rebuildFulltextIndex(scopePid),

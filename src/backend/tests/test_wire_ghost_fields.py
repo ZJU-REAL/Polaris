@@ -35,3 +35,7 @@ async def test_library_responses_have_no_ghost_fields(client):
     mine = next(row for row in listed if row["id"] == detail["id"])
     assert "status" not in mine
     assert "review_note" not in mine
+    # 单用户本地应用（#842）：个人/公共与归属字段都退役了
+    retired = {"is_public", "submitted_by", "owner_name", "is_owner", "is_mine", "can_manage"}
+    assert not retired & detail.keys()
+    assert not retired & mine.keys()

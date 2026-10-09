@@ -17,7 +17,6 @@ export interface DailyDigestTabProps {
   libraryId: string;
   onOpenPaper: (paperId: string) => void;
   onWikiLink: (name: string) => void;
-  canGenerate?: boolean;
   ingestRunning?: boolean;
   hasWatermark?: boolean;
 }
@@ -61,7 +60,6 @@ export function DailyDigestTab({
   libraryId,
   onOpenPaper,
   onWikiLink,
-  canGenerate = false,
   ingestRunning = false,
   hasWatermark = false,
 }: DailyDigestTabProps) {
@@ -167,25 +165,23 @@ export function DailyDigestTab({
           'The next ingest will create one, and the watermark advances only after it succeeds.',
         )}
         action={
-          canGenerate ? (
-            <button
-              type="button"
-              className="btn btn-primary sm"
-              disabled={ingestRunning || generateMutation.isPending || !hasWatermark}
-              title={
-                hasWatermark
-                  ? tr(
-                      '今日已有论文更新时直接生成，否则先执行增量同步',
-                      'Generate directly from today’s updates, or sync first when there are none',
-                    )
-                  : tr('需先完成一次初始建库', 'Run the initial library build first')
-              }
-              onClick={() => generateMutation.mutate()}
-            >
-              <Icon name="refresh" size={13} />
-              {tr('生成今日简报', "Generate today's digest")}
-            </button>
-          ) : undefined
+          <button
+            type="button"
+            className="btn btn-primary sm"
+            disabled={ingestRunning || generateMutation.isPending || !hasWatermark}
+            title={
+              hasWatermark
+                ? tr(
+                    '今日已有论文更新时直接生成，否则先执行增量同步',
+                    'Generate directly from today’s updates, or sync first when there are none',
+                  )
+                : tr('需先完成一次初始建库', 'Run the initial library build first')
+            }
+            onClick={() => generateMutation.mutate()}
+          >
+            <Icon name="refresh" size={13} />
+            {tr('生成今日简报', "Generate today's digest")}
+          </button>
         }
       />
     );
@@ -277,33 +273,31 @@ export function DailyDigestTab({
                     text={view === 'brief' ? detail.content : detail.trend_content ?? ''}
                   />
                 )}
-                {canGenerate && (
-                  <button
-                    type="button"
-                    className="btn btn-primary sm"
-                    disabled={ingestRunning || generateMutation.isPending || !hasWatermark}
-                    title={
-                      hasWatermark
-                        ? tr(
-                            '今日已有论文更新时直接生成，否则先执行增量同步',
-                            'Generate directly from today’s updates, or sync first when there are none',
-                          )
-                        : tr('需先完成一次初始建库', 'Run the initial library build first')
-                    }
-                    onClick={() => generateMutation.mutate()}
-                  >
-                    <Icon
-                      name="refresh"
-                      size={13}
-                      style={generateMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined}
-                    />
-                    {generateMutation.isPending
-                      ? tr('启动中…', 'Starting…')
-                      : ingestRunning
-                        ? tr('文献任务进行中', 'Literature task running')
-                        : tr('生成今日简报', 'Generate today’s digest')}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="btn btn-primary sm"
+                  disabled={ingestRunning || generateMutation.isPending || !hasWatermark}
+                  title={
+                    hasWatermark
+                      ? tr(
+                          '今日已有论文更新时直接生成，否则先执行增量同步',
+                          'Generate directly from today’s updates, or sync first when there are none',
+                        )
+                      : tr('需先完成一次初始建库', 'Run the initial library build first')
+                  }
+                  onClick={() => generateMutation.mutate()}
+                >
+                  <Icon
+                    name="refresh"
+                    size={13}
+                    style={generateMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined}
+                  />
+                  {generateMutation.isPending
+                    ? tr('启动中…', 'Starting…')
+                    : ingestRunning
+                      ? tr('文献任务进行中', 'Literature task running')
+                      : tr('生成今日简报', 'Generate today’s digest')}
+                </button>
                 <Segmented<DigestView>
                   options={[
                     { v: 'brief', label: tr('本次简报', 'Digest') },

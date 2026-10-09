@@ -69,16 +69,14 @@ class DirectionLibrary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     ingest_state: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     cadence: Mapped[str | None] = mapped_column(String(32))  # 同步节奏：daily | weekly | ...
     monthly_budget: Mapped[int | None]  # 每月 ingest 预算（P6 治理用）
-    # 共享开关（原 P10「个人/公共」归属）：false = 仅创建者可见的个人库；true = 对本
-    # 部署所有用户可见。审批流已随 #593/#596 移除、status/review_note 残留列随 #619
-    # 删除：创建者在库设置里直接切换，不再经任何审批。
+    # 遗留列：原「个人/公共」共享开关。单用户本地应用（#842）里没有别人可共享，
+    # 不再有任何读写；列保留只为不动表结构（删列在 sqlite 上要重建这张大表）。
     is_public: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
-    # 库归属人（创建者）：个人库仅归属人可见/可管理；NULL = 无主库（存量/系统建）。
-    # 曾与 created_by 双列并存、写入时恒等（P9b 遗留），#734 合一：全部读写走这一列，
-    # 列名保留 submitted_by——30+ 读点、前端类型与 golden wire 形状都在用它，改名收益
-    # 只有「更好听」，代价是全链路 churn。
+    # 建库的人：只是记录（ingest 用量记在他名下），不再用于任何权限判断（#842）；
+    # NULL = 存量/系统建。曾与 created_by 双列并存、写入时恒等（P9b 遗留），#734 合一：
+    # 全部读写走这一列，列名保留 submitted_by——改名收益只有「更好听」，代价是全链路 churn。
     submitted_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )

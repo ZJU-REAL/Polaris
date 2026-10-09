@@ -104,10 +104,9 @@ async def _first_user() -> User:
 
 async def test_centroid_cached_and_invalidated(client):
     _headers, library_id, _name = await _setup_library(client, member_axes=[0, 0])
-    user = await _first_user()
 
     async with get_sessionmaker()() as session:
-        anchors = await daily_relevance.library_anchors(session, user=user)
+        anchors = await daily_relevance.library_anchors(session)
         assert len(anchors) == 1
         assert anchors[0].centroid is not None
         assert anchors[0].centroid[0] == pytest.approx(1.0)
@@ -123,7 +122,7 @@ async def test_centroid_cached_and_invalidated(client):
         row.value = dict(row.value, centroid=tampered)
         await session.commit()
     async with get_sessionmaker()() as session:
-        anchors = await daily_relevance.library_anchors(session, user=user)
+        anchors = await daily_relevance.library_anchors(session)
         assert anchors[0].centroid[5] == pytest.approx(1.0)
 
     # 库一变（再收一篇）指纹变 → 自动重算，篡改值被真质心覆盖
@@ -134,7 +133,7 @@ async def test_centroid_cached_and_invalidated(client):
         )
         await session.commit()
     async with get_sessionmaker()() as session:
-        anchors = await daily_relevance.library_anchors(session, user=user)
+        anchors = await daily_relevance.library_anchors(session)
         centroid = anchors[0].centroid
         assert centroid[0] == pytest.approx(2 / 3)
         assert centroid[1] == pytest.approx(1 / 3)

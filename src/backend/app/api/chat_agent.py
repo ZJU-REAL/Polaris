@@ -57,7 +57,7 @@ from app.services import projects as projects_service
 from app.services.acp import chat as acp_chat
 from app.tools.context import ToolContext
 from app.tools.memory import MEMORY_TOOL_NAMES
-from app.tools.scope import visible_library_ids
+from app.tools.scope import all_library_ids
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -327,7 +327,7 @@ async def list_backends(
     """助手能用的「大脑」：Polaris 自己的模型循环，加上这个人能用的外部 agent（#836）。"""
     _require_enabled()
     out: list[dict[str, object]] = [{"id": "polaris", "name": "Polaris", "kind": "polaris"}]
-    for row in await acp_chat.usable_agents(session, user):
+    for row in await acp_chat.usable_agents(session):
         out.append(
             {
                 "id": str(row.id),
@@ -359,7 +359,7 @@ async def run_turn(
     # 近似相抵），另一半留给工具 schema、系统提示与本轮生成。管理端没填就用保守缺省。
     budget_chars: int | None = None
     try:
-        _, route = await get_llm_router().resolve("agent", user.id)
+        _, route = await get_llm_router().resolve("agent")
         if route.context_window:
             budget_chars = route.context_window * 2  # window/2 token × 4 字符/token
     except Exception:  # noqa: BLE001 — 路由解析失败不该挡住对话，走缺省预算
@@ -386,7 +386,7 @@ async def run_turn(
     backend = str(settings.get("backend") or "polaris")
     agent = None
     if backend != "polaris":
-        agent = await acp_chat.resolve_agent(session, user, backend)
+        agent = await acp_chat.resolve_agent(session, backend)
         if agent is None:
             raise HTTPException(status.HTTP_409_CONFLICT, detail="ACP_AGENT_NOT_AVAILABLE")
     else:
@@ -419,20 +419,17 @@ async def run_turn(
     await store.append_message(session, conversation=conv, role="user", text=payload.question)
     await session.commit()
 
-    # PolarisBuddy 是**全局**助手：检索范围是「这个人看得见的全部文献库」，不再要求
-    # 先选一个课题。课题从来不是权限边界，只是库的一个子集；要求先选课题，等于让用户
-    # 替一个纯内部的数据结构做选择题，而他想问的往往正好跨库。
-    #
-    # 越权由可见性这一步挡住（口径与库列表页一致：管理员看全部，普通用户看自己的
-    # 个人库加公共库），不是靠"只给一个课题"。
-    library_ids = tuple(await visible_library_ids(session, user))
+    # PolarisBuddy 是**全局**助手：检索范围是全部文献库，不再要求先选一个课题。
+    # 课题只是库的一个子集；要求先选课题，等于让用户替一个纯内部的数据结构做选择题，
+    # 而他想问的往往正好跨库。
+    library_ids = tuple(await all_library_ids(session))
     # 本轮显式指定课题时仍然收窄到那个课题（课题里的对话还走这条路）。
     project_id = (
         await _resolve_project(session, user=user, conv=conv, requested=payload.project_id)
         if payload.project_id is not None
         else None
     )
-    # 一个可见库都没有 = 没有语料可查，这轮不带工具。**不假装查过**：兜一个空范围
+    # 一个库都没有 = 没有语料可查，这轮不带工具。**不假装查过**：兜一个空范围
     # 然后说「没查到」，与从前兜随机 UUID 一样是在撒谎。
     has_corpus = bool(project_id) or bool(library_ids)
     memory_on = buddy.memory_enabled(user)

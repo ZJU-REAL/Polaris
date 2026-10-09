@@ -121,7 +121,7 @@ export function DailySubscriptionsSection() {
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 16, lineHeight: 1.6 }}>
         {tr(
-          '每天从这些来源取新论文。arXiv 按分类订（如 cs.AI、q-bio.NC），PubMed 等按检索词订。抓取是全平台一起做的，别人订的不会进你的列表；改动从下一次抓取开始生效。',
+          '每天从这些来源取新论文。arXiv 按分类订（如 cs.AI、q-bio.NC），PubMed 等按检索词订。改动从下一次抓取开始生效。',
           'New papers arrive every day from these sources. arXiv is subscribed by category (e.g. cs.AI, q-bio.NC); PubMed and others by search term. Fetching is shared across the platform, but what others subscribe to never appears in your list. Changes apply from the next fetch.',
         )}
       </div>

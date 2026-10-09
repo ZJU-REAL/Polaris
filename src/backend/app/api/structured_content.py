@@ -34,7 +34,7 @@ async def _visible_library_paper(
     user: User,
 ) -> None:
     library = await libraries_service.get_library(session, library_id)
-    if library is None or not libraries_service.library_visible_to(library, user):
+    if library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="STRUCTURED_CONTENT_NOT_FOUND")
     view = await papers_service.get_library_paper_view(
         session,

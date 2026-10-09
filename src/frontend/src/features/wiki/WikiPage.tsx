@@ -28,28 +28,16 @@ const PresentationModal = lazy(() =>
 );
 
 /* ============================================================
-   文献库工作台（P5c 起挂在 /libraries/:id 的可管理者视图；原 /wiki 页面主体）
+   文献库工作台（挂在 /libraries/:id；原 /wiki 页面主体）
    Tab：论文库 / 概念库 / 图谱 / 文献对话 / 建库与同步 / 笔记，
    传入 libraryId 时追加治理（P6：库信息与预算 / 重复论文）；
-   数据一律走 /libraries/{id}/* 端点（可管理者放行）。pid 只是这个库当初
+   数据一律走 /libraries/{id}/* 端点。pid 只是这个库当初
    从哪个课题建的，如今仅用来决定要不要显示课题域的 PPT。
    ============================================================ */
 
 type WikiTab = 'discover' | 'papers' | 'concepts' | 'methods' | 'graph' | 'gaps' | 'digest' | 'chat' | 'qa' | 'ingest' | 'notes' | 'govern';
 
-export function WikiWorkbench({
-  pid,
-  libraryId,
-  canManage = false,
-  canManageDiscovery = false,
-}: {
-  pid?: string;
-  libraryId?: string;
-  /** 能否管理这个库（决定共享 Tab 里的管理操作显不显示）；由调用方按 can_manage 传入。 */
-  canManage?: boolean;
-  /** 文献发现的写权限独立于一般库管理权限。 */
-  canManageDiscovery?: boolean;
-}) {
+export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: string }) {
   const navigate = useNavigate();
 
   // 集合级数据与导出一律走 /libraries/{id}/* 端点——库已与课题解耦，pid 只是
@@ -229,12 +217,11 @@ export function WikiWorkbench({
         }}
       >
         {tab === 'discover' && libraryId ? (
-          <LiteratureDiscoveryPanel libraryId={libraryId} readOnly={!canManageDiscovery} />
+          <LiteratureDiscoveryPanel libraryId={libraryId} />
         ) : tab === 'papers' ? (
           <PapersTab
             pid={pid}
             libraryId={tabLibraryId}
-            canManage={canManage}
             selectedId={paperId}
             onSelect={setPaperId}
             onOpenConcept={goConcept}
@@ -245,7 +232,6 @@ export function WikiWorkbench({
           <ConceptsTab
             pid={pid}
             libraryId={tabLibraryId}
-            canManage={canManage}
             selectedId={conceptId}
             onSelect={setConceptId}
             onOpenPaper={goPaper}
@@ -265,7 +251,6 @@ export function WikiWorkbench({
               libraryId={libraryId}
               onOpenPaper={goPaper}
               onWikiLink={onWikiLink}
-              canGenerate={canManage}
               ingestRunning={!!ingestQuery.data?.running_voyage_id}
               hasWatermark={!!ingestQuery.data?.watermark}
             />
@@ -274,7 +259,6 @@ export function WikiWorkbench({
           <LibraryChatTab
             pid={pid}
             libraryId={tabLibraryId}
-            canManage={canManage}
             onOpenPaper={goPaper}
             onWikiLink={onWikiLink}
           />
@@ -290,7 +274,7 @@ export function WikiWorkbench({
             onGoGovern={libraryId ? () => setTab('govern') : undefined}
           />
         ) : tab === 'govern' && libraryId ? (
-          <GovernanceTab libraryId={libraryId} readOnly={!canManage} />
+          <GovernanceTab libraryId={libraryId} />
         ) : (
           <NotesTab pid={pid} libraryId={tabLibraryId} />
         )}

@@ -435,6 +435,5 @@ class CollectingLibraryRead(BaseModel):
 
     library_id: uuid.UUID
     name: str
-    is_public: bool
     status: str
     relevance_score: float | None = None

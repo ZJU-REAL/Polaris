@@ -4,11 +4,9 @@
 所以放开范围不需要改检索本身，只需要换一种方式回答「这次能搜哪些库」：
 
 - 课题内（voyage、课题里的对话）：课题关联的那些库；
-- 全局（PolarisBuddy）：这个人**看得见**的全部库（管理员看全部，普通用户看自己的
-  个人库加全部公共库，口径与 ``library_visible_to`` 一致）。
+- 全局（PolarisBuddy）：全部文献库。
 
-两条路都落到同一批库 id 上，越权与否由那一步决定，检索代码不需要知道自己在哪种
-模式下跑。
+两条路都落到同一批库 id 上，检索代码不需要知道自己在哪种模式下跑。
 """
 
 from __future__ import annotations
@@ -24,24 +22,25 @@ from sqlalchemy.orm import selectinload
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper
 from app.models.project import Project
-from app.models.user import User
 from app.services.libraries import (
     get_source_library_ids,
-    library_visible_to,
     membership_rank,
 )
 from app.services.papers import PaperView, paper_in_daily_feed
 from app.tools.context import ToolContext
 
 
-async def visible_library_ids(session: AsyncSession, user: User) -> list[uuid.UUID]:
-    """这个人看得见的全部库。口径与库列表页一致——助手不该比界面看得更多。"""
-    libraries = (
-        (await session.execute(select(DirectionLibrary).order_by(DirectionLibrary.created_at)))
+async def all_library_ids(session: AsyncSession) -> list[uuid.UUID]:
+    """全部文献库（按创建先后）。"""
+    return list(
+        (
+            await session.execute(
+                select(DirectionLibrary.id).order_by(DirectionLibrary.created_at)
+            )
+        )
         .scalars()
         .all()
     )
-    return [lib.id for lib in libraries if library_visible_to(lib, user)]
 
 
 async def library_ids_for(session: AsyncSession, ctx: ToolContext) -> list[uuid.UUID]:

@@ -1,18 +1,13 @@
-"""库治理：库级写权限助手（创建者）与库定义编辑（收录配置权威源）。
+"""库治理：库定义编辑（收录配置权威源）。
 
-策展人任命与转公共审批流已随实验室定位移除（P1 去实验室化）。
+单用户本地应用（#842）：每个库都是这个人的，没有库级写权限判断可测。
 """
 
 import uuid
 
-from sqlalchemy import select
-
-from app.api.auth import LOCAL_USER_EMAIL
 from app.core.db import get_sessionmaker
 from app.models.library_direction import DirectionLibrary
 from app.models.project import Project
-from app.models.user import User
-from app.services import libraries as libraries_service
 from tests.conftest import make_project_with_library, register_and_login
 
 
@@ -27,18 +22,6 @@ async def _setup(client):
     # P9c：课题不再自动建库——显式建课题 + 关联一条 active 起源库（project_id 回指）。
     project_id, library_id = await make_project_with_library(client, owner, name="治理方向")
     return owner, project_id, str(library_id)
-
-
-async def test_creator_can_manage_library(client):
-    _owner, _project_id, library_id = await _setup(client)
-    async with get_sessionmaker()() as session:
-        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
-        owner_user = (
-            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
-        ).scalar_one()
-        assert await libraries_service.can_manage_library(session, user=owner_user, library=library)
-        # 批量版与逐库版规则一字不差
-        assert libraries_service.can_manage_library_row(user=owner_user, library=library)
 
 
 async def test_patch_library_permission_and_definition_authority(client):
@@ -60,7 +43,6 @@ async def test_patch_library_permission_and_definition_authority(client):
     body = resp.json()
     assert body["name"] == "稀疏注意力"
     assert body["monthly_budget"] == 500000
-    assert body["can_manage"] is True
     # 响应带出收录配置全量（供「收录设置」回填）
     assert body["definition"]["rubric"] == ["和稀疏注意力直接相关"]
     assert body["definition"]["anchor_papers"] == [{"arxiv_id": "2404.00001"}]

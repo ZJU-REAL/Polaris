@@ -63,11 +63,6 @@ export function LibraryPicker({
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="row gap8">
                 <span style={{ fontSize: 13.5, fontWeight: 650 }}>{lib.name}</span>
-                {lib.is_mine && (
-                  <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-                    {tr('我在用', 'In use')}
-                  </span>
-                )}
                 {lib.library_kind === 'interdisciplinary' && (
                   <span className="pill sm">{tr('专属交叉库', 'Dedicated interdisciplinary')}</span>
                 )}

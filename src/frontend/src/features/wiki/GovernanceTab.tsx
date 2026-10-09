@@ -26,13 +26,13 @@ function fromDefinition(def: ProjectDefinition | null): InclusionValue {
 
 /* ============================================================
    文献库治理页签：
-   - 库信息编辑（可管理者）；
+   - 库信息编辑；
    - 本月 AI 用量展示（#734 起纯展示：预算硬限额已移除，不再暂停任务，
      旧的「每月预算」输入随之撤下——参考上限仅在用量条上呈现）；
    - 重复论文候选与合并（不可撤销）。
    ============================================================ */
 
-export function GovernanceTab({ libraryId, readOnly = false }: { libraryId: string; readOnly?: boolean }) {
+export function GovernanceTab({ libraryId }: { libraryId: string }) {
   const { data: lib } = useQuery({
     queryKey: ['library', libraryId],
     queryFn: () => api.getLibrary(libraryId),
@@ -41,24 +41,17 @@ export function GovernanceTab({ libraryId, readOnly = false }: { libraryId: stri
 
   return (
     <div className="col gap16" style={{ padding: 20, overflowY: 'auto' }}>
-      {lib && <LibraryInfoCard lib={lib} readOnly={readOnly} />}
+      {lib && <LibraryInfoCard lib={lib} />}
       {lib?.library_kind === 'interdisciplinary' && lib.project_id && (
         <InterdisciplinaryLibraryScope projectId={lib.project_id} library={lib} />
       )}
-      {lib && <DisciplineCard lib={lib} readOnly={readOnly} />}
+      {lib && <DisciplineCard lib={lib} />}
       {lib && (
-        <InclusionSettingsCard
-          lib={lib}
-          readOnly={readOnly || lib.library_kind === 'interdisciplinary'}
-        />
+        // 交叉库的收录范围由课题的交叉研究设置决定，这里只读
+        <InclusionSettingsCard lib={lib} readOnly={lib.library_kind === 'interdisciplinary'} />
       )}
-      {/* 预算 / 重复论文均为管理门数据，普通用户取不到 → 只读时不渲染 */}
-      {!readOnly && (
-        <>
-          <BudgetCard libraryId={libraryId} />
-          <DuplicatesCard libraryId={libraryId} />
-        </>
-      )}
+      <BudgetCard libraryId={libraryId} />
+      <DuplicatesCard libraryId={libraryId} />
     </div>
   );
 }
@@ -267,29 +260,18 @@ function BudgetCard({ libraryId }: { libraryId: string }) {
 
 /* —— 库信息 —— */
 
-function LibraryInfoCard({
-  lib,
-  readOnly,
-}: {
-  lib: DirectionLibraryDetail;
-  readOnly?: boolean;
-}) {
+function LibraryInfoCard({ lib }: { lib: DirectionLibraryDetail }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(lib.name);
   const [statement, setStatement] = useState(lib.statement ?? '');
-  const [isPublic, setIsPublic] = useState(lib.is_public);
 
   // 库切换 / 保存后回填
   useEffect(() => {
     setName(lib.name);
     setStatement(lib.statement ?? '');
-    setIsPublic(lib.is_public);
   }, [lib]);
 
-  const dirty =
-    name !== lib.name ||
-    statement !== (lib.statement ?? '') ||
-    isPublic !== lib.is_public;
+  const dirty = name !== lib.name || statement !== (lib.statement ?? '');
 
   // 「每月预算」输入已撤（#734）：硬限额移除后它什么都不控制，留着只会误导。
   const save = useMutation({
@@ -297,7 +279,6 @@ function LibraryInfoCard({
       api.updateLibrary(lib.id, {
         name: name.trim() || lib.name,
         statement: statement.trim() || null,
-        is_public: isPublic,
       }),
     onSuccess: () => {
       toast(tr('库信息已保存', 'Library info saved'), 'ok');
@@ -312,20 +293,18 @@ function LibraryInfoCard({
     <section className="card" style={{ padding: 18 }}>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
         <h3 style={{ fontSize: 14, fontWeight: 700 }}>{tr('库信息', 'Library info')}</h3>
-        {!readOnly && (
-          <button
-            className="btn btn-primary sm"
-            disabled={!dirty || save.isPending || !name.trim()}
-            onClick={() => save.mutate()}
-          >
-            {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
-          </button>
-        )}
+        <button
+          className="btn btn-primary sm"
+          disabled={!dirty || save.isPending || !name.trim()}
+          onClick={() => save.mutate()}
+        >
+          {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+        </button>
       </div>
       <div className="col gap12">
         <label className="col gap6">
           <span className="muted" style={{ fontSize: 12 }}>{tr('名称', 'Name')}</span>
-          <input className="input" value={name} disabled={readOnly} onChange={(e) => setName(e.target.value)} maxLength={255} />
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={255} />
         </label>
         <label className="col gap6">
           <span className="muted" style={{ fontSize: 12 }}>{tr('方向描述', 'Description')}</span>
@@ -334,7 +313,6 @@ function LibraryInfoCard({
             rows={3}
             style={{ resize: 'none', height: 78 }}
             value={statement}
-            disabled={readOnly}
             onChange={(e) => setStatement(e.target.value)}
             placeholder={tr(
               '例：研究长时程运行的 LLM 智能体。关注记忆压缩、错误恢复、长期一致性评测；偏重方法与系统设计，不收纯 prompt 工程和纯应用报告。',
@@ -342,21 +320,6 @@ function LibraryInfoCard({
             )}
           />
         </label>
-        {/* 共享开关：审批流已移除（#619），创建者在这里直接决定库是否对所有人可见 */}
-        {!readOnly && (
-          <label className="row gap8" style={{ alignItems: 'center', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={isPublic}
-              onChange={(e) => setIsPublic(e.target.checked)}
-              style={{ width: 14, height: 14, margin: 0, accentColor: 'var(--accent)', cursor: 'pointer' }}
-            />
-            <span style={{ fontSize: 13 }}>{tr('公开给所有人', 'Visible to everyone')}</span>
-            <span className="muted" style={{ fontSize: 12 }}>
-              {tr('开启后本部署的所有用户都能浏览这个库', 'Everyone on this deployment can browse this library')}
-            </span>
-          </label>
-        )}
       </div>
     </section>
   );
@@ -408,7 +371,10 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
       </div>
       <p className="muted" style={{ fontSize: 12, marginBottom: 16 }}>
         {readOnly
-          ? tr('由文献库管理员维护，你只能查看。', 'Maintained by library managers — read-only for you.')
+          ? tr(
+              '交叉库的收录范围由课题的交叉研究设置决定，这里只能查看。',
+              'This cross-field library takes its scope from the topic’s cross-field settings, so it is read-only here.',
+            )
           : tr(
               '建库检索从这里勾选的来源按关键词取文献（选了 arXiv 时还可按分类筛），再按打分标准判定相关性；不设打分标准则只按方向说明打分。',
               'Library builds search the sources ticked here by keyword (arXiv can also be narrowed by category), then score relevance against the rubric; without a rubric, scoring uses the statement alone.',
@@ -440,13 +406,7 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
  */
 export const disciplinePatchValue = disciplineFieldValue;
 
-function DisciplineCard({
-  lib,
-  readOnly,
-}: {
-  lib: DirectionLibraryDetail;
-  readOnly?: boolean;
-}) {
+function DisciplineCard({ lib }: { lib: DirectionLibraryDetail }) {
   const queryClient = useQueryClient();
   const [value, setValue] = useState<string>(lib.discipline ?? '');
 
@@ -469,15 +429,13 @@ function DisciplineCard({
     <section className="card" style={{ padding: 18 }}>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
         <h3 style={{ fontSize: 14, fontWeight: 700 }}>{tr('学科口径', 'Discipline')}</h3>
-        {!readOnly && (
-          <button
-            className="btn btn-primary sm"
-            disabled={save.isPending || !dirty}
-            onClick={() => save.mutate()}
-          >
-            {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
-          </button>
-        )}
+        <button
+          className="btn btn-primary sm"
+          disabled={save.isPending || !dirty}
+          onClick={() => save.mutate()}
+        >
+          {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+        </button>
       </div>
       <p className="muted" style={{ fontSize: 12, marginBottom: 16 }}>
         {tr(
@@ -486,7 +444,7 @@ function DisciplineCard({
         )}
       </p>
 
-      <DisciplineSelect value={value} onChange={setValue} disabled={readOnly} />
+      <DisciplineSelect value={value} onChange={setValue} />
     </section>
   );
 }

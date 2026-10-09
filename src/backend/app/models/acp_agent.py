@@ -35,8 +35,6 @@ class AcpAgent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: deny / read_only / auto（见 services/acp/client 的模块头）
     permission_policy: Mapped[str] = mapped_column(String(16), nullable=False, default="deny")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    #: 平台上其他账号也能在助手里选它（用的是登记者的订阅/额度，所以默认不共享）
-    shared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     #: 上次探测（握手）拿到的 agent 自述；失败时为 None、原因在 last_error
     last_probe: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)

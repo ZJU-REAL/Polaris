@@ -199,7 +199,7 @@ async def compile_paper(
     让它残留进 wiki，也绝不因解析失败让编译失败。
     """
     llm = llm or get_llm_router()
-    fulltext_chars = await resolve_budget(llm, LIBRARIAN_FULLTEXT, user_id)
+    fulltext_chars = await resolve_budget(llm, LIBRARIAN_FULLTEXT)
     user_prompt, images = build_compile_prompt(paper, fulltext_chars)
     evidence_bundle: AIEvidenceBundle | None = None
     if session is not None and library_id is not None:
