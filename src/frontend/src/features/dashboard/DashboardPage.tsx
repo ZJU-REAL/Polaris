@@ -376,8 +376,11 @@ function ActivityFeed({ activities, error }: { activities: ActivityRead[]; error
   );
 }
 
-function GatePreview({ gates, gatesError, openGates }: {
+function GatePreview({ gates, otherTopicsCount, gatesError, openGates }: {
+  /** 本课题的待处理审批（审批中心是全局的，这里只列本课题的，和指标卡同一口径）。 */
   gates: GateRead[];
+  /** 别的课题还有几个待处理（审批中心里能看到）。 */
+  otherTopicsCount: number;
   gatesError: boolean;
   openGates: (id?: string | null) => void;
 }) {
@@ -438,6 +441,11 @@ function GatePreview({ gates, gatesError, openGates }: {
               </div>
             );
           })
+        )}
+        {!gatesError && otherTopicsCount > 0 && (
+          <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-3)', textAlign: 'center' }}>
+            {tr(`其他课题还有 ${otherTopicsCount} 个待处理`, `${otherTopicsCount} more pending in other topics`)}
+          </div>
         )}
         <button className="btn btn-soft" onClick={() => openGates(null)} style={{ justifyContent: 'center' }}>
           {tr('查看全部审批', 'View all approvals')}
@@ -632,7 +640,10 @@ export function DashboardPage() {
   // 全流程都有产出 → 整卡隐藏
   const showChecklist = checklistReady && nextSteps.some((s) => !s.done);
 
-  const statCards = buildStatCards(stats, pendingGates.length);
+  // 审批中心（顶栏）是全局的；课题概况只算本课题的，指标卡（stats.gates_pending）与
+  // 右侧审批预览必须同一口径，否则会出现「指标 0、预览 1 个待处理」。
+  const topicGates = pendingGates.filter((g) => g.project_id === currentProjectId);
+  const statCards = buildStatCards(stats, topicGates.length);
   const stages = buildPipelineStages(
     stats,
     currentProjectId,
@@ -696,7 +707,12 @@ export function DashboardPage() {
               />
             </div>
             <div className="dash-side">
-              <GatePreview gates={pendingGates} gatesError={gatesError} openGates={openGates} />
+              <GatePreview
+                gates={topicGates}
+                otherTopicsCount={pendingGates.length - topicGates.length}
+                gatesError={gatesError}
+                openGates={openGates}
+              />
             </div>
           </div>
         </>

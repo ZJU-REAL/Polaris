@@ -9,7 +9,9 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "7d2e4f9a1b63"  # 单用户：别的用户行的数据并到本地用户 (#850)
+HEAD_REVISION = "9a4c2e7b1d58"  # SQLite：voyage_terminal_logs.id 改成 INTEGER 主键
+TERMINAL_LOG_PK_REVISION = HEAD_REVISION
+USER_ROWS_MERGE_REVISION = "7d2e4f9a1b63"  # 单用户：别的用户行的数据并到本地用户 (#850)
 SINGLE_USER_REVISION = "3c7d9e1f5a20"  # 单用户：LLM 配置并成一张表、agent 去掉共享列 (#842)
 NO_ACCOUNTS_REVISION = "88a5bdc0aa15"  # 删掉邮箱验证码表：去掉账号层 (#842)
 ROUTES_TO_AGENTS_REVISION = "a9c4e7d2f1b8"  # 路由可以指向外部 agent (#840)
@@ -657,7 +659,12 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 账号层已删（#842）：邮箱验证码表不在 head 上
     assert "email_verification_codes" not in columns["_tables"]
 
-    # 先退掉用户行合并（#850）：空操作。
+    # 先退掉终端日志主键重建：空操作。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == USER_ROWS_MERGE_REVISION
+
+    # 再退掉用户行合并（#850）：空操作。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == SINGLE_USER_REVISION
@@ -2032,7 +2039,7 @@ def test_user_rows_merge_into_the_local_user(tmp_path):
     assert settings == {"shared": "local", "daily.sync_time": "07:15", "x": 3}
 
     # 降级是空操作；再升一次（幂等）结果不变
-    command.downgrade(cfg, "-1")
+    command.downgrade(cfg, SINGLE_USER_REVISION)
     assert _inspect_db(db_path)[0] == SINGLE_USER_REVISION
     command.upgrade(cfg, "head")
     engine = create_engine(f"sqlite:///{db_path}")
@@ -2089,3 +2096,89 @@ def test_user_rows_merge_adopts_the_earliest_user_when_there_is_no_local_user(tm
     assert users[first] == ("local@polaris.desktop", "me", True)
     assert users[second] == ("b@x.com", "local", False)
     assert owners == {first}
+
+
+def _insert_terminal_log(conn, run_id: str) -> int:
+    """不给 id 插一行终端日志，返回库给的 id（SQLite 只有 INTEGER 主键才自动给）。"""
+    conn.execute(
+        text(
+            "INSERT INTO voyage_terminal_logs (run_id, event, message, at) "
+            "VALUES (:run_id, 'log', 'hello', '2026-10-09 00:00:00')"
+        ),
+        {"run_id": run_id},
+    )
+    return conn.execute(text("SELECT last_insert_rowid()")).scalar_one()
+
+
+def test_integer_primary_keys_auto_increment_on_a_migrated_sqlite_db(tmp_path):
+    """桌面端的库是迁移建的，不是 metadata 建的：迁移出来的自增主键必须声明成 INTEGER。
+
+    SQLite 只有类型恰好是 INTEGER 的单列主键才是 rowid 别名、插入时自动给值；BIGINT
+    主键就是普通列，不给 id 的插入全部 NOT NULL 失败（终端日志因此一行都存不下）。
+    """
+    db_path = tmp_path / "pk.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, "head")
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            wrong: dict[str, str] = {}
+            tables = conn.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).scalars()
+            for table in list(tables):
+                pk = [c for c in conn.exec_driver_sql(f"PRAGMA table_info('{table}')") if c[5]]
+                declared = (pk[0][2] or "").upper() if len(pk) == 1 else ""
+                if "INT" in declared and declared != "INTEGER":
+                    wrong[table] = declared
+            assert wrong == {}, f"integer primary keys that will not auto-increment: {wrong}"
+
+            run_id = "0" * 32
+            assert _insert_terminal_log(conn, run_id) == 1
+            assert _insert_terminal_log(conn, run_id) == 2
+    finally:
+        engine.dispose()
+
+
+def test_terminal_log_pk_rebuild_keeps_rows_index_and_foreign_key(tmp_path):
+    """重建表时已有的终端日志、run_id 索引和指向 voyage_runs 的外键都要留着。"""
+    db_path = tmp_path / "pk-keep.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, USER_ROWS_MERGE_REVISION)
+
+    run_id = "1" * 32
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO voyage_terminal_logs (id, run_id, event, message, at) "
+                    "VALUES (7, :run_id, 'llm', 'kept', '2026-10-09 00:00:00')"
+                ),
+                {"run_id": run_id},
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, TERMINAL_LOG_PK_REVISION)
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text("SELECT id, run_id, event, message FROM voyage_terminal_logs")
+            ).all()
+            assert rows == [(7, run_id, "llm", "kept")]
+            assert _insert_terminal_log(conn, run_id) == 8
+            fks = inspect(conn).get_foreign_keys("voyage_terminal_logs")
+            assert [(fk["referred_table"], fk["options"].get("ondelete")) for fk in fks] == [
+                ("voyage_runs", "CASCADE")
+            ]
+    finally:
+        engine.dispose()
+    assert "ix_voyage_terminal_logs_run_id" in _index_names(db_path, "voyage_terminal_logs")
+
+    # 退回去是空操作，再升上来也不出错
+    command.downgrade(cfg, "-1")
+    command.upgrade(cfg, "head")
