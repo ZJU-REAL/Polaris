@@ -30,11 +30,11 @@ export function StatCard({ icon, label, en, value, sub, accent }: StatCardProps)
           <Icon name={icon} size={16} />
         </div>
         <div>
-          <div style={{ fontSize: 12.5, fontWeight: 600 }}>{tr(label, en)}</div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{tr(label, en)}</div>
         </div>
       </div>
       <div className="row" style={{ alignItems: 'baseline', gap: 8 }}>
-        <span style={{ fontFamily: 'var(--mono)', fontSize: 28, fontWeight: 700, letterSpacing: '-0.02em' }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 28, fontWeight: 600, letterSpacing: '-0.02em' }}>
           {value}
         </span>
         {sub && <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{sub}</span>}

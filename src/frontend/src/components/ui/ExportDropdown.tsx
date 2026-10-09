@@ -114,7 +114,7 @@ export function ExportDropdown({
               <span>
                 {it.label}
                 {it.hint && (
-                  <span className="muted" style={{ marginLeft: 5, fontSize: 10.5 }}>
+                  <span className="muted" style={{ marginLeft: 5, fontSize: 11 }}>
                     {it.hint}
                   </span>
                 )}

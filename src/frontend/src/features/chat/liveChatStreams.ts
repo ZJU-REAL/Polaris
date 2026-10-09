@@ -1,4 +1,5 @@
 import { persistAssistantProgress } from './chatStorage';
+import { tr } from '../../lib/i18n';
 import type { ChatMsg } from './types';
 
 /* ============================================================
@@ -147,7 +148,7 @@ export function startStream(
     onDone: () => finish(false),
     onError: (detail) => {
       onFail?.(detail);
-      finish(true, '（回答中断了，请重试）');
+      finish(true, tr('（回答中断了，请重试）', '(The reply stopped. Try again.)'));
     },
   });
 }

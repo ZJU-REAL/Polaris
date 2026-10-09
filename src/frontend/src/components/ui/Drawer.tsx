@@ -20,7 +20,7 @@ export function Drawer({ open, onClose, title, sub, children }: DrawerProps) {
         <div className="row" style={{ padding: '18px 20px', borderBottom: '0.5px solid var(--border)', justifyContent: 'space-between' }}>
           <div>
             <div className="row gap8">{title}</div>
-            {sub && <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 3 }}>{sub}</div>}
+            {sub && <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>{sub}</div>}
           </div>
           <button className="icon-btn" onClick={onClose} aria-label={tr('关闭', 'Close')}>
             <Icon name="x" size={16} />

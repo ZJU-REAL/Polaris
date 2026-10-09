@@ -129,7 +129,7 @@ export function ConversationRail({
           padding: '6px 8px',
           borderRadius: 7,
           cursor: 'pointer',
-          fontSize: 12.5,
+          fontSize: 13,
         }}
       >
         <Icon name="pen" size={13} style={{ color: 'var(--text-3)' }} />
@@ -137,7 +137,7 @@ export function ConversationRail({
       </div>
       <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '0 6px 8px' }}>
         {rows.length === 0 && (
-          <div style={{ fontSize: 11, color: 'var(--text-4)', padding: '6px 6px' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-3)', padding: '6px 6px' }}>
             {tr('还没有对话', 'No conversations yet')}
           </div>
         )}
@@ -145,8 +145,8 @@ export function ConversationRail({
           <div key={group.label} style={{ marginBottom: 6 }}>
             <div
               style={{
-                fontSize: 10.5,
-                color: 'var(--text-4)',
+                fontSize: 11,
+                color: 'var(--text-3)',
                 padding: '10px 8px 4px',
               }}
             >
@@ -177,7 +177,7 @@ export function ConversationRail({
                       if (e.key === 'Enter') void commitRename(row.id);
                       if (e.key === 'Escape') setRenaming(null);
                     }}
-                    style={{ height: 22, fontSize: 11.5, flex: 1, minWidth: 0 }}
+                    style={{ height: 22, fontSize: 12, flex: 1, minWidth: 0 }}
                   />
                 ) : (
                   <>
@@ -185,7 +185,7 @@ export function ConversationRail({
                       style={{
                         flex: 1,
                         minWidth: 0,
-                        fontSize: 11.5,
+                        fontSize: 12,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',

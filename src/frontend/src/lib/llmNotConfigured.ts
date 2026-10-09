@@ -15,7 +15,7 @@ export function isLlmNotConfigured(detail: string): boolean {
 
 export function llmNotConfiguredText(): string {
   return tr(
-    '还没有可用的模型：去「设置 → 模型与智能体」添加一个智能体（如 Claude Code）或一个模型 API。',
-    'No model is available yet: add an agent backend (such as Claude Code) or a model API in Settings → Models & agents.',
+    '还没有可用的模型，请在「设置 → 模型与智能体」中添加智能体或模型服务。',
+    'No model is available. Add an agent or a model provider in Settings → Models & agents.',
   );
 }

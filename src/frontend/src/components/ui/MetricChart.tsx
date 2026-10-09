@@ -100,8 +100,8 @@ export function MetricChart({ series, height = 220, baseline }: MetricChartProps
 
   if (data.length === 0) {
     return (
-      <div className="empty" style={{ padding: 30, fontSize: 12.5 }}>
-        {tr('暂无指标数据 · 运行日志中的 POLARIS_METRIC 行会被解析到这里', 'No metric data yet · POLARIS_METRIC lines in run logs are parsed into this chart')}
+      <div className="empty" style={{ padding: 30, fontSize: 13 }}>
+        {tr('还没有指标。实验输出的 POLARIS_METRIC 行会显示在这里。', 'No metrics yet. POLARIS_METRIC lines in the run output show up here.')}
       </div>
     );
   }
@@ -232,7 +232,7 @@ export function MetricChart({ series, height = 220, baseline }: MetricChartProps
             <div key={en.name} className="row gap6" style={{ fontSize: 11, marginTop: 2 }}>
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: en.color, flexShrink: 0 }} />
               <span style={{ color: 'var(--text-2)' }}>{en.name}</span>
-              <span className="mono" style={{ fontWeight: 700 }}>{fmtVal(en.value)}</span>
+              <span className="mono" style={{ fontWeight: 600 }}>{fmtVal(en.value)}</span>
             </div>
           ))}
         </div>

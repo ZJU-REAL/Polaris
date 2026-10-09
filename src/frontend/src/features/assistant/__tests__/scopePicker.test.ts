@@ -44,13 +44,15 @@ describe('课题选择', () => {
   const plusButton = lines.findIndex((l) => l.includes('setPlusOpen((o) => !o)'));
   const scopeButton = lines.findIndex((l) => l.includes('className="buddy-scope"'));
 
-  it('是一枚按钮，和加号并排在输入框上方', () => {
+  it('是一枚按钮，和加号并排在输入卡片的底栏', () => {
     expect(plusButton).toBeGreaterThan(0);
     expect(scopeButton).toBeGreaterThan(plusButton);
-    // 中间不能隔着输入框：两者必须在同一行容器里
-    const composer = lines.findIndex((l) => l.includes('padding: 12, borderTop:'));
+    // 输入框在上、选择器在下，同在一张输入卡片里
+    const composer = lines.findIndex((l) => l.includes('className="buddy-composer"'));
     expect(composer).toBeGreaterThan(0);
-    expect(plusButton).toBeGreaterThan(composer);
+    const textarea = lines.findIndex((l, i) => i > composer && l.includes('<textarea'));
+    expect(textarea).toBeGreaterThan(composer);
+    expect(plusButton).toBeGreaterThan(textarea);
   });
 
   it('加号菜单里不再有「只查课题」——那件事归选择器了', () => {

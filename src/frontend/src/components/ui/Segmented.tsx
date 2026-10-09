@@ -40,7 +40,7 @@ export function Segmented<V extends string>({ options, value, onChange }: Segmen
               cursor: 'pointer',
               borderRadius: 6,
               padding: '5px 13px',
-              fontSize: 12.5,
+              fontSize: 13,
               fontWeight: 600,
               fontFamily: 'var(--sans)',
               background: on ? 'var(--surface)' : 'transparent',

@@ -4,11 +4,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Modal } from '../../components/ui/Modal';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type ProjectRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { errorText } from '../../lib/errors';
 import { useLibraries } from '../libraries/hooks';
 import { LibraryPicker } from '../libraries/LibraryPicker';
 import { InterdisciplinaryScopePanel } from './InterdisciplinaryScopePanel';
@@ -61,7 +64,7 @@ function EditableText({ value, placeholder, onSave, saving }: {
   if (!editing) {
     return (
       <div className="row gap10" style={{ alignItems: 'flex-start' }}>
-        <div style={{ flex: 1, fontSize: 13.5, lineHeight: 1.6, color: value ? 'var(--text)' : 'var(--text-4)' }}>
+        <div style={{ flex: 1, fontSize: 13, lineHeight: 1.6, color: value ? 'var(--text)' : 'var(--text-4)' }}>
           {value || placeholder}
         </div>
         <EditButton editing={false} onClick={() => { setDraft(value); setEditing(true); }} />
@@ -102,7 +105,7 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
     },
     onError: (err) => {
       const forbidden = err instanceof ApiError && err.status === 403;
-      toast(forbidden ? tr('只有课题创建者或管理员可以删除', 'Only the topic owner or an admin can delete it') : `${tr('删除失败：', 'Delete failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error');
+      toast(forbidden ? tr('没有权限删除这个课题', 'You can’t delete this topic') : `${tr('无法删除课题：', 'Couldn’t delete the topic: ')}${errorText(err)}`, 'error');
     },
   });
 
@@ -120,7 +123,7 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
       toast(tr('已保存', 'Saved'), 'ok');
     },
-    onError: (err) => toast(`${tr('保存失败：', 'Save failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('无法保存：', 'Couldn’t save: ')}${errorText(err)}`, 'error'),
   });
 
   // —— 关联文献库 ——
@@ -168,7 +171,7 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
       setLinkOpen(false);
       toast(tr('关联文献库已更新', 'Linked libraries updated'), 'ok');
     },
-    onError: (err) => toast(`${tr('更新失败：', 'Update failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('无法更新关联文献库：', 'Couldn’t update linked libraries: ')}${errorText(err)}`, 'error'),
   });
 
   // —— 名称编辑 ——
@@ -176,23 +179,17 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
   const [nameDraft, setNameDraft] = useState('');
 
   if (isLoading) {
-    return <div className="empty" style={{ padding: 80 }}>{tr('加载中…', 'Loading…')}</div>;
+    return <LoadingState />;
   }
   if (isError || !project) {
     const notFound = error instanceof ApiError && error.status === 404;
     return (
-      <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
-          <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 8 }}>
-            {notFound ? tr('课题不存在', 'Topic not found') : tr('无法加载课题设置', 'Failed to load topic settings')}
-          </div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 18 }}>
-            {error instanceof Error ? error.message : tr('后端不可用，请稍后重试', 'Backend unavailable — try again later')}
-          </div>
-          <div className="row gap8" style={{ justifyContent: 'center' }}>
-            <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-            <button className="btn btn-ghost" onClick={() => navigate('/')}>{tr('返回总览', 'Back to dashboard')}</button>
-          </div>
-      </div>
+      <ErrorState
+        title={notFound ? tr('找不到这个课题，可能已被删除', 'This topic no longer exists.') : tr('无法加载课题设置，请确认本机引擎正在运行', 'Couldn’t load topic settings. Check that the local engine is running.')}
+        detail={notFound ? null : error instanceof Error ? error.message : null}
+        onRetry={notFound ? undefined : () => void refetch()}
+        action={<button className="btn btn-ghost sm" onClick={() => navigate('/')}>{tr('返回工作台', 'Back to workbench')}</button>}
+      />
     );
   }
 
@@ -206,7 +203,7 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
           {!embedded && <div className="h-eyebrow">{tr('课题设置', 'Topic Settings')}</div>}
           {editingName ? (
             <div className="row gap8" style={{ marginTop: 8 }}>
-              <input className="input" style={{ fontSize: 17, fontWeight: 650, width: 380, maxWidth: '100%' }} value={nameDraft}
+              <input className="input" style={{ fontSize: 17, fontWeight: 600, width: 380, maxWidth: '100%' }} value={nameDraft}
                 onChange={(e) => setNameDraft(e.target.value)} />
               <button className="btn btn-primary sm" disabled={saving}
                 onClick={() => {
@@ -228,7 +225,7 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
           )}
           <div className="row gap8" style={{ marginTop: 10 }}>
             {project.status && <StatusPill status={project.status} sm />}
-            <span className="mono muted" style={{ fontSize: 11 }}>{tr('创建于', 'Created')} {fmtTime(project.created_at)}</span>
+            <span className="muted" style={{ fontSize: 'var(--fs-sm)' }}>{tr(`创建于 ${fmtTime(project.created_at)}`, `Created ${fmtTime(project.created_at)}`)}</span>
           </div>
         </div>
         <div className="row gap8">
@@ -244,38 +241,25 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
       </div>
 
       {/* —— 删除确认 —— */}
-      <Modal
+      <ConfirmModal
         open={deleteOpen}
         onClose={() => setDeleteOpen(false)}
-        title={tr('删除课题', 'Delete topic')}
-        sub={project.name}
-        width={440}
-        footer={
-          <>
-            <button className="btn btn-ghost sm" onClick={() => setDeleteOpen(false)}>
-              {tr('取消', 'Cancel')}
-            </button>
-            <button
-              className="btn btn-primary sm"
-              style={{ background: 'var(--danger-tx)' }}
-              disabled={deleteMutation.isPending}
-              onClick={() => deleteMutation.mutate()}
-            >
-              {deleteMutation.isPending ? tr('删除中…', 'Deleting…') : tr('确认删除', 'Confirm delete')}
-            </button>
-          </>
-        }
-      >
-        <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text-2)' }}>
-          {tr('删除课题会移除该课题的', 'Deleting this topic removes its ')}<b>{tr('想法、实验、任务记录与文献库关联', 'ideas, experiments, task history and library links')}</b>{tr('；', '; ')}<b>{tr('文献库与论文本身保留，不受影响', 'the libraries and papers themselves are kept and unaffected')}</b>{tr('。此操作', '. This ')}<b>{tr('无法恢复', 'cannot be undone')}</b>{tr('。确定要删除 “', '. Delete “')}{project.name}{tr('” 吗？', '”?')}
-        </div>
-      </Modal>
+        title={tr(`删除课题「${project.name}」？`, `Delete topic “${project.name}”?`)}
+        message={tr(
+          '它的想法、实验和任务记录会被删除，无法恢复。文献库和论文会保留。',
+          'Its ideas, experiments and task history are deleted for good. Libraries and papers are kept.',
+        )}
+        confirmText={tr('删除', 'Delete')}
+        danger
+        busy={deleteMutation.isPending}
+        onConfirm={() => deleteMutation.mutate()}
+      />
 
       {/* —— 管理关联文献库 —— */}
       <Modal
         open={linkOpen}
         onClose={() => setLinkOpen(false)}
-        title={tr('管理关联文献库', 'Linked libraries')}
+        title={tr('关联文献库', 'Linked libraries')}
         width={600}
         footer={
           <>
@@ -288,9 +272,9 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
         }
       >
         {librariesQuery.isLoading ? (
-          <div className="empty" style={{ padding: 30 }}>{tr('加载中…', 'Loading…')}</div>
+          <LoadingState compact />
         ) : allLibraries.length === 0 ? (
-          <div className="empty" style={{ padding: 30 }}>{tr('平台还没有文献库。', 'No libraries on the platform yet.')}</div>
+          <div className="empty" style={{ padding: 30 }}>{tr('还没有文献库', 'No libraries yet')}</div>
         ) : (
           <div style={{ maxHeight: '55vh', overflowY: 'auto', marginTop: 4 }}>
             <LibraryPicker
@@ -313,8 +297,8 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
         )}
 
         {/* 一句话定义 */}
-        <SectionCard icon="sparkle" zh="课题定义" en="Statement">
-          <EditableText value={project.statement ?? ''} placeholder={tr('尚未填写一句话定义', 'No one-line statement yet')}
+        <SectionCard icon="sparkle" zh="简介" en="Description">
+          <EditableText value={project.statement ?? ''} placeholder={tr('一句话说明研究什么', 'One sentence on what you study')}
             onSave={(v) => patchMutation.mutate({ statement: v })} saving={saving} />
         </SectionCard>
 
@@ -328,10 +312,10 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
           }
         >
           {sourceLibraries === undefined ? (
-            <div style={{ fontSize: 13, color: 'var(--text-4)' }}>{tr('加载中…', 'Loading…')}</div>
+            <div style={{ fontSize: 13, color: 'var(--text-3)' }}>{tr('加载中…', 'Loading…')}</div>
           ) : sourceLibraries.length === 0 ? (
-            <div style={{ fontSize: 13, color: 'var(--text-4)' }}>
-              {tr('尚未关联任何文献库；点右上管理添加。', 'No linked libraries yet — use “Manage” to add.')}
+            <div style={{ fontSize: 13, color: 'var(--text-3)' }}>
+              {tr('还没有关联文献库', 'No linked libraries yet')}
             </div>
           ) : (
             <div className="col gap8">
@@ -344,17 +328,17 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
                     <div className="row gap8" style={{ flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 13, fontWeight: 600 }}>{lib.name}</span>
                       {lib.library_kind === 'interdisciplinary' && (
-                        <span className="pill sm">{tr('专属交叉库', 'Dedicated interdisciplinary')}</span>
+                        <span className="pill sm">{tr('课题专属', 'Topic library')}</span>
                       )}
                     </div>
-                    {lib.statement && <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2, lineHeight: 1.4 }}>{lib.statement}</div>}
+                    {lib.statement && <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2, lineHeight: 1.4 }}>{lib.statement}</div>}
                     {!!lib.interdisciplinary_domains?.length && (
                       <div className="muted" style={{ fontSize: 11, marginTop: 3 }}>
                         {lib.interdisciplinary_domains.join(' · ')}
                       </div>
                     )}
                   </div>
-                  <span className="mono muted" style={{ fontSize: 11, flexShrink: 0 }}>{tr(`${lib.paper_count} 篇`, `${lib.paper_count} papers`)}</span>
+                  <span className="mono muted" style={{ fontSize: 11, flexShrink: 0 }}>{tr(`${lib.paper_count} 篇`, lib.paper_count === 1 ? '1 paper' : `${lib.paper_count} papers`)}</span>
                 </div>
               ))}
             </div>

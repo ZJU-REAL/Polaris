@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Modal } from './Modal';
+import { tr } from '../../lib/i18n';
 
 export interface ConfirmModalProps {
   open: boolean;
@@ -20,7 +21,7 @@ export function ConfirmModal({
   onClose,
   title,
   message,
-  confirmText = '确认',
+  confirmText = tr('确定', 'OK'),
   danger,
   busy,
   onConfirm,
@@ -30,11 +31,11 @@ export function ConfirmModal({
       open={open}
       onClose={onClose}
       title={title}
-      width={420}
+      width={400}
       footer={
         <>
           <button className="btn btn-ghost sm" onClick={onClose} disabled={busy}>
-            取消
+            {tr('取消', 'Cancel')}
           </button>
           <button
             className={`btn sm ${danger ? 'btn-danger' : 'btn-primary'}`}
@@ -42,12 +43,12 @@ export function ConfirmModal({
             disabled={busy}
             autoFocus
           >
-            {busy ? '处理中…' : confirmText}
+            {busy ? tr('处理中…', 'Working…') : confirmText}
           </button>
         </>
       }
     >
-      <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.7 }}>{message}</div>
+      <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7 }}>{message}</div>
     </Modal>
   );
 }

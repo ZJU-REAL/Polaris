@@ -26,7 +26,7 @@ export function KnobRange({ label, en, hint, value, min, max, step, format, onCh
           onChange={(e) => onChange(Number(e.target.value))}
           style={{ flex: 1 }}
         />
-        <span className="mono" style={{ fontSize: 12.5, fontWeight: 650, width: 44, textAlign: 'right' }}>
+        <span className="mono" style={{ fontSize: 13, fontWeight: 600, width: 44, textAlign: 'right' }}>
           {format ? format(value) : value}
         </span>
       </div>

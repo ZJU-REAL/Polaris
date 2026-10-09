@@ -33,7 +33,7 @@ export function ScoreRing({ value, max = 10, size = 46, label }: ScoreRingProps)
           justifyContent: 'center',
         }}
       >
-        <span style={{ fontFamily: 'var(--mono)', fontSize: size * 0.3, fontWeight: 700, color: 'var(--text)' }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: size * 0.3, fontWeight: 600, color: 'var(--text)' }}>
           {value.toFixed(max <= 1 ? 2 : 1)}
         </span>
         {label && <span style={{ fontSize: 8, color: 'var(--text-3)', marginTop: -1 }}>{label}</span>}

@@ -41,13 +41,13 @@ export function ChatFigure({
 
   if (query.isError) return null; // 图缺失静默跳过
   if (!url) {
-    return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{tr('配图加载中…', 'loading figure…')}</span>;
+    return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{tr('图片加载中…', 'Loading figure…')}</span>;
   }
   return (
     <img
       src={url}
-      alt={tr('论文配图', 'paper figure')}
-      title={tr('点击打开论文', 'click to open paper')}
+      alt={tr('论文图片', 'Paper figure')}
+      title={tr('打开论文', 'Open paper')}
       onClick={() => onOpenPaper(paperId)}
       style={{
         display: 'block',
@@ -82,7 +82,7 @@ function SourceCard({ s, onOpenPaper }: { s: LibraryChatSource; onOpenPaper: (id
         <div className="row gap6" style={{ minWidth: 0 }}>
           <span
             style={{
-              fontSize: 11.5,
+              fontSize: 12,
               fontWeight: 600,
               cursor: 'pointer',
               overflow: 'hidden',
@@ -90,13 +90,13 @@ function SourceCard({ s, onOpenPaper }: { s: LibraryChatSource; onOpenPaper: (id
               whiteSpace: 'nowrap',
               minWidth: 0,
             }}
-            title={`${s.title} · ${tr('点击去阅读', 'click to read')}`}
+            title={`${s.title} · ${tr('打开阅读', 'Open to read')}`}
             onClick={() => onOpenPaper(s.paper_id)}
           >
             {s.title}
           </span>
           {s.year !== null && (
-            <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)', flexShrink: 0 }}>{s.year}</span>
+            <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)', flexShrink: 0 }}>{s.year}</span>
           )}
           {/* scoped 场景相关度可能为 null——有才画相关度条 */}
           {typeof s.relevance === 'number' && (
@@ -111,7 +111,7 @@ function SourceCard({ s, onOpenPaper }: { s: LibraryChatSource; onOpenPaper: (id
               <span
                 key={name}
                 className="tag"
-                style={{ fontSize: 9.5, height: 15, lineHeight: '15px', padding: '0 5px' }}
+                style={{ fontSize: 10, height: 15, lineHeight: '15px', padding: '0 5px' }}
               >
                 {name}
               </span>
@@ -122,7 +122,7 @@ function SourceCard({ s, onOpenPaper }: { s: LibraryChatSource; onOpenPaper: (id
       <button
         className="icon-btn"
         style={{ width: 22, height: 22, border: 'none', background: 'transparent', flexShrink: 0 }}
-        title={tr('去阅读（PDF + AI 伴读）', 'Read (PDF + AI companion)')}
+        title={tr('打开阅读', 'Open to read')}
         onClick={() => onOpenPaper(s.paper_id)}
       >
         <Icon name="book" size={12} />
@@ -143,8 +143,8 @@ export function SourceList({
   const shown = open ? sources : sources.slice(0, 3);
   return (
     <div className="col" style={{ gap: 4, marginTop: 10, paddingTop: 8, borderTop: '0.5px solid var(--border)' }}>
-      <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
-        {tr(`引用来源 · ${sources.length} 篇`, `Sources · ${sources.length}`)}
+      <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)' }}>
+        {tr(`来源（${sources.length}）`, `Sources (${sources.length})`)}
       </span>
       {shown.map((s) => (
         <SourceCard key={s.index} s={s} onOpenPaper={onOpenPaper} />
@@ -154,7 +154,7 @@ export function SourceList({
           onClick={() => setOpen(!open)}
           style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11, color: 'var(--accent-text)', textAlign: 'left' }}
         >
-          {open ? tr('收起', 'Collapse') : tr(`展开全部 ${sources.length} 篇来源`, `Show all ${sources.length} sources`)}
+          {open ? tr('收起', 'Collapse') : tr(`显示全部 ${sources.length} 篇`, `Show all ${sources.length}`)}
         </button>
       )}
     </div>
@@ -171,7 +171,7 @@ export function makeCitationRenderer(onOpenPaper: (id: string) => void) {
         <span
           role="link"
           tabIndex={0}
-          title={`${src.title} · ${tr('点击打开', 'click to open')}`}
+          title={`${src.title} · ${tr('打开', 'Open')}`}
           onClick={() => onOpenPaper(src.paper_id)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') onOpenPaper(src.paper_id);
@@ -184,7 +184,7 @@ export function makeCitationRenderer(onOpenPaper: (id: string) => void) {
             background: 'var(--accent-soft)',
             color: 'var(--accent-text)',
             fontSize: '0.82em',
-            fontWeight: 650,
+            fontWeight: 600,
             cursor: 'pointer',
             verticalAlign: '0.15em',
             lineHeight: 1.5,

@@ -18,43 +18,43 @@ function copyFor(id: string): { title: string; hint: string; href: string; cta: 
   switch (id) {
     case 'model':
       return {
-        title: tr('接一个智能体或模型', 'Connect an agent or a model'),
+        title: tr('添加智能体或模型服务', 'Add an agent or model provider'),
         hint: tr(
-          '添加一个智能体（如 Claude Code）或一个模型 API，AI 功能才能用。智能体用你自己的登录，最省事。',
-          'Add an agent backend (such as Claude Code) or a model API before AI features can work. An agent uses your own sign-in and is the quickest.',
+          'AI 功能需要它。已装好 Claude Code 等智能体的话，直接添加最快。',
+          'AI features need one. If you already use an agent such as Claude Code, adding it is quickest.',
         ),
         href: '/settings?tab=llm',
-        cta: tr('去配置', 'Configure'),
+        cta: tr('添加', 'Add'),
       };
     case 'library':
       return {
-        title: tr('建一个文献库', 'Create a library'),
+        title: tr('新建文献库', 'Create a library'),
         hint: tr(
-          '文献库是语料的来源——课题本身不持有论文，它读的是所关联文献库的并集。',
-          'Libraries hold the corpus; a topic owns no papers of its own, it reads the libraries linked to it.',
+          '论文都放在文献库里，课题通过关联文献库来使用它们。',
+          'Papers live in libraries. Topics use the libraries you link to them.',
         ),
         href: '/libraries',
-        cta: tr('去新建', 'Create'),
+        cta: tr('新建', 'Create'),
       };
     case 'discipline':
       return {
-        title: tr('选择学科口径', 'Pick a discipline'),
+        title: tr('选择学科', 'Choose a field'),
         hint: tr(
-          '决定论文按哪套字段抽取。研究不分领域的话，通用口径就是对的答案，可以直接收起这份清单。',
-          'Sets which fields papers are extracted into. If your work is not field-specific, the general fields are the right answer — just dismiss this list.',
+          '决定从论文中提取哪些信息。不限领域的话，保留「通用」即可。',
+          'Decides what to extract from papers. If you don’t work in one field, keep General.',
         ),
         href: '/libraries',
-        cta: tr('去设置', 'Set it'),
+        cta: tr('设置', 'Choose'),
       };
     case 'experiment':
       return {
-        title: tr('连一台跑实验的机器', 'Connect a machine'),
+        title: tr('连接实验机器', 'Connect an experiment machine'),
         hint: tr(
-          '通用的 Python 实验需要一台 SSH 机器；电路、流体等专用后端在本机容器里跑，不需要。',
-          'General Python experiments need an SSH machine. The circuit and fluid backends run in local containers and do not.',
+          'Python 实验在你通过 SSH 连接的机器上运行。电路、流体等实验在本机运行，不需要。',
+          'Python experiments run on a machine you connect over SSH. Circuit and fluid experiments run locally and don’t need one.',
         ),
         href: '/settings?tab=ssh',
-        cta: tr('去连接', 'Connect'),
+        cta: tr('连接', 'Connect'),
       };
     default:
       // 后端加了新项而前端还没跟上：与其显示一个没有文案的空行，不如不显示
@@ -90,8 +90,8 @@ export function OnboardingCard() {
   return (
     <section className="card" style={{ padding: 18, marginBottom: 16 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>
-          {tr('先把这几件事配好', 'A few things to set up first')}
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>
+          {tr('开始之前', 'Get set up')}
         </h3>
         <div className="row gap8" style={{ alignItems: 'center' }}>
           <span className="muted" style={{ fontSize: 12 }}>
@@ -107,10 +107,7 @@ export function OnboardingCard() {
         </div>
       </div>
       <p className="muted" style={{ fontSize: 12, margin: '4px 0 14px' }}>
-        {tr(
-          '每一项都按你账号的实际状态判断，配好了自动打勾。',
-          'Each item reflects your account’s actual state and ticks itself once done.',
-        )}
+        {tr('完成一项会自动打勾。', 'Items tick off as you finish them.')}
       </p>
       <div className="col gap8">
         {shown.map(({ item, copy }) => (
@@ -119,12 +116,12 @@ export function OnboardingCard() {
             className="row gap8"
             style={{ alignItems: 'flex-start', opacity: item.done ? 0.55 : 1 }}
           >
-            <span style={{ marginTop: 2, color: item.done ? 'var(--ok, #2e9e5b)' : 'var(--muted)' }}>
+            <span style={{ marginTop: 2, color: item.done ? 'var(--ok)' : 'var(--text-4)' }}>
               <Icon name={item.done ? 'check' : 'dot'} size={14} />
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>{copy.title}</div>
-              <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>{copy.hint}</div>
+              <div className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>{copy.hint}</div>
             </div>
             {!item.done && (
               <Link className="btn btn-soft sm" to={copy.href}>

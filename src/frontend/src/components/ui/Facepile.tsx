@@ -60,7 +60,7 @@ export function Facepile({
             background: 'var(--surface-3)',
             color: 'var(--text-3)',
             fontSize: Math.max(8, Math.round(size * 0.42)),
-            fontWeight: 650,
+            fontWeight: 600,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',

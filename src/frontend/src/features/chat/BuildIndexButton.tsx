@@ -1,5 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { tr } from '../../lib/i18n';
+import { errorText } from '../../lib/errors';
 import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
 
@@ -24,13 +25,13 @@ function buildResultToast(data: BuildIndexResult): string {
   const skipped = data.skipped ?? data.no_fulltext ?? 0;
   if (skipped > 0) {
     return tr(
-      `已排队 ${indexable} 篇建立全文索引，${skipped} 篇无全文已跳过（约需几分钟）`,
-      `Queued ${indexable} paper(s) for indexing; skipped ${skipped} without full text (takes a few minutes)`,
+      `正在为 ${indexable} 篇建立全文索引，约需几分钟；${skipped} 篇没有全文，已跳过`,
+      `Indexing ${indexable} ${indexable === 1 ? 'paper' : 'papers'}, which takes a few minutes. Skipped ${skipped} without full text.`,
     );
   }
   return tr(
-    `已排队 ${indexable} 篇建立全文索引，完成后对话检索会更准（约需几分钟）`,
-    `Queued ${indexable} paper(s) for full-text indexing — chat retrieval will improve once it finishes (takes a few minutes)`,
+    `正在为 ${indexable} 篇建立全文索引，约需几分钟`,
+    `Indexing ${indexable} ${indexable === 1 ? 'paper' : 'papers'}, which takes a few minutes.`,
   );
 }
 
@@ -39,7 +40,7 @@ export function BuildIndexButton({ build }: { build: () => Promise<BuildIndexRes
     mutationFn: build,
     onSuccess: (data) => toast(buildResultToast(data), 'ok'),
     onError: (e) => {
-      toast(`${tr('操作失败', 'Failed')}：${e instanceof Error ? e.message : String(e)}`, 'error');
+      toast(`${tr('无法建立索引：', 'Couldn’t build the index: ')}${errorText(e)}`, 'error');
     },
   });
 
@@ -48,8 +49,8 @@ export function BuildIndexButton({ build }: { build: () => Promise<BuildIndexRes
   return (
     <button
       className="btn btn-ghost sm"
-      style={{ height: 26, fontSize: 10.5, flexShrink: 0 }}
-      title={tr('为这批论文建立全文索引，让对话检索更准', 'Build a full-text index for these papers to improve chat retrieval')}
+      style={{ height: 26, fontSize: 11, flexShrink: 0 }}
+      title={tr('建立全文索引后，回答能引用论文正文', 'With a full-text index, answers can cite the paper body')}
       disabled={mutation.isPending}
       onClick={() => mutation.mutate()}
     >

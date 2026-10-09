@@ -40,10 +40,10 @@ function FigureImage({ figure, onOpen }: { figure: ImageRef; onOpen: (url: strin
 
   if (failed) {
     return (
-      <div style={{ fontSize: 11, color: 'var(--text-4)', padding: '4px 0' }}>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', padding: '4px 0' }}>
         {tr(`图 ${figure.index}`, `Figure ${figure.index}`)}
         {figure.label ? ` · ${figure.label}` : ''}
-        {tr('（取图失败）', ' (failed to load)')}
+        {tr('（加载失败）', ' (couldn’t load)')}
       </div>
     );
   }
@@ -76,7 +76,7 @@ function FigureImage({ figure, onOpen }: { figure: ImageRef; onOpen: (url: strin
         />
       )}
       {figure.label && (
-        <figcaption style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 4, lineHeight: 1.5 }}>
+        <figcaption style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4, lineHeight: 1.5 }}>
           {tr(`图 ${figure.index}`, `Fig. ${figure.index}`)} · {figure.label}
         </figcaption>
       )}

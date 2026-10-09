@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { errorText } from '../../lib/errors';
 import { pcm16LeToFloat32, splitSpeechText } from '../../lib/speech';
 import { Icon } from './Icon';
 import { toast } from './Toast';
@@ -24,13 +25,13 @@ function formatTime(seconds: number): string {
 
 function speechError(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 413) return tr('语音分段失败，请重试', 'Speech segmentation failed; try again');
-    if (error.status === 503) return tr('语音服务暂时不可用', 'Speech service is temporarily unavailable');
+    if (error.status === 413) return tr('朗读失败，请重试', 'Couldn’t read this aloud. Try again.');
+    if (error.status === 503) return tr('语音服务暂时不可用，请稍后重试', 'The speech service is unavailable. Try again later.');
   }
   if (error instanceof Error && error.message === 'TTS_STREAM_TIMEOUT') {
-    return tr('语音响应超时，请重试', 'Speech response timed out; try again');
+    return tr('语音服务没有响应，请重试', 'The speech service didn’t respond. Try again.');
   }
-  return error instanceof Error ? error.message : String(error);
+  return `${tr('无法朗读：', 'Couldn’t read aloud: ')}${errorText(error)}`;
 }
 
 async function withStreamTimeout<T>(promise: Promise<T>): Promise<T> {
@@ -203,7 +204,7 @@ export function SpeechPlayer({
     } catch (error) {
       if (!controller.signal.aborted) {
         release();
-        toast(`${tr('播放失败', 'Playback failed')}：${speechError(error)}`, 'error');
+        toast(speechError(error), 'error');
       }
     }
   }, [context, release]);
@@ -231,7 +232,7 @@ export function SpeechPlayer({
 
     const AudioContextClass = audioContextConstructor();
     if (!AudioContextClass) {
-      toast(tr('当前浏览器不支持实时语音播放', 'This browser does not support live speech playback'), 'error');
+      toast(tr('当前浏览器不支持朗读', 'This browser can’t play speech'), 'error');
       return;
     }
     if (stopActivePlayer !== release) stopActivePlayer?.();
@@ -255,7 +256,7 @@ export function SpeechPlayer({
     } catch (error) {
       if (!controller.signal.aborted) {
         release();
-        toast(`${tr('播放失败', 'Playback failed')}：${speechError(error)}`, 'error');
+        toast(speechError(error), 'error');
       }
     }
   }, [maxChars, release, runPlayback, state, text]);
@@ -265,7 +266,7 @@ export function SpeechPlayer({
   const active = state !== 'idle';
   const chunkProgress = chunkCount > 1 ? `${chunkIndex + 1}/${chunkCount}` : '';
   const title = state === 'connecting'
-    ? tr('取消实时语音', 'Cancel live speech')
+    ? tr('停止朗读', 'Stop reading')
     : state === 'playing'
       ? tr('暂停', 'Pause')
       : state === 'paused'
@@ -303,7 +304,7 @@ export function SpeechPlayer({
         </span>
         <span>
           {state === 'connecting'
-            ? tr('正在连接实时语音…', 'Connecting live speech…')
+            ? tr('正在连接…', 'Connecting…')
             : title}
         </span>
       </button>

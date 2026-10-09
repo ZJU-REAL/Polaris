@@ -32,6 +32,13 @@ const BOTS: MentionTarget[] = [
   { kind: 'feishu', id: 'bot:feishu', label: '飞书机器人', sub: 'Feishu 群' },
 ];
 
+/** 机器人名字按当前语言给（BOTS 是模块常量，不能在顶层 tr）。 */
+function botText(kind: MentionTarget['kind']): { label: string; sub: string } {
+  return kind === 'feishu'
+    ? { label: tr('飞书机器人', 'Feishu bot'), sub: tr('飞书群', 'Feishu group') }
+    : { label: tr('钉钉机器人', 'DingTalk bot'), sub: tr('钉钉群', 'DingTalk group') };
+}
+
 const MENTION_ICON: Record<MentionTarget['kind'], IconName> = {
   dingtalk: 'chat',
   feishu: 'chat',
@@ -123,8 +130,9 @@ export function Composer({
       const config = botConfigsQ.data?.find((item) => item.platform === bot.kind);
       const status = config?.configured
         ? tr('已配置', 'Configured')
-        : tr('未配置 · 请先到设置页填写', 'Not configured · set it up in Settings');
-      return { ...bot, sub: `${bot.sub} · ${status}` };
+        : tr('未配置，请在设置中添加', 'Not set up. Add it in Settings.');
+      const text = botText(bot.kind);
+      return { ...bot, label: text.label, sub: `${text.sub} · ${status}` };
     });
     const q = menu.query.toLowerCase();
     return bots.filter((t) => !q || t.label.toLowerCase().includes(q) || (t.sub ?? '').toLowerCase().includes(q));
@@ -217,8 +225,8 @@ export function Composer({
         <div className="chat-pop">
           <div className="chat-pop-head mono">
             {slashOpen
-              ? tr('放入上下文 · 论文 / 实验 / 想法 / 概念', 'Add context · papers / experiments / ideas / concepts')
-              : tr('分享给 · 群机器人', 'Share to · group bots')}
+              ? tr('添加上下文：论文、实验、想法、概念', 'Add context: papers, experiments, ideas, concepts')
+              : tr('分享到群机器人', 'Share to a group bot')}
           </div>
           <div className="chat-pop-list scroll">
             {slashOpen
@@ -276,7 +284,7 @@ export function Composer({
             <span className="chat-chip share">
               <Icon name={MENTION_ICON[shareTo.kind]} size={11} />
               <span className="chat-chip-label">{tr('分享给 ', 'To ')}{shareTo.label}</span>
-              <button className="chat-chip-x" title={tr('取消分享', 'Cancel share')} onClick={() => setShareTo(null)}>
+              <button className="chat-chip-x" title={tr('取消分享', 'Don’t share')} onClick={() => setShareTo(null)}>
                 <Icon name="x" size={10} />
               </button>
             </span>
@@ -287,14 +295,14 @@ export function Composer({
       {recommendMode && (
         <div className="chat-hint-line">
           <Icon name="sparkle" size={11} />
-          {tr('直接发送 = 让 AI 写一段推荐语转给对方', 'Send as-is = AI writes a recommendation to forward')}
+          {tr('直接发送会生成一段推荐语并转发', 'Sending now writes a short recommendation and forwards it')}
         </div>
       )}
 
       <div className="chat-input-row">
         <button
           className="chat-tool"
-          title={tr('放入上下文', 'Add context')}
+          title={tr('添加上下文', 'Add context')}
           onMouseDown={(e) => {
             e.preventDefault();
             onChange((text ? text + ' ' : '') + '/');
@@ -305,14 +313,14 @@ export function Composer({
         </button>
         <button
           className="chat-tool"
-          title={tr('分享 / 召唤', 'Share / mention')}
+          title={tr('分享', 'Share')}
           onMouseDown={(e) => {
             e.preventDefault();
             onChange((text ? text + ' ' : '') + '@');
             inputRef.current?.focus();
           }}
         >
-          <span style={{ fontWeight: 700, fontSize: 15 }}>@</span>
+          <span style={{ fontWeight: 600, fontSize: 15 }}>@</span>
         </button>
         <textarea
           ref={inputRef}

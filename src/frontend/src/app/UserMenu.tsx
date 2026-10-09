@@ -14,17 +14,17 @@ function AboutModal({ open, onClose }: { open: boolean; onClose: () => void }) {
     <Modal open={open} onClose={onClose} title={tr('关于', 'About')} width={480}>
       <div className="col gap14" style={{ padding: '2px 2px 4px' }}>
         <div className="col gap6">
-          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.2, color: 'var(--text-1)' }}>
+          <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: 0.2, color: 'var(--text-1)' }}>
             Polaris
           </div>
-          <div style={{ fontSize: 12.5, fontWeight: 620, color: 'var(--accent-text)' }}>
-            {tr('面向个人研究者的 AI 科研工作台', 'An AI research workbench for individual researchers')}
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-text)' }}>
+            {tr('个人科研工作台', 'A research workbench for individual researchers')}
           </div>
         </div>
         <div style={{ fontSize: 13, lineHeight: 1.75, color: 'var(--text-2)' }}>
           {tr(
-            'Polaris 覆盖从文献调研、研究构思、实验执行到论文写作的完整科研流程，帮助你把想法一步步推进成可复现的研究成果。',
-            'Polaris supports the full research workflow — literature review, ideation, experiments, and paper writing — helping you turn ideas into reproducible results.',
+            '从读文献、想点子、做实验到写论文，都在一个地方完成。',
+            'Read papers, develop ideas, run experiments and write papers, all in one place.',
           )}
         </div>
         {/* 仓库链接指向真实 remote（项目事实信息），不算机构品牌文案 */}
@@ -33,10 +33,10 @@ function AboutModal({ open, onClose }: { open: boolean; onClose: () => void }) {
           href="https://github.com/ZJU-REAL/Polaris"
           target="_blank"
           rel="noreferrer noopener"
-          style={{ color: 'var(--accent-text)', fontSize: 12.5, textDecoration: 'none' }}
+          style={{ color: 'var(--accent-text)', fontSize: 13, textDecoration: 'none' }}
         >
           <Icon name="link" size={13} />
-          {tr('开源仓库（GitHub）', 'Source code (GitHub)')}
+          {tr('GitHub 源码', 'Source code on GitHub')}
         </a>
       </div>
     </Modal>

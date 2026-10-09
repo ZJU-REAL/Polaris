@@ -16,8 +16,8 @@ const TYPE_META: Record<
   concept: { zh: '概念', en: 'Concepts', icon: 'sparkle', to: (h) => `/concepts/${h.id}` },
   idea: { zh: '想法', en: 'Ideas', icon: 'bulb', to: (h) => `/ideas/${h.id}` },
   experiment: { zh: '实验', en: 'Experiments', icon: 'flask', to: (h) => `/experiment/${h.id}` },
-  voyage: { zh: 'AI 任务', en: 'Tasks', icon: 'compass', to: (h) => `/voyages/${h.id}` },
-  manuscript: { zh: '论文稿', en: 'Drafts', icon: 'pen', to: (h) => `/writer/${h.id}` },
+  voyage: { zh: '任务', en: 'Tasks', icon: 'compass', to: (h) => `/voyages/${h.id}` },
+  manuscript: { zh: '稿件', en: 'Manuscripts', icon: 'pen', to: (h) => `/writer/${h.id}` },
 };
 
 const TYPE_ORDER = Object.keys(TYPE_META) as GlobalSearchHitType[];
@@ -95,15 +95,15 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
   if (!showing) {
     body = (
       <div className="empty" style={{ padding: 24 }}>
-        {tr('输入关键词开始搜索', 'Type keywords to search')}
+        {tr('输入关键词搜索', 'Type to search')}
       </div>
     );
   } else if (query.isLoading) {
     body = <div className="empty" style={{ padding: 24 }}>{tr('搜索中…', 'Searching…')}</div>;
   } else if (query.isError) {
-    body = <div className="empty" style={{ padding: 24 }}>{tr('搜索失败（后端不可用）', 'Search failed (backend unavailable)')}</div>;
+    body = <div className="empty" style={{ padding: 24 }}>{tr('搜索失败，请确认本机引擎正在运行', 'Search failed. Check that the local engine is running.')}</div>;
   } else if (flat.length === 0) {
-    body = <div className="empty" style={{ padding: 24 }}>{tr(`没有找到与 “${debounced}” 相关的内容`, `No results for “${debounced}”`)}</div>;
+    body = <div className="empty" style={{ padding: 24 }}>{tr(`没有找到「${debounced}」相关的结果`, `No results for “${debounced}”`)}</div>;
   } else {
     let offset = 0;
     body = (
@@ -114,7 +114,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
           const meta = TYPE_META[g.type];
           return (
             <div key={g.type}>
-              <div className="mono" style={{ fontSize: 10, color: 'var(--text-4)', letterSpacing: '0.06em', padding: '8px 10px 4px' }}>
+              <div className="mono" style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.06em', padding: '8px 10px 4px' }}>
                 {tr(meta.zh, meta.en.toUpperCase())}
               </div>
               {g.hits.map((h, i) => {
@@ -145,7 +145,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
                         style={{
                           display: 'block',
                           fontSize: 13,
-                          fontWeight: 550,
+                          fontWeight: 500,
                           color: 'var(--text)',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -158,7 +158,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
                         <span
                           style={{
                             display: 'block',
-                            fontSize: 11.5,
+                            fontSize: 12,
                             color: 'var(--text-3)',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -195,8 +195,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
         position: 'fixed',
         inset: 0,
         zIndex: 90,
-        background: 'rgba(15, 30, 55, 0.32)',
-        backdropFilter: 'blur(2px)',
+        background: 'var(--scrim-modal)',
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'flex-start',
@@ -214,7 +213,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
             ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder={tr('搜索论文 / 概念 / 想法 / 实验 / AI 任务 / 论文稿…', 'Search papers / concepts / ideas / experiments / AI tasks / drafts…')}
+            placeholder={tr('搜索论文、概念、想法、实验、任务、稿件…', 'Search papers, concepts, ideas, experiments, tasks, manuscripts…')}
             style={{
               flex: 1,
               border: 'none',
@@ -225,7 +224,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
               color: 'var(--text)',
             }}
           />
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', border: '0.5px solid var(--border-2)', borderRadius: 5, padding: '2px 6px' }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', border: '0.5px solid var(--border-2)', borderRadius: 5, padding: '2px 6px' }}>
             ESC
           </span>
         </div>
@@ -237,13 +236,13 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
             gap: 14,
             padding: '8px 16px',
             borderTop: '0.5px solid var(--border)',
-            fontSize: 10.5,
-            color: 'var(--text-4)',
+            fontSize: 11,
+            color: 'var(--text-3)',
           }}
         >
-          <span>↑↓ {tr('选择', 'select')}</span>
-          <span>↵ {tr('打开', 'open')}</span>
-          <span style={{ marginLeft: 'auto' }}>{tr('仅搜索当前课题', 'Searches current topic only')}</span>
+          <span>↑↓ {tr('选择', 'Select')}</span>
+          <span>↵ {tr('打开', 'Open')}</span>
+          <span style={{ marginLeft: 'auto' }}>{tr('范围：当前课题', 'Current topic only')}</span>
         </div>
       </div>
     </div>

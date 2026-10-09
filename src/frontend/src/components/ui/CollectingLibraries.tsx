@@ -13,7 +13,7 @@ import { Modal } from './Modal';
    ============================================================ */
 
 function scoreText(v: number | null): string {
-  return v === null ? tr('未打分', 'not scored') : v.toFixed(2);
+  return v === null ? tr('未打分', 'Not scored') : v.toFixed(2);
 }
 
 export function CollectingLibraries({
@@ -37,9 +37,9 @@ export function CollectingLibraries({
   if (libs.length === 0) {
     return standalone ? (
       <div className="row gap6" style={{ alignItems: 'center', marginTop: 8, paddingLeft: 2 }}>
-        <Icon name="book" size={12} style={{ color: 'var(--text-4)' }} />
-        <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>
-          {tr('还没有文献库收录这篇', 'No library has collected this paper yet')}
+        <Icon name="book" size={12} style={{ color: 'var(--text-3)' }} />
+        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+          {tr('还没有文献库收录这篇论文', 'Not in any library yet')}
         </span>
       </div>
     ) : null;
@@ -63,19 +63,19 @@ export function CollectingLibraries({
           className={standalone ? 'row gap6' : 'mono'}
           style={
             standalone
-              ? { fontSize: 11.5, color: 'var(--text-3)', alignItems: 'center' }
-              : { fontSize: 10.5, color: 'var(--text-4)' }
+              ? { fontSize: 12, color: 'var(--text-3)', alignItems: 'center' }
+              : { fontSize: 11, color: 'var(--text-3)' }
           }
         >
-          {standalone && <Icon name="book" size={12} style={{ color: 'var(--text-4)' }} />}
-          {tr('已收录', 'In')}
+          {standalone && <Icon name="book" size={12} style={{ color: 'var(--text-3)' }} />}
+          {tr('收录于', 'In')}
         </span>
         {shown.map((l) => (
           <span
             key={l.library_id}
             className="pill sm"
             style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}
-            title={tr(`相关度 ${scoreText(l.relevance_score)}`, `relevance ${scoreText(l.relevance_score)}`)}
+            title={tr(`相关度 ${scoreText(l.relevance_score)}`, `Relevance ${scoreText(l.relevance_score)}`)}
           >
             {l.name}
           </span>
@@ -93,7 +93,7 @@ export function CollectingLibraries({
       {open && (
         <Modal
           open
-          title={tr(`收录了这篇论文的文献库（${libs.length}）`, `Libraries holding this paper (${libs.length})`)}
+          title={tr(`收录这篇论文的文献库（${libs.length}）`, `Libraries with this paper (${libs.length})`)}
           onClose={() => setOpen(false)}
         >
           <div className="col gap8" style={{ minWidth: 320 }}>
@@ -107,8 +107,8 @@ export function CollectingLibraries({
                   <Icon name="layers" size={12} style={{ color: 'var(--text-3)' }} />
                   <span className="ellipsis" style={{ fontSize: 13 }}>{l.name}</span>
                 </span>
-                <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-                  {tr('相关度', 'relevance')} {scoreText(l.relevance_score)}
+                <span className="mono" style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                  {tr('相关度', 'Relevance')} {scoreText(l.relevance_score)}
                 </span>
               </div>
             ))}

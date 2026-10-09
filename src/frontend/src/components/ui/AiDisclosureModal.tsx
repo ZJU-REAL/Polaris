@@ -48,7 +48,7 @@ export function AiDisclosureModal({ open, onClose, subject }: AiDisclosureModalP
 
   const copy = async (text: string) => {
     if (await copyText(text)) toast(tr('已复制', 'Copied'));
-    else toast(tr('复制失败', 'Copy failed'), 'error');
+    else toast(tr('无法复制，请手动选择文本', 'Couldn’t copy. Select the text instead.'), 'error');
   };
 
   return (
@@ -56,10 +56,10 @@ export function AiDisclosureModal({ open, onClose, subject }: AiDisclosureModalP
       open={open}
       onClose={onClose}
       width={640}
-      title={tr('AI 披露声明', 'AI use disclosure')}
+      title={tr('AI 使用声明', 'AI use disclosure')}
       sub={tr(
-        '按平台记录如实生成，可直接粘贴到投稿声明中',
-        'Generated verbatim from platform records; paste into your submission statement',
+        '根据使用记录生成，可直接粘贴到投稿材料中',
+        'Generated from your usage records. Paste it into your submission.',
       )}
       footer={
         <>
@@ -95,7 +95,7 @@ export function AiDisclosureModal({ open, onClose, subject }: AiDisclosureModalP
       )}
       {query.isError && (
         <div style={{ color: 'var(--danger, #c00)', padding: '16px 0' }}>
-          {tr('披露声明生成失败', 'Failed to generate the disclosure')}
+          {tr('无法生成声明，请重试', 'Couldn’t generate the statement. Try again.')}
         </div>
       )}
       {data && (
@@ -118,8 +118,8 @@ export function AiDisclosureModal({ open, onClose, subject }: AiDisclosureModalP
           {!data.facts.ai_used && (
             <div style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 8 }}>
               {tr(
-                '平台未记录到 AI 参与痕迹，声明如实说明未使用。',
-                'No AI participation was recorded; the statement honestly reports none was used.',
+                '没有 AI 使用记录，声明中写明未使用 AI。',
+                'No AI use was recorded, so the statement says none was used.',
               )}
             </div>
           )}
@@ -130,8 +130,8 @@ export function AiDisclosureModal({ open, onClose, subject }: AiDisclosureModalP
               onClick={() => setShowAppendix((v) => !v)}
             >
               {showAppendix
-                ? tr('收起明细附录', 'Hide appendix')
-                : tr('展开明细附录', 'Show appendix')}
+                ? tr('收起附录', 'Hide appendix')
+                : tr('查看附录', 'Show appendix')}
             </button>
             {showAppendix && (
               <div

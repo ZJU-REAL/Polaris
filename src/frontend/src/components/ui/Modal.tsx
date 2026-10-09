@@ -51,10 +51,10 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 520
           style={{ padding: '16px 20px', borderBottom: '0.5px solid var(--border)', justifyContent: 'space-between' }}
         >
           <div>
-            <div className="row gap8" style={{ fontSize: 14.5, fontWeight: 660 }}>
+            <div className="row gap8" style={{ fontSize: 15, fontWeight: 600 }}>
               {title}
             </div>
-            {sub && <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 3 }}>{sub}</div>}
+            {sub && <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>{sub}</div>}
           </div>
           <button className="icon-btn" onClick={onClose} aria-label={tr('关闭', 'Close')}>
             <Icon name="x" size={15} />
@@ -64,7 +64,7 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 520
           {children}
         </div>
         {footer && (
-          <div className="row gap8" style={{ padding: '14px 20px', borderTop: '0.5px solid var(--border)', justifyContent: 'flex-end' }}>
+          <div className="row gap8 modal-foot" style={{ padding: '12px 20px', borderTop: '0.5px solid var(--border)', justifyContent: 'flex-end' }}>
             {footer}
           </div>
         )}

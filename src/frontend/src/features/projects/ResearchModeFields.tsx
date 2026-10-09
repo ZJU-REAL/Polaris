@@ -13,12 +13,13 @@ export function ResearchModeFields({
   onModeChange: (mode: ResearchMode) => void;
 }) {
   return (
-    <div className="card card-pad research-mode-card">
-      <FormField label={tr('研究方式', 'Research mode')}>
+    // 不自带卡片：放在新建课题表单那张卡里，跟名称、简介一组（卡片套卡片会多一层框）
+    <div className="research-mode-fields">
+      <FormField label={tr('课题类型', 'Topic type')}>
         <Segmented
           options={[
-            { v: 'conventional' as const, label: tr('常规研究', 'Conventional') },
-            { v: 'interdisciplinary' as const, label: tr('跨学科研究', 'Interdisciplinary') },
+            { v: 'conventional' as const, label: tr('常规', 'Standard') },
+            { v: 'interdisciplinary' as const, label: tr('跨学科', 'Interdisciplinary') },
           ]}
           value={mode}
           onChange={onModeChange}
@@ -29,8 +30,8 @@ export function ResearchModeFields({
           <Icon name="layers" size={14} />
           <span>
             {tr(
-              'AI 先生成可编辑草案；只有在你确认后，范围版本和专属交叉文献库才会持久化。',
-              'AI first proposes an editable draft. The versioned scope and dedicated evidence library are persisted only after confirmation.',
+              '先生成研究范围草案，你确认后才会保存并建立专属文献库。',
+              'A scope draft is generated first. It’s saved, with its own library, only after you confirm.',
             )}
           </span>
         </div>

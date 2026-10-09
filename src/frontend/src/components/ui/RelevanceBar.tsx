@@ -14,7 +14,7 @@ export function RelevanceBar({ value, width = 92 }: RelevanceBarProps) {
         <div className="bar" style={{ flex: 1, opacity: 0.5 }}>
           <i style={{ width: 0 }} />
         </div>
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
           —
         </span>
       </div>
@@ -27,7 +27,7 @@ export function RelevanceBar({ value, width = 92 }: RelevanceBarProps) {
       <div className="bar" style={{ flex: 1 }}>
         <i style={{ width: `${v * 100}%`, background: color }} />
       </div>
-      <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
         {v.toFixed(2)}
       </span>
     </div>
