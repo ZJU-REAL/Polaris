@@ -17,6 +17,7 @@ import { topicPath, useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, type ActivityRead, type DirectionLibrarySummary, type GateRead, type StatsRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { EmptyState, ErrorState } from '../../components/ui/EmptyState';
 import { compositeOf } from '../forge/ideaShared';
 import { OnboardingCard } from './OnboardingCard';
 
@@ -92,22 +93,22 @@ function buildNextSteps(
       ? {
           key: 'papers',
           done: hasPapers,
-          zh: '从关联文献库里挑选论文，充实课题的相关研究',
-          en: "Pick papers from the linked libraries to fill the topic's related work",
-          actionZh: '去相关研究挑选论文',
-          actionEn: 'Pick related work',
+          zh: '从关联的文献库中挑选相关研究',
+          en: 'Pick related work from your linked libraries',
+          actionZh: '挑选论文',
+          actionEn: 'Pick papers',
           path: topicPath(pid, 'research'),
         }
       : {
           key: 'papers',
           done: hasPapers,
-          zh: '关联一个文献库作为课题的文献来源（也可以新建一个）',
-          en: "Link a literature library as the topic's source (or create a new one)",
-          actionZh: '去关联文献库',
+          zh: '为课题关联一个文献库',
+          en: 'Link a library to this topic',
+          actionZh: '关联文献库',
           actionEn: 'Link a library',
           path: `/projects/${pid ?? ''}`,
-          altActionZh: '浏览全部文献库',
-          altActionEn: 'Browse all libraries',
+          altActionZh: '查看文献库',
+          altActionEn: 'View libraries',
           altPath: '/libraries',
         };
   return [
@@ -115,27 +116,27 @@ function buildNextSteps(
     {
       key: 'ideas',
       done: hasIdeas,
-      zh: '基于关联文献生成第一批研究想法',
-      en: 'Generate your first batch of research ideas from the linked literature',
-      actionZh: '去生成想法',
+      zh: '根据文献生成第一批研究想法',
+      en: 'Generate your first research ideas from the literature',
+      actionZh: '生成想法',
       actionEn: 'Generate ideas',
       path: topicPath(pid, 'forge'),
     },
     {
       key: 'experiments',
       done: hasExperiments,
-      zh: '评审想法，把优胜者晋级为实验',
-      en: 'Review ideas and promote the winners to experiments',
-      actionZh: '去评审想法',
+      zh: '评审想法，把最好的转为实验',
+      en: 'Review ideas and turn the best into experiments',
+      actionZh: '评审想法',
       actionEn: 'Review ideas',
       path: topicPath(pid, 'review'),
     },
     {
       key: 'manuscripts',
       done: hasManuscripts,
-      zh: '根据实验结果开始撰写论文',
-      en: 'Start writing the paper from your experiment results',
-      actionZh: '去写论文',
+      zh: '根据实验结果撰写论文',
+      en: 'Write the paper from your results',
+      actionZh: '开始写作',
       actionEn: 'Start writing',
       path: topicPath(pid, 'writer'),
     },
@@ -154,7 +155,7 @@ function NextStepsCard({ steps, onNavigate }: { steps: NextStep[]; onNavigate: (
           {tr('下一步', 'Next steps')}
         </span>
         <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-          {doneCount}/{steps.length} {tr('已完成', 'done')}
+          {tr(`已完成 ${doneCount}/${steps.length}`, `${doneCount}/${steps.length} done`)}
         </span>
       </div>
       <div className="col gap8">
@@ -181,7 +182,7 @@ function NextStepsCard({ steps, onNavigate }: { steps: NextStep[]; onNavigate: (
                   alignItems: 'center',
                   justifyContent: 'center',
                   background: s.done ? 'var(--ok-bg)' : isCurrent ? 'var(--accent)' : 'var(--surface-2)',
-                  color: s.done ? 'var(--ok-tx)' : isCurrent ? '#fff' : 'var(--text-4)',
+                  color: s.done ? 'var(--ok-tx)' : isCurrent ? 'var(--on-accent)' : 'var(--text-4)',
                   border: s.done || isCurrent ? 'none' : '1px solid var(--border-strong)',
                 }}
               >
@@ -193,7 +194,7 @@ function NextStepsCard({ steps, onNavigate }: { steps: NextStep[]; onNavigate: (
                   fontSize: 13,
                   lineHeight: 1.5,
                   color: s.done ? 'var(--text-3)' : isCurrent ? 'var(--text)' : 'var(--text-3)',
-                  fontWeight: isCurrent ? 650 : 450,
+                  fontWeight: isCurrent ? 600 : 450,
                 }}
               >
                 {tr(s.zh, s.en)}
@@ -234,22 +235,22 @@ function FeaturedIdeaCard({ pid }: { pid: string | null }) {
     return (
       <div className="card card-pad" style={{ background: 'linear-gradient(135deg, var(--surface) 60%, var(--accent-soft) 200%)' }}>
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
-          <span className="pill" style={{ background: 'var(--accent)', color: '#fff' }}>
+          <span className="pill" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
             <Icon name="sparkle" size={12} />
-            {tr('当前重点想法', 'Featured idea')}
+            {tr('领先想法', 'Top idea')}
           </span>
         </div>
         <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6 }}>
           {leaderboardQuery.isLoading
-            ? tr('加载想法排行榜…', 'Loading idea leaderboard…')
+            ? tr('加载中…', 'Loading…')
             : leaderboardQuery.isError
-              ? tr('暂时无法加载想法排行榜。', 'Idea leaderboard is unavailable right now.')
-              : tr('候选池还是空的，先运行一次想法生成。', 'The candidate pool is empty — run idea generation first.')}
+              ? tr('无法加载想法排名，请稍后重试。', 'Couldn’t load idea rankings. Try again later.')
+              : tr('还没有想法。', 'No ideas yet.')}
         </div>
         {!leaderboardQuery.isLoading && (
           <button className="btn btn-ghost sm" style={{ marginTop: 14 }} onClick={() => navigate(topicPath(pid, 'forge'))}>
             <Icon name="bulb" size={13} />
-            {tr('前往想法生成', 'Go to Idea Forge')}
+            {tr('生成想法', 'Generate ideas')}
           </button>
         )}
       </div>
@@ -264,13 +265,13 @@ function FeaturedIdeaCard({ pid }: { pid: string | null }) {
       style={{ background: 'linear-gradient(135deg, var(--surface) 60%, var(--accent-soft) 200%)' }}
     >
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
-        <span className="pill" style={{ background: 'var(--accent)', color: '#fff' }}>
+        <span className="pill" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
           <Icon name="sparkle" size={12} />
-          {tr('当前重点想法 · Elo 榜首', 'Featured idea · Elo leader')}
+          {tr('领先想法', 'Top idea')}
         </span>
         <StatusPill status={idea.status} sm />
       </div>
-      <div style={{ fontSize: 16, fontWeight: 680, letterSpacing: '-0.01em', lineHeight: 1.35 }}>{idea.title}</div>
+      <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: '-0.01em', lineHeight: 1.35 }}>{idea.title}</div>
       <div
         style={{
           fontSize: 12,
@@ -285,16 +286,16 @@ function FeaturedIdeaCard({ pid }: { pid: string | null }) {
         {idea.summary}
       </div>
       <div className="row gap16" style={{ marginTop: 16, alignItems: 'center' }}>
-        {composite !== null && <ScoreRing value={composite} label="composite" />}
+        {composite !== null && <ScoreRing value={composite} label={tr('综合', 'Overall')} />}
         <div>
-          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>Elo rating</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{tr('Elo 评分', 'Elo rating')}</div>
           <div className="row" style={{ alignItems: 'baseline', gap: 8 }}>
-            <span className="mono" style={{ fontSize: 22, fontWeight: 700 }}>{Math.round(idea.elo_rating)}</span>
+            <span className="mono" style={{ fontSize: 22, fontWeight: 600 }}>{Math.round(idea.elo_rating)}</span>
             <Delta>{tr(`${idea.wins}/${idea.matches} 胜`, `${idea.wins}/${idea.matches} wins`)}</Delta>
           </div>
         </div>
         <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{tr('查看详情与讨论 →', 'View details & discussion →')}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{tr('查看详情 →', 'View details →')}</div>
         </div>
       </div>
     </div>
@@ -329,14 +330,14 @@ function ActivityFeed({ activities, error }: { activities: ActivityRead[]; error
       <div className="card-pad row" style={{ paddingBottom: 12, justifyContent: 'space-between' }}>
         <span className="section-h">
           <Icon name="clock" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('近期活动', 'Activity')}
+          {tr('最近动态', 'Recent activity')}
         </span>
       </div>
       <div style={{ padding: '0 6px 8px' }}>
         {error ? (
-          <div className="empty" style={{ padding: 18 }}>{tr('无法加载活动（后端不可用）', 'Failed to load activity (backend unavailable)')}</div>
+          <ErrorState compact title={tr('无法加载动态，请确认本机引擎正在运行', 'Couldn’t load activity. Check that the local engine is running.')} />
         ) : activities.length === 0 ? (
-          <div className="empty" style={{ padding: 18 }}>{tr('暂无活动 — 先关联文献库或生成想法', 'No activity yet — link a library or generate ideas')}</div>
+          <div className="empty" style={{ padding: 18 }}>{tr('还没有动态', 'No activity yet')}</div>
         ) : (
           activities.map((a) => {
             const gate = a.kind.toLowerCase().includes('gate');
@@ -363,7 +364,7 @@ function ActivityFeed({ activities, error }: { activities: ActivityRead[]; error
                 >
                   <Icon name={activityIcon(a.kind)} size={13} />
                 </div>
-                <div style={{ flex: 1, fontSize: 12.5, color: 'var(--text)', lineHeight: 1.45, paddingTop: 2 }}>
+                <div style={{ flex: 1, fontSize: 13, color: 'var(--text)', lineHeight: 1.45, paddingTop: 2 }}>
                   {a.message}
                 </div>
               </div>
@@ -385,15 +386,15 @@ function GatePreview({ gates, gatesError, openGates }: {
       <div className="card-pad row" style={{ justifyContent: 'space-between', paddingBottom: 14 }}>
         <span className="section-h">
           <Icon name="gate" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('人工审批 · 审批中心', 'Approvals')}
+          {tr('审批', 'Approvals')}
         </span>
         <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-          {gates.length} {tr('待处理', 'pending')}
+          {tr(`${gates.length} 项待处理`, `${gates.length} pending`)}
         </span>
       </div>
       <div style={{ padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {gatesError ? (
-          <div className="empty" style={{ padding: 18 }}>{tr('无法加载审批列表（后端不可用）', 'Failed to load approvals (backend unavailable)')}</div>
+          <ErrorState compact title={tr('无法加载审批，请确认本机引擎正在运行', 'Couldn’t load approvals. Check that the local engine is running.')} />
         ) : gates.length === 0 ? (
           <div className="empty" style={{ padding: 18 }}>{tr('没有待处理的审批', 'No pending approvals')}</div>
         ) : (
@@ -412,12 +413,13 @@ function GatePreview({ gates, gatesError, openGates }: {
                 }}
               >
                 <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 13, fontWeight: 650 }}>{gateTitle(g)}</span>
-                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
-                    {gateKindLabel(g.kind)}
-                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{gateTitle(g)}</span>
+                  {/* 没有单独标题时 gateTitle 就是类别名，别并排写两遍 */}
+                  {gateKindLabel(g.kind) !== gateTitle(g) && (
+                    <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{gateKindLabel(g.kind)}</span>
+                  )}
                 </div>
-                {desc && <div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 5, lineHeight: 1.45 }}>{desc}</div>}
+                {desc && <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 5, lineHeight: 1.45 }}>{desc}</div>}
                 <div className="row gap8" style={{ marginTop: 10 }}>
                   <button
                     className="btn btn-primary sm"
@@ -427,9 +429,9 @@ function GatePreview({ gates, gatesError, openGates }: {
                     }}
                   >
                     <Icon name="check" size={13} />
-                    {tr('审批', 'Review')}
+                    {tr('处理', 'Review')}
                   </button>
-                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginLeft: 'auto' }}>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 'auto' }}>
                     {fmtTime(g.created_at)}
                   </span>
                 </div>
@@ -438,7 +440,7 @@ function GatePreview({ gates, gatesError, openGates }: {
           })
         )}
         <button className="btn btn-soft" onClick={() => openGates(null)} style={{ justifyContent: 'center' }}>
-          {tr('查看全部审批记录', 'View all approval records')}
+          {tr('查看全部审批', 'View all approvals')}
         </button>
       </div>
     </div>
@@ -468,40 +470,40 @@ function LiteratureCard({
         </span>
         <button className="btn btn-ghost sm" onClick={() => onNavigate(`/projects/${pid ?? ''}`)}>
           <Icon name="link" size={12} />
-          {tr('管理关联库', 'Linked libraries')}
+          {tr('关联文献库', 'Linked libraries')}
         </button>
       </div>
       <div className="row gap16" style={{ alignItems: 'baseline', marginBottom: 14 }}>
         <div>
-          <span className="mono" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>{linkedCount}</span>
-          <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 6 }}>{tr('个关联文献库', 'linked libraries')}</span>
+          <span className="mono" style={{ fontSize: 24, fontWeight: 600, letterSpacing: '-0.02em' }}>{linkedCount}</span>
+          <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 6 }}>{tr('个关联文献库', linkedCount === 1 ? 'linked library' : 'linked libraries')}</span>
         </div>
         {shelfCount !== null && (
           <div>
-            <span className="mono" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>{shelfCount}</span>
-            <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 6 }}>{tr('篇相关研究', 'in related work')}</span>
+            <span className="mono" style={{ fontSize: 24, fontWeight: 600, letterSpacing: '-0.02em' }}>{shelfCount}</span>
+            <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 6 }}>{tr('篇相关研究', shelfCount === 1 ? 'paper in related work' : 'papers in related work')}</span>
           </div>
         )}
       </div>
       {!hasLinked && (
         <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5, marginBottom: 14 }}>
-          {tr('课题还没关联文献库；关联后即可从库里挑论文进相关研究。', 'No linked libraries yet — link one to pick papers into related work.')}
+          {tr('关联文献库后，就能从中挑选相关研究。', 'Link a library to start picking related work.')}
         </div>
       )}
       <div className="row gap8">
         {hasLinked ? (
           <button className="btn btn-primary sm" onClick={() => onNavigate(topicPath(pid, 'research'))}>
             <Icon name="book" size={13} />
-            {tr('去相关研究', 'Open related work')}
+            {tr('打开相关研究', 'Open related work')}
           </button>
         ) : (
           <>
             <button className="btn btn-primary sm" onClick={() => onNavigate(`/projects/${pid ?? ''}`)}>
               <Icon name="link" size={13} />
-              {tr('去关联文献库', 'Link a library')}
+              {tr('关联文献库', 'Link a library')}
             </button>
             <button className="btn btn-ghost sm" onClick={() => onNavigate('/libraries')}>
-              {tr('浏览全部文献库', 'Browse all libraries')}
+              {tr('查看文献库', 'View libraries')}
             </button>
           </>
         )}
@@ -515,31 +517,24 @@ function buildStatCards(stats: StatsRead | undefined, pendingGatesCount: number)
   return [
     {
       icon: 'book',
-      label: tr('关联文献', 'Linked papers'),
-      en: 'Linked papers',
+      label: tr('论文', 'Papers'),
+      en: 'Papers',
       value: stats ? stats.papers_total : '—',
-      sub: stats ? `+${stats.papers_today} ${tr('今日', 'today')}` : undefined,
-    },
-    {
-      icon: 'refresh',
-      label: tr('今日新增', 'New today'),
-      en: 'New today',
-      value: stats ? stats.papers_today : '—',
-      sub: tr('篇论文', 'papers'),
+      sub: stats ? tr(`今日 +${stats.papers_today}`, `+${stats.papers_today} today`) : undefined,
     },
     {
       icon: 'bulb',
-      label: tr('候选想法', 'Idea candidates'),
-      en: 'Idea candidates',
+      label: tr('候选想法', 'Candidate ideas'),
+      en: 'Candidate ideas',
       value: stats ? stats.ideas_candidate : '—',
-      sub: tr('想法池', 'in the pool'),
+      sub: tr('待评审', 'to review'),
     },
     {
       icon: 'gate',
       label: tr('待处理审批', 'Pending approvals'),
       en: 'Pending approvals',
       value: stats ? stats.gates_pending : pendingGatesCount,
-      sub: tr('人工审批', 'need review'),
+      sub: tr('等你处理', 'need you'),
       accent: true,
     },
   ];
@@ -648,7 +643,7 @@ export function DashboardPage() {
   return (
     <div className="page fadeup">
       <PageHead
-        eyebrow="Polaris · Autonomous Research"
+        eyebrow={tr('课题', 'Topic')}
         title={tr('课题工作台', 'Topic Workbench')}
         dense
       />
@@ -660,8 +655,8 @@ export function DashboardPage() {
       <div style={{ marginBottom: 22 }}>
         <Segmented
           options={[
-            { v: 'overview' as const, label: tr('课题概况', 'Overview') },
-            { v: 'settings' as const, label: tr('课题设置', 'Settings') },
+            { v: 'overview' as const, label: tr('概况', 'Overview') },
+            { v: 'settings' as const, label: tr('设置', 'Settings') },
             { v: 'tasks' as const, label: tr('任务', 'Tasks') },
           ]}
           value={tab}
@@ -711,7 +706,7 @@ export function DashboardPage() {
         (currentProjectId ? (
           <ProjectSettings id={currentProjectId} embedded />
         ) : (
-          <div className="empty" style={{ padding: 60 }}>{tr('请先选择一个课题', 'Pick a topic first')}</div>
+          <EmptyState icon="layers" title={tr('还没有选择课题', 'No topic selected')} />
         ))}
 
       {/* 课题工作台只看本课题的任务；课题外任务在 /lab（底部引导链接） */}

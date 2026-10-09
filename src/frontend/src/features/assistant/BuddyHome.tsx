@@ -41,7 +41,7 @@ const CARD_LOOK: Record<string, { icon: IconName; color: string }> = {
   about: { icon: 'sparkle', color: '#868E96' },
 };
 
-const NEUTRAL = { icon: 'dot' as IconName, color: 'var(--text-4)' };
+const NEUTRAL = { icon: 'dot' as IconName, color: 'var(--text-3)' };
 
 export function BuddyHome({
   name,
@@ -80,7 +80,7 @@ export function BuddyHome({
           {greetingFor(new Date().getHours(), name)}
         </div>
         {question && (
-          <div style={{ fontSize: 13.5, color: 'var(--text-3)', lineHeight: 1.6, marginTop: 9 }}>
+          <div style={{ fontSize: 13, color: 'var(--text-3)', lineHeight: 1.6, marginTop: 9 }}>
             {question}
           </div>
         )}
@@ -109,8 +109,8 @@ export function BuddyHome({
 
       {/* 一张都没取到时给一句兜底，别让空屏真的空着 */}
       {picks.length === 0 && !question && (
-        <div style={{ fontSize: 12.5, color: 'var(--text-4)' }}>
-          {tr('问点什么开始吧。', 'Ask me anything to get started.')}
+        <div style={{ fontSize: 13, color: 'var(--text-3)' }}>
+          {tr('有什么想问的？', 'What would you like to ask?')}
         </div>
       )}
     </div>

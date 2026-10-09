@@ -6,6 +6,7 @@ import { toast } from '../../components/ui/Toast';
 import { ApiError, api, type ChatTurn } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { isLlmNotConfigured, llmNotConfiguredText } from '../../lib/llmNotConfigured';
+import { errorText } from '../../lib/errors';
 import { useIsMobile } from '../../lib/useBreakpoint';
 import { useChatHistory } from './useChatHistory';
 import {
@@ -77,13 +78,13 @@ function recommendPrompt(context: ContextRef[]): string {
 function robotShareError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.message === 'CHAT_BOT_NOT_CONFIGURED') {
-      return tr('尚未配置该机器人，请先到“设置 → 群机器人”填写 ID 和 Secret', 'This bot is not configured. Add its ID and secret under Settings → Group bots.');
+      return tr('还没有配置这个机器人，请在「设置 → 群机器人」中填写', 'This bot isn’t set up. Add it in Settings → Group bots.');
     }
     if (error.message.startsWith('CHAT_BOT_DELIVERY_FAILED')) {
-      return tr('机器人拒绝了推送，请检查 ID、Secret 与群安全设置', 'The bot rejected delivery. Check its ID, secret, and group security settings.');
+      return tr('机器人拒收了消息，请检查 ID、Secret 和群的安全设置', 'The bot rejected the message. Check its ID, secret and the group’s security settings.');
     }
   }
-  return error instanceof Error ? error.message : String(error);
+  return errorText(error);
 }
 
 export function ChatSurface(cfg: ChatSurfaceConfig) {
@@ -134,18 +135,18 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
     const assistant = finalMsgs[finalMsgs.length - 1];
     const text = assistant?.role === 'assistant' ? assistant.content.trim() : '';
     if (!text) {
-      toast(tr('回答为空，未向群机器人推送', 'The answer was empty, so nothing was sent to the group bot.'), 'error');
+      toast(tr('回答是空的，没有发送', 'The answer was empty, so nothing was sent'), 'error');
       return;
     }
     toast(tr(`正在推送给 ${share.label}…`, `Sending to ${share.label}…`), 'info');
     void api.sendChatBotMessage(share.kind, {
-      title: tr('Polaris AI 分享', 'Shared from Polaris AI'),
+      title: tr('来自 Polaris 的分享', 'Shared from Polaris'),
       text,
     }).then((result) => {
       const parts = result.parts > 1 ? tr(`（${result.parts} 条）`, ` (${result.parts} messages)`) : '';
       toast(tr(`已分享给 ${share.label}${parts}`, `Shared with ${share.label}${parts}`), 'ok');
     }).catch((error: unknown) => {
-      toast(`${tr('分享失败', 'Share failed')}：${robotShareError(error)}`, 'error');
+      toast(`${tr('分享失败：', 'Couldn’t share: ')}${robotShareError(error)}`, 'error');
     });
   };
 
@@ -236,7 +237,7 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
         toast(
           isLlmNotConfigured(detail)
             ? llmNotConfiguredText()
-            : `${tr('对话出错：', 'Chat error: ')}${detail}`,
+            : `${tr('回答中断：', 'The reply stopped: ')}${errorText(detail)}`,
           'error',
         ),
     );
@@ -266,7 +267,7 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
       {/* —— 历史抽屉 —— */}
       <div className="chat-history">
         <div className="chat-history-head">
-          <span className="mono">{tr('历史对话', 'History')}</span>
+          <span className="mono">{tr('对话记录', 'History')}</span>
           <div className="row gap6">
             <button className="chat-new-btn" title={tr('新建对话', 'New chat')} onClick={history.create}>
               <Icon name="plus" size={13} />
@@ -287,7 +288,7 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
         </div>
         <div className="chat-history-list scroll">
           {history.conversations.length === 0 ? (
-            <div className="chat-history-empty">{tr('还没有历史对话', 'No conversations yet')}</div>
+            <div className="chat-history-empty">{tr('还没有对话', 'No conversations yet')}</div>
           ) : (
             history.conversations.map((c) => (
               <div
@@ -370,7 +371,7 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
                       )}
                       {recoLabel ? (
                         <span className="chat-reco-label">
-                          {tr(`让 AI 写推荐并分享给 ${m.sharedTo!.label}`, `Ask AI to recommend & share with ${m.sharedTo!.label}`)}
+                          {tr(`生成推荐语并分享到${m.sharedTo!.label}`, `Write a recommendation and share to ${m.sharedTo!.label}`)}
                         </span>
                       ) : (
                         m.content

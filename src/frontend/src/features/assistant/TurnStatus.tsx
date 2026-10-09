@@ -83,11 +83,11 @@ export function TurnStatus({
       ? tr('等你批准', 'Waiting for your approval')
       : phase === 'tool'
         ? tr(
-            `正在查：${running.map((b) => (b.kind === 'tool' ? toolDisplayName(b) : '')).join('、')}`,
-            `Searching: ${running.map((b) => (b.kind === 'tool' ? toolDisplayName(b) : '')).join(', ')}`,
+            `正在使用：${running.map((b) => (b.kind === 'tool' ? toolDisplayName(b) : '')).join('、')}`,
+            `Using: ${running.map((b) => (b.kind === 'tool' ? toolDisplayName(b) : '')).join(', ')}`,
           )
         : phase === 'writing'
-          ? tr('正在写答案', 'Writing')
+          ? tr('正在回答', 'Writing')
           : tr('正在思考', 'Thinking');
 
   return (
@@ -110,7 +110,7 @@ export function TurnStatus({
         {phase === 'approval' ? label : stepLabel || label}
       </span>
       {secs >= 3 && (
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
           {secs}s
         </span>
       )}

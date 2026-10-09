@@ -32,13 +32,11 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
         <div className="row gap10">
           <span className="section-h">
             <Icon name="layers" size={16} style={{ color: 'var(--accent)' }} />
-            {tr('端到端研究流水线', 'End-to-end research pipeline')}
+            {tr('研究进度', 'Research progress')}
           </span>
         </div>
-        <span className="pill">
-          <span className="dot" style={{ background: 'var(--ok)' }} />
-          {tr('当前课题', 'Current topic')} · {directionLabel}
-        </span>
+        {/* 当前课题名已在侧栏切换器和面包屑里，这里不再重复；directionLabel 只作读屏说明 */}
+        <span className="sr-only">{directionLabel}</span>
       </div>
       {/* 窄屏改 3 列网格并隐藏箭头（见 global.css）：折行会在行末留下指向空处的
           箭头，且两行卡片高度不齐；网格下卡片等高，顺序由 00-05 编号表达。
@@ -61,7 +59,7 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
                 cursor: 'pointer',
               }}
             >
-              <div style={{ position: 'absolute', top: 8, left: 10, fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-4)' }}>
+              <div style={{ position: 'absolute', top: 8, left: 10, fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-3)' }}>
                 {s.no}
               </div>
               <div
@@ -80,13 +78,13 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
               >
                 <Icon name={s.icon} size={19} />
               </div>
-              <div style={{ fontSize: 12.5, fontWeight: 650 }}>{tr(s.zh, s.en)}</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{tr(s.zh, s.en)}</div>
               <div
                 style={{
                   marginTop: 9,
                   fontFamily: 'var(--mono)',
                   fontSize: 20,
-                  fontWeight: 700,
+                  fontWeight: 600,
                   color: s.running ? 'var(--accent-text)' : 'var(--text)',
                 }}
               >
@@ -95,14 +93,14 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
               {s.running && (
                 <div
                   className="pulse pipeline-hint"
-                  style={{ marginTop: 6, fontSize: 9.5, color: 'var(--accent-text)', fontWeight: 600 }}
+                  style={{ marginTop: 6, fontSize: 10, color: 'var(--accent-text)', fontWeight: 600 }}
                 >
                   ● {tr('运行中', 'Running')}
                 </div>
               )}
               {s.stuck && !s.running && (
-                <div className="pipeline-hint" style={{ marginTop: 6, fontSize: 9.5, color: 'var(--accent-text)', fontWeight: 650 }}>
-                  ▸ {tr('下一步从这里继续', 'Next step starts here')}
+                <div className="pipeline-hint" style={{ marginTop: 6, fontSize: 10, color: 'var(--accent-text)', fontWeight: 600 }}>
+                  ▸ {tr('下一步', 'Up next')}
                 </div>
               )}
             </div>

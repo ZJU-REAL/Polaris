@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from './Icon';
 import { toast } from './Toast';
 import { tr } from '../../lib/i18n';
+import { errorText } from '../../lib/errors';
 import { api, ApiError, type FigureInfo, type PaperDetail } from '../../lib/api';
 
 /* ============================================================
@@ -136,11 +137,11 @@ export function FigureEmbed({
             borderRadius: 10,
             border: '0.5px dashed var(--border)',
             background: 'var(--surface-2)',
-            color: 'var(--text-4)',
+            color: 'var(--text-3)',
           }}
         >
           <Icon name="file" size={18} style={{ margin: '0 auto 6px' }} />
-          <div style={{ fontSize: 11.5 }}>{tr('这张图加载失败了，稍后再试', 'This figure failed to load, try again later')}</div>
+          <div style={{ fontSize: 12 }}>{tr('图片加载失败，请稍后重试', 'Couldn’t load this figure. Try again later.')}</div>
         </div>
       ) : (
         <img
@@ -162,7 +163,7 @@ export function FigureEmbed({
       <figcaption
         style={{
           marginTop: 7,
-          fontSize: 11.5,
+          fontSize: 12,
           lineHeight: 1.6,
           color: 'var(--text-3)',
           maxWidth: 560,
@@ -224,9 +225,9 @@ function FigureThumb({
         {isLoading ? (
           <div className="pulse" style={{ width: '100%', height: '100%', background: 'var(--surface-3)' }} />
         ) : isError || !url ? (
-          <div style={{ textAlign: 'center', color: 'var(--text-4)' }}>
+          <div style={{ textAlign: 'center', color: 'var(--text-3)' }}>
             <Icon name="file" size={16} style={{ margin: '0 auto 4px' }} />
-            <div style={{ fontSize: 10 }}>{tr('图片加载失败', 'Failed to load')}</div>
+            <div style={{ fontSize: 10 }}>{tr('加载失败', 'Couldn’t load')}</div>
           </div>
         ) : (
           <img
@@ -240,7 +241,7 @@ function FigureThumb({
       <div
         style={{
           marginTop: 5,
-          fontSize: 10.5,
+          fontSize: 11,
           lineHeight: 1.45,
           color: 'var(--text-3)',
           overflow: 'hidden',
@@ -391,7 +392,7 @@ function Lightbox({
         ) : isError || !url ? (
           <div style={{ textAlign: 'center', color: 'var(--on-scrim-2)' }}>
             <Icon name="file" size={26} style={{ margin: '0 auto 8px' }} />
-            <div style={{ fontSize: 13 }}>{tr('这张图加载失败了，稍后再试', 'This figure failed to load, try again later')}</div>
+            <div style={{ fontSize: 13 }}>{tr('图片加载失败，请稍后重试', 'Couldn’t load this figure. Try again later.')}</div>
           </div>
         ) : (
           <img
@@ -413,7 +414,7 @@ function Lightbox({
             marginTop: 14,
             maxWidth: 720,
             textAlign: 'center',
-            fontSize: 12.5,
+            fontSize: 13,
             lineHeight: 1.6,
             color: 'var(--on-scrim)',
           }}
@@ -422,7 +423,7 @@ function Lightbox({
           {captionOf(fig)}
         </div>
         <div className="mono" style={{ marginTop: 6, fontSize: 11, color: 'var(--on-scrim-3)' }}>
-          {index + 1} / {count} · {tr(`第 ${fig.page} 页`, `page ${fig.page}`)}
+          {index + 1} / {count} · {tr(`第 ${fig.page} 页`, `Page ${fig.page}`)}
         </div>
       </div>
     </div>
@@ -467,7 +468,7 @@ export function FigureGallery({ paperId, figures }: { paperId: string; figures: 
           }}
         >
           <Icon name={showAll ? 'chevDown' : 'grid'} size={12} style={showAll ? { transform: 'rotate(180deg)' } : undefined} />
-          {showAll ? tr('只看重要的', 'Key figures only') : tr(`显示全部 ${figures.length} 张`, `Show all ${figures.length}`)}
+          {showAll ? tr('只看重要图片', 'Key figures only') : tr(`显示全部 ${figures.length} 张`, `Show all ${figures.length}`)}
         </button>
       )}
       {lightbox !== null && lightboxFig && (
@@ -539,24 +540,22 @@ export function FiguresSection({
         toast(
           force
             ? tr(
-                `重新提取完成，找到 ${res.figures.length} 张图；如需更新正文插图请点重新编译`,
-                `Re-extracted ${res.figures.length} figures; use “Recompile” to refresh in-text figures`,
+                `已重新提取 ${res.figures.length} 张图，重新生成解读后正文插图会更新`,
+                `Re-extracted ${res.figures.length} figures. Regenerate the summary to update figures in the text.`,
               )
-            : tr(`提取完成，找到 ${res.figures.length} 张图`, `Done — found ${res.figures.length} figures`),
+            : tr(`已提取 ${res.figures.length} 张图`, res.figures.length === 1 ? 'Extracted 1 figure' : `Extracted ${res.figures.length} figures`),
           'ok',
         );
       } else {
-        toast(tr('这篇 PDF 里没找到合适的图片', 'No suitable figures found in this PDF'), 'info');
+        toast(tr('PDF 中没有找到合适的图片', 'No usable figures found in the PDF'), 'info');
       }
     },
     onError: (e) => {
       const msg =
         e instanceof ApiError && e.message.includes('PDF_NOT_AVAILABLE')
-          ? tr('这篇论文还没有 PDF，先到阅读页获取 PDF 再试', 'This paper has no PDF yet — fetch it on the reading page first')
-          : e instanceof Error
-            ? e.message
-            : String(e);
-      toast(tr(`提取图片失败：${msg}`, `Figure extraction failed: ${msg}`), 'error');
+          ? tr('这篇论文还没有 PDF，请先在阅读页获取', 'This paper has no PDF yet. Get it on the reading page first.')
+          : errorText(e);
+      toast(tr(`无法提取图片：${msg}`, `Couldn’t extract figures: ${msg}`), 'error');
     },
   });
 
@@ -573,7 +572,7 @@ export function FiguresSection({
           {extractMutation.isPending ? (
             <>
               <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-              {tr('提取中，视觉模型筛选约需半分钟…', 'Extracting — vision-model filtering takes about half a minute…')}
+              {tr('正在提取，约需半分钟…', 'Extracting, about 30 seconds…')}
             </>
           ) : (
             <>
@@ -589,8 +588,8 @@ export function FiguresSection({
   return (
     <div style={{ marginTop: 18, ...style }}>
       <div className="row gap8" style={{ marginBottom: expanded ? 8 : 0 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 650 }}>
-          {tr('重要图片', 'Figures')}
+        <span style={{ fontSize: 13, fontWeight: 600 }}>
+          {tr('图片', 'Figures')}
         </span>
         {defaultCollapsed && (
           <button className="btn btn-ghost sm" onClick={() => setExpanded((e) => !e)}>
@@ -599,7 +598,7 @@ export function FiguresSection({
               size={12}
               style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
             />
-            {expanded ? tr('收起', 'Collapse') : tr(`展开全部图片（${figures.length} 张）`, `Show all figures (${figures.length})`)}
+            {expanded ? tr('收起', 'Collapse') : tr(`展开（${figures.length} 张）`, `Show all (${figures.length})`)}
           </button>
         )}
         {paper.pdf_available && !readOnly && (
@@ -607,7 +606,7 @@ export function FiguresSection({
             className="btn btn-ghost sm"
             style={{ marginLeft: 'auto' }}
             disabled={extractMutation.isPending}
-            title={tr('用最新方法从 PDF 重新抽取图片', 'Re-extract figures from the PDF with the latest method')}
+            title={tr('从 PDF 重新提取图片', 'Extract figures from the PDF again')}
             onClick={() => extractMutation.mutate(true)}
           >
             <Icon
@@ -615,7 +614,7 @@ export function FiguresSection({
               size={12}
               style={extractMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined}
             />
-            {extractMutation.isPending ? tr('重新提取中…', 'Re-extracting…') : tr('重新提取配图', 'Re-extract')}
+            {extractMutation.isPending ? tr('正在提取…', 'Extracting…') : tr('重新提取', 'Re-extract')}
           </button>
         )}
       </div>

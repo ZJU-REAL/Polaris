@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Modal } from './Modal';
+import { tr } from '../../lib/i18n';
 
 export interface PromptModalProps {
   open: boolean;
@@ -26,7 +27,7 @@ export function PromptModal({
   label,
   placeholder,
   initial = '',
-  submitText = '确定',
+  submitText = tr('确定', 'OK'),
   mono,
   busy,
   onSubmit,
@@ -50,14 +51,14 @@ export function PromptModal({
       footer={
         <>
           <button className="btn btn-ghost sm" onClick={onClose} disabled={busy}>
-            取消
+            {tr('取消', 'Cancel')}
           </button>
           <button
             className="btn btn-primary sm"
             onClick={submit}
             disabled={busy || !value.trim()}
           >
-            {busy ? '处理中…' : submitText}
+            {busy ? tr('处理中…', 'Working…') : submitText}
           </button>
         </>
       }
@@ -65,7 +66,7 @@ export function PromptModal({
       {label && <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 8 }}>{label}</div>}
       <input
         className={`input${mono ? ' mono' : ''}`}
-        style={{ width: '100%', height: 32, fontSize: 12.5 }}
+        style={{ width: '100%', height: 32, fontSize: 13 }}
         autoFocus
         placeholder={placeholder}
         value={value}

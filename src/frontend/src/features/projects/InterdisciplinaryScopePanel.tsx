@@ -12,6 +12,7 @@ import {
   type ProjectRead,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { errorText } from '../../lib/errors';
 import {
   splitInterdisciplinaryTerms,
   validateInterdisciplinaryScope,
@@ -28,6 +29,13 @@ interface EditableScope {
   userQuestions: Record<string, unknown>[] | null;
   queryMatrix: Record<string, unknown>[] | null;
   evidenceBalance: Record<string, number> | null;
+}
+
+/** 版本状态（draft / confirmed）→ 给人看的词；认不出的原样显示。 */
+function scopeStatusLabel(status: string): string {
+  if (status === 'draft') return tr('草案', 'Draft');
+  if (status === 'confirmed') return tr('已确认', 'Confirmed');
+  return status;
 }
 
 function editableScope(scope: InterdisciplinaryScopeDraft): EditableScope {
@@ -106,10 +114,10 @@ export function InterdisciplinaryScopePanel({
       setClarificationQuestions(suggestion.clarification_questions);
       setRationale(suggestion.rationale);
       setModel(suggestion.model);
-      toast(tr('已生成新的可编辑草案', 'New editable draft generated'), 'ok');
+      toast(tr('已生成新草案', 'New draft ready'), 'ok');
     },
     onError: (error) => toast(
-      `${tr('分析失败：', 'Analysis failed: ')}${error instanceof Error ? error.message : String(error)}`,
+      `${tr('无法分析研究范围：', 'Couldn’t analyze the scope: ')}${errorText(error)}`,
       'error',
     ),
   });
@@ -135,14 +143,14 @@ export function InterdisciplinaryScopePanel({
     onSuccess: (result, confirm) => {
       invalidate();
       if (confirm) {
-        toast(tr('交叉范围已确认，专属文献库已同步', 'Scope confirmed and dedicated library synchronized'), 'ok');
+        toast(tr('研究范围已确认，专属文献库已更新', 'Scope confirmed. The topic library is updated.'), 'ok');
       } else {
         setEditing(editableScope(result.profile));
-        toast(tr('交叉范围草案已保存', 'Scope draft saved'), 'ok');
+        toast(tr('草案已保存', 'Draft saved'), 'ok');
       }
     },
     onError: (error) => toast(
-      `${tr('保存失败：', 'Save failed: ')}${error instanceof Error ? error.message : String(error)}`,
+      `${tr('无法保存：', 'Couldn’t save: ')}${errorText(error)}`,
       'error',
     ),
   });
@@ -160,19 +168,19 @@ export function InterdisciplinaryScopePanel({
       <div className="interdisciplinary-profile-head">
         <div>
           <span className="pill sm">{tr('跨学科研究', 'Interdisciplinary')}</span>
-          <h3>{tr('学科范围与检索边界', 'Scope and retrieval boundary')}</h3>
+          <h3>{tr('研究范围', 'Research scope')}</h3>
           <p>
             {latest
-              ? tr('每次保存都会形成新版本；确认后同步到专属交叉文献库。', 'Each save creates a version. Confirmation synchronizes the dedicated library.')
-              : tr('课题已创建，但交叉范围尚未完成。重新分析后即可恢复。', 'The topic exists, but its scope is incomplete. Analyze again to recover.')}
+              ? tr('每次保存生成一个新版本，确认后更新专属文献库。', 'Each save makes a new version. Confirming updates the topic library.')
+              : tr('研究范围还没有完成，请重新分析。', 'The scope isn’t finished. Analyze again.')}
           </p>
         </div>
         <div className="row gap8 interdisciplinary-profile-actions">
-          {latest && <span className="mono muted">v{latest.version} · {latest.status}</span>}
+          {latest && <span className="muted">v{latest.version} · {scopeStatusLabel(latest.status)}</span>}
           {dedicatedLibrary && (
             <button className="btn btn-soft sm" onClick={() => navigate(`/libraries/${dedicatedLibrary.id}`)}>
               <Icon name="book" size={12} />
-              {tr('专属库', 'Library')}
+              {tr('专属文献库', 'Topic library')}
             </button>
           )}
           <button className="btn btn-soft sm" disabled={analyze.isPending || save.isPending} onClick={() => analyze.mutate()}>
@@ -184,17 +192,17 @@ export function InterdisciplinaryScopePanel({
 
       {(scopeMissing || !latest) && !editing && (
         <div className="interdisciplinary-recovery">
-          {tr('未找到已保存的交叉范围。点击“重新分析”生成可编辑草案。', 'No saved scope was found. Analyze again to create an editable draft.')}
+          {tr('还没有保存的研究范围，点击「重新分析」生成草案。', 'No saved scope yet. Click “Analyze again” to draft one.')}
         </div>
       )}
 
       {!!clarificationQuestions.length && (
         <div className="interdisciplinary-questions">
-          <span className="label">{tr('需要你判断的问题', 'Questions for you')}</span>
+          <span className="label">{tr('需要你回答的问题', 'Questions for you')}</span>
           {clarificationQuestions.map((question, index) => (
             <div key={`${index}-${question}`}><b>{index + 1}</b><span>{question}</span></div>
           ))}
-          <textarea className="textarea" rows={3} value={context} onChange={(event) => setContext(event.target.value)} placeholder={tr('补充回答后可再次分析', 'Add answers and analyze again')} />
+          <textarea className="textarea" rows={3} value={context} onChange={(event) => setContext(event.target.value)} placeholder={tr('在这里回答，然后重新分析', 'Answer here, then analyze again')} />
         </div>
       )}
 
@@ -202,33 +210,33 @@ export function InterdisciplinaryScopePanel({
         <>
           <div className="interdisciplinary-profile-grid">
             <label className="col gap6 profile-span">
-              <span className="label">{tr('交叉研究范围', 'Research scope')}</span>
+              <span className="label">{tr('研究范围', 'Scope')}</span>
               <textarea className="textarea" rows={4} value={editing.researchScope} onChange={(event) => setEditing({ ...editing, researchScope: event.target.value })} />
             </label>
             <label className="col gap6 profile-span">
-              <span className="label">{tr('核心交叉问题', 'Core questions')}</span>
+              <span className="label">{tr('核心问题', 'Core questions')}</span>
               <textarea className="textarea" rows={4} value={editing.coreQuestions} onChange={(event) => setEditing({ ...editing, coreQuestions: event.target.value })} />
             </label>
             <label className="col gap6">
-              <span className="label">{tr('主学科', 'Primary domain')}</span>
+              <span className="label">{tr('主学科', 'Primary field')}</span>
               <input className="input" value={editing.primaryDomain} onChange={(event) => setEditing({ ...editing, primaryDomain: event.target.value, queryMatrix: null, evidenceBalance: null })} />
             </label>
             <label className="col gap6">
-              <span className="label">{tr('关联学科', 'Related domains')}</span>
+              <span className="label">{tr('相关学科', 'Related fields')}</span>
               <input className="input" value={editing.relatedDomains} onChange={(event) => setEditing({ ...editing, relatedDomains: event.target.value, queryMatrix: null, evidenceBalance: null })} />
             </label>
             <label className="col gap6">
-              <span className="label">{tr('证据边界', 'Evidence boundary')}</span>
+              <span className="label">{tr('证据范围', 'Evidence scope')}</span>
               <textarea className="textarea" rows={3} value={editing.evidenceBoundary} onChange={(event) => setEditing({ ...editing, evidenceBoundary: event.target.value })} />
             </label>
             <label className="col gap6">
-              <span className="label">{tr('验证条件', 'Validation conditions')}</span>
+              <span className="label">{tr('验证条件', 'Validation criteria')}</span>
               <textarea className="textarea" rows={3} value={editing.validationConditions} onChange={(event) => setEditing({ ...editing, validationConditions: event.target.value })} />
             </label>
           </div>
           {rationale && (
             <div className="interdisciplinary-rationale">
-              <span>{tr('建议依据', 'Rationale')}</span>
+              <span>{tr('依据', 'Rationale')}</span>
               <p>{rationale}</p>
               {model && <small>{model}</small>}
             </div>
@@ -236,11 +244,11 @@ export function InterdisciplinaryScopePanel({
           <div className="row gap8 interdisciplinary-save-actions">
             <button className="btn btn-soft sm" disabled={save.isPending} onClick={() => save.mutate(false)}>
               <Icon name="check" size={12} />
-              {save.isPending ? tr('保存中…', 'Saving…') : tr('保存新版本草案', 'Save version draft')}
+              {save.isPending ? tr('正在保存…', 'Saving…') : tr('保存草案', 'Save draft')}
             </button>
             <button className="btn btn-primary sm" disabled={save.isPending} onClick={() => save.mutate(true)}>
               <Icon name="sparkle" size={12} />
-              {tr('确认并同步专属库', 'Confirm and sync library')}
+              {tr('确认范围', 'Confirm scope')}
             </button>
           </div>
         </>
@@ -248,11 +256,11 @@ export function InterdisciplinaryScopePanel({
 
       {!!versions.length && (
         <details className="interdisciplinary-version-history">
-          <summary>{tr(`版本历史 · ${versions.length}`, `Version history · ${versions.length}`)}</summary>
+          <summary>{tr(`历史版本（${versions.length}）`, `Version history (${versions.length})`)}</summary>
           {versions.map((version: InterdisciplinaryScopeRead) => (
             <div key={version.id}>
               <span className="mono">v{version.version}</span>
-              <b>{version.status}</b>
+              <b>{scopeStatusLabel(version.status)}</b>
               <span>{version.primary_domain} · {version.related_domains.join(' / ')}</span>
             </div>
           ))}

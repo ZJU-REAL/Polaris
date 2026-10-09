@@ -32,7 +32,7 @@ function GroupCard({ icon, title, children }: { icon: IconName; title: string; c
     <div style={{ background: 'var(--surface)', border: '0.5px solid var(--border)', borderRadius: 10, padding: '10px 14px' }}>
       <div className="row gap6" style={{ alignItems: 'center', marginBottom: 8 }}>
         <Icon name={icon} size={13} style={{ color: 'var(--accent)' }} />
-        <span style={{ fontSize: 12, fontWeight: 650, color: 'var(--text-2)' }}>{title}</span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)' }}>{title}</span>
       </div>
       <div className="col gap8">{children}</div>
     </div>
@@ -43,7 +43,7 @@ function MeterRow({ label, used, total, extra }: { label: string; used: number; 
   return (
     <div className="col" style={{ gap: 3 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-2)' }}>{label}</span>
+        <span className="mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>{label}</span>
         <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
           {fmtMib(used)} / {fmtMib(total)}{extra ? ` · ${extra}` : ''}
         </span>
@@ -64,11 +64,11 @@ export function SysinfoPanel({
   info: SshSysinfo | undefined;
   onRefresh: () => void;
 }) {
-  if (loading) return <div className="muted" style={{ fontSize: 12 }}>{tr('正在探测服务器…', 'Probing server…')}</div>;
+  if (loading) return <div className="muted" style={{ fontSize: 12 }}>{tr('正在获取机器状态…', 'Checking the machine…')}</div>;
   if (error || !info) {
     return (
       <div className="row gap8" style={{ alignItems: 'center' }}>
-        <span className="muted" style={{ fontSize: 12 }}>{tr('获取失败', 'Failed to fetch')}</span>
+        <span className="muted" style={{ fontSize: 12 }}>{tr('无法获取机器状态', 'Couldn’t get machine status')}</span>
         <button className="btn btn-soft sm" onClick={onRefresh}>{tr('重试', 'Retry')}</button>
       </div>
     );
@@ -77,7 +77,7 @@ export function SysinfoPanel({
     return (
       <div className="row gap8" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
         <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
-          {tr('连接失败', 'Unreachable')}
+          {tr('无法连接', 'Unreachable')}
         </span>
         <span className="mono muted" style={{ fontSize: 11, wordBreak: 'break-all' }}>{info.detail}</span>
         <button className="btn btn-soft sm" onClick={onRefresh}>{tr('重试', 'Retry')}</button>
@@ -94,8 +94,8 @@ export function SysinfoPanel({
         {/* 处理器 */}
         <GroupCard icon="cpu" title={tr('处理器', 'CPU')}>
           <div className="row gap8" style={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{cpu.cores ?? '—'}</span>
-            <span className="muted" style={{ fontSize: 11.5 }}>{tr('核', 'cores')}</span>
+            <span style={{ fontSize: 18, fontWeight: 600, color: 'var(--text)' }}>{cpu.cores ?? '—'}</span>
+            <span className="muted" style={{ fontSize: 12 }}>{tr('核', 'cores')}</span>
             {cpu.load_1m != null && (
               <span className="mono muted" style={{ fontSize: 11, marginLeft: 'auto' }}>
                 {tr('负载', 'load')} {cpu.load_1m} / {cpu.load_5m ?? '—'} / {cpu.load_15m ?? '—'}
@@ -115,14 +115,14 @@ export function SysinfoPanel({
               extra={mem.available_mib != null ? `${tr('可用', 'avail')} ${fmtMib(mem.available_mib)}` : undefined}
             />
           ) : (
-            <span className="muted" style={{ fontSize: 11.5 }}>{tr('未探测到', 'Not detected')}</span>
+            <span className="muted" style={{ fontSize: 12 }}>{tr('未探测到', 'Not detected')}</span>
           )}
         </GroupCard>
 
         {/* 显卡 */}
         <GroupCard icon="chart" title={tr('显卡', 'GPUs')}>
           {gpus.length === 0 ? (
-            <span className="muted" style={{ fontSize: 11.5 }}>{tr('无 GPU', 'No GPU')}</span>
+            <span className="muted" style={{ fontSize: 12 }}>{tr('无 GPU', 'No GPU')}</span>
           ) : (
             gpus.map((g) => (
               <MeterRow
@@ -139,7 +139,7 @@ export function SysinfoPanel({
         {/* 磁盘 */}
         <GroupCard icon="server" title={tr('磁盘', 'Disks')}>
           {disks.length === 0 ? (
-            <span className="muted" style={{ fontSize: 11.5 }}>{tr('未探测到', 'Not detected')}</span>
+            <span className="muted" style={{ fontSize: 12 }}>{tr('未探测到', 'Not detected')}</span>
           ) : (
             disks.map((d) => <MeterRow key={d.mount} label={d.mount} used={d.used_mib} total={d.total_mib} />)
           )}

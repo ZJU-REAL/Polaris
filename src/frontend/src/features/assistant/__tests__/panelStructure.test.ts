@@ -38,7 +38,7 @@ function closingLineOf(lines: string[], openIndex: number): number {
 describe('面板骨架', () => {
   const lines = source.split('\n');
   const rowIndex = lines.findIndex((l) => l.includes("className=\"row\" style={{ flex: 1, minHeight: 0"));
-  const composerIndex = lines.findIndex((l) => l.includes("padding: 12, borderTop:"));
+  const composerIndex = lines.findIndex((l) => l.includes('className="buddy-composer"'));
 
   it('会话列表与消息区在同一个横向 row 里', () => {
     expect(rowIndex).toBeGreaterThan(0);

@@ -33,7 +33,7 @@ export function toast(message: string, kind: ToastKind = 'info'): void {
 
 const KIND_ICON: Record<ToastKind, IconName> = { info: 'bell', ok: 'check', error: 'x' };
 const KIND_COLOR: Record<ToastKind, string> = {
-  info: 'var(--accent-soft-2)',
+  info: 'var(--accent-soft-2)', // 深色底上：浅蓝
   ok: 'var(--ok)',
   error: 'var(--danger)',
 };
@@ -52,8 +52,8 @@ export function ToastHost() {
   return (
     <div className="toast-host">
       {list.map((t) => (
-        <div key={t.id} className="toast" style={{ borderLeftColor: KIND_COLOR[t.kind] }}>
-          <Icon name={KIND_ICON[t.kind]} size={14} style={{ flexShrink: 0, opacity: 0.85 }} />
+        <div key={t.id} className="toast" role={t.kind === 'error' ? 'alert' : 'status'}>
+          <Icon name={KIND_ICON[t.kind]} size={14} style={{ flexShrink: 0, marginTop: 2, color: KIND_COLOR[t.kind] }} />
           <span>{t.message}</span>
         </div>
       ))}

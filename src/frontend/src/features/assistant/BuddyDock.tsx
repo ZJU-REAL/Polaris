@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    PolarisBuddy 的停靠栏：它是**版面的一列**，不是浮在页面上的抽屉。
@@ -110,7 +111,7 @@ export function BuddyDock({ children }: { children: React.ReactNode }) {
       {/* 拖拽把手：贴在左边缘外侧一点，命中区比看得见的线宽 */}
       <div
         onPointerDown={onPointerDown}
-        title="拖动改变宽度"
+        title={tr('拖动调整宽度', 'Drag to resize')}
         style={{
           position: 'absolute',
           left: -3,

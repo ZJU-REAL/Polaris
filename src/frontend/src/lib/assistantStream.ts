@@ -1,4 +1,5 @@
 import { postSse } from './sse';
+import { tr } from './i18n';
 
 /* ============================================================
    助手的事件流 → 可渲染的块时间线。
@@ -347,7 +348,7 @@ export function assistantTurnSse(
         } else if (event === 'done') {
           handlers.onDone(str(data.stop_reason, 'stop'));
         } else if (event === 'error') {
-          handlers.onError(str(data.detail, '出错了'));
+          handlers.onError(str(data.detail, tr('出错了，请重试', 'Something went wrong. Try again.')));
         } else {
           handlers.onBlocks((blocks) => applyAssistantEvent(blocks, event, data));
         }

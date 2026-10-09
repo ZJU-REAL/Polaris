@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type PaperIndexStatus, type VectorStatus } from '../../lib/api';
 import { fmtFullTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { errorText } from '../../lib/errors';
 import { toast } from './Toast';
 import { Icon } from './Icon';
 
@@ -19,20 +20,16 @@ function dotTitle(label: string, s: VectorStatus | undefined, note?: string): st
   const head = (() => {
     const when = s?.built_at ? fmtFullTime(s.built_at) : null;
     if (s?.stale) {
-      const by = s.model ? tr(`（旧模型 ${s.model}）`, ` (old model ${s.model})`) : '';
-      return tr(
-        `${label}：待重建${by}——向量模型换过了，现有向量搜不了，重建一次即可`,
-        `${label}: needs rebuild${by} — the embedding model changed, so the existing vector is unusable; rebuild it`,
-      );
+      return tr(`${label}：需要重建（嵌入模型已更换）`, `${label}: needs rebuild (embedding model changed)`);
     }
-    if (!s?.built) return tr(`${label}：未构建`, `${label}: not built`);
+    if (!s?.built) return tr(`${label}：未建立`, `${label}: not built`);
     if (s.model && when) {
-      return tr(`${label}：${when} 由 ${s.model} 构建`, `${label}: built ${when} by ${s.model}`);
+      return tr(`${label}：${when} 建立，模型 ${s.model}`, `${label}: built ${when} with ${s.model}`);
     }
-    if (s.model) return tr(`${label}：由 ${s.model} 构建`, `${label}: built by ${s.model}`);
-    if (when) return tr(`${label}：${when} 构建`, `${label}: built ${when}`);
+    if (s.model) return tr(`${label}：已建立，模型 ${s.model}`, `${label}: built with ${s.model}`);
+    if (when) return tr(`${label}：${when} 建立`, `${label}: built ${when}`);
     // 存量数据：向量在，但没记过时间与模型名
-    return tr(`${label}：已构建（时间与模型未记录）`, `${label}: built (time and model not recorded)`);
+    return tr(`${label}：已建立`, `${label}: built`);
   })();
   return note ? `${head}\n${note}` : head;
 }
@@ -74,7 +71,7 @@ function Dot({
           display: 'inline-block',
         }}
       />
-      <span style={{ color: 'var(--text-3)', fontSize: 11.5 }}>{label}</span>
+      <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{label}</span>
     </span>
   );
 }
@@ -100,16 +97,14 @@ export function PaperIndexStatusRow({
     mutationFn: () => api.rebuildPaperIndex(paperId),
     onSuccess: (status) => {
       queryClient.setQueryData<PaperIndexStatus>(queryKey, status);
-      toast(tr('索引已构建', 'Index built'), 'ok');
+      toast(tr('索引已建立', 'Index built'), 'ok');
     },
     onError: (e) => {
       const msg =
         e instanceof ApiError && e.status === 403
-          ? tr('没有大模型使用权限，无法构建索引', 'No LLM access — cannot build the index')
-          : e instanceof Error
-            ? e.message
-            : String(e);
-      toast(`${tr('构建失败：', 'Build failed: ')}${msg}`, 'error');
+          ? tr('没有可用的嵌入模型，请在设置中配置', 'No embedding model available. Set one up in Settings.')
+          : errorText(e);
+      toast(`${tr('无法建立索引：', 'Couldn’t build the index: ')}${msg}`, 'error');
     },
   });
 
@@ -120,18 +115,18 @@ export function PaperIndexStatusRow({
   // 只有摘要兜底块 = 这篇没有全文索引，只是「能搜到」而已，别让绿点造成误会
   const abstractOnly = data?.chunk_source === 'abstract';
   const chunkLabel = abstractOnly
-    ? tr('摘要级索引', 'Abstract-level index')
-    : tr('全文分块向量', 'Chunk vectors');
+    ? tr('摘要检索', 'Abstract search')
+    : tr('全文检索', 'Full-text search');
   const chunkNote = abstractOnly
     ? tr(
-        '这篇没有全文，只用标题 + 摘要建了一个分段（向量与论文级向量是同一份）。取到 PDF 后会换成全文分块。',
-        'No full text for this paper — only one segment from title and abstract (sharing the paper vector). It is replaced by full-text chunks once a PDF is fetched.',
+        '还没有全文，只索引了标题和摘要。获取 PDF 后会改为全文索引。',
+        'No full text yet, so only the title and abstract are indexed. Fetching the PDF switches it to full text.',
       )
     : undefined;
 
   return (
     <div className="row gap12 wrap" style={{ alignItems: 'center' }}>
-      <Dot label={tr('论文级向量', 'Paper vector')} status={data?.paper_vector} />
+      <Dot label={tr('整篇检索', 'Paper search')} status={data?.paper_vector} />
       <Dot
         label={chunkLabel}
         status={data?.chunk_vector}
@@ -142,7 +137,7 @@ export function PaperIndexStatusRow({
         <span
           className="mono"
           style={{ color: 'var(--text-3)', fontSize: 11 }}
-          title={tr('已建向量的分段 / 分段总数', 'Segments with vectors / total segments')}
+          title={tr('已索引段落 / 段落总数', 'Indexed passages / total passages')}
         >
           {data.embedded_chunk_count}/{data.chunk_count}
         </span>
@@ -153,10 +148,7 @@ export function PaperIndexStatusRow({
         className="btn btn-ghost sm"
         disabled={isLoading || rebuild.isPending}
         onClick={() => rebuild.mutate()}
-        title={tr(
-          '重新计算这篇论文的检索向量（会调用一次嵌入模型）',
-          'Recompute this paper’s retrieval vectors (calls the embedding model once)',
-        )}
+        title={tr('重新建立这篇论文的检索索引', 'Rebuild this paper’s search index')}
       >
         <Icon
           name="refresh"
@@ -164,10 +156,10 @@ export function PaperIndexStatusRow({
           style={rebuild.isPending ? { animation: 'spin 1s linear infinite' } : undefined}
         />
         {rebuild.isPending
-          ? tr('构建中…', 'Building…')
+          ? tr('建立中…', 'Building…')
           : built
-            ? tr('重新构建', 'Rebuild')
-            : tr('构建索引', 'Build index')}
+            ? tr('重建索引', 'Rebuild index')
+            : tr('建立索引', 'Build index')}
       </button>
       )}
     </div>

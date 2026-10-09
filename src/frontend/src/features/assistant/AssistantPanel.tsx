@@ -186,19 +186,19 @@ function ToolCard({ block }: { block: Extract<AssistantBlock, { kind: 'tool' }> 
               title={toolDisplayName(block)}
               style={{ color: 'var(--text-3)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
             >
-              {block.state === 'running' && !block.title ? tr('调用中…', 'running…') : toolDisplayName(block)}
+              {block.state === 'running' && !block.title ? tr('运行中…', 'Running…') : toolDisplayName(block)}
             </span>
           </>
         ) : (
           <>
             <span className="mono" style={{ color: 'var(--text-2)' }}>{block.name}</span>
             <span style={{ color: 'var(--text-3)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {block.summary ?? tr('调用中…', 'running…')}
+              {block.summary ?? tr('运行中…', 'Running…')}
             </span>
           </>
         )}
         {block.durationMs !== undefined && (
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
             {block.durationMs}ms
           </span>
         )}
@@ -268,13 +268,13 @@ function PlanCard({
     >
       <div
         className="row gap6"
-        style={{ alignItems: 'center', marginBottom: 6, fontSize: 11.5, color: 'var(--text-3)' }}
+        style={{ alignItems: 'center', marginBottom: 6, fontSize: 12, color: 'var(--text-3)' }}
       >
         <Icon name="layers" size={12} style={{ color: 'var(--accent)' }} />
         <span>{awaitingApproval ? tr('这样做行吗？', 'Shall I go ahead?') : tr('计划', 'Plan')}</span>
         {/* 待审批时不报「0/N」：一步都还没做，进度数字只会让人以为它已经开工了 */}
         {!awaitingApproval && (
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
             {done}/{steps.length}
           </span>
         )}
@@ -285,7 +285,7 @@ function PlanCard({
           className="row gap6"
           style={{
             alignItems: 'flex-start',
-            fontSize: 12.5,
+            fontSize: 13,
             lineHeight: 1.6,
             color: step.status === 'done' ? 'var(--text-4)' : 'var(--text-2)',
           }}
@@ -326,7 +326,7 @@ function PlanCard({
           )}
           {onRevise && (
             <button className="btn btn-ghost sm" onClick={onRevise}>
-              {tr('改一改', 'Revise it')}
+              {tr('修改', 'Revise')}
             </button>
           )}
         </div>
@@ -343,7 +343,7 @@ function ThinkingView({ text, live }: { text: string; live: boolean }) {
     <div style={{ margin: '4px 0' }}>
       <div
         className="row gap6 hoverable"
-        style={{ cursor: 'pointer', alignItems: 'center', fontSize: 11.5, color: 'var(--text-4)' }}
+        style={{ cursor: 'pointer', alignItems: 'center', fontSize: 12, color: 'var(--text-3)' }}
         onClick={() => setOpen((o) => !o)}
       >
         <Icon
@@ -392,8 +392,8 @@ function ThinkingView({ text, live }: { text: string; live: boolean }) {
 function SourcesCard({ papers }: { papers: PaperSource[] }) {
   return (
     <div style={{ margin: '10px 0 2px' }}>
-      <div style={{ fontSize: 11, color: 'var(--text-4)', marginBottom: 4 }}>
-        {tr(`本轮查看的论文 · ${papers.length}`, `Papers looked at · ${papers.length}`)}
+      <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>
+        {tr(`查阅的论文（${papers.length}）`, `Papers consulted (${papers.length})`)}
       </div>
       <div className="col gap4">
         {papers.map((paper, i) => (
@@ -411,7 +411,7 @@ function SourcesCard({ papers }: { papers: PaperSource[] }) {
               borderRadius: 6,
             }}
           >
-            <span className="mono" style={{ color: 'var(--text-4)', flexShrink: 0 }}>
+            <span className="mono" style={{ color: 'var(--text-3)', flexShrink: 0 }}>
               {i + 1}.
             </span>
             <span style={{ minWidth: 0 }}>{paper.title}</span>
@@ -433,11 +433,11 @@ function VerifyCard({ notes }: { notes: string[] }) {
         borderRadius: 8,
         background: 'var(--warn-bg)',
         color: 'var(--warn-tx)',
-        fontSize: 11.5,
+        fontSize: 12,
         lineHeight: 1.6,
       }}
     >
-      <div style={{ marginBottom: 2 }}>{tr('这段回答有地方对不上：', 'Something in this answer does not line up:')}</div>
+      <div style={{ marginBottom: 2 }}>{tr('这段回答可能有误：', 'Parts of this answer may be wrong:')}</div>
       {notes.map((note) => (
         <div key={note}>· {note}</div>
       ))}
@@ -488,7 +488,7 @@ function BlockView({
                 background: 'var(--accent-soft)',
                 color: 'var(--accent-text)',
                 fontSize: '0.82em',
-                fontWeight: 650,
+                fontWeight: 600,
                 textDecoration: 'none',
               }}
             >
@@ -1069,14 +1069,14 @@ export function AssistantPanel({
             {/* 运行中的呼吸灯：标题栏与会话列表用同一个记号，扫一眼就知道哪场还在跑 */}
             {busy && <span className="buddy-live-dot" />}
             <strong
-              style={{ fontSize: 13.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
               title={title || 'PolarisBuddy'}
             >
               {title || 'PolarisBuddy'}
             </strong>
           </div>
           {model && (
-            <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
+            <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)' }}>
               {model}
             </span>
           )}
@@ -1086,7 +1086,7 @@ export function AssistantPanel({
           <button
             className="icon-btn"
             onClick={toggleRail}
-            title={tr('会话列表', 'Conversations')}
+            title={tr('对话列表', 'Conversations')}
             style={{ color: railOpen ? 'var(--accent)' : undefined }}
           >
             <Icon name="sidebar" size={14} />
@@ -1095,12 +1095,12 @@ export function AssistantPanel({
           <button
             className="icon-btn"
             onClick={() => void openHistory()}
-            title={tr('历史会话', 'Conversations')}
+            title={tr('对话列表', 'Conversations')}
           >
             <Icon name="clock" size={14} />
           </button>
         )}
-        <button className="icon-btn" onClick={newConversation} title={tr('新会话', 'New')}>
+        <button className="icon-btn" onClick={newConversation} title={tr('新对话', 'New chat')}>
           <Icon name="plus" size={14} />
         </button>
         <button
@@ -1127,8 +1127,8 @@ export function AssistantPanel({
           }}
         >
           {conversations.length === 0 && (
-            <div style={{ fontSize: 12, color: 'var(--text-4)', padding: 8 }}>
-              {tr('还没有历史会话', 'No conversations yet')}
+            <div style={{ fontSize: 12, color: 'var(--text-3)', padding: 8 }}>
+              {tr('还没有对话', 'No conversations yet')}
             </div>
           )}
           {conversations.map((c) => (
@@ -1139,7 +1139,7 @@ export function AssistantPanel({
               style={{
                 padding: '7px 9px',
                 borderRadius: 7,
-                fontSize: 12.5,
+                fontSize: 13,
                 cursor: 'pointer',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -1192,18 +1192,23 @@ export function AssistantPanel({
           return (
             <div key={i} style={{ marginBottom: 14 }}>
               {turn.role === 'user' ? (
-                <div
-                  style={{
-                    background: 'var(--accent-soft)',
-                    color: 'var(--accent-text)',
-                    borderRadius: 9,
-                    padding: '8px 11px',
-                    fontSize: 13,
-                    overflowWrap: 'anywhere',
-                    whiteSpace: 'pre-wrap',
-                  }}
-                >
-                  {turn.blocks.map((b, j) => (b.kind === 'text' ? <span key={j}>{b.text}</span> : null))}
+                // 用户的话：靠右的浅灰气泡；助手的回答不加气泡，直接是正文
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <div
+                    style={{
+                      maxWidth: '85%',
+                      background: 'var(--surface-3)',
+                      color: 'var(--text)',
+                      borderRadius: 'var(--radius-lg)',
+                      padding: '8px 12px',
+                      fontSize: 13,
+                      lineHeight: 'var(--lh-body)',
+                      overflowWrap: 'anywhere',
+                      whiteSpace: 'pre-wrap',
+                    }}
+                  >
+                    {turn.blocks.map((b, j) => (b.kind === 'text' ? <span key={j}>{b.text}</span> : null))}
+                  </div>
                 </div>
               ) : (
                 <div style={{ fontSize: 13, lineHeight: 1.7 }}>
@@ -1288,19 +1293,55 @@ export function AssistantPanel({
       </div>
       </div>
 
-      <div style={{ padding: 12, borderTop: '0.5px solid var(--border-2)' }}>
-        {/* 上下文栏贴在输入框顶上（Codex 那样）：课题与模式是这次提问的前置条件，
-            放进框里会和正文抢注意力，放到别处又和输入脱节。 */}
+      <div style={{ padding: '8px 12px 12px' }}>
+        <div
+          className="buddy-composer"
+          style={{
+            border: '0.5px solid var(--border-2)',
+            borderRadius: 'var(--radius-lg)',
+            background: 'var(--surface)',
+            position: 'relative',
+          }}
+        >
+          <textarea
+            className="textarea"
+            rows={1}
+            value={input}
+            placeholder={tr('输入问题或任务…', 'Ask a question or describe a task…')}
+            onChange={(e) => {
+              setInput(e.target.value);
+              const el = e.target;
+              el.style.height = 'auto';
+              el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            title={tr('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter for a new line')}
+            style={{
+              width: '100%',
+              fontSize: 13,
+              border: 'none',
+              boxShadow: 'none',
+              outline: 'none',
+              resize: 'none',
+              background: 'transparent',
+              padding: '10px 12px 4px',
+              maxHeight: 140,
+              lineHeight: '21px',
+            }}
+          />
+        {/* 输入卡片的底栏：课题、模式、模型、智能体和发送按钮排成一行（与输入框同一张卡，
+            选择器是这次提问的前置条件，放在别处会和输入脱节）。菜单都向上弹。 */}
         <div
           className="row gap8"
           style={{
             alignItems: 'center',
-            padding: '6px 10px',
-            border: '0.5px solid var(--border-2)',
-            borderBottom: 'none',
-            borderRadius: '12px 12px 0 0',
-            background: 'var(--surface-2)',
-            fontSize: 11.5,
+            padding: '4px 8px 8px',
+            fontSize: 12,
             color: 'var(--text-3)',
             position: 'relative',
           }}
@@ -1331,17 +1372,17 @@ export function AssistantPanel({
             aria-expanded={topicOpen}
             title={
               topic
-                ? `${tr('只用这个课题名下的资产', 'Only this topic’s assets')} · ${topic.name}`
+                ? `${tr('只查这个课题的内容', 'Only this topic’s content')} · ${topic.name}`
                 : tr(
-                    '你能看到的所有资产；选一个课题可收窄到它名下',
-                    'Everything you can see; pick a topic to narrow to it',
+                    '查找全部内容，选择课题可缩小范围',
+                    'Searches everything. Pick a topic to narrow it.',
                   )
             }
             data-picked={topic ? '1' : undefined}
           >
             <Icon name="layers" size={12} />
             <span className="buddy-scope-label">
-              {topic ? topic.name : tr('所有资产', 'All assets')}
+              {topic ? topic.name : tr('全部内容', 'Everything')}
             </span>
             <Icon name="chevDown" size={11} />
           </button>
@@ -1353,7 +1394,7 @@ export function AssistantPanel({
                 className="hoverable"
                 style={{ cursor: 'pointer', color: 'var(--accent-text)' }}
                 onClick={() => { setMode('chat'); setGoal(''); }}
-                title={tr('点掉回到普通对话', 'Click to return to plain chat')}
+                title={tr('点击退出此模式', 'Click to leave this mode')}
               >
                 {mode === 'plan' ? tr('计划模式', 'Plan mode') : tr('目标模式', 'Goal mode')}
               </span>
@@ -1362,7 +1403,7 @@ export function AssistantPanel({
 
           <span style={{ flex: 1 }} />
           {model && model !== backendItem?.name && (
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }} title={model}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }} title={model}>
               {model}
             </span>
           )}
@@ -1381,7 +1422,7 @@ export function AssistantPanel({
               }}
               aria-haspopup="listbox"
               aria-expanded={backendOpen}
-              title={tr('这场对话由谁来回答', 'Who answers in this conversation')}
+              title={tr('选择由谁回答', 'Choose who answers')}
               data-picked={backend && backend !== POLARIS_BACKEND ? '1' : undefined}
             >
               <Icon name="cpu" size={12} />
@@ -1425,8 +1466,8 @@ export function AssistantPanel({
                 </div>
                 <div className="buddy-scope-empty" style={{ lineHeight: 1.5 }}>
                   {tr(
-                    '外部智能体在这台机器上用你自己的账号运行；在「设置 → 模型与智能体」里管理。',
-                    'Outside agents run on this machine with your own sign-in. Manage them in Settings → Models & agents.',
+                    '在「设置 → 模型与智能体」中管理智能体。',
+                    'Manage agents in Settings → Models & agents.',
                   )}
                 </div>
               </div>
@@ -1444,7 +1485,7 @@ export function AssistantPanel({
                     autoFocus
                     value={topicQuery}
                     onChange={(e) => setTopicQuery(e.target.value)}
-                    placeholder={tr('搜课题…', 'Search topics…')}
+                    placeholder={tr('搜索课题…', 'Search topics…')}
                     onKeyDown={(e) => {
                       if (e.key === 'Escape') setTopicOpen(false);
                       // 搜到只剩一个时回车直接选它
@@ -1468,7 +1509,7 @@ export function AssistantPanel({
                     }}
                   >
                     <Icon name="grid" size={13} />
-                    <span className="buddy-scope-item-label">{tr('所有资产', 'All assets')}</span>
+                    <span className="buddy-scope-item-label">{tr('全部内容', 'Everything')}</span>
                     {!topicId && <Icon name="check" size={12} />}
                   </button>
                   {projects.length > 0 && <div className="hr" style={{ margin: '4px 2px' }} />}
@@ -1493,8 +1534,8 @@ export function AssistantPanel({
                   {topicMatches.length === 0 && (
                     <div className="buddy-scope-empty">
                       {projects.length === 0
-                        ? tr('还没有可见的课题', 'No topics you can see yet')
-                        : tr('没有匹配的课题', 'No topic matches that')}
+                        ? tr('还没有课题', 'No topics yet')
+                        : tr('没有匹配的课题', 'No matching topics')}
                     </div>
                   )}
                 </div>
@@ -1525,96 +1566,51 @@ export function AssistantPanel({
                     已经亮着的那个——「取消勾选」这个动作没人猜得到，等于普通模式没有入口。 */}
                 <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => { setMode('chat'); setGoal(''); }}>
                   <Icon name="chat" size={13} />
-                  <span style={{ flex: 1, textAlign: 'left' }}>{tr('一般模式 · 直接回答', 'Normal · just answer')}</span>
+                  <span style={{ flex: 1, textAlign: 'left' }}>{tr('普通 · 直接回答', 'Chat · Answer directly')}</span>
                   {mode === 'chat' && <Icon name="check" size={12} />}
                 </button>
                 <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => { setMode('plan'); setGoal(''); }}>
                   <Icon name="bulb" size={13} />
-                  <span style={{ flex: 1, textAlign: 'left' }}>{tr('计划模式 · 先出方案，你点头再做', 'Plan · propose first, act on approval')}</span>
+                  <span style={{ flex: 1, textAlign: 'left' }}>{tr('计划 · 先给方案，确认后再做', 'Plan · Propose first, act after approval')}</span>
                   {mode === 'plan' && <Icon name="check" size={12} />}
                 </button>
                 <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => setMode('goal')}>
                   <Icon name="compass" size={13} />
-                  <span style={{ flex: 1, textAlign: 'left' }}>{tr('目标模式 · 一直朝一个目标推进', 'Goal mode · keep pursuing one goal')}</span>
+                  <span style={{ flex: 1, textAlign: 'left' }}>{tr('目标 · 持续推进一个目标', 'Goal · Keep working toward one goal')}</span>
                   {mode === 'goal' && <Icon name="check" size={12} />}
                 </button>
               </div>
             </>
           )}
+          {busy ? (
+            <button
+              onClick={stop}
+              title={tr('停止', 'Stop')}
+              style={{
+                width: 28, height: 28, borderRadius: '50%', border: 'none',
+                background: 'var(--surface-3)', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <Icon name="pause" size={12} />
+            </button>
+          ) : (
+            <button
+              onClick={send}
+              disabled={!input.trim()}
+              title={tr('发送', 'Send')}
+              style={{
+                width: 28, height: 28, borderRadius: '50%', border: 'none',
+                background: input.trim() ? 'var(--accent)' : 'var(--surface-3)',
+                color: input.trim() ? 'var(--on-accent)' : 'var(--text-3)',
+                cursor: input.trim() ? 'pointer' : 'default',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <Icon name="arrow" size={13} />
+            </button>
+          )}
         </div>
-
-
-
-        <div
-          style={{
-            border: '0.5px solid var(--border-2)',
-            borderRadius: '0 0 12px 12px',
-            background: 'var(--surface)',
-            padding: '10px 12px 8px',
-          }}
-        >
-          <textarea
-            className="textarea"
-            rows={1}
-            value={input}
-            placeholder={tr('今天想让我做点什么？', 'How can I help you today?')}
-            onChange={(e) => {
-              setInput(e.target.value);
-              const el = e.target;
-              el.style.height = 'auto';
-              el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            style={{
-              width: '100%',
-              fontSize: 13.5,
-              border: 'none',
-              outline: 'none',
-              resize: 'none',
-              background: 'transparent',
-              padding: 0,
-              maxHeight: 140,
-              lineHeight: '21px',
-            }}
-          />
-          <div className="row gap8" style={{ alignItems: 'center', marginTop: 6 }}>
-            <span style={{ flex: 1, fontSize: 10.5, color: 'var(--text-4)' }}>
-              {tr('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter for a new line')}
-            </span>
-            {busy ? (
-              <button
-                onClick={stop}
-                title={tr('停止', 'Stop')}
-                style={{
-                  width: 28, height: 28, borderRadius: '50%', border: 'none',
-                  background: 'var(--surface-3)', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-              >
-                <Icon name="pause" size={12} />
-              </button>
-            ) : (
-              <button
-                onClick={send}
-                disabled={!input.trim()}
-                title={tr('发送', 'Send')}
-                style={{
-                  width: 28, height: 28, borderRadius: '50%', border: 'none',
-                  background: input.trim() ? 'var(--accent)' : 'var(--surface-3)',
-                  color: input.trim() ? '#fff' : 'var(--text-4)',
-                  cursor: input.trim() ? 'pointer' : 'default',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-              >
-                <Icon name="arrow" size={13} />
-              </button>
-            )}
-          </div>
         </div>
       </div>
     </div>

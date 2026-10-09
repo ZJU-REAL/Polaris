@@ -76,13 +76,14 @@
   --grad-avatar: linear-gradient(140deg, #4a6fa5, var(--accent));
   --on-accent:   #ffffff;                  /* 深色强调底（accent/渐变）上的文字 */
 
-  /* — Radii — */
-  --radius:    12px;
-  --radius-sm: 8px;
-  --radius-lg: 16px;
+  /* — Radii：控件 7 / 卡片 10 / 弹窗 12 — */
+  --radius:    10px;
+  --radius-sm: 7px;
+  --radius-lg: 12px;
 
   /* — Shadows (cool blue-gray tint) — */
-  --shadow-card: 0 1px 2px rgba(16, 32, 60, 0.05), 0 1px 3px rgba(16, 32, 60, 0.06);
+  /* 卡片靠 0.5px 边线成形，阴影只留一道发丝线；真正的投影只给浮层（菜单/弹窗/toast） */
+  --shadow-card: 0 1px 0 rgba(16, 32, 60, 0.04);
   --shadow-pop:  0 4px 14px rgba(16, 32, 60, 0.1), 0 1px 3px rgba(16, 32, 60, 0.06);
   --shadow-win:  0 0 0 0.5px rgba(0, 16, 40, 0.16), 0 24px 70px -12px rgba(10, 26, 54, 0.4),
     0 8px 24px rgba(10, 26, 54, 0.16);
@@ -91,6 +92,43 @@
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue",
     system-ui, sans-serif;
   --mono: "SF Mono", "JetBrains Mono", ui-monospace, "Menlo", "Cascadia Code", monospace;
+
+  /* — Type scale：只用这五档（外加页面标题），不写 12.5 / 11.5 这类半号字 —
+     字重只用 400（正文）/ 500（标签、导航、按钮）/ 600（标题）。 */
+  --fs-caption: 11px;  /* 角标、等宽元信息、分组小标题 */
+  --fs-sm:      12px;  /* 提示文字、次要信息、小按钮 */
+  --fs-body:    13px;  /* 正文、表单标签、按钮 */
+  --fs-title:   15px;  /* 区块标题、弹窗标题 */
+  --fs-h2:      17px;  /* 卡片大标题 */
+  --fs-page:    20px;  /* 页面标题 */
+  --lh-tight: 1.3;
+  --lh-body:  1.5;
+  --fw-regular:  400;
+  --fw-medium:   500;
+  --fw-semibold: 600;
+
+  /* — Controls：按钮/输入框统一高度 — */
+  --control-h:    32px;
+  --control-h-sm: 28px;
+  --control-h-xs: 24px;
+
+  /* — Motion：三档时长 + 一条缓出曲线；系统开了「减弱动态效果」时全部关掉（见 global.css 末尾） — */
+  --dur-micro:  100ms;
+  --dur-fast:   150ms;
+  --dur-normal: 200ms;
+  --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+
+  /* — Overlay：弹窗遮罩要轻，桌面上整窗压暗显得沉 — */
+  --scrim-modal: rgba(10, 22, 44, 0.14);
+
+  /* — Spacing：4px 网格 — */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
 
   /* — Breakpoints —
      全站只有两档断点。CSS 变量不能用在 @media 条件里，所以这里只是「登记」，

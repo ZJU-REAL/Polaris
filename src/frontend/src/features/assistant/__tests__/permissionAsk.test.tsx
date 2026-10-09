@@ -126,7 +126,7 @@ describe('permission card', () => {
     expect(html).toContain('Run npm test');
     expect(html).toContain('&quot;command&quot;: &quot;npm test&quot;');
     expect(html).toContain('总是允许');
-    expect(html).toContain('5 分钟内不回答就按拒绝处理');
+    expect(html).toContain('5 分钟内未回答将自动拒绝');
     expect(html.match(/<button/g)?.length).toBe(3);
     expect(html).toContain('btn btn-primary sm');
     expect(html).toContain('btn btn-ghost sm');
@@ -147,7 +147,7 @@ describe('permission card', () => {
       />,
     );
     expect(expired).toContain('已拒绝');
-    expect(expired).toContain('请求已过期');
+    expect(expired).toContain('已超时');
   });
 
   it('drops the buttons when the turn has ended', () => {
@@ -155,6 +155,6 @@ describe('permission card', () => {
       <PermissionCard block={block} conversationId="c1" turnLive={false} onStateChange={noop} />,
     );
     expect(html).not.toContain('<button');
-    expect(html).toContain('这一轮已经结束');
+    expect(html).toContain('对话已停止');
   });
 });

@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import type { AssistantBlock } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
 import { MODEL_SETTINGS_HREF, isLlmNotConfigured, llmNotConfiguredText } from '../../lib/llmNotConfigured';
+import { errorText as genericErrorText } from '../../lib/errors';
 
 /* ============================================================
    对话里的出错提示。
@@ -13,7 +14,7 @@ import { MODEL_SETTINGS_HREF, isLlmNotConfigured, llmNotConfiguredText } from '.
 
 type NoticeBlock = Extract<AssistantBlock, { kind: 'notice' }>;
 
-/** 后端错误码 → 用户看得懂的一句话。认不出的原样透出，别把线索吃掉。 */
+/** 后端错误码 → 用户看得懂的一句话。认不出的走 lib/errors 的通用处理（原码留在括号里，别把线索吃掉）。 */
 export function errorText(detail: string): string {
   if (detail === 'CHAT_AGENT_DISABLED') {
     return tr(
@@ -25,11 +26,11 @@ export function errorText(detail: string): string {
   // 传输层报错带着前缀（"Error: ACP_AGENT_NOT_AVAILABLE"），按包含判断
   if (detail.includes('ACP_AGENT_NOT_AVAILABLE')) {
     return tr(
-      '这场对话选的智能体已经不能用了（被删掉或停用）。换一个再问。',
-      'The agent picked for this conversation is no longer available (removed or turned off). Pick another one and ask again.',
+      '这段对话使用的智能体已不可用，请换一个后重试。',
+      'The agent for this conversation is no longer available. Choose another one and try again.',
     );
   }
-  return detail;
+  return genericErrorText(detail);
 }
 
 /** 出错 → 提示块。withDetail：把原始细节一并留下，只写「网络错误」等于无从查起。 */
@@ -51,12 +52,13 @@ export function NoticeView({ block }: { block: NoticeBlock }) {
         padding: '8px 10px',
         borderRadius: 8,
         background: 'var(--surface-2)',
+        borderLeft: '2px solid var(--warn)',
         color: 'var(--text-2)',
         fontSize: 13,
         lineHeight: 1.6,
       }}
     >
-      <span>⚠️ {block.text}</span>
+      <span>{block.text}</span>
       {block.action === 'model-settings' && (
         <>
           {' '}
@@ -66,7 +68,7 @@ export function NoticeView({ block }: { block: NoticeBlock }) {
         </>
       )}
       {block.detail && (
-        <div className="mono" style={{ marginTop: 4, fontSize: 11.5, color: 'var(--text-4)', overflowWrap: 'anywhere' }}>
+        <div className="mono" style={{ marginTop: 4, fontSize: 12, color: 'var(--text-3)', overflowWrap: 'anywhere' }}>
           {block.detail}
         </div>
       )}

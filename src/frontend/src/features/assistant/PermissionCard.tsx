@@ -9,6 +9,7 @@ import type {
   PermissionState,
 } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
+import { errorText as genericErrorText } from '../../lib/errors';
 import { agentToolIcon, agentToolKind, agentToolLabel } from './agentTools';
 
 /* ============================================================
@@ -27,8 +28,8 @@ export type PermissionStateChange = (
 const OPTION_LABELS: Record<PermissionOptionKind, { zh: string; en: string }> = {
   allow_once: { zh: '允许这一次', en: 'Allow once' },
   allow_always: { zh: '总是允许', en: 'Always allow' },
-  reject_once: { zh: '拒绝', en: 'Reject' },
-  reject_always: { zh: '总是拒绝', en: 'Always reject' },
+  reject_once: { zh: '拒绝', en: 'Deny' },
+  reject_always: { zh: '总是拒绝', en: 'Always deny' },
 };
 
 /** 按钮上的字：agent 给了名字就用它的，没有就按类别给一句。 */
@@ -99,9 +100,9 @@ export function PermissionCard({
     const allowed = block.state === 'allowed';
     const note = !open
       ? block.expired
-        ? tr('（请求已过期）', ' (request expired)')
+        ? tr('（已超时）', ' (timed out)')
         : ''
-      : tr('（这一轮已经结束）', ' (this turn has ended)');
+      : tr('（对话已停止）', ' (reply stopped)');
     return (
       <div
         className="row gap8"
@@ -121,7 +122,7 @@ export function PermissionCard({
           style={{ color: allowed ? 'var(--ok-tx)' : 'var(--danger-tx)', flexShrink: 0 }}
         />
         <span style={{ color: allowed ? 'var(--ok-tx)' : 'var(--danger-tx)', flexShrink: 0 }}>
-          {open ? tr('没有回答', 'Not answered') : allowed ? tr('已允许', 'Allowed') : tr('已拒绝', 'Refused')}
+          {open ? tr('没有回答', 'Not answered') : allowed ? tr('已允许', 'Allowed') : tr('已拒绝', 'Denied')}
         </span>
         <span
           className="mono"
@@ -130,7 +131,7 @@ export function PermissionCard({
         >
           {title}
         </span>
-        {note && <span style={{ color: 'var(--text-4)', flexShrink: 0 }}>{note}</span>}
+        {note && <span style={{ color: 'var(--text-3)', flexShrink: 0 }}>{note}</span>}
       </div>
     );
   }
@@ -154,8 +155,7 @@ export function PermissionCard({
         return;
       }
       setPicked(null);
-      const detail = e instanceof Error ? e.message : String(e);
-      toast(`${tr('没能提交', 'Could not send your answer')}：${detail}`, 'error');
+      toast(`${tr('没能提交，请重试：', 'Couldn’t send your answer. Try again: ')}${genericErrorText(e)}`, 'error');
       onStateChange(block.requestId, 'pending', { from: 'answering' });
     }
   };
@@ -172,11 +172,11 @@ export function PermissionCard({
         margin: '8px 0',
       }}
     >
-      <div className="row gap6" style={{ alignItems: 'center', fontSize: 11.5, color: 'var(--warn-tx)', fontWeight: 600 }}>
+      <div className="row gap6" style={{ alignItems: 'center', fontSize: 12, color: 'var(--warn-tx)', fontWeight: 600 }}>
         <Icon name="shield" size={12} />
         <span>{tr('需要你批准', 'Needs your approval')}</span>
       </div>
-      <div className="row gap6" style={{ alignItems: 'center', marginTop: 6, fontSize: 12.5, minWidth: 0 }}>
+      <div className="row gap6" style={{ alignItems: 'center', marginTop: 6, fontSize: 13, minWidth: 0 }}>
         <span className="row gap4" style={{ color: 'var(--text-2)', alignItems: 'center', flexShrink: 0 }}>
           <Icon name={agentToolIcon(kind)} size={12} />
           {kindLabel}
@@ -238,7 +238,7 @@ export function PermissionCard({
               disabled={answering || !conversationId}
               onClick={() => void answer(option)}
             >
-              {answering && picked === option.id ? tr('提交中…', 'Sending…') : permissionOptionLabel(option)}
+              {answering && picked === option.id ? tr('正在提交…', 'Sending…') : permissionOptionLabel(option)}
             </button>
           );
         })}
@@ -246,15 +246,15 @@ export function PermissionCard({
       <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-3)' }}>
         {block.timeoutS >= 60
           ? tr(
-              `${Math.round(block.timeoutS / 60)} 分钟内不回答就按拒绝处理`,
-              `Refused automatically if not answered within ${Math.round(block.timeoutS / 60)} minutes`,
+              `${Math.round(block.timeoutS / 60)} 分钟内未回答将自动拒绝`,
+              `Denied automatically after ${Math.round(block.timeoutS / 60)} min without an answer`,
             )
           : tr(
-              `${Math.round(block.timeoutS)} 秒内不回答就按拒绝处理`,
-              `Refused automatically if not answered within ${Math.round(block.timeoutS)} seconds`,
+              `${Math.round(block.timeoutS)} 秒内未回答将自动拒绝`,
+              `Denied automatically after ${Math.round(block.timeoutS)} s without an answer`,
             )}
         {remaining > 0 && (
-          <span className="mono" style={{ marginLeft: 6, color: 'var(--text-4)' }}>
+          <span className="mono" style={{ marginLeft: 6, color: 'var(--text-3)' }}>
             {tr(`还剩 ${clock(remaining)}`, `${clock(remaining)} left`)}
           </span>
         )}

@@ -32,15 +32,15 @@ export function InlineFigure({ paperId, index }: { paperId: string; index: numbe
   if (failed) return null;
   if (!url) {
     return (
-      <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('配图加载中…', 'loading figure…')}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{tr('图片加载中…', 'Loading figure…')}</span>
     );
   }
   return (
-    <a href={`/papers/${paperId}/read`} title={tr('点击打开论文', 'open the paper')}>
+    <a href={`/papers/${paperId}/read`} title={tr('打开论文', 'Open paper')}>
       <img
         src={url}
         onError={() => setFailed(true)}
-        alt={tr('论文配图', 'paper figure')}
+        alt={tr('论文图片', 'Paper figure')}
         style={{
           display: 'block',
           maxWidth: '100%',

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon, type IconName } from '../components/ui/Icon';
 import { PolarisMark, PolarisWordmark } from '../components/ui/PolarisLogo';
 import { Drawer } from '../components/ui/Drawer';
+import { ErrorState, LoadingState } from '../components/ui/EmptyState';
 import { GateCard, gateTitle } from '../components/ui/GateCard';
 import { ToastHost, toast } from '../components/ui/Toast';
 import { UpdateBadge } from '../components/ui/UpdateBadge';
@@ -38,7 +39,7 @@ interface NavEntry {
 
 /** 侧栏三个分组的标题：面包屑第一段直接复用，保证两处永远对得上。 */
 const NAV_GROUPS = {
-  literature: { zh: '文献', en: 'Library' },
+  literature: { zh: '文献', en: 'Literature' },
   topic: { zh: '课题研究', en: 'Topic' },
   personal: { zh: '个人', en: 'Personal' },
 } as const;
@@ -122,7 +123,7 @@ function crumbsFor(
     if (p === '/paper-review') return [topic, e('paper-review')];
     if (p.startsWith('/ideas/')) return [topic, e('forge'), { label: tr('想法详情', 'Idea detail') }];
     if (p.startsWith('/experiment/')) return [topic, e('experiment'), { label: tr('实验详情', 'Experiment detail') }];
-    if (p.startsWith('/writer/')) return [topic, e('writer'), { label: tr('编辑工作台', 'Editor workspace') }];
+    if (p.startsWith('/writer/')) return [topic, e('writer'), { label: tr('稿件', 'Manuscript') }];
     // 任务已并入课题工作台的「任务」标签
     if (p === '/voyages') return [topic, e(''), { label: tr('任务', 'Tasks') }];
     // 任务详情按归属分流：文献库任务 / 每日新论文（以及任何不挂课题的任务）归文献组，
@@ -143,14 +144,15 @@ function crumbsFor(
     if (p === '/lab') return [literature, e('/lab')];
     if (p === '/libraries' || p === '/wiki') return [literature, e('/libraries')];
     if (p.startsWith('/libraries/'))
-      return [literature, e('/libraries'), { label: libName || tr('文献库详情', 'Library') }];
+      return [literature, e('/libraries'), { label: libName || tr('文献库', 'Library') }];
     if (p === '/daily') return [literature, e('/daily')];
-    if (p.startsWith('/papers/')) return [literature, e('/libraries'), { label: tr('论文阅读', 'Paper reading') }];
+    if (p.startsWith('/papers/')) return [literature, e('/libraries'), { label: tr('论文', 'Paper') }];
     if (p.startsWith('/concepts/')) return [literature, e('/libraries'), { label: tr('概念', 'Concept') }];
 
     // —— 个人区 ——
     if (p === '/library') return [personal, e('/library')];
-    if (p === '/settings') return [personal, { label: tr('设置', 'Settings') }];
+    // 设置页自带分组导航，面包屑只写「设置」，不挂在「个人」下面
+    if (p === '/settings') return [{ label: tr('设置', 'Settings') }];
     return [{ label: 'Polaris' }];
   })();
 
@@ -212,7 +214,7 @@ function TopicSwitcher({ collapsed }: { collapsed: boolean }) {
     border: 'none',
     background: 'transparent',
     cursor: 'pointer',
-    fontSize: 12.5,
+    fontSize: 13,
     fontFamily: 'var(--sans)',
     color: 'var(--text)',
     textAlign: 'left',
@@ -259,13 +261,13 @@ function TopicSwitcher({ collapsed }: { collapsed: boolean }) {
             animation: 'fadeUp 0.12s ease',
           }}
         >
-          <div className="mono" style={{ fontSize: 10, color: 'var(--text-4)', padding: '4px 12px 6px', letterSpacing: '0.06em' }}>
-            {tr('课题', 'TOPICS')}
+          <div className="mono" style={{ fontSize: 10, color: 'var(--text-3)', padding: '4px 12px 6px', letterSpacing: '0.06em' }}>
+            {tr('课题', 'Topics')}
           </div>
           <div className="scroll" style={{ maxHeight: 320, overflowY: 'auto' }}>
             {projects.length === 0 && (
-              <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-4)' }}>
-                {isLoading ? tr('加载中…', 'Loading…') : tr('还没有课题，先创建一个', 'No topics yet — create one first')}
+              <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-3)' }}>
+                {isLoading ? tr('加载中…', 'Loading…') : tr('还没有课题', 'No topics yet')}
               </div>
             )}
             {projects.map((p) => {
@@ -312,7 +314,7 @@ function TopicSwitcher({ collapsed }: { collapsed: boolean }) {
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
-                      fontWeight: active ? 650 : 450,
+                      fontWeight: active ? 600 : 450,
                       color: active ? 'var(--accent-text)' : 'var(--text)',
                     }}
                     title={p.name}
@@ -581,7 +583,7 @@ export function AppShell() {
       void queryClient.invalidateQueries({ queryKey: ['voyage'] });
     },
     onError: (err) => {
-      toast(`${tr('审批失败', 'Approval failed')}：${err instanceof Error ? err.message : String(err)}`, 'error');
+      toast(`${tr('审批未提交，请重试', 'Couldn’t submit the approval. Try again.')} ${err instanceof Error ? err.message : String(err)}`, 'error');
     },
   });
 
@@ -608,8 +610,8 @@ export function AppShell() {
     const close = connectNotifications(getToken, (msg) => {
       if (msg.type === 'gate.created') {
         void queryClient.invalidateQueries({ queryKey: ['gates'] });
-        toast(`${tr('新审批请求', 'New approval request')}：${gateTitle(msg.gate)}`, 'info');
-        notifyDesktop(tr('新审批请求', 'New approval request'), gateTitle(msg.gate));
+        toast(`${tr('新的审批', 'New approval')}：${gateTitle(msg.gate)}`, 'info');
+        notifyDesktop(tr('新的审批', 'New approval'), gateTitle(msg.gate));
       } else if (msg.type === 'gate.decided') {
         void queryClient.invalidateQueries({ queryKey: ['gates'] });
         void queryClient.invalidateQueries({ queryKey: ['voyages'] });
@@ -620,8 +622,8 @@ export function AppShell() {
           toast(tr('任务等待审批', 'Task paused for approval'), 'info');
           notifyDesktop(tr('任务等待审批', 'Task paused for approval'));
         } else if (msg.status === 'done') {
-          toast(tr('任务完成', 'Task done'), 'ok');
-          notifyDesktop(tr('任务完成', 'Task done'));
+          toast(tr('任务已完成', 'Task finished'), 'ok');
+          notifyDesktop(tr('任务已完成', 'Task finished'));
         } else if (msg.status === 'failed') {
           toast(tr('任务失败', 'Task failed'), 'error');
           notifyDesktop(tr('任务失败', 'Task failed'));
@@ -630,8 +632,8 @@ export function AppShell() {
         void queryClient.invalidateQueries({ queryKey: ['voyages'] });
         void queryClient.invalidateQueries({ queryKey: ['voyage', msg.voyage_id] });
         void queryClient.invalidateQueries({ queryKey: ['voyage-messages', msg.voyage_id] });
-        toast(`${tr('AI 有问题想问你', 'The AI has a question for you')}：${msg.question}`, 'info');
-        notifyDesktop(tr('AI 有问题想问你', 'The AI has a question for you'), msg.question);
+        toast(`${tr('任务需要你回答', 'A task needs your answer')}：${msg.question}`, 'info');
+        notifyDesktop(tr('任务需要你回答', 'A task needs your answer'), msg.question);
       } else if (msg.type === 'review.message') {
         // 正在看该 session 的组件共享此 query cache → 直接乐观追加（按 id 去重）
         queryClient.setQueryData<ReviewMessageRead[]>(['session-messages', msg.session_id], (old) =>
@@ -667,13 +669,13 @@ export function AppShell() {
           toast(tr('实验等待预算审批', 'Experiment awaiting budget approval'), 'info');
           notifyDesktop(tr('实验等待预算审批', 'Experiment awaiting budget approval'));
         } else if (msg.status === 'waiting_user') {
-          toast(tr('实验暂停：AI 有问题想问你', 'Experiment paused — the AI has a question'), 'info');
-          notifyDesktop(tr('实验暂停：AI 有问题想问你', 'Experiment paused — the AI has a question'));
+          toast(tr('实验已暂停，需要你回答', 'Experiment paused for your answer'), 'info');
+          notifyDesktop(tr('实验已暂停，需要你回答', 'Experiment paused for your answer'));
         } else if (msg.status === 'running') {
-          toast(tr('实验正式运行中', 'Experiment running'), 'info');
+          toast(tr('实验开始运行', 'Experiment started'), 'info');
         } else if (msg.status === 'done') {
-          toast(tr('实验完成', 'Experiment done'), 'ok');
-          notifyDesktop(tr('实验完成', 'Experiment done'));
+          toast(tr('实验已完成', 'Experiment finished'), 'ok');
+          notifyDesktop(tr('实验已完成', 'Experiment finished'));
         } else if (msg.status === 'failed') {
           toast(tr('实验失败', 'Experiment failed'), 'error');
           notifyDesktop(tr('实验失败', 'Experiment failed'));
@@ -801,8 +803,8 @@ export function AppShell() {
                   ? tr('关闭菜单', 'Close menu')
                   : tr('打开菜单', 'Open menu')
                 : navCollapsed
-                  ? tr('展开菜单栏', 'Expand sidebar')
-                  : tr('收起菜单栏', 'Collapse sidebar')
+                  ? tr('展开侧栏', 'Expand sidebar')
+                  : tr('收起侧栏', 'Collapse sidebar')
             }
             aria-label={
               isMobile
@@ -810,8 +812,8 @@ export function AppShell() {
                   ? tr('关闭菜单', 'Close menu')
                   : tr('打开菜单', 'Open menu')
                 : navCollapsed
-                  ? tr('展开菜单栏', 'Expand sidebar')
-                  : tr('收起菜单栏', 'Collapse sidebar')
+                  ? tr('展开侧栏', 'Expand sidebar')
+                  : tr('收起侧栏', 'Collapse sidebar')
             }
             aria-expanded={isMobile ? mobileNavOpen : undefined}
           >
@@ -829,8 +831,8 @@ export function AppShell() {
             className="icon-btn crumb-refresh"
             onClick={() => void refreshData()}
             disabled={refreshing}
-            title={tr('刷新本页数据', 'Reload this page’s data')}
-            aria-label={tr('刷新本页数据', 'Reload this page’s data')}
+            title={tr('刷新', 'Refresh')}
+            aria-label={tr('刷新', 'Refresh')}
           >
             <Icon name="refresh" size={15} style={refreshing ? { animation: 'spin 1s linear infinite' } : undefined} />
           </button>
@@ -841,8 +843,8 @@ export function AppShell() {
             <div className="searchbox" role="button" tabIndex={0} onClick={() => setSearchOpen(true)}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSearchOpen(true); }}>
               <Icon name="search" size={14} />
-              <span>{tr('搜索论文 / 想法 / 实验…', 'Search papers / ideas / experiments…')}</span>
-              <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>⌘K</span>
+              <span>{tr('搜索论文、想法、实验…', 'Search papers, ideas, experiments…')}</span>
+              <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-3)' }}>⌘K</span>
             </div>
           ) : (
             <button
@@ -859,8 +861,8 @@ export function AppShell() {
           <button
             className="icon-btn"
             onClick={() => setAssistantOpen((o) => !o)}
-            title={tr('PolarisBuddy（⌘J）· 可把论文或选中的文字拖到这里', 'PolarisBuddy (⌘J) · drop a paper or selection here')}
-            aria-label="PolarisBuddy"
+            title={tr('助手（⌘J）· 可拖入论文或选中的文字', 'Assistant (⌘J) · Drop a paper or text here')}
+            aria-label={tr('助手', 'Assistant')}
             onDragOver={(e) => {
               const types = e.dataTransfer.types;
               if (types.includes(PAPER_DND_MIME) || types.includes('text/plain')) {
@@ -921,7 +923,7 @@ export function AppShell() {
               <LangToggle />
               <FeedbackLink />
               <UpdateBadge />
-              <button className="icon-btn" onClick={() => openGates(null)} title={tr('审批中心', 'Approvals')}>
+              <button className="icon-btn" onClick={() => openGates(null)} title={tr('审批', 'Approvals')} aria-label={tr('审批', 'Approvals')}>
                 <Icon name="bell" size={16} />
                 {pending.length > 0 && <span className="badge">{pending.length}</span>}
               </button>
@@ -961,7 +963,7 @@ export function AppShell() {
                     onClick={() => setTopbarMoreOpen(false)}
                   >
                     <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => openGates(null)}>
-                      <Icon name="bell" size={14} /> {tr('审批中心', 'Approvals')}
+                      <Icon name="bell" size={14} /> {tr('审批', 'Approvals')}
                       {pending.length > 0 && <span className="badge" style={{ position: 'static', marginLeft: 'auto' }}>{pending.length}</span>}
                     </button>
                     <div className="row gap6" style={{ padding: '2px 4px' }}>
@@ -1010,7 +1012,7 @@ export function AppShell() {
         title={
           <>
             <Icon name="gate" size={18} style={{ color: 'var(--accent)' }} />
-            <span style={{ fontSize: 15, fontWeight: 680 }}>{tr('审批中心', 'Approvals')}</span>
+            <span style={{ fontSize: 15, fontWeight: 600 }}>{tr('审批', 'Approvals')}</span>
           </>
         }
       >
@@ -1019,14 +1021,11 @@ export function AppShell() {
         </div>
         <div className="col gap10" style={{ marginBottom: 24 }}>
           {pendingQuery.isError ? (
-            <div className="empty" style={{ padding: 20 }}>
-              {tr('无法加载审批列表（后端不可用）', 'Failed to load approvals (backend unavailable)')}
-              <div style={{ marginTop: 10 }}>
-                <button className="btn btn-soft sm" onClick={() => void pendingQuery.refetch()}>
-                  {tr('重试', 'Retry')}
-                </button>
-              </div>
-            </div>
+            <ErrorState
+              compact
+              title={tr('无法加载审批，请确认本机引擎正在运行', 'Couldn’t load approvals. Check that the local engine is running.')}
+              onRetry={() => void pendingQuery.refetch()}
+            />
           ) : pending.length > 0 ? (
             pending.map((g) => (
               <GateCard
@@ -1043,11 +1042,11 @@ export function AppShell() {
           )}
         </div>
         <div className="row" style={{ marginBottom: 10 }}>
-          <span className="sb-section" style={{ padding: 0 }}>{tr('历史记录', 'History')}</span>
+          <span className="sb-section" style={{ padding: 0 }}>{tr('已处理', 'Decided')}</span>
         </div>
         <div className="col gap10">
           {decidedQuery.isLoading ? (
-            <div className="empty" style={{ padding: 16 }}>{tr('加载中…', 'Loading…')}</div>
+            <LoadingState compact />
           ) : decided.length > 0 ? (
             decided.map((g) => (
               <GateCard
@@ -1059,11 +1058,11 @@ export function AppShell() {
               />
             ))
           ) : (
-            <div className="empty" style={{ padding: 16 }}>{tr('暂无历史审批记录', 'No past approvals')}</div>
+            <div className="empty" style={{ padding: 16 }}>{tr('还没有处理过的审批', 'No decided approvals yet')}</div>
           )}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.5, marginTop: 20, padding: '0 2px' }}>
-          {tr('批准与任务关联的审批后，对应任务将自动从断点恢复；拒绝则置为 failed。', 'Approving a task-linked request resumes the task from its checkpoint; rejecting marks it failed.')}
+        <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.5, marginTop: 20, padding: '0 2px' }}>
+          {tr('批准后任务从暂停处继续，拒绝后任务标记为失败。', 'Approving resumes the task where it paused. Rejecting marks it failed.')}
         </div>
       </Drawer>
 

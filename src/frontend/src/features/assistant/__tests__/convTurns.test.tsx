@@ -140,7 +140,7 @@ describe('error notices', () => {
 
   it('no longer talks about sharing agents', () => {
     expect(errorText('ACP_AGENT_NOT_AVAILABLE')).not.toContain('共享');
-    expect(errorText('ACP_AGENT_NOT_AVAILABLE')).toContain('删掉或停用');
+    expect(errorText('ACP_AGENT_NOT_AVAILABLE')).toContain('已不可用');
   });
 });
 

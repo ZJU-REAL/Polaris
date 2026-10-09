@@ -5,12 +5,12 @@ import { tr } from '../../lib/i18n';
 import type { GateDecision, GateRead } from '../../lib/api';
 
 const GATE_KIND: Record<string, { zh: string; en: string }> = {
-  idea_promotion: { zh: '想法晋级审批', en: 'Idea promotion approval' },
-  idea_goal: { zh: '研究目标确认', en: 'Research goal confirmation' },
-  idea_pivot: { zh: '方向调整确认', en: 'Direction change confirmation' },
-  compute_budget: { zh: '算力预算审批', en: 'Compute budget approval' },
-  pr_push: { zh: '推送 PR', en: 'Push PR' },
-  paper_submission: { zh: '论文投稿', en: 'Paper submission' },
+  idea_promotion: { zh: '想法晋级', en: 'Promote idea' },
+  idea_goal: { zh: '确认研究目标', en: 'Confirm research goal' },
+  idea_pivot: { zh: '调整研究方向', en: 'Change direction' },
+  compute_budget: { zh: '算力预算', en: 'Compute budget' },
+  pr_push: { zh: '推送 PR', en: 'Push pull request' },
+  paper_submission: { zh: '论文投稿', en: 'Submit paper' },
 };
 
 /** gate kind → 当前语言标签（未收录的原样展示）。 */
@@ -40,7 +40,8 @@ export function gateDesc(g: GateRead): string | null {
 
 function payloadLines(payload: Record<string, unknown> | null): string[] {
   if (!payload) return [];
-  return Object.entries(payload).map(
+  // 内部 id 对用户没有意义，不展示
+  return Object.entries(payload).filter(([k]) => k !== 'id' && !k.endsWith('_id')).map(
     ([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`,
   );
 }
@@ -67,8 +68,8 @@ function asStringArray(v: unknown): string[] {
 function GoalRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-3)', marginBottom: 3 }}>{label}</div>
-      <div style={{ fontSize: 12.5, lineHeight: 1.55 }}>{children}</div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 13, lineHeight: 1.55 }}>{children}</div>
     </div>
   );
 }
@@ -118,12 +119,12 @@ function IdeaGoalView({ payload }: { payload: Record<string, unknown> | null }) 
       )}
       {groundingCount > 0 && (
         <GoalRow label={tr('依据文献', 'Grounding papers')}>
-          {tr(`共 ${groundingCount} 篇（详情见生成后的想法页）`, `${groundingCount} papers (details on the generated idea page)`)}
+          {tr(`${groundingCount} 篇`, groundingCount === 1 ? '1 paper' : `${groundingCount} papers`)}
         </GoalRow>
       )}
       {trace && (
-        <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5, marginTop: 4 }}>
-          {tr('探索过程：', 'Exploration trace: ')}{trace}
+        <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5, marginTop: 4 }}>
+          {tr('探索过程：', 'How it got here: ')}{trace}
         </div>
       )}
     </div>
@@ -147,10 +148,10 @@ function IdeaPivotView({ payload }: { payload: Record<string, unknown> | null })
   return (
     <div style={{ marginTop: 12 }}>
       {reason && (
-        <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.55, marginBottom: 10 }}>{reason}</div>
+        <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.55, marginBottom: 10 }}>{reason}</div>
       )}
       {comparisons.length > 0 && (
-        <GoalRow label={tr(`高度重合的已有工作 · ${comparisons.length} 项`, `Highly overlapping prior work · ${comparisons.length}`)}>
+        <GoalRow label={tr(`高度相似的已有工作（${comparisons.length}）`, `Similar prior work (${comparisons.length})`)}>
           <div className="col gap6">
             {comparisons.map((c, i) => {
               const item = asRecord(c);
@@ -169,7 +170,7 @@ function IdeaPivotView({ payload }: { payload: Record<string, unknown> | null })
               return (
                 <div key={i} style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '8px 11px' }}>
                   {title && (
-                    <div style={{ fontSize: 12, fontWeight: 650, marginBottom: details.length > 0 ? 4 : 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: details.length > 0 ? 4 : 0 }}>
                       {url ? (
                         <a href={url} target="_blank" rel="noreferrer noopener">{title}</a>
                       ) : (
@@ -180,7 +181,7 @@ function IdeaPivotView({ payload }: { payload: Record<string, unknown> | null })
                   {details.map(([k, v]) => {
                     const f = CMP_FIELD[k];
                     return (
-                      <div key={k} style={{ fontSize: 11.5, color: 'var(--text-2)', lineHeight: 1.5 }}>
+                      <div key={k} style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
                         {f ? <b style={{ color: 'var(--text)' }}>{tr(`${f.zh}：`, `${f.en}: `)}</b> : null}
                         {v}
                       </div>
@@ -192,10 +193,10 @@ function IdeaPivotView({ payload }: { payload: Record<string, unknown> | null })
           </div>
         </GoalRow>
       )}
-      <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5 }}>
+      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
         {tr(
-          '批准 = AI 按你的意见调整研究方向后继续；拒绝 = 终止本次深度生成。',
-          'Approve = AI adjusts the research direction per your comment and continues; reject = stop this deep generation.',
+          '批准后按你的意见调整方向并继续，拒绝则停止生成。',
+          'Approve to change direction using your comment and continue. Reject to stop generating.',
         )}
       </div>
     </div>
@@ -229,9 +230,11 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
         style={{ padding: '14px 16px', cursor: 'pointer', background: pending ? 'var(--accent-soft)' : 'var(--surface)' }}
       >
         <div className="row gap8" style={{ marginBottom: 6 }}>
-          <span className="pill sm" style={{ background: 'var(--surface-3)' }}>
-            {gateKindLabel(g.kind)}
-          </span>
+          {gateKindLabel(g.kind) !== gateTitle(g) && (
+            <span className="pill sm" style={{ background: 'var(--surface-3)' }}>
+              {gateKindLabel(g.kind)}
+            </span>
+          )}
           {pending ? (
             <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
               <span className="dot" />
@@ -252,15 +255,14 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
             style={{ marginLeft: 'auto', color: 'var(--text-3)', transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }}
           />
         </div>
-        <div style={{ fontSize: 13.5, fontWeight: 650 }}>{gateTitle(g)}</div>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{gateTitle(g)}</div>
         <div className="row gap8" style={{ marginTop: 5 }}>
-          <span className="mono muted" style={{ fontSize: 10.5 }}>{g.id.slice(0, 8)}</span>
-          <span className="mono muted" style={{ fontSize: 10.5 }}>· {fmtTime(g.created_at)}</span>
+          <span className="muted" style={{ fontSize: 'var(--fs-sm)' }}>{fmtTime(g.created_at)}</span>
         </div>
       </div>
       {expanded && (
         <div style={{ padding: '0 16px 16px', borderTop: '0.5px solid var(--border)' }}>
-          {desc && <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.55, margin: '12px 0 0' }}>{desc}</div>}
+          {desc && <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.55, margin: '12px 0 0' }}>{desc}</div>}
           {isGoal && <IdeaGoalView payload={g.payload} />}
           {isPivot && <IdeaPivotView payload={g.payload} />}
           {lines.length > 0 && (
@@ -276,10 +278,10 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
                 className="textarea"
                 placeholder={
                   isGoal
-                    ? tr('可填写修改意见，AI 将按意见调整目标后继续', 'Optional comment — AI will adjust the goal accordingly and continue')
+                    ? tr('修改意见（可选），会据此调整目标', 'Comment (optional). The goal is revised to match.')
                     : isPivot
-                      ? tr('可填写调整意见，AI 将按意见调整研究方向后继续', 'Optional comment — AI will adjust the direction accordingly and continue')
-                      : tr('审批意见（可选）', 'Comment (optional)')
+                      ? tr('调整意见（可选），会据此调整方向', 'Comment (optional). The direction is revised to match.')
+                      : tr('意见（可选）', 'Comment (optional)')
                 }
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
@@ -303,17 +305,17 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
                   onClick={() => onDecide(g.id, 'reject', comment.trim() || undefined)}
                 >
                   <Icon name="x" size={13} />
-                  {isPivot ? tr('终止', 'Stop') : isGoal ? tr('驳回', 'Reject') : tr('拒绝', 'Reject')}
+                  {isPivot ? tr('停止', 'Stop') : tr('拒绝', 'Reject')}
                 </button>
               </div>
             </>
           ) : (
-            <div className="col gap6" style={{ marginTop: 12, fontSize: 11.5, color: 'var(--text-3)' }}>
+            <div className="col gap6" style={{ marginTop: 12, fontSize: 12, color: 'var(--text-3)' }}>
               <div className="row gap8">
                 <Icon name="check" size={13} style={{ color: g.status === 'approved' ? 'var(--ok-tx)' : 'var(--danger-tx)' }} />
                 {g.status === 'approved'
-                  ? tr(`于 ${fmtTime(g.decided_at)} 批准`, `Approved at ${fmtTime(g.decided_at)}`)
-                  : tr(`于 ${fmtTime(g.decided_at)} 拒绝`, `Rejected at ${fmtTime(g.decided_at)}`)}
+                  ? tr(`${fmtTime(g.decided_at)} 已批准`, `Approved ${fmtTime(g.decided_at)}`)
+                  : tr(`${fmtTime(g.decided_at)} 已拒绝`, `Rejected ${fmtTime(g.decided_at)}`)}
               </div>
               {g.comment && <div style={{ paddingLeft: 21 }}>{tr('意见：', 'Comment: ')}{g.comment}</div>}
             </div>

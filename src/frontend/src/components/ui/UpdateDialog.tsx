@@ -7,6 +7,7 @@ import { openExternal, type UpdateInfo } from '../../lib/host';
 import { invokeJob } from '../../lib/host-jobs';
 import { Markdown } from '../../lib/markdown';
 import { tr } from '../../lib/i18n';
+import { errorText } from '../../lib/errors';
 
 /**
  * 「有新版本」对话框：更新说明 + 查看发布页 + 立即更新。
@@ -42,14 +43,14 @@ export function UpdateDialog({
         // 热更新走到这里时窗口已经在重载，提示多半来不及看到——不影响正确性
         if (!hot) {
           toast(
-            tr('安装包已下载，按提示完成安装', 'Installer downloaded — follow the prompts'),
+            tr('安装包已下载，请按提示完成安装', 'Installer downloaded. Follow the prompts to install.'),
             'ok',
           );
         }
       },
       onError: (_code, message) => {
         setBusy(false);
-        toast(`${tr('更新失败', 'Update failed')}：${message}`, 'error');
+        toast(`${tr('无法更新：', 'Couldn’t update: ')}${errorText(message)}`, 'error');
       },
     });
   };
@@ -63,19 +64,19 @@ export function UpdateDialog({
       title={`${tr('有新版本', 'Update available')} · v${info.latestVersion}`}
       sub={
         <>
-          {tr('当前', 'Current')} v{info.currentVersion}
+          {tr('当前版本', 'Current version')} v{info.currentVersion}
           {info.publishedAt ? ` · ${fmtTime(info.publishedAt)}` : ''}
           {' · '}
           {hot
-            ? tr('本次更新无需重启', 'Applies without restarting')
-            : tr('本次更新需要重新安装', 'Requires reinstalling the app')}
+            ? tr('无需重启', 'No restart needed')
+            : tr('需要重新安装', 'Reinstall required')}
         </>
       }
       width={600}
       footer={
         <div className="row gap8" style={{ justifyContent: 'flex-end' }}>
           {busy && (
-            <span style={{ marginRight: 'auto', fontSize: 12.5, color: 'var(--text-3)' }}>
+            <span style={{ marginRight: 'auto', fontSize: 13, color: 'var(--text-3)' }}>
               {tr('下载中', 'Downloading')} {percent}%
             </span>
           )}
@@ -90,11 +91,11 @@ export function UpdateDialog({
             </button>
           )}
           <button className="btn" onClick={onClose} disabled={busy}>
-            {tr('取消', 'Cancel')}
+            {tr('稍后', 'Later')}
           </button>
           <button className="btn btn-primary" onClick={start} disabled={busy}>
             <Icon name="download" size={14} />
-            {busy ? tr('更新中…', 'Updating…') : tr('立即更新', 'Update now')}
+            {busy ? tr('正在更新…', 'Updating…') : tr('立即更新', 'Update now')}
           </button>
         </div>
       }
@@ -102,7 +103,7 @@ export function UpdateDialog({
       {info.notes ? (
         <Markdown source={info.notes} />
       ) : (
-        <p style={{ color: 'var(--text-3)' }}>{tr('本次更新没有说明', 'No release notes')}</p>
+        <p style={{ color: 'var(--text-3)' }}>{tr('这个版本没有更新说明', 'No release notes for this version')}</p>
       )}
     </Modal>
   );
