@@ -15,7 +15,7 @@ export function emit(event: HostEvent): void {
 }
 
 /**
- * job 登记表住在 kernel（#754，服务器形态用同一份），桌面只提供落点：
+ * job 登记表住在 kernel（#754），桌面只提供落点：
  * 事件经 webContents 推给渲染进程。
  */
 export const jobBus = new JobBus((event: JobEvent) => emit(event as HostEvent));

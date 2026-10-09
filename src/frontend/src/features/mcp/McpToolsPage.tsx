@@ -5,7 +5,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { tr } from '../../lib/i18n';
-import { localOrigin, portalUrl } from '../../lib/endpoint';
+import { engineOrigin, localOrigin } from '../../lib/endpoint';
 import { copyText } from '../../lib/clipboard';
 import { useProject } from '../../app/project';
 import { api, getToken, type McpToolCheck, type McpToolInfo } from '../../lib/api';
@@ -203,12 +203,10 @@ export function McpToolsContent() {
   const projectId = pickedProjectId ?? currentProjectId;
   const [includeNetwork, setIncludeNetwork] = useState(false);
 
-  // 本地模式（桌面端未配置服务器）没有门户地址：端点给出本机引擎的真实
-  // 地址（外部 MCP 客户端与桌面端同机，127.0.0.1 恰好就是对的），并附一行
-  // 「仅本机可访问」说明；以前回落 app://polaris 产出的端点谁都连不上。
-  const portal = portalUrl();
-  const isLocalEndpoint = portal == null && localOrigin() != null;
-  const origin = portal ?? localOrigin() ?? '';
+  // 端点给出本机引擎的真实地址（外部 MCP 客户端与桌面端同机，127.0.0.1
+  // 恰好就是对的），并附一行「仅本机可访问」说明。
+  const isLocalEndpoint = localOrigin() != null;
+  const origin = engineOrigin();
   const httpUrl = `${origin}${data?.endpoint ?? '/mcp'}`;
   const token = getToken() ?? '';
 

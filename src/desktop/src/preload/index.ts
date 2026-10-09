@@ -5,7 +5,7 @@
    能力清单，所以第二期加本地能力时只改 shared/contract.ts 与 main 侧。
 
    暴露两个全局，职责刻意分开：
-   - window.__POLARIS__  静态事实（serverUrl / platform / appVersion）。
+   - window.__POLARIS__  静态事实（platform / appVersion）。
      用 sendSync 取：lib/endpoint.ts 的 apiBase() 可能在任何时刻被调用，
      必须保证注入早于一切 renderer 脚本，异步 invoke 做不到这一点。
      一次同步 IPC 只发生在启动期，开销可忽略。

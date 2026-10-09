@@ -8,8 +8,8 @@
    - A「壳与免登录」：需要 docker 与 polaris-api-test:local 镜像，
      门控照抄冒烟——设 POLARIS_E2E_ENGINE=1 且镜像存在才跑，否则
      打明确日志后 skip（CI 无镜像时仍然全绿）。
-   - B「无引擎回落」：不依赖 docker，任何机器必跑。不设引擎 env 起壳，
-     应停在服务器配置页而不是崩溃。
+   - B「无引擎兜底」：不依赖 docker，任何机器必跑。不设引擎 env 起壳，
+     应停在「本机引擎没有启动」页而不是白屏或崩溃。
    - C「插件市场闭环」（#712）：不依赖 docker，任何机器必跑。本进程起
      一个 127.0.0.1 的 http 替身充当索引源与 npm registry，经渲染进程的
      window.polaris（生产 IPC 路径）驱动种子插件走完「换源 → 拉索引 →
@@ -88,8 +88,6 @@ function launchEnv(overrides: Record<string, string>): Record<string, string> {
   // 泄进来会让组 A 用错库、也会让其他组的引擎行为不可预期。基线清干净，
   // 需要的组在 overrides 里显式声明。
   delete env.POLARIS_DATABASE_URL;
-  // 内部分发机器可能设了默认服务器：会让「未配置服务器」的断言失真
-  delete env.POLARIS_DEFAULT_SERVER_URL;
   return { ...env, ...overrides };
 }
 
@@ -195,7 +193,7 @@ async function groupEngine(): Promise<void> {
 
     const authCards = await page.locator('.auth-card-title').count();
     const path = await page.evaluate('window.location.pathname');
-    check('不是登录页/配置页', authCards === 0 && path !== '/login', `authCards=${authCards} path=${String(path)}`);
+    check('不是登录页/兜底页', authCards === 0 && path !== '/login', `authCards=${authCards} path=${String(path)}`);
 
     // 渲染进程内直接打本地引擎：证明 CSP 放行了 127.0.0.1、端点解析走了本地
     const health = (await page.evaluate(
@@ -258,10 +256,10 @@ async function groupEngine(): Promise<void> {
   }
 }
 
-/* ---------------- 组 B：无引擎回落（必跑） ---------------- */
+/* ---------------- 组 B：无引擎兜底（必跑） ---------------- */
 
 async function groupNoEngine(): Promise<void> {
-  console.log('\n无引擎回落');
+  console.log('\n无引擎兜底');
   const userData = mkdtempSync(join(tmpdir(), 'polaris-e2e-b-'));
   let app: ElectronApplication | null = null;
 
@@ -270,10 +268,12 @@ async function groupNoEngine(): Promise<void> {
     app = r.app;
     const { page } = r;
 
-    // 未配置服务器、也没有本地引擎：应停在首启的服务器配置页，而不是白屏/崩溃
+    // 没有本地引擎：应停在「本机引擎没有启动」页（带重新打开的出路），而不是白屏/崩溃
     await page.waitForSelector('.auth-card-title', { timeout: 30_000 });
     const title = (await page.locator('.auth-card-title').textContent()) ?? '';
-    check('停在服务器配置页', /连接到服务器|Connect to a server/.test(title), `title=${title}`);
+    check('停在本机引擎兜底页', /本机引擎没有启动|The local engine is not running/.test(title), `title=${title}`);
+    const restart = await page.getByRole('button', { name: /重新打开 Polaris|Restart Polaris/ }).count();
+    check('兜底页给出「重新打开」按钮', restart === 1, `count=${restart}`);
     check('窗口仍然存活（未崩溃）', !page.isClosed());
 
     const mounted = (await page.evaluate('document.querySelector("#root")?.childElementCount ?? 0')) as number;
@@ -285,7 +285,7 @@ async function groupNoEngine(): Promise<void> {
     )) as { storage?: boolean } | null;
     check('kernel storage 持久层就绪', ks?.storage === true, `status=${JSON.stringify(ks)}`);
   } catch (err) {
-    check('无引擎回落组执行完成', false, String(err).slice(0, 400));
+    check('无引擎兜底组执行完成', false, String(err).slice(0, 400));
   } finally {
     await shutdown(app);
     rmSync(userData, { recursive: true, force: true });

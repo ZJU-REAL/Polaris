@@ -36,7 +36,6 @@ from app.api import (
     onboarding,
     paper_assets,
     papers,
-    plugins,
     presentations,
     projects,
     publications,
@@ -93,7 +92,6 @@ api_router.include_router(evidence.router)
 api_router.include_router(experiments.router)
 api_router.include_router(manuscripts.router)
 api_router.include_router(export.router)
-api_router.include_router(plugins.router)
 api_router.include_router(mcp_servers.router)
 api_router.include_router(acp_agents.router)
 api_router.include_router(experiment_backends.router)

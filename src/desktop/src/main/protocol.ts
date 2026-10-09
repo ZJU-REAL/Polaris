@@ -58,27 +58,18 @@ function rendererRoot(): string {
 }
 
 /**
- * CSP 随当前服务器地址动态生成（换服务器后重建窗口即刷新）。
+ * CSP 随本机引擎地址动态生成（引擎起来后首启等待页整页 reload 即刷新）。
  * 两处宽松是必需的，不要「顺手收紧」：
  * - script-src 'wasm-unsafe-eval'：pdf.js 的 openjpeg / qcms 是 WASM；
  * - style-src 'unsafe-inline'：CodeMirror 的 style-mod 与 KaTeX 在运行时
  *   insertRule 注入样式，去掉编辑器和公式渲染会直接崩。
  */
-export function buildCsp(serverUrl: string, localBaseUrl?: string | null): string {
+export function buildCsp(localBaseUrl?: string | null): string {
   // blob: 必须显式列出：Chromium 里 'self' 不覆盖 blob: URL，而 pdf.js 标注阅读器
   // 是 fetch(blob:…pdf) 取正文（走 connect-src），标准阅读器是 <iframe src=blob:>
   // （走 frame-src）。少了这一项就只有标注阅读器打不开，且只在桌面端复现。
   const connect = new Set<string>(["'self'", 'blob:']);
-  if (serverUrl) {
-    try {
-      const u = new URL(serverUrl);
-      connect.add(u.origin);
-      connect.add(u.origin.replace(/^http/, 'ws'));
-    } catch {
-      /* 地址非法时只留 'self'，前端会停在配置页 */
-    }
-  }
-  // 本地引擎（POLARIS_DESKTOP_ENGINE）：不放行 127.0.0.1 的话 renderer 对
+  // 本地引擎：不放行 127.0.0.1 的话 renderer 对
   // 本地后端的一切 fetch/WS 都会被 CSP 拦死，endpoint.ts 的切换形同虚设。
   if (localBaseUrl) {
     try {
@@ -106,7 +97,7 @@ export function buildCsp(serverUrl: string, localBaseUrl?: string | null): strin
   ].join('; ');
 }
 
-export function handleAppProtocol(getServerUrl: () => string): void {
+export function handleAppProtocol(): void {
   protocol.handle(APP_SCHEME, async (request) => {
     // 每次请求重新解析：热更新切换目录后无需重启协议处理器
     const root = normalize(rendererRoot());
@@ -135,7 +126,7 @@ export function handleAppProtocol(getServerUrl: () => string): void {
     const res = await net.fetch(pathToFileURL(filePath).toString());
     const headers = new Headers(res.headers);
     if (filePath.endsWith('.html')) {
-      headers.set('Content-Security-Policy', buildCsp(getServerUrl(), localBackend().baseUrl));
+      headers.set('Content-Security-Policy', buildCsp(localBackend().baseUrl));
     }
     return new Response(res.body, { status: res.status, headers });
   });

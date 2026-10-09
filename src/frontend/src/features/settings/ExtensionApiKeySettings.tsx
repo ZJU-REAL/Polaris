@@ -6,18 +6,17 @@ import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../components/ui/Toast';
 import { api } from '../../lib/api';
 import { copyText } from '../../lib/clipboard';
-import { localOrigin, portalUrl } from '../../lib/endpoint';
+import { engineOrigin, localOrigin } from '../../lib/endpoint';
 import { tr } from '../../lib/i18n';
 
 export function ExtensionApiKeySettings() {
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [keyPrefix, setKeyPrefix] = useState<string | null>(null);
   const [revokeOpen, setRevokeOpen] = useState(false);
-  // 浏览器扩展跑在同一台电脑上：本地模式（无门户地址）给本机引擎地址
-  // 一样能用，只是别的机器访问不到——附一行说明（#721）。
-  const portal = portalUrl();
-  const isLocalBase = portal == null && localOrigin() != null;
-  const baseUrl = portal ?? localOrigin() ?? '';
+  // 浏览器扩展跑在同一台电脑上：给本机引擎地址，别的机器访问不到——附一行
+  // 说明（#721）。
+  const isLocalBase = localOrigin() != null;
+  const baseUrl = engineOrigin();
 
   const rotateMutation = useMutation({
     mutationFn: () => api.rotateDownloadApiKey(),

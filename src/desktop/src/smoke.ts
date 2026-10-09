@@ -45,7 +45,7 @@ import { extractTarGz } from './main/updates/tar';
 import { compareVersions, stagedSupersedes } from './main/updates/version';
 import { APP_INDEX, buildCsp, handleAppProtocol, registerAppScheme } from './main/protocol';
 
-const SERVER_URL = 'https://polaris.example.edu';
+const LOCAL_ENGINE_URL = 'http://127.0.0.1:18080';
 const problems: string[] = [];
 
 // 全程用一次性 userData：storage 持久层（#609）起来后内核会真的写库，
@@ -65,18 +65,19 @@ function check(label: string, ok: boolean, detail = ''): void {
 }
 
 void app.whenReady().then(async () => {
-  handleAppProtocol(() => SERVER_URL);
+  handleAppProtocol();
   installIpc(); // preload 的 sendSync 依赖它，不装就测不到真实注入链路
   // 白盒断言需要内核已就绪：这里显式 await（生产 main/index.ts 自 #721 起
   // 窗口先起、内核后台启动，渲染层靠首启等待页消化启动窗口期）
   const kernelInstance = await startKernel();
 
   console.log('CSP');
-  const csp = buildCsp(SERVER_URL);
+  const csp = buildCsp(LOCAL_ENGINE_URL);
   check("script-src 放行 wasm-unsafe-eval（pdf.js）", csp.includes("'wasm-unsafe-eval'"));
   check("style-src 放行 unsafe-inline（CodeMirror/KaTeX）", csp.includes("style-src 'self' 'unsafe-inline'"));
-  check('connect-src 含服务器 https 源', csp.includes(SERVER_URL));
-  check('connect-src 含服务器 wss 源', csp.includes('wss://polaris.example.edu'));
+  check('connect-src 含本机引擎 http 源', csp.includes(LOCAL_ENGINE_URL));
+  check('connect-src 含本机引擎 ws 源', csp.includes('ws://127.0.0.1:18080'));
+  check('无本机引擎时 connect-src 只留自身与 blob:', !/connect-src [^;]*(https?|wss?):/.test(buildCsp(null)));
   check("connect-src 放行 blob:（pdf.js 取正文）", /connect-src [^;]*\bblob:/.test(csp));
   check("worker-src 放行 blob:（pdf.js worker）", csp.includes("worker-src 'self' blob:"));
   check("frame-src 放行 blob:（写作页 PDF 预览）", csp.includes('frame-src blob:'));
@@ -143,7 +144,7 @@ void app.whenReady().then(async () => {
     'JSON.stringify({ info: window.__POLARIS__ ?? null, bridge: typeof window.polaris })',
   )) as string;
   const state = JSON.parse(injected) as {
-    info: { serverUrl?: string; platform?: string } | null;
+    info: { platform?: string } | null;
     bridge: string;
   };
   check('window.__POLARIS__ 已注入', state.info != null && typeof state.info.platform === 'string');
@@ -154,11 +155,11 @@ void app.whenReady().then(async () => {
   )) as number;
   check('React 应用已挂载（#root 有子节点）', mounted > 0);
 
-  // 首启流程：桌面端未配置服务器时必须落在配置页，而不是登录页
+  // 冒烟没有拉起本机引擎：必须落在「本机引擎没有启动」兜底页，而不是白屏或登录页
   const title = (await win.webContents.executeJavaScript(
     'document.querySelector(".auth-card-title")?.textContent ?? ""',
   )) as string;
-  check('未配置服务器时进入配置页', /连接到服务器|Connect to a server/.test(title), `title=${title}`);
+  check('无本机引擎时进入兜底页', /本机引擎没有启动|The local engine is not running/.test(title), `title=${title}`);
 
   // macOS 的交通灯占据窗口左上角约 y=14..26（见 window.ts 的 trafficLightPosition），
   // 页面左上角的品牌标必须落在这条带子下面，否则会被压住。
@@ -364,9 +365,8 @@ void app.whenReady().then(async () => {
     'host.copyText',
     'host.info',
     'host.openExternal',
+    'host.relaunch',
     'host.setBadgeCount',
-    'host.setServerUrl',
-    'host.testServer',
     'host.update.apply',
     'host.update.check',
     'kernel.engineBootstrapStatus',

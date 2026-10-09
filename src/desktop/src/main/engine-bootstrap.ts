@@ -185,12 +185,12 @@ export async function bootstrapEngine(opts: BootstrapOptions): Promise<EngineCom
  * 启动器同时负责 cwd、数据库地址与用户数据目录：
  * - chdir 到后端源码目录——alembic.ini 的 script_location/prepend_sys_path
  *   都是相对 cwd 的相对路径；
- * - POLARIS_DATABASE_URL 指到 userData 的 SQLite 文件（legacy-engine 只注入
- *   POLARIS_PROFILE，数据库路径是引导方才知道的信息，所以写在启动器里）；
+ * - POLARIS_DATABASE_URL 指到 userData 的 SQLite 文件（数据库路径是引导方
+ *   才知道的信息，所以写在启动器里）；
  * - POLARIS_DATA_DIR 指到 userData 的 engine/data/（#718）：后端 data_dir
  *   默认相对 './data'，chdir 之后会落进 App 安装包的 resources/backend/，
  *   应用更新整包替换时用户的 PDF/导出/实验日志就全没了。setdefault 而非
- *   覆写：给高级用户留 env 改道的口子，与 PROFILE 同一语义。
+ *   覆写：给高级用户留 env 改道的口子。
  */
 function buildEngineCommand(venvPython: string, backendDir: string, engineDir: string): string[] {
   const dbPath = join(engineDir, 'polaris.db').split('\\').join('/');
@@ -203,7 +203,6 @@ function buildEngineCommand(venvPython: string, backendDir: string, engineDir: s
     'import os, subprocess, sys',
     // 传给 alembic 子进程（子解释器启动时读 env；本进程靠 -X utf8）
     "os.environ.setdefault('PYTHONUTF8', '1')",
-    "os.environ.setdefault('POLARIS_PROFILE', 'desktop')",
     `os.environ['POLARIS_DATABASE_URL'] = ${JSON.stringify(`sqlite+aiosqlite:///${dbPath}`)}`,
     // 用户数据目录钉在 userData 下（#718，理由见本函数 docstring）
     `os.environ.setdefault('POLARIS_DATA_DIR', ${JSON.stringify(dataDir)})`,

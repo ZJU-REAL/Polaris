@@ -4,7 +4,6 @@ import { Icon } from '../../components/ui/Icon';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import type { PaperDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { portalUrl } from '../../lib/endpoint';
 import { evidenceCitationRenderer, parseEvidenceArtifact } from '../reading/evidenceArtifact';
 
 /* ============================================================
@@ -74,9 +73,6 @@ export function PaperReader({
   }, [onClose]);
 
   const venueYear = [paper.venue, paper.year].filter(Boolean).join(' · ');
-  // 本地模式下没有门户地址（null）：不渲染「平台阅读链接」——
-  // app:// 链接发给别人只会打不开。
-  const readLink = portalUrl(`/papers/${paper.id}/read`);
   const sourceUrl = paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : paper.url ?? null;
   const sourceLabel = paper.arxiv_id ? `arXiv:${paper.arxiv_id}` : tr('论文源链接', 'Source');
 
@@ -128,12 +124,6 @@ export function PaperReader({
               </div>
             )}
             <div className="paper-reader-links">
-              {readLink && (
-                <a href={readLink} target="_blank" rel="noreferrer noopener">
-                  <Icon name="book" size={12} />
-                  {tr('平台阅读链接', 'Read on platform')}
-                </a>
-              )}
               {sourceUrl && (
                 <a href={sourceUrl} target="_blank" rel="noreferrer noopener">
                   <Icon name="link" size={12} />

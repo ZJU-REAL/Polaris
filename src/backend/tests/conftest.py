@@ -48,7 +48,29 @@ async def app():
         await conn.run_sync(Base.metadata.create_all)
     reset_llm_router()  # 丢弃路由缓存，避免跨测试串味
     yield create_app()
+    await _stop_background_tasks()
     await dispose_engine()
+
+
+async def _stop_background_tasks() -> None:
+    """收掉这个用例留下的后台任务（加论文起的补全、进程内队列里的任务）。
+
+    进程内 redis 恒可用（#842）之后，加论文真的会起后台补全。它若在用例结束时还在写
+    库，下一个用例重建表就会撞上 "database is locked"——哪个用例倒霉看时机。"""
+    import asyncio
+
+    import app.core.queue as queue_mod
+    from app.services import paper_enrich
+
+    tasks = list(paper_enrich._TASKS.values())
+    if queue_mod._queue is not None:
+        tasks += list(getattr(queue_mod._queue, "_tasks", {}).values())
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    paper_enrich._TASKS.clear()
+    queue_mod._queue = None
 
 
 @pytest_asyncio.fixture(autouse=True)

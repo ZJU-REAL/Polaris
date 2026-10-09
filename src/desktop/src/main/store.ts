@@ -19,21 +19,17 @@ export interface WindowState {
 }
 
 export interface DesktopConfig {
-  /** 空串 = 尚未配置，前端进入首启配置页。 */
-  serverUrl: string;
   window: WindowState;
   /**
    * 插件市场索引源（#708）。
    * @deprecated #737 起真相在 kernel 持久层（PluginMetaStore 'market:endpoint'，
    * 见 methods.market.ts）：这里只剩迁移期读穿回退与「持久层不可用」的降级落点，
-   * 一期后随回退一起删。electron store 只放纯壳偏好（窗口状态/服务器地址）。
+   * 一期后随回退一起删。electron store 只放纯壳偏好（窗口状态）。
    */
   marketEndpoint: string;
 }
 
-/** 内部分发时可用 POLARIS_DEFAULT_SERVER_URL 预填默认服务器，避免把内网地址写死进源码。 */
 const DEFAULTS: DesktopConfig = {
-  serverUrl: process.env.POLARIS_DEFAULT_SERVER_URL ?? '',
   window: { width: 1440, height: 900, maximized: false },
   marketEndpoint: MARKET_ENDPOINT_DEFAULT,
 };
@@ -49,7 +45,6 @@ export function readConfig(): DesktopConfig {
   try {
     const raw = JSON.parse(readFileSync(configPath(), 'utf8')) as Partial<DesktopConfig>;
     cache = {
-      serverUrl: typeof raw.serverUrl === 'string' ? raw.serverUrl : DEFAULTS.serverUrl,
       window: { ...DEFAULTS.window, ...(raw.window ?? {}) },
       // 空串不保留：历史配置文件没有该键或被清空时一律回官方默认源
       marketEndpoint:

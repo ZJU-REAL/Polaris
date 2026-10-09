@@ -238,13 +238,10 @@ jobs:
 
           ## First run
 
-          The app asks for your lab's Polaris server address and validates it against
-          `/api/health`. You can change it later from the Server… menu item (Cmd+,).
-
-          **The server must be running a backend that whitelists the desktop origin**, or
-          login will fail. The desktop page is served from `app://polaris`, so every
-          request is cross-origin, and older backends reject the preflight in production
-          mode.
+          The first launch sets up the local engine on this computer: it downloads a
+          Python toolchain and dependencies, which can take a few minutes. Later launches
+          skip this. Everything stays on your machine — there is no server address to
+          enter and no account to create.
           EOF
           DRAFT=""
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then

@@ -3013,10 +3013,9 @@ export function SettingsPage() {
     );
   };
 
-  // 「插件」tab 在 plugins.manage 能力可用时出现——桌面端看主进程清单，服务器
-  // 形态（#754）看后端：接了内核且当前用户是主人才为真。能力清单由 App.tsx 启动时
-  // 异步拉取，本页可能先于它渲染完，这里再取一次并在拿到结果后重读，避免首次进
-  // 设置页时 tab 闪失。没接内核的部署探测失败即维持 false，页面上就没有这个 tab。
+  // 「插件」tab 在 plugins.manage 能力可用时出现（看桌面主进程的能力清单）。能力
+  // 清单由 App.tsx 启动时异步拉取，本页可能先于它渲染完，这里再取一次并在拿到结果
+  // 后重读，避免首次进设置页时 tab 闪失。浏览器里开发调试没有宿主，就没有这个 tab。
   const [pluginsAvailable, setPluginsAvailable] = useState(() => isCapabilityAvailable(CAPABILITY_PLUGINS_MANAGE));
   useEffect(() => {
     if (pluginsAvailable) return;
@@ -3030,7 +3029,7 @@ export function SettingsPage() {
   }, [pluginsAvailable]);
   // 深链 ?tab=plugins 在能力缺失（web 端、清单未就绪）时回落默认 tab，不崩也不留空白；
   // 清单稍后就绪且能力在，effectiveTab 自动切回 plugins。
-  // 「关于」只在桌面端有意义：网页版跟着服务器升级，没有什么可检查的（#812）
+  // 「关于」（检查更新）只在桌面端有意义（#812）
   const desktop = hasHost();
   const effectiveTab: Tab =
     (tab === 'plugins' && !pluginsAvailable) || (tab === 'about' && !desktop) ? 'personal' : tab;

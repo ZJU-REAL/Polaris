@@ -4,7 +4,6 @@ import { installIpc } from './ipc/router';
 import { startKernel, stopKernel } from './kernel';
 import { installMenu } from './menu';
 import { APP_ORIGIN, handleAppProtocol, registerAppScheme } from './protocol';
-import { readConfig } from './store';
 import { createWindow, getWindow } from './window';
 
 /**
@@ -41,7 +40,7 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(() => {
     app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
-    handleAppProtocol(() => readConfig().serverUrl);
+    handleAppProtocol();
     installIpc();
     installMenu();
     // 窗口先起、内核后台启动（#721）：打包态首启的内嵌引擎引导要下载

@@ -7,7 +7,6 @@ import { Markdown } from '../../lib/markdown';
 import { api, type LibraryChatSource } from '../../lib/api';
 import { chatPaperSse } from '../../lib/sse';
 import { tr } from '../../lib/i18n';
-import { portalUrl } from '../../lib/endpoint';
 import { ChatSurface } from '../chat/ChatSurface';
 import type { ChatMsg, ContextRef } from '../chat/types';
 
@@ -134,10 +133,6 @@ export function ChatPanel({ paperId, pid }: { paperId: string; pid: string }) {
     [paperId],
   );
 
-  // 本地模式（桌面端未配置服务器）没有别人打得开的门户地址：readLink 为
-  // null 时 ChatSurface 分享照常走、只是不附阅读链接（推荐语也不再提链接）。
-  const readLink = portalUrl(`/papers/${paperId}/read`);
-
   return (
     <ChatSurface
       surfaceKey={`reading:${paperId}`}
@@ -145,8 +140,6 @@ export function ChatPanel({ paperId, pid }: { paperId: string; pid: string }) {
       title={tr('AI 伴读', 'AI reading')}
       contextKinds={['paper', 'concept']}
       defaultDrawerOpen={false}
-      attachesPaperLink
-      shareLink={readLink}
       hint={tr(
         '回答基于本篇全文；用 / 选入其他文献即可让 AI 一起对比。仅供参考，关键结论请回原文核对。',
         'Answers use this paper’s full text; use / to add other papers for comparison. For reference only — verify against the original.',

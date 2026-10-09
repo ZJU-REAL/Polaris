@@ -14,9 +14,9 @@ process with SQLite, an in-process task queue, and an in-process scheduler (see
 > the old app.
 
 When no local engine is available (the bootstrap failed, or a development run without
-`POLARIS_DESKTOP_ENGINE`), the renderer shows a server-address page instead. That page is left over
-from the retired server form (#842); there are no new Polaris servers to point it at, so treat it as
-a sign that the engine did not start.
+`POLARIS_DESKTOP_ENGINE`), the app shows a page saying so, with a **Restart Polaris** button that
+quits and reopens the app (which retries the bootstrap and the engine start). There is no remote
+mode to fall back to.
 
 The code lives in `src/desktop/`, a sibling of `src/frontend` and `src/backend` with its own
 `package.json` (one pnpm workspace at the repo root).
@@ -65,7 +65,7 @@ computed fresh on every launch and injected in memory only — the tree stores t
    resources bootstrap a local environment (next section). The user's machine needs neither
    Python nor Docker.
 3. **Neither** (development, no env) — the entry stays disabled and no engine starts; the app
-   shows the leftover server-address page.
+   shows the "local engine is not running" page.
 
 ## First launch: bootstrap and the progress page
 
@@ -91,7 +91,8 @@ can take minutes; after that, startup cost is zero.
 Every engine start runs `alembic upgrade head` under a **migration guard**: a non-empty database
 is snapshotted to `engine/snapshots/<timestamp>/` first, a failed migration restores the
 snapshot before re-raising, and only the last 3 snapshots are kept. A failed bootstrap or engine
-start never blocks the window — it logs and reports `failed`.
+start never blocks the window — it logs and reports `failed`, and the waiting page turns into the
+"local setup did not finish" page with the same **Restart Polaris** button.
 
 ## Where the data lives
 
@@ -153,7 +154,7 @@ compute does not run as a separate agent process — it runs as kernel plugins
 (`legacy-engine` being the first); the stdio JSON-RPC agent of the original phase-1 design
 was removed once the kernel landed (#731).
 
-Every frontend decision about local-versus-remote reads the capability manifest
+Every frontend decision about what the shell can do reads the capability manifest
 (`host.capabilities`). **Do not branch on the platform or on a version number.** A declared
 capability that is unavailable at call time fails with `ERR_CAPABILITY_UNAVAILABLE` and the
 frontend falls back to the engine; `plugins.manage` is the first capability that is actually
@@ -170,18 +171,16 @@ exist yet).
 | `blob:` in `connect-src` | The annotating reader hands pdf.js a `blob:` URL and pdf.js fetches it; `'self'` does not cover `blob:` in Chromium. Drop it and only that reader breaks — the standard reader is an `<iframe>` and goes through `frame-src` |
 | `style-src 'unsafe-inline'` in the CSP | CodeMirror's style-mod and KaTeX insert rules at runtime; without it the editor and formula rendering break |
 | `role: 'editMenu'` in `menu.ts` | Without it, Cmd+C/V/A/Z stop working in some controls on macOS |
-| Recreating the window after a server change | The preload injection and the CSP response header are both fixed at document load; `reload()` cannot refresh them |
+| The full-page reload after the first-launch waiting page | The CSP response header is fixed at document load, and the first document loads before the engine has an address; only a reload lets the page connect to it |
 
 ## Frontend conventions
 
-- Server addresses go through `src/frontend/src/lib/endpoint.ts` (`apiBase()`, `wsUrl()`,
-  `portalUrl()`). Do not assemble `window.location` in components — on the web these
-  functions degrade to exactly the previous relative-path behaviour.
-- Desktop capabilities go through `src/frontend/src/lib/host.ts`, which is a safe no-op on
-  the web. **Never read `window.polaris` in a component**, or the web build needs null
-  checks everywhere.
-- Share links use `portalUrl()`, not `window.location.origin`: those links are opened by
-  other people in a browser, so on desktop they must point at the web portal.
+- Engine addresses go through `src/frontend/src/lib/endpoint.ts` (`apiBase()`, `wsUrl()`,
+  `localOrigin()`). Do not assemble `window.location` in components — in a plain browser
+  (the Vite dev server) these functions degrade to same-origin relative paths.
+- Desktop capabilities go through `src/frontend/src/lib/host.ts`, which is a safe no-op in
+  a plain browser (plugin management, for instance, simply does not appear there).
+  **Never read `window.polaris` in a component**, or every caller needs null checks.
 - System notifications go through `lib/desktop-notify.ts`, and only for events that need a
   human or that reached a terminal state — and only while the window is unfocused.
 - **Keep the auth token in `localStorage`; do not switch to Electron `safeStorage`.** This
