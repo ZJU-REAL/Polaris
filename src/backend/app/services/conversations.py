@@ -198,11 +198,18 @@ async def replay(
     conversation_id: uuid.UUID,
     limit: int | None = None,
     budget_chars: int | None = None,
+    after_seq: int | None = None,
 ) -> list[Message]:
     """把会话历史翻回 ``Message`` 列表，按 seq 升序。
 
     只回放 ``complete`` 的消息：中断/出错那条留在库里给人看，但不该喂回给模型——
     半截的 assistant 轮会让它以为自己说过那些话。
+
+    ``after_seq``：只要这个序号之后的消息（外部 agent 没见过的那几轮）。
+
+    回放前把工具调用配好对（见 repair_tool_pairs）：库里的历史可能有没结果的调用
+    （中断的那轮只有最后一条标了 interrupted、被上面滤掉）或者错位的结果，原样喂给
+    原生模型会 400。
     """
     stmt = (
         select(ConversationMessage)
@@ -212,12 +219,60 @@ async def replay(
         )
         .order_by(ConversationMessage.seq.desc())
     )
+    if after_seq is not None:
+        stmt = stmt.where(ConversationMessage.seq > after_seq)
     if limit:
         stmt = stmt.limit(limit)
     rows = list((await session.execute(stmt)).scalars().all())
     rows.reverse()
     messages = [Message(role=r.role, content=blocks_from_json(r.blocks)) for r in rows]
-    return trim_history(messages, budget_chars=budget_chars)
+    return trim_history(repair_tool_pairs(messages), budget_chars=budget_chars)
+
+
+def repair_tool_pairs(messages: list[Message]) -> list[Message]:
+    """让每个 tool_use 都紧跟着它的结果、每个结果前面都有它的调用。
+
+    各家 API 的硬规则：assistant 里的 tool_use 必须在**下一条**消息里有对应的
+    tool_result，tool_result 也必须对得上前一条的 tool_use。对不上的一律去掉（不是
+    补造结果：回放给模型的是「当时发生了什么」，编一条结果等于替它说谎）；去空了
+    的消息整条不要。
+    """
+    out: list[Message] = []
+    for index, msg in enumerate(messages):
+        blocks = msg.content
+        if isinstance(blocks, str):
+            out.append(msg)
+            continue
+        if msg.role == "assistant" and any(isinstance(b, ToolUseBlock) for b in blocks):
+            nxt = messages[index + 1] if index + 1 < len(messages) else None
+            answered = (
+                {b.tool_use_id for b in nxt.content if isinstance(b, ToolResultBlock)}
+                if nxt is not None and nxt.role == "user" and not isinstance(nxt.content, str)
+                else set()
+            )
+            kept = [b for b in blocks if not isinstance(b, ToolUseBlock) or b.id in answered]
+            if len(kept) != len(blocks):
+                if not kept:
+                    continue
+                msg = Message(role=msg.role, content=kept)
+        elif msg.role == "user" and any(isinstance(b, ToolResultBlock) for b in blocks):
+            prev = out[-1] if out else None
+            asked = (
+                {b.id for b in prev.content if isinstance(b, ToolUseBlock)}
+                if prev is not None
+                and prev.role == "assistant"
+                and not isinstance(prev.content, str)
+                else set()
+            )
+            kept = [
+                b for b in blocks if not isinstance(b, ToolResultBlock) or b.tool_use_id in asked
+            ]
+            if len(kept) != len(blocks):
+                if not kept:
+                    continue
+                msg = Message(role=msg.role, content=kept)
+        out.append(msg)
+    return out
 
 
 def _is_turn_start(msg: Message) -> bool:

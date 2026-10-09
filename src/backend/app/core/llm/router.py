@@ -21,7 +21,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.llm import call_log
-from app.core.llm.acp import AcpLLMProvider, AcpTarget
+from app.core.llm.acp import AcpLLMProvider, AcpTarget, config_version
 from app.core.llm.anthropic import AnthropicProvider
 from app.core.llm.base import (
     CompletionResult,
@@ -238,13 +238,17 @@ class ResolvedRoute:
 def _acp_target(agent: Any) -> AcpTarget:
     from app.services.mcp_hub.registry import decrypt_env
 
+    args = tuple(str(a) for a in (agent.args or []))
+    env = tuple(sorted(decrypt_env(agent.env_encrypted).items()))
     return AcpTarget(
         agent_id=str(agent.id),
         name=agent.name or agent.slug,
         command=agent.command,
-        args=tuple(str(a) for a in (agent.args or [])),
-        env=tuple(sorted(decrypt_env(agent.env_encrypted).items())),
-        version=str(agent.updated_at),
+        args=args,
+        env=env,
+        # 只看拉起方式：探测写回 last_probe 会改 updated_at，拿它当版本的话每探测
+        # 一次 target 就变一次，两份缓存（路由表 / 接管）各持一个，进程池来回换
+        version=config_version(agent.command, args, env),
     )
 
 
@@ -564,6 +568,16 @@ class LLMRouter:
                     max_attempts=attempts,
                 )
             elif route.provider_kind == "acp" and route.acp is not None:
+                # 同一个 agent 换了配置：旧配置的 provider 不会再被用到，别让它们一直攒着
+                agent_id = route.acp.agent_id
+                for old in [
+                    k
+                    for k, p in self._providers.items()
+                    if isinstance(p, AcpLLMProvider)
+                    and p.target.agent_id == agent_id
+                    and p.target != route.acp
+                ]:
+                    del self._providers[old]
                 self._providers[key] = AcpLLMProvider(route.acp, timeout=timeout)
             elif route.provider_kind == "fake":
                 self._providers[key] = FakeProvider()

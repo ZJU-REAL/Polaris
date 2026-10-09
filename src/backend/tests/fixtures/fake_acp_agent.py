@@ -10,9 +10,15 @@
 - ``slow``：一直等，直到收到 session/cancel，回 stopReason=cancelled。
 - ``crash``：直接退出进程。
 - ``mcp``：把 session/new 收到的 mcpServers 说出来。
+- ``nested``：嵌套、交叠的工具调用（像 Claude Code 的 Task 工具）：外层 t1 开始，
+  里面 t2 开始又结束，t3 开始后再没下文，t1 最后才结束，然后回一句话。
+- ``huge``：往 stdout 写一行很长的消息（配合调小 LINE_LIMIT 测超限）。
+- ``prompt-text``：把收到的整段提示词原样说出来。
 
 环境变量 FAKE_ACP_NO_LOAD=1 时不声明 loadSession；FAKE_ACP_NO_MCP=1 时不声明 HTTP MCP；
-FAKE_ACP_IMAGE=1 时声明能看图。
+FAKE_ACP_IMAGE=1 时声明能看图；FAKE_ACP_SLOW_NEW=<秒> 时 session/new 要等这么久才回；
+FAKE_ACP_IGNORE_TERM=1 时不理 SIGTERM（只能被 kill）。session/set_model 收到模型
+``broken`` 时回一个 ``"id": null`` 的错误。
 
 当模型用（#840）：提示词里有「plain language model」那句时，吐一段思考，再回答
 ``llm[<模型>]: <请求正文>``（请求正文 = 最后一个分隔段之前那段），带图时追加
@@ -81,6 +87,50 @@ def handle_prompt(rid: int, params: dict) -> None:
 
     if "crash" in prompt:
         os._exit(3)
+
+    if "prompt-text" in prompt:
+        update(sid, {"sessionUpdate": "agent_message_chunk", "content": text(prompt)})
+        send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "end_turn"}})
+        return
+
+    if "huge" in prompt:
+        update(sid, {"sessionUpdate": "agent_message_chunk", "content": text("x" * 200_000)})
+        send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "end_turn"}})
+        return
+
+    if "nested" in prompt:
+
+        def call_start(tid: str, title: str, kind: str) -> None:
+            update(
+                sid,
+                {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": tid,
+                    "title": title,
+                    "kind": kind,
+                    "status": "in_progress",
+                },
+            )
+
+        def call_end(tid: str, out: str) -> None:
+            update(
+                sid,
+                {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": tid,
+                    "status": "completed",
+                    "content": [{"type": "content", "content": text(out)}],
+                },
+            )
+
+        call_start("t1", "Task: look around", "think")
+        call_start("t2", "Read a.txt", "read")
+        call_end("t2", "a contents")
+        call_start("t3", "Search b", "search")
+        call_end("t1", "task done")
+        update(sid, {"sessionUpdate": "agent_message_chunk", "content": text("all done")})
+        send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "end_turn"}})
+        return
 
     if "slow" in prompt:
         update(sid, {"sessionUpdate": "agent_message_chunk", "content": text("working…")})
@@ -201,6 +251,10 @@ def handle_prompt(rid: int, params: dict) -> None:
 
 
 def main() -> None:
+    if os.environ.get("FAKE_ACP_IGNORE_TERM") == "1":
+        import signal
+
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
     counter = [0]
     for raw in sys.stdin:
         raw = raw.strip()
@@ -242,6 +296,8 @@ def main() -> None:
                 }
             )
         elif method == "session/new":
+            if os.environ.get("FAKE_ACP_SLOW_NEW"):
+                threading.Event().wait(float(os.environ["FAKE_ACP_SLOW_NEW"]))
             counter[0] += 1
             sid = f"sess-{os.getpid()}-{counter[0]}"
             _sessions[sid] = {"cwd": params.get("cwd"), "mcpServers": params.get("mcpServers", [])}
@@ -261,6 +317,8 @@ def main() -> None:
                 sid, {"sessionUpdate": "agent_message_chunk", "content": text("REPLAYED HISTORY")}
             )
             send({"jsonrpc": "2.0", "id": rid, "result": None})
+        elif method == "session/set_model" and params.get("modelId") == "broken":
+            send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse"}})
         elif method == "session/set_model":
             _sessions.setdefault(params.get("sessionId", ""), {})["model"] = params.get("modelId")
             send({"jsonrpc": "2.0", "id": rid, "result": {}})

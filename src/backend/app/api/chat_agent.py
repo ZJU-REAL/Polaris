@@ -394,6 +394,7 @@ async def run_turn(
     # 这个对话交给了外部 agent（#836）：换一个大脑，事件、落库、渲染都不变
     backend = str(settings.get("backend") or "polaris")
     agent = None
+    agent_model = ""
     if backend != "polaris":
         agent = await acp_chat.resolve_agent(session, backend)
         if agent is None:
@@ -402,11 +403,28 @@ async def run_turn(
         # 「Polaris」这个大脑本身也可能落在外部 agent 上：助手环节路由到了 agent，或者
         # 没配模型 API、由 agent 接管（#840）。那就直接走 agent 会话——它带着 Polaris 的
         # MCP 工具，工具照样能用；硬塞进原生工具循环只会得到一个不能调工具的回答。
-        agent = await acp_chat.agent_for_polaris_turn(session, user)
+        # 路由上填的模型也跟过去（agent 提供选模型时用上）。
+        taken = await acp_chat.agent_for_polaris_turn(session, user)
+        if taken is not None:
+            agent, agent_model = taken
     if agent is not None:
         acp_history = await store.replay(session, conversation_id=conv.id, limit=40)
+        same_agent = settings.get("acp_agent_id") == str(agent.id)
+        # agent 那个会话上次答完之后、Polaris 自己答的那几轮：会话还活着也得补给它
+        seen = settings.get("acp_seen_seq")
+        unseen = (
+            await store.replay(session, conversation_id=conv.id, after_seq=seen, limit=40)
+            if same_agent and isinstance(seen, int)
+            else []
+        )
         await store.append_message(session, conversation=conv, role="user", text=payload.question)
         await session.commit()
+        # 模式、目标、长期记忆：原生循环放在系统提示里，agent 没有系统提示，随这一轮带上
+        instructions = "\n\n".join(
+            x
+            for x in (memories, mode_instructions(payload.mode, goal=goal, external_agent=True))
+            if x
+        )
         return _stream_turn(
             acp_chat.run_turn(
                 agent=agent,
@@ -414,15 +432,17 @@ async def run_turn(
                 conversation_id=conv.id,
                 question=payload.question,
                 history=acp_history,
+                unseen=unseen,
+                instructions=instructions,
+                model=agent_model,
                 page_context=buddy.render_page_context(payload.page_kind, payload.page_id),
-                resume_session_id=settings.get("acp_session_id")
-                if settings.get("acp_agent_id") == str(agent.id)
-                else None,
+                resume_session_id=settings.get("acp_session_id") if same_agent else None,
                 server_port=_server_port(request),
             ),
             conv_id=conv.id,
             user_id=user.id,
             first_question=payload.question,
+            agent_turn=True,
         )
     mode_note = mode_instructions(payload.mode, goal=goal)
     await store.append_message(session, conversation=conv, role="user", text=payload.question)
@@ -521,28 +541,42 @@ def _stream_turn(
     conv_id: uuid.UUID,
     user_id: uuid.UUID,
     first_question: str,
+    agent_turn: bool = False,
 ) -> StreamingResponse:
     async def event_stream() -> AsyncIterator[str]:
         # 落库的是**整条时间线**，不只是最终文本。只存文本的后果用户一眼就能看见：
         # 切到别的对话再切回来，思考过程和工具调用全没了，只剩一段结论——而那段结论
         # 之所以可信，正是因为下面那些调用。
-        timeline = _TurnTimeline()
+        timeline = _TurnTimeline(grouped=agent_turn)
         stop_reason, usage = "stop", {}
+        finished = False
         try:
             async for ev in events:
                 timeline.feed(ev)
                 if isinstance(ev, DoneEvent):
                     stop_reason, usage = ev.stop_reason, ev.usage
                 yield _to_frame(ev)
+            finished = True
         finally:
-            # 断线也要落库：把已经生成的部分留住，标成 interrupted。
+            # 断线也要落库：把已经生成的部分留住，标成 interrupted（事件流没走完 =
+            # 客户端断了、这一轮被取消）。
             # shield 是必需的——取消态下再 await 数据库写会被二次取消。
             import asyncio
 
+            if not finished:
+                stop_reason = "interrupted"
             parts = timeline.messages()
             if parts:
                 await asyncio.shield(
-                    _persist_answer(conv_id, user_id, parts, timeline.text, stop_reason, usage)
+                    _persist_answer(
+                        conv_id,
+                        user_id,
+                        parts,
+                        timeline.text,
+                        stop_reason,
+                        usage,
+                        agent_saw=agent_turn,
+                    )
                 )
                 await asyncio.shield(
                     _name_conversation(
@@ -612,12 +646,18 @@ class _TurnTimeline:
     与 SSE 帧的区别：帧是给界面看的（带 duration、preview），块是给**下一轮的模型**
     和**回放**看的。两者都需要工具调用在场——模型需要它才能接着推理，用户需要它才
     看得出结论是怎么来的。
+
+    ``grouped``：外部 agent（ACP）的轮次。它的工具结果不按调用顺序回来——嵌套、交叠
+    的调用（Claude Code 的 Task 工具里套着别的工具）很常见——照事件顺序切消息会切出
+    「assistant 里的 tool_use 在下一条里没有结果」，回放给原生模型时直接 400。这种轮次
+    把所有调用收进一条 assistant 消息，紧跟一条装着**每个**调用结果的消息。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, grouped: bool = False) -> None:
         self._blocks: list[Any] = []
         self._text: list[str] = []
         self._thinking: list[str] = []
+        self._grouped = grouped
 
     @property
     def text(self) -> str:
@@ -663,8 +703,13 @@ class _TurnTimeline:
         不能把整轮塞进一条 assistant 消息——回放到 OpenAI 形状时，工具结果会变成
         没有 tool_calls 前置的孤儿 tool 消息，中转直接 400。这条边界与循环里跑的时候
         用的是同一套（结果单独成一条消息），回放才可能和当时等价。
+
+        每个 tool_use 都保证在紧跟的那条结果消息里有结果：没等到结果的（断线、取消、
+        agent 自己没报）补一条「没有结果」。
         """
         self._flush_thinking()
+        if self._grouped:
+            return self._grouped_messages()
         out: list[tuple[str, list[Any]]] = []
         current: list[Any] = []
         for block in self._blocks:
@@ -677,16 +722,76 @@ class _TurnTimeline:
                 else:
                     out.append(("tool_results", [block]))
                 continue
-            if out and out[-1][0] == "tool_results" and current == []:
-                pass
             current.append(block)
         if current:
             out.append(("assistant", current))
+        return _complete_tool_results(out)
+
+    def _grouped_messages(self) -> list[tuple[str, list[Any]]]:
+        body = [b for b in self._blocks if not isinstance(b, ToolResultBlock)]
+        uses = [b for b in body if isinstance(b, ToolUseBlock)]
+        if not uses:
+            return [("assistant", body)] if body else []
+        # 最后一个调用之前的正文/思考跟调用放在一起；之后的（收尾的回答）另起一条
+        last_use = max(i for i, b in enumerate(body) if isinstance(b, ToolUseBlock))
+        head, tail = body[: last_use + 1], body[last_use + 1 :]
+        # 同一个调用的结果只留第一条；没见过调用的结果（孤儿）不要
+        results: dict[str, ToolResultBlock] = {}
+        for b in self._blocks:
+            if isinstance(b, ToolResultBlock) and b.tool_use_id not in results:
+                results[b.tool_use_id] = b
+        seen: set[str] = set()
+        paired: list[ToolResultBlock] = []
+        for use in uses:
+            if use.id in seen:
+                continue
+            seen.add(use.id)
+            paired.append(results.get(use.id) or _missing_result(use.id))
+        out: list[tuple[str, list[Any]]] = [("assistant", head), ("tool_results", paired)]
+        if tail:
+            out.append(("assistant", tail))
         return out
 
     def blocks(self) -> list[Any]:
         self._flush_thinking()
         return list(self._blocks)
+
+
+def _missing_result(tool_use_id: str) -> ToolResultBlock:
+    payload = {"summary": "No result reported.", "preview": "", "ok": False}
+    return ToolResultBlock(
+        tool_use_id=tool_use_id, content=json.dumps(payload, ensure_ascii=False), is_error=True
+    )
+
+
+def _complete_tool_results(
+    parts: list[tuple[str, list[Any]]],
+) -> list[tuple[str, list[Any]]]:
+    """每条带 tool_use 的 assistant 消息后面都跟一条装着它全部结果的消息；对不上前一条
+    调用的结果（错位、重复）不留。"""
+
+    def uses(blocks: list[Any]) -> list[str]:
+        return [b.id for b in blocks if isinstance(b, ToolUseBlock)]
+
+    out: list[tuple[str, list[Any]]] = []
+    for role, blocks in parts:
+        prev = out[-1] if out else None
+        asked = uses(prev[1]) if prev is not None and prev[0] == "assistant" else []
+        if role == "tool_results":
+            have: dict[str, Any] = {}
+            for b in blocks:
+                if b.tool_use_id in asked and b.tool_use_id not in have:
+                    have[b.tool_use_id] = b
+            paired = [have.get(i) or _missing_result(i) for i in dict.fromkeys(asked)]
+            if paired:
+                out.append(("tool_results", paired))
+            continue
+        if asked:
+            out.append(("tool_results", [_missing_result(i) for i in dict.fromkeys(asked)]))
+        out.append((role, blocks))
+    if out and out[-1][0] == "assistant" and (asked := uses(out[-1][1])):
+        out.append(("tool_results", [_missing_result(i) for i in dict.fromkeys(asked)]))
+    return out
 
 
 async def _name_conversation(
@@ -718,17 +823,24 @@ async def _persist_answer(
     text: str,
     stop_reason: str,
     usage: dict[str, Any],
+    *,
+    agent_saw: bool = False,
 ) -> None:
-    """把这一轮的回答落库。用独立 session：请求那个可能已经随连接一起没了。"""
+    """把这一轮的回答落库。用独立 session：请求那个可能已经随连接一起没了。
+
+    ``agent_saw``：这一轮是外部 agent 答的——它的会话见过到这里为止的全部消息，记下
+    最后一条的序号（``acp_seen_seq``）。之后 Polaris 自己答的轮次，下次交回 agent 时
+    据此补给它。"""
     from app.core.db import get_sessionmaker
 
     async with get_sessionmaker()() as session:
         conv = await store.get_or_create(
             session, user_id=user_id, scope_kind="global", conversation_id=conversation_id
         )
+        row = None
         for index, (role, blocks) in enumerate(parts):
             last = index == len(parts) - 1
-            await store.append_message(
+            row = await store.append_message(
                 session,
                 conversation=conv,
                 # 工具结果按 Anthropic 的形状装在 role="user" 里；kind 标出来，
@@ -744,4 +856,6 @@ async def _persist_answer(
                 if last
                 else "complete",
             )
+        if agent_saw and row is not None:
+            conv.settings = {**(conv.settings or {}), "acp_seen_seq": int(row.seq)}
         await session.commit()

@@ -15,12 +15,17 @@ execute…）。落库的块会在下一轮回放给模型——用户随时可�
 ## 上下文从哪来
 
 agent 自己的会话记得之前聊过什么；进程被回收后能 ``session/load`` 就续上。都不行
-（新进程、agent 不支持续会话、或者这个对话前几轮是 Polaris 自己答的）就把最近几轮的
-文字摘要拼在这轮提问前面——宁可多花一点 token，也不让它像失忆一样从头问起。
+（新进程、agent 不支持续会话）就把最近几轮的文字摘要拼在这轮提问前面——宁可多花
+一点 token，也不让它像失忆一样从头问起。
+
+会话还活着（或续上了）也可能有它没见过的内容：这个对话中间有几轮是 Polaris 自己答的。
+上层记着 agent 见过的最后一条消息（会话设置 ``acp_seen_seq``），把那之后的消息作为
+``unseen`` 传进来，同样拼成摘要补上。
 """
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -58,6 +63,8 @@ _PLAN_STATUS = {"pending": "pending", "in_progress": "running", "completed": "do
 #: 拼进提示词的历史摘要上限（字符）
 HISTORY_PREFACE_LIMIT = 12_000
 
+logger = logging.getLogger("polaris.acp")
+
 McpFactory = Callable[
     [AcpClient], Awaitable[tuple[list[dict[str, Any]], list[Callable[[], Awaitable[None]]]]]
 ]
@@ -74,7 +81,14 @@ class AcpTurnRequest:
     #: 上次这个对话在 agent 那边的会话号（用来 session/load）
     resume_session_id: str | None = None
     page_context: str = ""
+    #: 最近若干轮（新进程、没能续上会话时整段补给 agent）
     history: list[Message] = field(default_factory=list)
+    #: agent 那个会话没见过的消息（上次它答完之后，Polaris 自己答的那几轮）
+    unseen: list[Message] = field(default_factory=list)
+    #: 这一轮附带的指示：模式（计划/目标）、目标、用户让助手一直记得的事
+    instructions: str = ""
+    #: 路由上填的模型（agent 提供 session/set_model 时用上）
+    model: str = ""
 
 
 def history_preface(history: list[Message], limit: int = HISTORY_PREFACE_LIMIT) -> str:
@@ -137,9 +151,20 @@ class AcpChatLoop:
         assert live is not None
         self.session_id = live.session_id
 
-        # 新进程且没能续上旧会话：agent 不知道前面聊过什么，补一段摘要
-        preface = history_preface(req.history) if fresh and not live.resumed else ""
-        prompt = preface + (f"{req.page_context}\n\n" if req.page_context else "") + req.question
+        # 新进程且没能续上旧会话：agent 不知道前面聊过什么，补一段摘要；会话还在（或续上
+        # 了）但中间有几轮是 Polaris 答的：补那几轮
+        if fresh and not live.resumed:
+            preface = history_preface(req.history)
+        else:
+            preface = history_preface(req.unseen)
+        notes = (
+            f"Instructions from Polaris for this turn:\n{req.instructions}\n\n---\n\n"
+            if req.instructions
+            else ""
+        )
+        prompt = (
+            preface + notes + (f"{req.page_context}\n\n" if req.page_context else "") + req.question
+        )
 
         #: tool id → (工具名, 开始时刻, 最新的标题)。标题常在后续的 tool_call_update
         #: 里才补全（Claude Code 先报 "Read File"，再补成 "Read /path/notes.txt"）
@@ -148,6 +173,16 @@ class AcpChatLoop:
         async with live.lock:
             live.last_used = time.monotonic()
             try:
+                if req.model and live.model != req.model:
+                    if await live.client.set_model(live.session_id, req.model):
+                        live.model = req.model
+                    else:
+                        logger.warning(
+                            "ACP agent %s 不认模型 %r，用它的默认模型（可选：%s）",
+                            req.agent_name,
+                            req.model,
+                            ", ".join(live.client.available_models()) or "不支持选模型",
+                        )
                 async for upd in live.client.prompt(live.session_id, prompt):
                     kind = upd["type"]
                     if kind == "message":
@@ -217,14 +252,17 @@ class AcpChatLoop:
                                 yield res
                     elif kind == "done":
                         stop_reason = _STOP_REASONS.get(upd["stop_reason"], upd["stop_reason"])
-                # agent 没给收尾的工具（被取消、它自己忘了报）：补成失败，别让卡片一直转圈
-                for tool_id in list(started):
-                    res = _result(tool_id, started, "failed", "", "No result reported.")
-                    if res is not None:
-                        yield res
+                # agent 没给收尾的工具（它自己忘了报）：补成失败，别让卡片一直转圈
+                for res in _unfinished(started):
+                    yield res
             except AcpError as exc:
-                # 进程死在半路：下一轮重新拉起，别留一个僵尸会话在池子里
-                await self.pool.close(key)
+                # 进程死在半路：下一轮重新拉起，别留一个僵尸会话在池子里。只关**这个**
+                # 会话——按 key 关的话，可能关掉另一轮刚为这个对话拉起的新会话
+                await self.pool.close_if(key, live)
+                # 已经开了头的工具同样补上结尾，再报错（断线/取消时这里不能再 yield，
+                # 落库那边 _TurnTimeline 会给没结果的调用补一条）
+                for res in _unfinished(started):
+                    yield res
                 yield ErrorEvent(detail=_explain(req, exc), code="ACP_AGENT_FAILED")
                 return
             finally:
@@ -252,6 +290,15 @@ def _result(
         preview=output,
         duration_ms=int((time.monotonic() - t0) * 1000),
     )
+
+
+def _unfinished(started: dict[str, tuple[str, float, str]]) -> list[ToolResultEvent]:
+    out = []
+    for tool_id in list(started):
+        res = _result(tool_id, started, "failed", "", "No result reported.")
+        if res is not None:
+            out.append(res)
+    return out
 
 
 def _explain(req: AcpTurnRequest, exc: AcpError) -> str:

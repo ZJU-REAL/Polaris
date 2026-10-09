@@ -88,6 +88,13 @@ async def test_images_are_not_persisted_as_base64(client):
     user_id = await _user_id(client, "conv-img@example.com")
     async with get_sessionmaker()() as session:
         conv = await store.get_or_create(session, user_id=user_id, scope_kind="global")
+        # 回放只留配得上对的工具结果，所以先有那次调用
+        await store.append_message(
+            session,
+            conversation=conv,
+            role="assistant",
+            blocks=[ToolUseBlock("c1", "get_figures", {})],
+        )
         row = await store.append_message(
             session,
             conversation=conv,
@@ -106,7 +113,7 @@ async def test_images_are_not_persisted_as_base64(client):
 
     async with get_sessionmaker()() as session:
         history = await store.replay(session, conversation_id=conv_id)
-    assert "2 张图片" in history[0].content[0].content
+    assert "2 张图片" in history[1].content[0].content
 
 
 async def test_interrupted_messages_stay_in_the_table_but_out_of_the_replay(client):

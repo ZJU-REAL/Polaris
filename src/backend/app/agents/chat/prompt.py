@@ -136,6 +136,14 @@ _PLAN_MODE = """\
 用户点头之后，你会在下一轮拿到这份计划，**那时才动手**。所以这一轮不要写最终答案，
 也不要在交出计划之后接着干活。"""
 
+#: 外部 agent 的计划模式：同一个约定，只是计划直接写在回复里（它没有 submit_plan）
+_PLAN_MODE_AGENT = """\
+【计划模式】这一轮**只做调研和规划，不动手执行**：可以读文件、查资料，但不要修改
+任何文件，也不要运行会改变东西的命令。
+
+想清楚之后，把计划直接写在回复里——具体到「每一步做什么、产出什么」，并写明为什么
+这么做、哪里可能不成立。用户点头之后，下一轮才动手。"""
+
 #: 目标模式的附加指令。目标随会话存着，每轮都带上——用户不必每次重述，模型也不会
 #: 在第三轮忘了最初要干什么。
 _GOAL_MODE = """\
@@ -149,10 +157,13 @@ _GOAL_MODE = """\
 目标达成了就明说达成了，不要为了显得还在干活而硬找下一步。"""
 
 
-def mode_instructions(mode: str, *, goal: str = "") -> str:
-    """模式附加指令；``chat`` 返回空串（默认行为一个字都不变）。"""
+def mode_instructions(mode: str, *, goal: str = "", external_agent: bool = False) -> str:
+    """模式附加指令；``chat`` 返回空串（默认行为一个字都不变）。
+
+    ``external_agent``：这一轮交给外部 agent（ACP）。它手里没有 submit_plan，计划模式
+    换一份不提这个工具的说法。"""
     if mode == "plan":
-        return _PLAN_MODE
+        return _PLAN_MODE_AGENT if external_agent else _PLAN_MODE
     if mode == "goal" and goal.strip():
         return _GOAL_MODE.format(goal=goal.strip())
     return ""
