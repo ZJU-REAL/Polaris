@@ -136,10 +136,21 @@ export interface LocalBackendInfo {
  * engine（环境已装好，引擎进程启动中）/ ready / idle（没走内嵌路径：开发态
  * 或显式 env）/ failed（引导或引擎启动失败）。
  * done 在 ready / idle / failed 时为 true。
+ *
+ * 其余字段可选、只在走内嵌引导时出现（老渲染层忽略即可，不必升契约版本），
+ * 让等待页「看得出没卡住」：
+ * - phaseStartedAt：当前阶段开始的时刻（epoch ms）
+ * - log：当前（或最近一个有输出的）阶段最后几行 uv 输出，已去 ANSI、截断
+ * - lastOutputAt：最近一行输出的时刻（epoch ms）
+ * - downloadedBytes：python / install 阶段 engine 目录相对阶段开始的落盘增长
  */
 export interface EngineBootstrapStatus {
   phase: string;
   done: boolean;
+  phaseStartedAt?: number;
+  log?: string[];
+  lastOutputAt?: number;
+  downloadedBytes?: number;
 }
 
 /* ---- plugins.*（#705）：配置树管理的载荷类型 ---- */

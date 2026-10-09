@@ -9,7 +9,14 @@ import {
 } from '../../lib/host';
 import type { LocalEngineProblem } from '../../lib/endpoint';
 import { tr, useLang } from '../../lib/i18n';
-import { BOOTSTRAP_STEPS, bootstrapGate, bootstrapStepIndex } from './engineBootstrap';
+import {
+  BOOTSTRAP_STEPS,
+  bootstrapGate,
+  bootstrapStepIndex,
+  formatBytes,
+  formatElapsed,
+  isStalled,
+} from './engineBootstrap';
 import { EngineUnavailablePage } from './EngineUnavailablePage';
 
 /**
@@ -26,18 +33,25 @@ import { EngineUnavailablePage } from './EngineUnavailablePage';
 export function EngineBootstrapPage({
   initialStatus,
   onProceed,
+  initialShowLog = false,
 }: {
   initialStatus: EngineBootstrapStatus;
   onProceed: () => void;
+  /** 详情框初始是否展开（测试用；默认收起）。 */
+  initialShowLog?: boolean;
 }) {
-  useLang();
+  const lang = useLang();
   const [status, setStatus] = useState(initialStatus);
   const [leaving, setLeaving] = useState(false);
+  const [showLog, setShowLog] = useState(initialShowLog);
+  // 每秒走一格：已用时长与「仍在进行」提示都按它算
+  const [now, setNow] = useState(() => Date.now());
   const proceededRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     const id = window.setInterval(() => {
+      setNow(Date.now());
       void engineBootstrapStatus().then((next) => {
         if (!cancelled && next) setStatus(next);
       });
@@ -82,6 +96,31 @@ export function EngineBootstrapPage({
 
   const active = bootstrapStepIndex(status.phase);
 
+  // 最近一次看到落盘字节数增长的时刻（宿主只给累计值，增长时刻在这边记）。
+  // 按阶段分开算：换阶段字节数从 0 重新累计，不能拿上一阶段的数比较；
+  // 每个阶段第一次看到的值只当基线，不算「刚刚在涨」。
+  const growthRef = useRef<{ phaseStartedAt?: number; bytes?: number; at?: number }>({});
+  {
+    const g = growthRef.current;
+    if (g.phaseStartedAt !== status.phaseStartedAt) {
+      growthRef.current = { phaseStartedAt: status.phaseStartedAt, bytes: status.downloadedBytes };
+    } else if (status.downloadedBytes !== undefined && status.downloadedBytes > (g.bytes ?? 0)) {
+      growthRef.current = { ...g, bytes: status.downloadedBytes, at: Date.now() };
+    }
+  }
+  const stalled = isStalled(
+    { phaseStartedAt: status.phaseStartedAt, lastOutputAt: status.lastOutputAt, lastGrowthAt: growthRef.current.at },
+    now,
+  );
+  const log = status.log ?? [];
+  const logKey = log.join('\n');
+
+  const logBoxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = logBoxRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [logKey, showLog]);
+
   if (gate === 'failed') {
     if (problem === undefined) return null;
     return problem ? <EngineUnavailablePage problem={problem} /> : <EngineUnavailablePage setupFailed />;
@@ -110,27 +149,112 @@ export function EngineBootstrapPage({
             const stepDone = active > i || leaving;
             const stepActive = active === i && !leaving;
             return (
-              <div
-                key={step.en}
-                className="row"
-                style={{
-                  gap: 8,
-                  fontSize: 13,
-                  color: stepActive ? 'var(--text-1)' : stepDone ? 'var(--ok-tx)' : 'var(--text-4)',
-                  fontWeight: stepActive ? 600 : 400,
-                }}
-              >
-                {stepActive ? (
-                  <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-                ) : (
-                  <Icon name={stepDone ? 'check' : 'dot'} size={13} />
+              <div key={step.en}>
+                <div
+                  className="row"
+                  style={{
+                    gap: 8,
+                    fontSize: 13,
+                    color: stepActive ? 'var(--text-1)' : stepDone ? 'var(--ok-tx)' : 'var(--text-4)',
+                    fontWeight: stepActive ? 600 : 400,
+                  }}
+                >
+                  {stepActive ? (
+                    <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                  ) : (
+                    <Icon name={stepDone ? 'check' : 'dot'} size={13} />
+                  )}
+                  {tr(step.zh, step.en)}
+                </div>
+                {stepActive && (
+                  <StepDetail
+                    downloadedBytes={status.downloadedBytes}
+                    elapsed={status.phaseStartedAt != null ? formatElapsed(now - status.phaseStartedAt, lang) : null}
+                    stalled={stalled}
+                  />
                 )}
-                {tr(step.zh, step.en)}
               </div>
             );
           })}
         </div>
+        {log.length > 0 && !leaving && (
+          <div style={{ marginTop: 14 }}>
+            <button
+              type="button"
+              onClick={() => setShowLog((v) => !v)}
+              aria-expanded={showLog}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                fontSize: 12,
+                color: 'var(--text-3)',
+              }}
+            >
+              {showLog ? tr('隐藏详情', 'Hide details') : tr('显示详情', 'Show details')}
+            </button>
+            {showLog && (
+              <div
+                ref={logBoxRef}
+                data-testid="bootstrap-log"
+                className="mono"
+                style={{
+                  marginTop: 8,
+                  maxHeight: 132,
+                  overflowY: 'auto',
+                  overflowX: 'hidden',
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  background: 'var(--surface-2)',
+                  border: '0.5px solid var(--border)',
+                  fontSize: 11,
+                  lineHeight: 1.5,
+                  color: 'var(--text-3)',
+                  whiteSpace: 'pre-wrap',
+                  overflowWrap: 'anywhere',
+                }}
+              >
+                {log.map((line, i) => (
+                  <div key={i}>{line}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * 当前步骤下的一行次要信息：已下载多少、这一步用了多久；长时间没动静时
+ * 换一句安抚的话。老宿主不给这些字段，整块不渲染。
+ */
+function StepDetail({
+  downloadedBytes,
+  elapsed,
+  stalled,
+}: {
+  downloadedBytes?: number;
+  elapsed: string | null;
+  stalled: boolean;
+}) {
+  const parts: string[] = [];
+  if (downloadedBytes !== undefined && downloadedBytes > 0) {
+    const size = formatBytes(downloadedBytes);
+    parts.push(tr(`已下载 ${size}`, `${size} downloaded`));
+  }
+  if (elapsed) parts.push(elapsed);
+  if (parts.length === 0 && !stalled) return null;
+  return (
+    <div
+      data-testid="bootstrap-step-detail"
+      // 与步骤文字左对齐（图标 13px + 间距 8px）
+      style={{ marginTop: 3, paddingLeft: 21, fontSize: 12, lineHeight: 1.5, fontWeight: 400, color: 'var(--text-3)' }}
+    >
+      {parts.length > 0 && <div style={{ fontVariantNumeric: 'tabular-nums' }}>{parts.join(' · ')}</div>}
+      {stalled && <div>{tr('仍在进行，网络较慢时需要更久', 'Still working — this takes longer on a slow network')}</div>}
     </div>
   );
 }

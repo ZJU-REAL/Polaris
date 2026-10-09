@@ -53,3 +53,53 @@ export function bootstrapStepIndex(phase: string): number {
       return -1;
   }
 }
+
+/* —— 进度细节（新宿主才有的可选字段，老宿主一律不显示） —— */
+
+/** 无输出、无落盘增长超过这么久，才提示「仍在进行」。 */
+export const STALL_THRESHOLD_MS = 90_000;
+
+/** 字节数 → 简短可读（1024 进制）：512 KB / 8.4 MB / 236 MB / 1.2 GB。 */
+export function formatBytes(bytes: number): string {
+  const b = Math.max(0, bytes);
+  const KB = 1024;
+  const MB = KB * 1024;
+  const GB = MB * 1024;
+  if (b >= GB) return `${(b / GB).toFixed(1)} GB`;
+  if (b >= MB) {
+    const mb = b / MB;
+    return mb >= 10 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
+  }
+  // 不足 1 KB 但非零也显示 1 KB：「在涨」比精确更要紧
+  return `${b === 0 ? 0 : Math.max(1, Math.round(b / KB))} KB`;
+}
+
+/** 已用时长：中文「1 分 20 秒」「45 秒」「1 小时 2 分」，英文「1:20」「0:45」「1:02:03」。 */
+export function formatElapsed(ms: number, lang: 'zh' | 'en'): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (lang === 'en') {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+  }
+  if (h > 0) return `${h} 小时 ${m} 分`;
+  if (m > 0) return `${m} 分 ${s} 秒`;
+  return `${s} 秒`;
+}
+
+/**
+ * 是否该提示「仍在进行」：阶段开始、最近一行输出、最近一次看到字节数增长
+ * 三者中最晚的那个距今超过阈值。没有 phaseStartedAt（老宿主）不提示——
+ * 拿不到可靠的起点，宁可不说。
+ */
+export function isStalled(
+  activity: { phaseStartedAt?: number; lastOutputAt?: number; lastGrowthAt?: number },
+  now: number,
+  thresholdMs: number = STALL_THRESHOLD_MS,
+): boolean {
+  if (activity.phaseStartedAt == null) return false;
+  const last = Math.max(activity.phaseStartedAt, activity.lastOutputAt ?? 0, activity.lastGrowthAt ?? 0);
+  return now - last > thresholdMs;
+}
