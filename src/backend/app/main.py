@@ -45,7 +45,15 @@ async def lifespan(app: FastAPI):
     load_disciplines()
     # AI 起草流式镜像订阅（worker 发布 → 写活跃 CRDT 房间；连不上 redis 自动放弃）
     get_crdt_stream_subscriber().start()
+    # 定时任务：桌面没有 ARQ worker，由引擎进程自己跑（#842）。服务器档位仍归 worker 的 cron
+    if settings.is_desktop:
+        from app.core.scheduler import start_engine_scheduler
+
+        await start_engine_scheduler()
     yield
+    from app.core.scheduler import stop_engine_scheduler
+
+    await stop_engine_scheduler()
     # 外部 agent 子进程（#836）：随服务一起收掉，别留孤儿进程继续烧额度
     from app.core.llm.acp import shutdown_pools
     from app.services.acp.pool import shutdown_pool
