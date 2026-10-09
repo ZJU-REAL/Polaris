@@ -1,6 +1,6 @@
 """文献库对话（跨文献问答，不 import fastapi）。
 
-流程：问题向量化 → 全库分段检索（pgvector；不可用时关键词降级）→
+流程：问题向量化 → 全库分段检索（向量；不可用时关键词降级）→
 按论文分组拼编号上下文（附概念清单）→ stage=reading 流式回答，
 要求用 [n] 标注引用来源、用 [[概念名]] 双链标注概念。
 检索任何一步失败（表未迁移、embedding 挂了等）都不抛错：逐级降级，
@@ -271,7 +271,7 @@ async def _retrieve_chunks(
     user_id: uuid.UUID | None,
     paper_ids: list[uuid.UUID] | None = None,
 ) -> list[tuple[PaperChunk, float]]:
-    """向量检索优先（postgres + embedding 可用），否则关键词降级；任何失败都不上抛。
+    """向量检索优先（embedding 可用时），否则关键词降级；任何失败都不上抛。
 
     典型失败：paper_chunks 表未迁移、embedding provider 挂了、平台还没建过向量、
     管理员换了嵌入模型而索引尚未重建——统一 rollback 后逐级降级（向量 → 关键词 →

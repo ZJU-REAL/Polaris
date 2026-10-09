@@ -24,6 +24,7 @@ from app.core.llm.router import LLMRouter
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperChunk
 from app.models.vectors import PaperChunkVector
+from app.services import vector_search
 
 CHUNK_TARGET_CHARS = 1200
 CHUNK_MAX_CHARS = 1600  # 超过则硬切
@@ -430,7 +431,9 @@ async def rebuild_library_fulltext_index(
 
 
 def chunk_vector_search_supported(session: AsyncSession) -> bool:
-    return session.get_bind().dialect.name == "postgresql"
+    """分段向量检索可用吗：postgres 走 pgvector，其余方言在 Python 侧打分，一律可用。"""
+    del session
+    return True
 
 
 async def semantic_search_chunks(
@@ -442,7 +445,8 @@ async def semantic_search_chunks(
     limit: int,
     paper_ids: list[uuid.UUID] | None = None,
 ) -> list[tuple[PaperChunk, float]]:
-    """pgvector 余弦检索（仅 postgres；调用方需先判 chunk_vector_search_supported）。
+    """余弦检索：postgres 上 pgvector 在 SQL 里排，其余方言在 Python 侧打分
+    （services/vector_search.py，候选集过滤与 SQL 同口径）。
 
     默认按 library_ids 限定关联库并集（chunk 命中多库时 DISTINCT 去重）。
     传 paper_ids 时把检索限制在这些论文内（伴读引用指定文献用）。
@@ -452,6 +456,15 @@ async def semantic_search_chunks(
     ``space`` 限定只跟同一个向量空间的分段比较——别的空间的向量出自别的模型，
     算出来的余弦是噪声。调用方给的 query_vector 也必须来自这个空间。
     """
+    if not vector_search.uses_pgvector(session):
+        return await _semantic_search_chunks_in_python(
+            session,
+            library_ids=library_ids,
+            query_vector=query_vector,
+            space=space,
+            limit=limit,
+            paper_ids=paper_ids,
+        )
     qv = json.dumps(query_vector)
     if not library_ids and paper_ids:
         # 纯 paper_ids 分支：不 join library_papers，只按论文集合过滤
@@ -507,16 +520,61 @@ async def semantic_search_chunks(
                 params,
             )
         ).all()
-    if not rows:
+    return await _chunks_for_scores(session, [(row.id, float(row.score)) for row in rows])
+
+
+async def _semantic_search_chunks_in_python(
+    session: AsyncSession,
+    *,
+    library_ids: list[uuid.UUID] | None,
+    query_vector: list[float],
+    space: EmbeddingSpace,
+    limit: int,
+    paper_ids: list[uuid.UUID] | None,
+) -> list[tuple[PaperChunk, float]]:
+    """没有 pgvector 时的同口径实现：SQL 圈候选（空间/论文集合/库成员+状态），Python 打分。"""
+    stmt = (
+        select(PaperChunkVector.chunk_id, vector_search.raw_embedding(PaperChunkVector.embedding))
+        .join(PaperChunk, PaperChunk.id == PaperChunkVector.chunk_id)
+        .where(PaperChunkVector.space == space.key)
+    )
+    if not library_ids and paper_ids:
+        stmt = stmt.where(PaperChunk.paper_id.in_(paper_ids))
+    else:
+        from app.services.papers import PAPER_STATUS_GROUPS
+
+        # IN 子查询代替 join：分段命中多个库时天然只出一次（SQL 版的 DISTINCT）
+        stmt = stmt.where(
+            PaperChunk.paper_id.in_(
+                select(LibraryPaper.paper_id).where(
+                    LibraryPaper.library_id.in_(library_ids or []),
+                    LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+                )
+            )
+        )
+        if paper_ids:
+            stmt = stmt.where(PaperChunk.paper_id.in_(paper_ids))
+    hits = await vector_search.search_statement(session, stmt, query_vector, limit)
+    return await _chunks_for_scores(session, hits)
+
+
+async def _chunks_for_scores(
+    session: AsyncSession, hits: list[tuple[Any, float]]
+) -> list[tuple[PaperChunk, float]]:
+    """按命中顺序把 (chunk_id, 分数) 补成 (PaperChunk, 分数)。"""
+    if not hits:
         return []
-    scores = {row.id: float(row.score) for row in rows}
     chunks = (
-        (await session.execute(select(PaperChunk).where(PaperChunk.id.in_(list(scores)))))
+        (
+            await session.execute(
+                select(PaperChunk).where(PaperChunk.id.in_([cid for cid, _ in hits]))
+            )
+        )
         .scalars()
         .all()
     )
     by_id = {c.id: c for c in chunks}
-    return [(by_id[row.id], scores[row.id]) for row in rows if row.id in by_id]
+    return [(by_id[cid], score) for cid, score in hits if cid in by_id]
 
 
 async def keyword_search_chunks(

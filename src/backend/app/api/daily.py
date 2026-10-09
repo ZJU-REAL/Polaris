@@ -106,8 +106,8 @@ async def list_papers(
 
     sort=relevance 按「与你的文献库的相关性 × 新近度」融合排序（没有文献库时与
     sort=date 一致）；条目附带「与你的库相关」徽章数据（related_library_id/name）。
-    mode=semantic 且有 q 时走论文向量检索（结果按相关度排序、不分页）；数据库不是
-    postgres 或 provider 不支持嵌入时回退关键词，响应里 mode_used 如实反映。
+    mode=semantic 且有 q 时走论文向量检索（结果按相关度排序、不分页）；
+    embedding provider 不支持时回退关键词，响应里 mode_used 如实反映。
     池论文默认不建向量（管理员开关），语义结果可能不全，覆盖度见 vector_ready/total。
     author/affiliation 是详情面板里点作者、点机构带上来的过滤（JSON 文本包含匹配），
     两种检索方式都生效。
