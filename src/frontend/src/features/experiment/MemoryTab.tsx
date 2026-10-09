@@ -31,13 +31,13 @@ export function MemoryTab({ exp }: { exp: ExperimentDetail }) {
         <EmptyState
           compact
           icon="book"
-          title={tr('该实验没有关联 AI 任务', 'This experiment has no linked AI task')}
+          title={tr('这个实验没有关联任务', 'This experiment has no linked task')}
         />
       </div>
     );
   }
   if (isLoading) {
-    return <div className="empty" style={{ padding: 40 }}>{tr('加载实验记忆…', 'Loading memory…')}</div>;
+    return <div className="empty" style={{ padding: 40 }}>{tr('加载中…', 'Loading…')}</div>;
   }
   const content = data?.content ?? '';
   if (!content.trim()) {
@@ -46,11 +46,8 @@ export function MemoryTab({ exp }: { exp: ExperimentDetail }) {
         <EmptyState
           compact
           icon="book"
-          title={tr('记忆还没建立', 'No memory yet')}
-          desc={tr(
-            '实验计划定稿后，平台与 AI 会把关键决策、环境事实、每轮结论写进这里。',
-            'Once the plan is finalized, the platform and the AI record key decisions, environment facts and per-round conclusions here.',
-          )}
+          title={tr('还没有实验记忆', 'No memory yet')}
+          desc={tr('计划确定后，关键决策和每轮结论会记在这里。', 'Key decisions and round results are recorded here once the plan is set.')}
         />
       </div>
     );
@@ -60,7 +57,6 @@ export function MemoryTab({ exp }: { exp: ExperimentDetail }) {
     <div className="fadeup" style={{ maxWidth: 860 }}>
       <div className="row gap8" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
         <span className="section-h">
-          <Icon name="book" size={15} style={{ color: 'var(--accent)' }} />
           {tr('实验记忆', 'Experiment memory')}
           <span className="en-label mono" style={{ fontSize: 11 }}>MEMORY.md</span>
         </span>
@@ -75,16 +71,16 @@ export function MemoryTab({ exp }: { exp: ExperimentDetail }) {
               }
               title={
                 data.source === 'ssh'
-                  ? tr('从实验服务器实时读取', 'Read live from the experiment server')
-                  : tr('服务器不可达，显示平台镜像', 'Server unreachable — showing the platform mirror')
+                  ? tr('从实验机器实时读取', 'Read live from the experiment machine')
+                  : tr('连不上实验机器，显示上次保存的版本', 'Can’t reach the experiment machine; showing the last saved copy')
               }
             >
-              {data.source === 'ssh' ? tr('服务器实时', 'live') : tr('平台镜像', 'mirror')}
+              {data.source === 'ssh' ? tr('实时', 'Live') : tr('已保存', 'Saved copy')}
             </span>
           )}
           <button className="btn btn-ghost sm" onClick={() => setRaw((r) => !r)}>
             <Icon name="file" size={12} />
-            {raw ? tr('渲染视图', 'Rendered') : tr('查看原文', 'Raw')}
+            {raw ? tr('预览', 'Preview') : tr('查看原文', 'Source')}
           </button>
         </div>
       </div>
@@ -92,7 +88,7 @@ export function MemoryTab({ exp }: { exp: ExperimentDetail }) {
         {raw ? (
           <pre
             className="mono scroll"
-            style={{ fontSize: 11.5, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}
+            style={{ fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}
           >
             {content}
           </pre>

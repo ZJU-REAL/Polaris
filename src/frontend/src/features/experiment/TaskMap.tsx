@@ -27,13 +27,13 @@ function actionIcon(action: string): IconName {
 /** 步骤 → 地图上的短标签（第 N 轮 / 分析 N 用轮次计数，渲染处 tr）。 */
 function nodeLabel(step: VoyageStepRead, roundNo: number | null): string {
   const a = step.action;
-  if (a.endsWith('.plan')) return tr('计划', 'plan');
-  if (a.endsWith('.setup')) return tr('环境', 'setup');
-  if (a.endsWith('.smoke')) return tr('试跑', 'smoke');
-  if (a.endsWith('.run')) return roundNo ? tr(`第 ${roundNo} 轮`, `run ${roundNo}`) : tr('运行', 'run');
-  if (a.endsWith('.analyze')) return roundNo ? tr(`分析 ${roundNo}`, `analyze ${roundNo}`) : tr('分析', 'analyze');
-  if (a.endsWith('.figures')) return tr('图表', 'figures');
-  if (a.endsWith('.report')) return tr('报告', 'report');
+  if (a.endsWith('.plan')) return tr('计划', 'Plan');
+  if (a.endsWith('.setup')) return tr('环境', 'Setup');
+  if (a.endsWith('.smoke')) return tr('试运行', 'Trial');
+  if (a.endsWith('.run')) return roundNo ? tr(`第 ${roundNo} 轮`, `Round ${roundNo}`) : tr('运行', 'Run');
+  if (a.endsWith('.analyze')) return roundNo ? tr(`分析 ${roundNo}`, `Analysis ${roundNo}`) : tr('分析', 'Analysis');
+  if (a.endsWith('.figures')) return tr('图表', 'Figures');
+  if (a.endsWith('.report')) return tr('报告', 'Report');
   return step.title.length > 6 ? `${step.title.slice(0, 6)}…` : step.title;
 }
 
@@ -231,7 +231,7 @@ function StepNode({
       </span>
       <span
         style={{
-          fontSize: 10.5,
+          fontSize: 11,
           lineHeight: 1.2,
           color: selected ? 'var(--text)' : 'var(--text-3)',
           fontWeight: selected ? 700 : 500,
@@ -282,10 +282,10 @@ export function TaskMap({
 
   if (steps.length === 0) {
     return (
-      <div className="card empty" style={{ padding: 22, fontSize: 12.5 }}>
+      <div className="card empty" style={{ padding: 22, fontSize: 13 }}>
         {voyageStatus === 'planning'
-          ? tr('AI 正在规划步骤…', 'AI is planning the steps…')
-          : tr('暂无步骤', 'No steps yet')}
+          ? tr('正在规划步骤…', 'Planning steps…')
+          : tr('还没有步骤', 'No steps yet')}
       </div>
     );
   }
@@ -322,7 +322,7 @@ export function TaskMap({
                   <Icon name="refresh" size={13} />
                 </span>
                 <span style={{ fontSize: 10, color: 'var(--accent-text)', whiteSpace: 'nowrap' }}>
-                  {tr(`调整 ${item.event.iteration}`, `adj ${item.event.iteration}`)}
+                  {tr(`调整 ${item.event.iteration}`, `Revision ${item.event.iteration}`)}
                 </span>
               </span>
             </span>
@@ -334,7 +334,7 @@ export function TaskMap({
               {connector}
               <button
                 onClick={() => setExpanded(true)}
-                title={tr('展开这些已完成的步骤', 'Expand these completed steps')}
+                title={tr('展开已完成的步骤', 'Show completed steps')}
                 className="col"
                 style={{
                   border: 'none',
@@ -357,14 +357,14 @@ export function TaskMap({
                     alignItems: 'center',
                     gap: 5,
                     fontSize: 11,
-                    fontWeight: 700,
+                    fontWeight: 600,
                   }}
                 >
                   <Icon name="check" size={12} />
                   {item.steps.length}
                 </span>
-                <span style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
-                  {tr(`${item.steps.length} 步已完成`, `${item.steps.length} done`)}
+                <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                  {tr(`已完成 ${item.steps.length} 步`, `${item.steps.length} done`)}
                 </span>
               </button>
             </span>

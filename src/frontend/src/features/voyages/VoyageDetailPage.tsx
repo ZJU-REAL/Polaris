@@ -1,9 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
+import { TaskStatus } from './shared/StatusDot';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { VoyageActions } from '../../components/ui/VoyageActions';
-import { StatusPill } from '../../components/ui/StatusPill';
 import { Timeline, TimelineItem } from '../../components/ui/Timeline';
 import { toast } from '../../components/ui/Toast';
 import { useShell } from '../../app/AppShell';
@@ -25,6 +25,7 @@ import {
   asObj,
   buildTimelineEntries,
   byListOrder,
+  enCount,
   num,
   stepMarker,
   stepTokenCount,
@@ -62,7 +63,7 @@ function PresentationDownload({ voyageId, goal }: { voyageId: string; goal: stri
     onError: (e) =>
       toast(
         e instanceof ApiError && e.message === 'FILE_NOT_READY'
-          ? tr('文件还没生成好，稍后再试', 'File not ready yet — try again shortly')
+          ? tr('文件还没生成，请稍后再试', 'The file isn’t ready yet. Try again shortly.')
           : `${tr('下载失败：', 'Download failed: ')}${e instanceof Error ? e.message : String(e)}`,
         'error',
       ),
@@ -98,8 +99,8 @@ function WikiRunSummary({ steps }: { steps: VoyageStepRead[] }) {
 
   const stats: { label: string; value: number }[] = [];
   if (search || snowball) stats.push({ label: tr('新收录论文', 'New papers'), value: num(search?.inserted) + num(snowball?.inserted) });
-  if (score) stats.push({ label: tr('通过筛选', 'Passed screening'), value: num(score.succeeded) - num(score.excluded) });
-  if (compile) stats.push({ label: tr('已编译', 'Compiled'), value: num(compile.succeeded) });
+  if (score) stats.push({ label: tr('相关论文', 'Relevant'), value: num(score.succeeded) - num(score.excluded) });
+  if (compile) stats.push({ label: tr('生成解读', 'Summaries'), value: num(compile.succeeded) });
   if (link) stats.push({ label: tr('新增概念', 'New concepts'), value: num(link.concepts_promoted) });
   if (stats.length === 0) return null;
 
@@ -107,15 +108,14 @@ function WikiRunSummary({ steps }: { steps: VoyageStepRead[] }) {
     <div className="card card-pad" style={{ marginBottom: 20 }}>
       <div className="row" style={{ marginBottom: 10 }}>
         <span className="section-h">
-          <Icon name="book" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('本次同步结果', 'Sync summary')}
+          {tr('本次结果', 'This run')}
         </span>
       </div>
       <div className="row" style={{ gap: 28, flexWrap: 'wrap' }}>
         {stats.map((s) => (
           <div key={s.label}>
-            <div className="mono" style={{ fontSize: 22, fontWeight: 680, lineHeight: 1.2 }}>{s.value}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>{s.label}</div>
+            <div className="mono" style={{ fontSize: 22, fontWeight: 600, lineHeight: 1.2 }}>{s.value}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>{s.label}</div>
           </div>
         ))}
       </div>
@@ -143,7 +143,7 @@ export function VoyageDetailPage() {
   const resumeMutation = useMutation({
     mutationFn: () => api.resumeVoyage(id),
     onSuccess: () => {
-      toast(tr('已重新入队，从断点续跑', 'Re-queued — resuming from where it stopped'), 'ok');
+      toast(tr('已从出错的步骤继续', 'Resumed from the failed step'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['voyage', id] });
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
     },
@@ -186,15 +186,17 @@ export function VoyageDetailPage() {
     return (
       <div className="page fadeup">
         <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
-          <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 8 }}>
-            {notFound ? tr('任务不存在', 'Task not found') : tr('无法加载任务详情', 'Failed to load task detail')}
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>
+            {notFound ? tr('任务不存在', 'Task not found') : tr('无法加载任务', 'Couldn’t load this task')}
           </div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 18 }}>
-            {error instanceof Error ? error.message : tr('后端不可用，请稍后重试', 'Backend unavailable — try again later')}
+          <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 18 }}>
+            {notFound
+              ? tr('它可能已被删除。', 'It may have been deleted.')
+              : tr('请确认本机引擎在运行，然后重试。', 'Make sure the local engine is running, then retry.')}
           </div>
           <div className="row gap8" style={{ justifyContent: 'center' }}>
             <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-            <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'voyages'))}>{tr('返回列表', 'Back to list')}</button>
+            <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'voyages'))}>{tr('返回任务列表', 'Back to tasks')}</button>
           </div>
         </div>
       </div>
@@ -232,25 +234,24 @@ export function VoyageDetailPage() {
                 ? tr('← 文献任务', '← Library tasks')
                 : tr('← 课题任务', '← Topic tasks')}
             </span>
-            <span className="mono" style={{ textTransform: 'none', color: 'var(--text-4)' }}>{voyage.id.slice(0, 8)}</span>
             {live && (
               <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
                 <span className="dot pulse" />
-                LIVE
+                {tr('实时', 'Live')}
               </span>
             )}
           </div>
           <h1 className="h-title" style={{ fontSize: 21 }}>{voyage.goal}</h1>
           <div className="row gap8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
             <KindBadge kind={voyage.kind} />
-            <StatusPill status={voyage.status} sm />
+            <TaskStatus status={voyage.status} />
             {planAdjusted && (
               <span
                 className="pill sm"
                 style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
-                title={tr('执行过程中计划被调整过（自动重试后的调整 / 按执行结果追加的轮次）', 'The plan was adjusted during execution (after auto-retries / extra rounds based on results)')}
+                title={tr('执行中按结果调整过计划', 'The plan changed based on results')}
               >
-                {tr('计划调整', 'Plan adjusted')} ×{voyage.plan_iteration}
+                {tr(`计划调整 ${voyage.plan_iteration} 次`, `Plan adjusted ${enCount(voyage.plan_iteration ?? 0, 'time')}`)}
               </span>
             )}
             <span className="mono muted" style={{ fontSize: 11 }}>
@@ -291,8 +292,7 @@ export function VoyageDetailPage() {
       {/* 步骤时间线（任务板：清单序渲染，计划调整插入分隔条目，作废步骤可选显示） */}
       <div className="row" style={{ marginBottom: 12 }}>
         <span className="section-h">
-          <Icon name="compass" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('步骤时间线', 'Steps')}
+          {tr('步骤', 'Steps')}
         </span>
         {planAdjusted && (
           <label
@@ -304,7 +304,7 @@ export function VoyageDetailPage() {
               checked={showObsolete}
               onChange={(e) => setShowObsolete(e.target.checked)}
             />
-            {tr('显示已作废步骤', 'Show obsolete steps')}
+            {tr('显示已作废步骤', 'Show dropped steps')}
           </label>
         )}
       </div>

@@ -64,16 +64,16 @@ export interface TerminalExtraEntry {
 
 /** stage → 大白话（进行中 / 已完成 两种措辞；模块级常量只存 zh/en，渲染处再 tr）。 */
 const STAGE_INFO: Record<string, { activeZh: string; activeEn: string; doneZh: string; doneEn: string }> = {
-  navigator: { activeZh: 'AI 正在规划任务', activeEn: 'AI is planning the task', doneZh: 'AI 规划任务', doneEn: 'Task planning' },
-  debate: { activeZh: '评审辩论中', activeEn: 'Peer debate in progress', doneZh: '评审辩论', doneEn: 'Peer debate' },
-  review: { activeZh: '评审辩论中', activeEn: 'Peer debate in progress', doneZh: '评审辩论', doneEn: 'Peer debate' },
-  experiment: { activeZh: '实验分析中', activeEn: 'Analyzing the experiment', doneZh: '实验分析', doneEn: 'Experiment analysis' },
-  writing: { activeZh: '论文撰写中', activeEn: 'Drafting the paper', doneZh: '论文撰写', doneEn: 'Paper drafting' },
-  proposal: { activeZh: '方案深耕中', activeEn: 'Refining the proposal', doneZh: '方案深耕', doneEn: 'Proposal refinement' },
-  librarian: { activeZh: '精读编译中', activeEn: 'Reading & compiling papers', doneZh: '精读编译', doneEn: 'Reading & compiling' },
-  present: { activeZh: '生成幻灯片中', activeEn: 'Building the slides', doneZh: '生成幻灯片', doneEn: 'Slide generation' },
+  navigator: { activeZh: '正在规划', activeEn: 'Planning', doneZh: '规划', doneEn: 'Planning' },
+  debate: { activeZh: '正在评审', activeEn: 'Reviewing', doneZh: '评审', doneEn: 'Review' },
+  review: { activeZh: '正在评审', activeEn: 'Reviewing', doneZh: '评审', doneEn: 'Review' },
+  experiment: { activeZh: '正在分析实验', activeEn: 'Analyzing the experiment', doneZh: '实验分析', doneEn: 'Experiment analysis' },
+  writing: { activeZh: '正在撰写论文', activeEn: 'Drafting the paper', doneZh: '论文撰写', doneEn: 'Paper draft' },
+  proposal: { activeZh: '正在完善方案', activeEn: 'Refining the plan', doneZh: '完善方案', doneEn: 'Plan refinement' },
+  librarian: { activeZh: '正在生成解读', activeEn: 'Generating summaries', doneZh: '生成解读', doneEn: 'Summaries' },
+  present: { activeZh: '正在生成幻灯片', activeEn: 'Building slides', doneZh: '生成幻灯片', doneEn: 'Slides' },
 };
-const STAGE_FALLBACK = { activeZh: 'AI 处理中', activeEn: 'AI is working', doneZh: 'AI 处理', doneEn: 'AI processing' };
+const STAGE_FALLBACK = { activeZh: 'AI 处理中', activeEn: 'AI working', doneZh: 'AI 输出', doneEn: 'AI output' };
 export function stageInfo(stage: string) {
   return STAGE_INFO[stage] ?? STAGE_FALLBACK;
 }
@@ -147,10 +147,10 @@ export function LlmRecord({ entry }: { entry: LlmEntry }) {
     >
       <div className="row" style={{ gap: 6 }}>
         <Icon name="sparkle" size={12} style={{ color: 'var(--terminal-accent)', flexShrink: 0 }} />
-        <span style={{ color: 'var(--terminal-accent)', fontWeight: 650 }}>
+        <span style={{ color: 'var(--terminal-accent)', fontWeight: 600 }}>
           {tr(info.doneZh, info.doneEn)}
         </span>
-        <span style={{ color: 'var(--terminal-dim)' }}>· {tr('输出完成', 'done')}</span>
+        <span style={{ color: 'var(--terminal-dim)' }}>· {tr('完成', 'done')}</span>
         <span style={{ color: 'var(--terminal-dim)', marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
           {hhmmss(entry.at)}
         </span>
@@ -205,7 +205,7 @@ export function LlmActive({ active }: { active: ActiveLlm }) {
     >
       <div className="row" style={{ gap: 7 }}>
         <span className="dot pulse" style={{ background: 'var(--terminal-accent)', flexShrink: 0 }} />
-        <span style={{ color: 'var(--terminal-accent)', fontWeight: 650 }}>
+        <span style={{ color: 'var(--terminal-accent)', fontWeight: 600 }}>
           {tr(info.activeZh, info.activeEn)} …
         </span>
       </div>
@@ -321,24 +321,23 @@ export function TaskTerminal({
 
   return (
     <>
-      <div className="row" style={{ margin: '20px 0 12px' }}>
-        <span className="section-h">
-          <Icon name="cpu" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('运行日志', 'Terminal')}
+      <div className="row" style={{ margin: '20px 0 12px', flexWrap: 'wrap', gap: 8 }}>
+        <span className="section-h" style={{ whiteSpace: 'nowrap' }}>
+          {tr('运行日志', 'Log')}
         </span>
-        <div className="row gap8" style={{ marginLeft: 'auto' }}>
+        <div className="row gap8" style={{ marginLeft: 'auto', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {headerExtras}
           {live && (
             <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
               <span className="dot pulse" />
-              {tr('实时', 'live')}
+              {tr('实时', 'Live')}
             </span>
           )}
           <button
             className="btn btn-ghost sm"
             onClick={onClear}
             disabled={empty}
-            title={tr('清空运行日志', 'Clear the terminal')}
+            title={tr('清空运行日志', 'Clear the log')}
           >
             <Icon name="trash" size={12} />
             {tr('清空', 'Clear')}
@@ -357,21 +356,21 @@ export function TaskTerminal({
             borderRadius: 12,
             padding: '12px 14px',
             fontFamily: 'var(--mono)',
-            fontSize: 11.5,
+            fontSize: 12,
             lineHeight: 1.65,
             color: 'var(--terminal-fg)',
           }}
         >
           {historyLoading && (
             <div style={{ color: 'var(--terminal-dim)', padding: '2px 2px 6px' }}>
-              {tr('正在加载历史日志…', 'Loading log history…')}
+              {tr('正在加载日志…', 'Loading log…')}
             </div>
           )}
           {historyError && (
             <div style={{ color: 'var(--terminal-dim)', padding: '2px 2px 6px' }}>
               {tr(
-                '历史日志加载失败，下面只显示实时输出（刷新页面可重试）',
-                'Failed to load log history — showing live output only (refresh to retry)',
+                '无法加载之前的日志，只显示新输出。刷新页面可重试。',
+                'Couldn’t load earlier log lines; showing new output only. Refresh to retry.',
               )}
             </div>
           )}
@@ -380,8 +379,8 @@ export function TaskTerminal({
               {historyLoading
                 ? null
                 : live
-                  ? tr('等待任务输出…', 'Waiting for task output…')
-                  : tr('暂无运行日志', 'No terminal output yet')}
+                  ? tr('等待输出…', 'Waiting for output…')
+                  : tr('还没有日志', 'No log yet')}
             </div>
           ) : (
             <>

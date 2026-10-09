@@ -67,10 +67,10 @@ export interface ScoreDim {
 }
 
 export const SCORE_DIMS: ScoreDim[] = [
-  { key: 'novelty', zh: '新颖', en: 'novelty' },
-  { key: 'feasibility', zh: '可行', en: 'feasibility' },
-  { key: 'operability', zh: '可操作', en: 'operability' },
-  { key: 'impact', zh: '影响', en: 'impact' },
+  { key: 'novelty', zh: '新颖', en: 'Novelty' },
+  { key: 'feasibility', zh: '可行', en: 'Feasibility' },
+  { key: 'operability', zh: '可操作', en: 'Practicality' },
+  { key: 'impact', zh: '影响', en: 'Impact' },
 ];
 
 /** 四维均值 composite（无分数返回 null）。 */
@@ -82,7 +82,7 @@ export function compositeOf(scores: IdeaScores | null | undefined): number | nul
 /** 四维 ScoreRing 组（候选卡用）。 */
 export function ScoreRingGroup({ scores, size = 38 }: { scores: IdeaScores | null; size?: number }) {
   if (!scores) {
-    return <span className="muted" style={{ fontSize: 12 }}>{tr('尚未打分', 'Not scored yet')}</span>;
+    return <span className="muted" style={{ fontSize: 12 }}>{tr('未评分', 'Not scored')}</span>;
   }
   return (
     <div className="row gap12 wrap">
@@ -105,7 +105,7 @@ export function RubricBar({ label, value }: { label: string; value: number }) {
       <div className="bar" style={{ flex: 1 }}>
         <i style={{ width: `${Math.max(0, Math.min(100, value * 10))}%`, background: color }} />
       </div>
-      <span className="mono" style={{ fontSize: 12, fontWeight: 700, width: 30, textAlign: 'right' }}>
+      <span className="mono" style={{ fontSize: 12, fontWeight: 600, width: 30, textAlign: 'right' }}>
         {value.toFixed(1)}
       </span>
     </div>

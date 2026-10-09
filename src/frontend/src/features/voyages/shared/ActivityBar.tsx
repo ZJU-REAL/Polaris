@@ -1,5 +1,6 @@
 import { Icon } from '../../../components/ui/Icon';
 import { tr } from '../../../lib/i18n';
+import { enCount } from './stepUtils';
 import type { VoyageDetail, VoyageStatus, VoyageStepRead } from '../../../lib/api';
 
 /* ============================================================
@@ -10,22 +11,22 @@ import type { VoyageDetail, VoyageStatus, VoyageStepRead } from '../../../lib/ap
 /** mode → 大白话标签与说明（模块级常量只存 zh/en 字段，渲染处再 tr）。 */
 export const MODE_INFO: Record<string, { zh: string; en: string; hintZh: string; hintEn: string }> = {
   pipeline: {
-    zh: '固定流程',
-    en: 'Fixed pipeline',
-    hintZh: '步骤在创建时已完全确定，按固定顺序执行，不会中途调整计划',
-    hintEn: 'Steps are fully fixed at creation and run in order; the plan never changes mid-run',
+    zh: '固定步骤',
+    en: 'Fixed steps',
+    hintZh: '按创建时定好的步骤依次执行',
+    hintEn: 'Runs the steps set at creation, in order',
   },
   template: {
-    zh: '模板流程',
-    en: 'Template flow',
-    hintZh: '按预设模板执行，在预设的分支点根据执行结果补充后续步骤',
-    hintEn: 'Runs from a preset template; follow-up steps are added at preset branch points based on results',
+    zh: '按模板',
+    en: 'Template',
+    hintZh: '按模板执行，必要时根据结果补充步骤',
+    hintEn: 'Follows a template and adds steps when results call for it',
   },
   loop: {
-    zh: 'AI 动态规划',
-    en: 'AI dynamic planning',
-    hintZh: '循环推进：每步执行后自动校验，再按结果动态调整后续计划（规则分支优先，AI 兜底）',
-    hintEn: 'Runs in a loop: each step is auto-checked, then the remaining plan is adjusted based on results (preset rules first, AI as fallback)',
+    zh: 'AI 规划',
+    en: 'AI-planned',
+    hintZh: '每步完成后检查结果，再调整后续步骤',
+    hintEn: 'Checks each step’s result, then adjusts the remaining steps',
   },
 };
 
@@ -58,36 +59,33 @@ export function activityText(voyage: VoyageDetail, steps: VoyageStepRead[]): str
 
   switch (voyage.status) {
     case 'planning':
-      return tr('AI 正在规划步骤…', 'AI is planning the steps…');
+      return tr('正在规划步骤…', 'Planning steps…');
     case 'executing': {
-      if (!stepRef) return tr('正在执行步骤…', 'Executing steps…');
+      if (!stepRef) return tr('正在执行…', 'Running…');
       const runSuffix =
         cur && cur.attempt > 1
-          ? tr(`（第 ${cur.attempt} 次运行）`, ` (run ${cur.attempt})`)
+          ? tr(`（第 ${cur.attempt} 次尝试）`, ` (attempt ${cur.attempt})`)
           : '';
-      return tr(`正在执行：${stepRef}${runSuffix}`, `Executing ${stepRef}${runSuffix}`);
+      return tr(`正在执行：${stepRef}${runSuffix}`, `Running ${stepRef}${runSuffix}`);
     }
     case 'verifying':
       return stepRef
         ? tr(`正在校验：${stepRef}`, `Checking ${stepRef}`)
-        : tr('正在校验执行结果…', 'Checking results…');
+        : tr('正在校验结果…', 'Checking results…');
     case 'replanning':
-      return tr(
-        `正在调整计划（第 ${(voyage.plan_iteration ?? 0) + 1} 次）…`,
-        `Adjusting the plan (adjustment ${(voyage.plan_iteration ?? 0) + 1})…`,
-      );
+      return tr('正在调整计划…', 'Adjusting the plan…');
     case 'paused_gate':
-      return tr('已暂停：等待人工审批', 'Paused: waiting for approval');
+      return tr('已暂停：等待审批', 'Paused: waiting for approval');
     case 'paused_error':
-      return tr('已暂停：执行出错', 'Paused: an error occurred');
+      return tr('已暂停：执行出错', 'Paused after an error');
     case 'paused_ask':
-      return tr('已暂停：AI 有问题想问你', 'Paused: the AI has a question for you');
+      return tr('已暂停：AI 有问题要问你', 'Paused: the AI has a question');
     case 'done': {
       const passed = live.filter((s) => s.status === 'passed').length;
       const adj = voyage.plan_iteration ?? 0;
       return (
-        tr(`任务完成：共执行 ${passed} 步`, `Task finished: ${passed} steps completed`) +
-        (adj > 0 ? tr(`，期间计划调整 ${adj} 次`, `; the plan was adjusted ${adj} time(s)`) : '')
+        tr(`已完成，共 ${passed} 步`, `Done: ${enCount(passed, 'step')}`) +
+        (adj > 0 ? tr(`，调整计划 ${adj} 次`, `, plan adjusted ${enCount(adj, 'time')}`) : '')
       );
     }
     case 'failed':
@@ -138,7 +136,7 @@ export function ActivityBar({
     <div>
       <div className="row gap10" style={{ flexWrap: 'wrap' }}>
         <span className={'dot' + (dot.pulse ? ' pulse' : '')} style={{ background: dot.color, flexShrink: 0 }} />
-        <span style={{ fontSize: 13.5, fontWeight: 650, minWidth: 0 }}>{activityText(voyage, steps)}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, minWidth: 0 }}>{activityText(voyage, steps)}</span>
         <div className="row gap8" style={{ marginLeft: 'auto' }}>
           {live.length > 0 && (
             <span className="mono muted" style={{ fontSize: 11 }}>
@@ -157,14 +155,14 @@ export function ActivityBar({
             background: 'var(--warn-bg)',
             color: 'var(--warn-tx)',
             borderRadius: 10,
-            fontSize: 12.5,
+            fontSize: 13,
             fontWeight: 600,
           }}
         >
           <Icon name="gate" size={15} />
-          {tr('任务已暂停，等待人工审批后继续。', 'Task paused — it will continue after approval.')}
+          {tr('批准后任务会继续。', 'The task continues once you approve.')}
           <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={onOpenGates}>
-            {tr('前往审批', 'Go to approvals')}
+            {tr('查看审批', 'Review')}
           </button>
         </div>
       )}
@@ -177,26 +175,26 @@ export function ActivityBar({
             background: 'var(--warn-bg)',
             color: 'var(--warn-tx)',
             borderRadius: 10,
-            fontSize: 12.5,
+            fontSize: 13,
             fontWeight: 600,
           }}
         >
           <Icon name="sparkle" size={15} />
-          {tr('AI 有问题想问你，回复后任务会继续。', 'The AI has a question — reply to continue the task.')}
+          {tr('回复后任务会继续。', 'The task continues once you reply.')}
           {onReply && (
             <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={onReply}>
-              {tr('去回复', 'Reply')}
+              {tr('回复', 'Reply')}
             </button>
           )}
         </div>
       )}
       {status === 'paused_error' && (
-        <div className="row gap8" style={{ marginTop: 12, padding: '10px 14px', background: 'var(--danger-bg)', color: 'var(--danger-tx)', borderRadius: 10, fontSize: 12.5 }}>
+        <div className="row gap8" style={{ marginTop: 12, padding: '10px 14px', background: 'var(--danger-bg)', color: 'var(--danger-tx)', borderRadius: 10, fontSize: 13 }}>
           <Icon name="x" size={14} />
-          {tr('任务因错误暂停。重试会从断点继续，已完成的步骤不会重跑。', 'Task paused on an error. Retrying resumes from where it stopped — finished steps will not rerun.')}
+          {tr('重试会从出错的步骤继续，已完成的步骤不重跑。', 'Retrying picks up at the failed step. Finished steps don’t rerun.')}
           {onResume && (
             <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} disabled={resuming} onClick={onResume}>
-              {resuming ? tr('重试中…', 'Retrying…') : tr('重试恢复', 'Retry & resume')}
+              {resuming ? tr('重试中…', 'Retrying…') : tr('重试', 'Retry')}
             </button>
           )}
         </div>

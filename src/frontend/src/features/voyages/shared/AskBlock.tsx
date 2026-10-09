@@ -52,11 +52,11 @@ export function AskBlock({ message }: { message: VoyageMessageRead }) {
         ) : (
           <Icon name="check" size={12} style={{ color: 'var(--terminal-dim)', flexShrink: 0 }} />
         )}
-        <span style={{ color: 'var(--terminal-warn)', fontWeight: 700 }}>
+        <span style={{ color: 'var(--terminal-warn)', fontWeight: 600 }}>
           {tr('AI 提问', 'AI question')}
         </span>
         {superseded && (
-          <span style={{ color: 'var(--terminal-dim)' }}>· {tr('已作废', 'superseded')}</span>
+          <span style={{ color: 'var(--terminal-dim)' }}>· {tr('已作废', 'dropped')}</span>
         )}
         {!pendingAnswer && !superseded && (
           <span style={{ color: 'var(--terminal-dim)' }}>· {tr('已回复', 'answered')}</span>
@@ -78,7 +78,7 @@ export function AskBlock({ message }: { message: VoyageMessageRead }) {
                 borderRadius: 999,
                 border: '0.5px solid var(--terminal-border)',
                 color: 'var(--terminal-fg)',
-                fontSize: 10.5,
+                fontSize: 11,
                 opacity: 0.9,
               }}
             >
@@ -102,7 +102,7 @@ export function AskBlock({ message }: { message: VoyageMessageRead }) {
               color: 'var(--terminal-accent)',
             }}
           >
-            {open ? tr('收起诊断上下文', 'Hide context') : tr('展开诊断上下文', 'Show context')}
+            {open ? tr('收起详情', 'Hide details') : tr('查看详情', 'Show details')}
           </button>
           {open && (
             <div
@@ -123,7 +123,7 @@ export function AskBlock({ message }: { message: VoyageMessageRead }) {
       )}
       {pendingAnswer && (
         <div style={{ marginTop: 7, color: 'var(--terminal-warn)', fontSize: 11 }}>
-          {tr('↓ 在下方输入框回复后任务会继续', '↓ Reply in the box below to continue the task')}
+          {tr('↓ 在下方回复后任务会继续', '↓ Reply below to continue the task')}
         </div>
       )}
     </div>
@@ -146,12 +146,12 @@ export function UserNoteBlock({ message }: { message: VoyageMessageRead }) {
         }}
       >
         <div className="row" style={{ gap: 6 }}>
-          <span style={{ color: 'var(--terminal-accent)', fontWeight: 700 }}>
+          <span style={{ color: 'var(--terminal-accent)', fontWeight: 600 }}>
             {isAnswer ? tr('你的回复', 'Your reply') : tr('你的建议', 'Your suggestion')}
           </span>
           {consumed && (
-            <span style={{ color: 'var(--terminal-dim)', fontSize: 10.5 }}>
-              · {tr('AI 已采纳', 'picked up')}
+            <span style={{ color: 'var(--terminal-dim)', fontSize: 11 }}>
+              · {tr('AI 已读取', 'seen by the AI')}
             </span>
           )}
           <span style={{ color: 'var(--terminal-dim)', marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>

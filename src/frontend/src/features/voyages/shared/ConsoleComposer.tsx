@@ -21,7 +21,7 @@ function upsertMessage(list: VoyageMessageRead[] | undefined, message: VoyageMes
 
 export function ConsoleComposer({
   voyageId,
-  openAsk,
+  openAsk: openAskProp,
   disabled,
   inputRef,
 }: {
@@ -31,6 +31,8 @@ export function ConsoleComposer({
   disabled?: boolean;
   inputRef?: MutableRefObject<HTMLTextAreaElement | null>;
 }) {
+  // 任务已结束就没有可回答的提问了：不再高亮「等你回复」
+  const openAsk = disabled ? null : openAskProp;
   const queryClient = useQueryClient();
   const lang = useLang();
   const [text, setText] = useState('');
@@ -54,7 +56,7 @@ export function ConsoleComposer({
     onSuccess: (message) => {
       afterSend(message);
       setText('');
-      toast(tr('已发送，AI 会在下一步决策时参考', 'Sent — the AI will factor it in at its next decision'), 'ok');
+      toast(tr('已发送，AI 会在下一步参考', 'Sent. The AI will use it at the next step'), 'ok');
     },
     onError: (e) =>
       toast(`${tr('发送失败：', 'Send failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
@@ -75,7 +77,7 @@ export function ConsoleComposer({
       afterSend(message);
       setText('');
       setChoice(null);
-      toast(tr('已回复，任务继续', 'Answered — the task resumes'), 'ok');
+      toast(tr('已回复，任务继续', 'Replied. The task continues'), 'ok');
     },
     onError: (e) => {
       const notOpen = e instanceof Error && e.message.includes('ASK_NOT_OPEN');
@@ -83,7 +85,7 @@ export function ConsoleComposer({
         // 提问已被回答/作废（可能在别的窗口答过）：以服务端为准刷新，自愈过期界面
         void queryClient.invalidateQueries({ queryKey: ['voyage-messages', voyageId] });
         void queryClient.invalidateQueries({ queryKey: ['voyage', voyageId] });
-        toast(tr('这个问题已经回复过了，界面已刷新', 'Already answered — refreshed the view'), 'info');
+        toast(tr('这个问题已回复过', 'This question was already answered'), 'info');
         return;
       }
       toast(`${tr('回复失败：', 'Reply failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
@@ -97,7 +99,7 @@ export function ConsoleComposer({
     const body = text.trim();
     if (openAsk) {
       if (!body && !choice) return;
-      if (choice === 'abort' && !window.confirm(tr('确定放弃这个任务？放弃后无法恢复。', 'Give up this task? This cannot be undone.'))) {
+      if (choice === 'abort' && !window.confirm(tr('放弃这个任务？放弃后无法恢复。', 'Give up this task? This can’t be undone.'))) {
         return;
       }
       answerMutation.mutate({ text: body || undefined, choice: choice ?? undefined });
@@ -119,9 +121,9 @@ export function ConsoleComposer({
     >
       {openAsk && (
         <div className="col gap8" style={{ marginBottom: 8 }}>
-          <div className="row gap6" style={{ fontSize: 12, color: 'var(--warn-tx)', fontWeight: 650 }}>
+          <div className="row gap6" style={{ fontSize: 12, color: 'var(--warn-tx)', fontWeight: 600 }}>
             <span className="dot pulse" style={{ background: 'var(--warn-tx)' }} />
-            {tr('AI 正在等你回复：', 'The AI is waiting for your reply: ')}
+            {tr('等你回复：', 'Waiting for your reply: ')}
             <span style={{ color: 'var(--text)', fontWeight: 600, minWidth: 0 }}>{openAsk.text}</span>
           </div>
           {options.length > 0 && (
@@ -147,7 +149,7 @@ export function ConsoleComposer({
                           ? 'var(--danger-tx)'
                           : 'var(--accent-text)'
                         : 'var(--text-2)',
-                      fontWeight: active ? 700 : 500,
+                      fontWeight: active ? 600 : 500,
                     }}
                   >
                     {askOptionLabel(opt, lang)}
@@ -170,10 +172,10 @@ export function ConsoleComposer({
             disabled
               ? tr('任务已结束', 'Task finished')
               : openAsk
-                ? tr('输入你的回复（可只选上方选项直接发送）…', 'Type your reply (or just pick an option above)…')
-                : tr('随时给 AI 建议，会在下一步决策时参考…', 'Suggest anything — the AI factors it in at its next decision…')
+                ? tr('输入回复，或直接选择上方选项', 'Type a reply, or pick an option above')
+                : tr('给 AI 的建议，会在下一步参考', 'A suggestion for the AI, used at the next step')
           }
-          style={{ flex: 1, resize: 'vertical', minHeight: 44, fontSize: 12.5 }}
+          style={{ flex: 1, resize: 'vertical', minHeight: 44, fontSize: 13 }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
@@ -185,7 +187,7 @@ export function ConsoleComposer({
           className="btn btn-primary"
           disabled={disabled || busy || (openAsk ? !text.trim() && !choice : !text.trim())}
           onClick={send}
-          title={tr('发送（⌘/Ctrl+Enter）', 'Send (⌘/Ctrl+Enter)')}
+          title={tr('发送（⌘↩ / Ctrl Enter）', 'Send (⌘↩ / Ctrl Enter)')}
         >
           <Icon name="arrow" size={13} />
           {busy ? tr('发送中…', 'Sending…') : openAsk ? tr('回复', 'Reply') : tr('发送', 'Send')}

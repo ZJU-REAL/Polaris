@@ -31,7 +31,7 @@ function buildPipelineStages(
 ): PipelineStage[] {
   const stages: PipelineStage[] = [
     { key: 'wiki', path: litPath, no: '00', icon: 'book', zh: '文献', en: 'Literature', count: stats?.papers_total ?? null },
-    { key: 'forge', path: topicPath(pid, 'forge'), no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge', count: stats?.ideas_candidate ?? null },
+    { key: 'forge', path: topicPath(pid, 'forge'), no: '01', icon: 'bulb', zh: '想法生成', en: 'Ideas', count: stats?.ideas_candidate ?? null },
     { key: 'review', path: topicPath(pid, 'review'), no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review', count: stats?.ideas_under_review ?? null },
     {
       key: 'experiment',
@@ -39,7 +39,7 @@ function buildPipelineStages(
       no: '03',
       icon: 'flask',
       zh: '实验搭建',
-      en: 'Experiment Lab',
+      en: 'Experiments',
       count: stats?.experiments_active ?? null,
       running: (stats?.experiments_running ?? 0) > 0,
     },
