@@ -16,11 +16,11 @@ import uuid
 
 from sqlalchemy import select
 
-from app.api.auth import LOCAL_USER_EMAIL
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.mcp.dispatch import handle_rpc
 from app.models.user import User
+from app.services.local_user import local_user_id
 
 
 async def _resolve_user_id() -> uuid.UUID:
@@ -34,18 +34,7 @@ async def _resolve_user_id() -> uuid.UUID:
             if user_id is None:
                 raise SystemExit(f"用户不存在：{email}（POLARIS_MCP_USER_EMAIL）")
             return user_id
-        user_id = (
-            await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
-        ).scalar_one_or_none()
-        if user_id is None:
-            user_id = (
-                await session.execute(
-                    select(User.id)
-                    .where(User.is_active.is_(True))
-                    .order_by(User.created_at.asc(), User.id.asc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
+        user_id = await local_user_id(session)
     if user_id is None:
         raise SystemExit("还没有本地用户：先打开一次 Polaris 桌面端，再启动 MCP")
     return user_id

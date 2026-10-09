@@ -5,23 +5,23 @@ Polaris 是单人、只在本机运行的产品（#842）：没有注册、密�
 ``POST /auth/local-session`` 取会话；其余路由照旧用 ``current_active_user`` 认 JWT。
 """
 
-import secrets
 import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import AuthenticationBackend, BearerTransport, JWTStrategy
-from fastapi_users.password import PasswordHelper
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.models.user import User
 from app.schemas.user import UserRead, UserUpdate
-from app.services.local_user import LOCAL_USER_EMAIL
+from app.services.local_user import (  # noqa: F401  LOCAL_USER_EMAIL 供调用方从这里导入
+    LOCAL_USER_EMAIL,
+    ensure_local_user,
+)
 
 
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
@@ -74,7 +74,6 @@ router = APIRouter()
 
 # 本机唯一用户的身份：固定邮箱 LOCAL_USER_EMAIL（定义在 services/local_user.py）做幂等键
 # （stdio MCP 也按它找人，见 app/mcp/__main__.py）。
-LOCAL_USERNAME = "local"
 
 
 @router.post("/auth/local-session", tags=["auth"])
@@ -83,25 +82,13 @@ async def local_session(
 ) -> dict[str, str]:
     """幂等确保本地用户存在并直接签发会话——这是拿到会话的唯一方式。
 
+    本地用户的认法见 services/local_user.ensure_local_user：老库里没有 local@ 时认领
+    最早的用户，而不是另建一个看不到旧数据的空用户（#850）。
+
     引擎只监听 127.0.0.1，能连上它的就是这台机器的主人。本地用户的密码是随机
     散列，没有任何端点会拿密码换会话。
     """
-    user = (
-        await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
-    ).scalar_one_or_none()
-    if user is None:
-        user = User(
-            email=LOCAL_USER_EMAIL,
-            hashed_password=PasswordHelper().hash(secrets.token_urlsafe(32)),
-            is_active=True,
-            is_superuser=False,
-            is_verified=True,
-            display_name="Local",
-            username=LOCAL_USERNAME,
-        )
-        session.add(user)
-        await session.commit()
-        await session.refresh(user)
+    user = await ensure_local_user(session)
     token = await get_jwt_strategy().write_token(user)
     return {"access_token": token, "token_type": "bearer"}
 
