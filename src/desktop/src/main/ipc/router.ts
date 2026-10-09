@@ -5,7 +5,7 @@
    参数都是单个字符串或数字，手写守卫比多一个运行时依赖清楚；真正重要的是
    「校验发生在唯一一处」这个结构，而不是用哪个库。
 
-   注意信任边界：renderer 里的 JS 来自服务器返回的数据渲染而成，所以这里的
+   注意信任边界：renderer 里的页面渲染着后端返回的数据（论文、网页摘录等外来内容），所以这里的
    参数一律当作不可信输入独立校验，不因为「前端已经检查过」而省略。
    ============================================================ */
 
@@ -46,16 +46,15 @@ function asNumber(params: unknown, key: string): number {
 type Handler = (params: unknown) => unknown | Promise<unknown>;
 
 const HANDLERS: Record<MethodName, Handler> = {
-  // plugins.*：守卫与语义都在 kernel 的 createPluginMethods 里（#754），两种
-  // 传输共用同一份；能力门槛（树不可达 → ERR_CAPABILITY_UNAVAILABLE）也在那里。
-  // 摊在最前面：下面的具名键是桌面独有的，任何重名都该以具名的为准。
+  // plugins.*：守卫与语义都在 kernel 的 createPluginMethods 里（#754）；
+  // 能力门槛（树不可达 → ERR_CAPABILITY_UNAVAILABLE）也在那里。
+  // 摊在最前面：下面的具名键是宿主自己的，任何重名都该以具名的为准。
   ...plugins.pluginMethods,
   // plugins.market.*（#708）：守卫与语义同样在 kernel（#754）；包名/版本的
   // 语义校验本来就在安装引擎里，这一层只管形状
   ...market.marketMethods,
   'host.info': () => host.hostInfo(),
-  'host.setServerUrl': (p) => host.setServerUrl(asString(p, 'url')),
-  'host.testServer': (p) => host.testServer(asString(p, 'url')),
+  'host.relaunch': () => host.relaunch(),
   'host.openExternal': (p) => host.openExternal(asString(p, 'url')),
   'host.copyText': (p) => host.copyText(asString(p, 'text')),
   'host.setBadgeCount': (p) => host.setBadgeCount(asNumber(p, 'count')),

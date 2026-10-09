@@ -22,8 +22,6 @@ interface ComposerProps {
   streaming: boolean;
   /** / 选择器提供哪些实体类型 */
   contextKinds: ContextKind[];
-  /** 分享出去会附带论文阅读链接（AI 伴读场景），仅用于提示 */
-  attachesPaperLink?: boolean;
   placeholder: string;
   onSend: (payload: { text: string; context: ContextRef[]; shareTo: MentionTarget | null }) => void;
   onStop: () => void;
@@ -47,7 +45,6 @@ export function Composer({
   libraryId,
   streaming,
   contextKinds,
-  attachesPaperLink,
   placeholder,
   onSend,
   onStop,
@@ -291,7 +288,6 @@ export function Composer({
         <div className="chat-hint-line">
           <Icon name="sparkle" size={11} />
           {tr('直接发送 = 让 AI 写一段推荐语转给对方', 'Send as-is = AI writes a recommendation to forward')}
-          {attachesPaperLink && tr('（附本篇阅读链接）', ' (with this paper’s read link)')}
         </div>
       )}
 

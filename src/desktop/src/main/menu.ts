@@ -6,14 +6,7 @@
 
 import { Menu, app, shell, type MenuItemConstructorOptions } from 'electron';
 
-import { IPC_CHANNEL_EVENT } from '../shared/contract';
-import { getWindow } from './window';
-
 const REPO_URL = 'https://github.com/ZJU-REAL/Polaris';
-
-function openServerSetup(): void {
-  getWindow()?.webContents.send(IPC_CHANNEL_EVENT, { type: 'host.openServerSetup' });
-}
 
 export function installMenu(): void {
   const isMac = process.platform === 'darwin';
@@ -26,12 +19,6 @@ export function installMenu(): void {
     return;
   }
 
-  const serverItem: MenuItemConstructorOptions = {
-    label: 'Server…',
-    accelerator: 'CmdOrCtrl+,',
-    click: openServerSetup,
-  };
-
   const template: MenuItemConstructorOptions[] = [
     ...(isMac
       ? ([
@@ -39,8 +26,6 @@ export function installMenu(): void {
             label: app.name,
             submenu: [
               { role: 'about' },
-              { type: 'separator' },
-              serverItem,
               { type: 'separator' },
               { role: 'services' },
               { type: 'separator' },
@@ -57,7 +42,7 @@ export function installMenu(): void {
       label: 'File',
       submenu: isMac
         ? [{ role: 'close' }]
-        : [serverItem, { type: 'separator' }, { role: 'quit' }],
+        : [{ role: 'quit' }],
     },
     // ★ 这一项是 macOS 剪贴板快捷键能工作的原因
     { role: 'editMenu' },

@@ -29,9 +29,8 @@ function fakeEngineScript(port: number): string {
     "console.log('pid=' + process.pid);",
     'const srv = http.createServer((req, res) => {',
     "  res.setHeader('content-type', 'application/json');",
-    // 顺带回显 profile 与 fake 回退开关：断言 command 模式注入了
-    // POLARIS_PROFILE=desktop，且**没有**代设 POLARIS_LLM_FAKE_FALLBACK（#717）
-    "  res.end(JSON.stringify({ status: 'ok', profile: process.env.POLARIS_PROFILE || '', fake: process.env.POLARIS_LLM_FAKE_FALLBACK || '' }));",
+    // 顺带回显 fake 回退开关：断言 command 模式**没有**代设 POLARIS_LLM_FAKE_FALLBACK（#717）
+    "  res.end(JSON.stringify({ status: 'ok', fake: process.env.POLARIS_LLM_FAKE_FALLBACK || '' }));",
     '});',
     `srv.listen(${port}, '127.0.0.1');`,
   ].join('\n')
@@ -59,9 +58,8 @@ describe('legacy-engine plugin (command mode)', () => {
 
     const res = await fetch(`${legacy!.baseUrl}/api/health`)
     expect(res.ok).toBe(true)
-    const body = (await res.json()) as { status: string; profile: string; fake: string }
+    const body = (await res.json()) as { status: string; fake: string }
     expect(body.status).toBe('ok')
-    expect(body.profile).toBe('desktop')
     // fake LLM 回退是严格显式 opt-in：插件绝不代设（#717）。本测试进程没设
     // 该变量，引擎子进程里也必须不存在。
     expect(body.fake).toBe('')

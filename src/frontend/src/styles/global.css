@@ -79,7 +79,7 @@ html { zoom: 1.1; }
 :root[data-desktop-platform='win32'] .paper-reader-topbar {
   padding-right: calc(18px + var(--winctl-w));
 }
-/* 登录/配置页右上角的语言切换同理 */
+/* 登录页与桌面端独立页面右上角的语言切换同理 */
 :root[data-desktop-platform='win32'] .auth-lang { right: calc(20px + var(--winctl-w)); }
 
 /* 拖拽区两平台共用：顶栏没有系统标题栏可抓，得自己声明 */

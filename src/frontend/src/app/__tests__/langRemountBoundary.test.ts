@@ -19,7 +19,7 @@ const code = (source: string) =>
 const app = read('../../App.tsx');
 const shell = read('../AppShell.tsx');
 const login = read('../../features/auth/LoginPage.tsx');
-const setup = read('../../features/desktop/ServerSetupPage.tsx');
+const engineUnavailable = read('../../features/desktop/EngineUnavailablePage.tsx');
 
 describe('语言切换的重挂载边界', () => {
   it('根部不再整树重挂载', () => {
@@ -45,7 +45,7 @@ describe('语言切换的重挂载边界', () => {
 describe('带表单的独立页面就地重渲染', () => {
   it.each([
     ['登录页', login],
-    ['桌面端服务器配置页', setup],
+    ['桌面端本机引擎兜底页', engineUnavailable],
   ])('%s 订阅了语言', (_name, source) => {
     expect(source).toContain('useLang');
     // 反面：自己再套一层 key={lang} 就等于把刚修好的状态又丢一次

@@ -2,8 +2,8 @@
    长任务（job）登记与进度广播，与传输无关（#754）。
 
    登记表本身是纯簿记：谁在跑、能不能取消。真正跟传输绑死的只有一件事——
-   把事件送到订阅者手上。桌面是 webContents.send，服务器是 SSE/WS 广播，
-   所以 emit 做成构造参数，其余照搬。
+   把事件送到订阅者手上（桌面是 webContents.send），所以 emit 做成构造
+   参数，其余照搬。
 
    为什么一期就要有 job 而不是让 invoke 直接等：安装要下载、校验、解压、
    登记四步，前端要能显示进度；把它做成 request/response 就只剩下「转圈」，
@@ -12,7 +12,7 @@
 
 import { randomUUID } from 'node:crypto'
 
-/** 事件的最小形状；具体事件类型由各形态的契约声明。 */
+/** 事件的最小形状；具体事件类型由调用方的契约声明。 */
 export interface JobEvent {
   type: string
   [key: string]: unknown

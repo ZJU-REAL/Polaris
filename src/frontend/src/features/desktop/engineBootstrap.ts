@@ -12,10 +12,10 @@ export type BootstrapGate = 'proceed' | 'wait' | 'failed';
 
 /**
  * 由引导状态决定挂载去向：
- * - null（web 端 / 旧宿主 / 桥故障）→ 放行，按既有远端流程走；
+ * - null（web 端 / 旧宿主 / 桥故障）→ 放行，交给 App 判断有没有本机引擎；
  * - idle = 没走内嵌路径（开发态 / 显式 env）→ 放行。旧宿主的 idle 可能
  *   done=false（当年初始值如此），也一并放行——旧宿主在窗口前就启动完了；
- * - failed → 失败页（给「使用远程服务器」出路）；
+ * - failed → 失败页（给「重新打开」出路）；
  * - 其余按 done 判断：没完就等。
  */
 export function bootstrapGate(status: EngineBootstrapStatus | null): BootstrapGate {

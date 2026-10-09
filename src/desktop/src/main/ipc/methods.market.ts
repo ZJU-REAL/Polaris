@@ -1,13 +1,13 @@
 /* ============================================================
    plugins.market.* 在桌面侧的绑定（#708，#754 起实现搬进 kernel）。
 
-   语义与守卫都住在 @polaris/kernel 的 rpc/market-methods.ts，服务器形态用
-   的是同一份。这里只接三样桌面独有的东西：
+   语义与守卫都住在 @polaris/kernel 的 rpc/market-methods.ts。这里只接
+   三样桌面独有的东西：
 
    - 宿主句柄（树 / 持久层 / 安装物目录）——都是模块级单例，传函数现读；
    - job 事件的落点——桌面经 webContents 推给渲染进程（events.ts）；
-   - 旧 electron store 的索引源读穿——一次性迁移，服务器没有这回事，
-     所以在 kernel 那边是可选依赖。
+   - 旧 electron store 的索引源读穿——一次性迁移，所以在 kernel 那边是
+     可选依赖。
 
    fetch 替身仍由本模块持有：冒烟把它换成离线实现跑完整安装链路，
    生产路径永远是 globalThis.fetch。

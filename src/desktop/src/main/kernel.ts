@@ -21,7 +21,8 @@
        1. POLARIS_DESKTOP_ENGINE 显式指定（开发/调试，行为与从前完全一致）
        2. 打包态自动引导（#607）：安装包自带 uv + 后端源码，首启在 userData
           里装出 venv 后以 command 模式拉起——用户机器不需要 Python/docker
-     两者都不成立（开发态未设 env）时不注入，条目保持 disabled，走远端流程。
+     两者都不成立（开发态未设 env）时不注入，条目保持 disabled，前端显示
+     「本机引擎没有启动」页。
    ============================================================ */
 
 import { app } from 'electron';
@@ -58,8 +59,8 @@ export function marketPluginsDir(): string {
  * - check/python/venv/install：内嵌引导各阶段（见 engine-bootstrap.ts）
  * - engine：环境已装好，引擎进程启动中（首启迁移可能要一会儿）
  * - ready + done：引擎已健康，本地地址可用
- * - idle + done：没走内嵌路径（开发态 / 显式 env / 无引擎），按远端流程走
- * - failed + done：内嵌引导或引擎启动失败，已回落远端流程
+ * - idle + done：没走内嵌路径（开发态 / 显式 env / 无引擎）
+ * - failed + done：内嵌引导或引擎启动失败
  */
 let bootstrapStatus: EngineBootstrapStatus = { phase: 'starting', done: false };
 
@@ -110,7 +111,7 @@ function parseEngineSpec(raw: string | undefined): LegacyEngineConfig | null {
 
 /**
  * 打包态的自动引导：用安装包里的 uv + 后端源码在 userData 装出运行环境，
- * 返回 legacy-engine 的 command 配置。失败返回 null（回落远端流程），
+ * 返回 legacy-engine 的 command 配置。失败返回 null（前端显示失败页），
  * 绝不让引导问题挡住窗口创建。
  */
 async function bootstrapPackagedEngine(): Promise<LegacyEngineConfig | null> {
@@ -126,12 +127,12 @@ async function bootstrapPackagedEngine(): Promise<LegacyEngineConfig | null> {
     });
     // 环境装好 ≠ 可用：引擎进程还要跑迁移并通过健康检查（下方 entry.update
     // 才等它），done 必须等引擎真的健康——否则首启等待页会提前放行，
-    // 前端探测拿到 null 又回落远端，等待整段白等。
+    // 前端探测拿到 null 就落到「引擎没启动」页，等待整段白等。
     bootstrapStatus = { phase: 'engine', done: false };
     return config;
   } catch (err) {
     bootstrapStatus = { phase: 'failed', done: true };
-    console.error('[kernel] 内嵌引擎引导失败，回落远端流程：', err);
+    console.error('[kernel] 内嵌引擎引导失败：', err);
     return null;
   }
 }
@@ -153,7 +154,7 @@ async function doStartKernel(): Promise<Kernel> {
   // ready/failed 冒充本轮结论
   bootstrapStatus = { phase: 'starting', done: false };
   // 装配顺序（storage → baseUrl → 哈希复核 → 种子 → Loader → SqliteTree）
-  // 住在 @polaris/kernel 的 createPluginHost 里，与服务器形态共用一份（#754）：
+  // 住在 @polaris/kernel 的 createPluginHost 里（#754）：
   // 装哪些内置插件、树长什么样、三方包的 import 基准在哪，两个形态必须一致，
   // 否则市场里同一个包在两边装出不同结果。桌面特有的部分（引擎注入）留在下面。
   const { kernel: instance, configTree } = await createPluginHost({
@@ -190,15 +191,15 @@ async function doStartKernel(): Promise<Kernel> {
         await entry.update({ config: engine, disabled: null });
       } catch (err) {
         // 失败时 Entry.update 自己把 options 回滚到 disabled 且不落库，
-        // 用户树不被污染；这里照旧记录错误后回落远端服务器流程。
-        console.error('[kernel] 本地引擎启动失败，回落远端流程：', err);
+        // 用户树不被污染；这里只记录错误，前端会显示「引擎没启动」页。
+        console.error('[kernel] 本地引擎启动失败：', err);
       }
     } else {
       // 条目被用户从树里删掉：用户状态即真相，不偷偷种回去
       console.warn('[kernel] 配置树没有 legacy-engine 条目，跳过本地引擎');
     }
   } else if (engine) {
-    console.error('[kernel] 配置树不可用，本地引擎无法注入，回落远端流程');
+    console.error('[kernel] 配置树不可用，本地引擎无法注入');
   }
 
   await instance.start();
@@ -276,7 +277,7 @@ export function kernelPluginMeta(): PluginMetaStore | null {
  * kernel.localBackend 的实现。ctx.get 是 cordis 公开的免 inject 读服务入口
  * （reflect mixin，见 vendor/deepseek-cordis/cordis/src/reflect.ts），严格模式
  * 只在提供方 fiber 处于 ACTIVE 时返回值——引擎没装、还没健康、或已失败时
- * 一律拿到 undefined，统一折叠成 null 让前端回落远端。
+ * 一律拿到 undefined，统一折叠成 null。
  */
 export function localBackend(): LocalBackendInfo {
   const legacy = kernel?.ctx.get('legacy') as { baseUrl?: string } | undefined;

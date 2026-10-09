@@ -48,9 +48,6 @@ export interface ChatSurfaceConfig {
   placeholder: string;
   /** 窄面板（如阅读页侧栏）默认收起历史抽屉 */
   defaultDrawerOpen?: boolean;
-  attachesPaperLink?: boolean;
-  /** 分享出去时附带的论文阅读链接（AI 伴读传） */
-  shareLink?: string | null;
   /** 渲染 assistant 正文（库对话注入引用角标/双链渲染器） */
   renderAssistant: (msg: ChatMsg) => ReactNode;
   /** assistant 气泡内附加区（库对话来源清单） */
@@ -66,14 +63,13 @@ export interface ChatSurfaceConfig {
 
 const MAX_HISTORY_TURNS = 10;
 
-function recommendPrompt(context: ContextRef[], shareLink?: string | null): string {
+function recommendPrompt(context: ContextRef[]): string {
   const items = context.length
     ? context.map((c) => `- ${c.label}`).join('\n')
     : '';
   return [
     '请用中文写一段简洁、真诚的推荐语（3-4 句），推荐给同事，说明它值得一读的理由。',
     items ? `推荐对象：\n${items}` : '推荐对象：当前讨论的内容。',
-    shareLink ? '结尾自然地提到可以点开阅读链接查看原文。' : '',
     '直接输出推荐语正文，不要加“推荐语：”之类的前缀。',
   ].filter(Boolean).join('\n\n');
 }
@@ -135,7 +131,6 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
     const share = pendingShareRef.current;
     pendingShareRef.current = null;
     if (!share || failed) return;
-    const link = cfg.shareLink ? tr('，已附论文链接', ' with paper link') : '';
     const assistant = finalMsgs[finalMsgs.length - 1];
     const text = assistant?.role === 'assistant' ? assistant.content.trim() : '';
     if (!text) {
@@ -146,10 +141,9 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
     void api.sendChatBotMessage(share.kind, {
       title: tr('Polaris AI 分享', 'Shared from Polaris AI'),
       text,
-      ...(cfg.shareLink ? { link: cfg.shareLink } : {}),
     }).then((result) => {
       const parts = result.parts > 1 ? tr(`（${result.parts} 条）`, ` (${result.parts} messages)`) : '';
-      toast(tr(`已分享给 ${share.label}${link}${parts}`, `Shared with ${share.label}${link}${parts}`), 'ok');
+      toast(tr(`已分享给 ${share.label}${parts}`, `Shared with ${share.label}${parts}`), 'ok');
     }).catch((error: unknown) => {
       toast(`${tr('分享失败', 'Share failed')}：${robotShareError(error)}`, 'error');
     });
@@ -191,7 +185,7 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
   const send = (payload: { text: string; context: ContextRef[]; shareTo: MentionTarget | null }) => {
     if (streaming) return;
     const recommend = payload.shareTo !== null && payload.text.trim().length === 0;
-    let question = recommend ? recommendPrompt(payload.context, cfg.shareLink) : payload.text.trim();
+    let question = recommend ? recommendPrompt(payload.context) : payload.text.trim();
     if (!question) return;
     // / 选中的上下文并入发给模型的问题（展示的 user 正文保持干净）
     if (!recommend && payload.context.length) {
@@ -416,7 +410,6 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
           libraryId={cfg.libraryId}
           streaming={streaming}
           contextKinds={cfg.contextKinds}
-          attachesPaperLink={cfg.attachesPaperLink}
           placeholder={cfg.placeholder}
           onSend={send}
           onStop={stop}

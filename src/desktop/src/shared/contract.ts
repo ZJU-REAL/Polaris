@@ -15,8 +15,6 @@
 
 /** preload 同步注入到 window.__POLARIS__ 的静态事实（见 preload/index.ts 的说明）。 */
 export interface HostInfo {
-  /** 已配置的服务器地址；未配置时为空串（前端据此进入首启配置页）。 */
-  serverUrl: string;
   platform: 'darwin' | 'win32' | 'linux';
   appVersion: string;
 }
@@ -29,8 +27,12 @@ export interface HostInfo {
  * 老外壳看到比自己大的号就不收这份界面，改走安装器。这一步不能省——插件页按能力
  * 表自动隐藏，老外壳装上新界面**不会报错**，只会悄悄少一块功能，然后因为版本号
  * 已经追平而不再提示更新，用户就永远停在收不到插件的外壳上了。
+ *
+ * 3（#842 起）：去掉远程服务器模式——host.setServerUrl / host.testServer 与
+ * 「换服务器」事件删除，加 host.relaunch。新界面只认本机引擎，装到还可能连着
+ * 服务器的老外壳上会把用户卡在「引擎没启动」页，所以老外壳必须走安装器。
  */
-export const CONTRACT_VERSION = 2;
+export const CONTRACT_VERSION = 3;
 
 /** 单个能力的可用性。detail 给前端做提示（如 tectonic 装了但缓存是空的）。 */
 export interface CapabilityState {
@@ -109,8 +111,8 @@ export interface KernelStatus {
 }
 
 /**
- * 本地引擎地址。内核没拉起本地后端（未设 POLARIS_DESKTOP_ENGINE、或引擎
- * 启动失败）时 baseUrl 为 null，前端据此回落远端服务器。
+ * 本地引擎地址。内核没拉起本地后端（开发态未设 POLARIS_DESKTOP_ENGINE、
+ * 或引擎启动失败）时 baseUrl 为 null，前端据此显示「引擎没启动」页。
  */
 export interface LocalBackendInfo {
   baseUrl: string | null;
@@ -121,8 +123,8 @@ export interface LocalBackendInfo {
  * 工具链并安装依赖，可能长达数分钟——窗口先于内核创建（#721），前端的
  * 首启等待页轮询这个方法。
  * phase：starting（内核启动中，路径未定）/ check / python / venv / install /
- * engine（环境已装好，引擎进程启动中）/ ready / idle（没走内嵌路径，按
- * 远端或显式 env 流程）/ failed（引导或引擎启动失败，已回落远端流程）。
+ * engine（环境已装好，引擎进程启动中）/ ready / idle（没走内嵌路径：开发态
+ * 或显式 env）/ failed（引导或引擎启动失败）。
  * done 在 ready / idle / failed 时为 true。
  */
 export interface EngineBootstrapStatus {
@@ -211,17 +213,10 @@ export type MarketUninstallResult =
   | { ok: true }
   | { ok: false; code: 'plugin-enabled' | 'not-installed'; message: string };
 
-/** 服务器连通性探测结果（打 GET {url}/api/health）。 */
-export type ServerProbe =
-  | { ok: true; version: string }
-  | { ok: false; reason: 'invalid-url' | 'unreachable' | 'timeout' | 'not-polaris'; detail?: string };
-
 export interface Methods {
   'host.info': { params: void; result: HostInfo };
-  /** 保存服务器地址并重建窗口（刷新 preload 注入值与 CSP）。 */
-  'host.setServerUrl': { params: { url: string }; result: void };
-  /** 探测服务器地址是否可用；不写入配置。 */
-  'host.testServer': { params: { url: string }; result: ServerProbe };
+  /** 退出并重新打开应用（本机引擎没起来时的「重试」）。 */
+  'host.relaunch': { params: void; result: void };
   /** 用系统浏览器打开外链（仅 http/https）。 */
   'host.openExternal': { params: { url: string }; result: void };
   /** 写系统剪贴板；renderer 的 navigator.clipboard 失败时的兜底。 */
@@ -302,9 +297,6 @@ export interface RpcRequest {
  * job.done / job.error）直接往这里加成员，preload 与前端订阅代码不用改。
  */
 export type HostEvent =
-  | { type: 'host.serverChanged'; serverUrl: string }
-  /** 原生菜单「服务器…」→ 让前端打开配置页（换服务器的唯一入口，一期不做设置页分组）。 */
-  | { type: 'host.openServerSetup' }
   /* ---- 长任务事件。形状现在定死：第二期的编译日志与扫描进度直接用它们，
      preload 与前端订阅代码不需要再改。 ---- */
   | { type: 'job.progress'; jobId: string; phase: string; done: number; total: number; note?: string }
