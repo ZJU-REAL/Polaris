@@ -46,9 +46,9 @@ from app.services.libraries import (
     dedupe_member_rows,
     get_library_for_project,
     get_source_library_ids,
+    library_paper_stmt,
     member_paper_stmt,
     member_papers_stmt,
-    user_visible_paper_stmt,
 )
 
 logger = logging.getLogger(__name__)
@@ -452,29 +452,6 @@ async def _pool_paper_view(
     paper = await session.get(Paper, paper_id, options=options)
     if paper is None:
         return None
-    # P5c 公共方向库全员可读：论文在任一**公共**库有成员行时，任何登录用户可读；
-    # 个人库（is_public=false）只对归属人放行，与 library_visible_to 的口径一致——
-    # 否则别人私有个人库里的论文可被任意用户凭 paper_id 读到。
-    # 视角取确定性成员行（最早入库的那份）；无课题上下文
-    # （project_id=None：伴读不带参考检索、LLM 记账归个人）。
-    from app.models.library_direction import DirectionLibrary
-
-    shared_stmt = (
-        select(LibraryPaper)
-        .join(DirectionLibrary, DirectionLibrary.id == LibraryPaper.library_id)
-        .where(
-            LibraryPaper.paper_id == paper_id,
-            or_(
-                DirectionLibrary.is_public.is_(True),
-                DirectionLibrary.submitted_by == user_id,
-            ),
-        )
-        .order_by(LibraryPaper.created_at)
-        .limit(1)
-    )
-    shared = (await session.execute(shared_stmt)).scalars().first()
-    if shared is not None:
-        return PaperView(paper, shared, None)
     stmt = (
         select(TopicPaper.topic_id)
         .join(Project, Project.id == TopicPaper.topic_id)
@@ -514,7 +491,7 @@ async def get_paper_for_user(
     无库论文也可读（见 :func:`_pool_paper_view`）。
     """
     stmt = (
-        user_visible_paper_stmt(user_id)
+        library_paper_stmt()
         .where(Paper.id == paper_id)
         .order_by(LibraryPaper.created_at)
         .limit(1)
@@ -1465,18 +1442,13 @@ async def rerank_paper_rows(
     return [(rows[i][0], score) for i, score in ranked[:limit]], True
 
 
-async def collecting_libraries(
-    session: AsyncSession, paper_id: uuid.UUID, user: Any
-) -> list[dict[str, Any]]:
-    """这篇论文被哪些**对该用户可见**的文献库收录了，带相关度分。
+async def collecting_libraries(session: AsyncSession, paper_id: uuid.UUID) -> list[dict[str, Any]]:
+    """这篇论文被哪些文献库收录了，带相关度分。
 
     只算真正进了库的状态（scored 及之后）——candidate 是还没打分、excluded 是打分没
     过，两者都不算"收录"，混进来会让人以为库里有这篇。
-
-    可见性按 P10 口径过滤：个人库只对归属人与 admin 可见，不能经这个接口泄漏出去。
     """
     from app.models.library_direction import DirectionLibrary, LibraryPaper
-    from app.services.libraries import library_visible_to
 
     rows = (
         await session.execute(
@@ -1493,10 +1465,8 @@ async def collecting_libraries(
         {
             "library_id": lib.id,
             "name": lib.name,
-            "is_public": lib.is_public,
             "status": status,
             "relevance_score": score,
         }
         for lib, status, score in rows
-        if library_visible_to(lib, user)
     ]

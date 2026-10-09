@@ -20,22 +20,8 @@ class DirectionLibrarySummary(BaseModel):
     # 学科包名：决定本库论文按哪套抽取 schema 走（None = 只用跨学科通用的内置）
     discipline: str | None = None
     statement: str | None
-    # 过渡期隐式库回指的课题；未来共享库可为 None
+    # 过渡期隐式库回指的课题；独立建的库为 None
     project_id: uuid.UUID | None
-    # 审批流残留的恒值字段 status/review_note（#619 删列后只剩 wire 形状兼容）
-    # 已随 #734 的有意重录 golden 移除。
-    # 共享开关：false = 仅创建者可见的个人库 | true = 对本部署所有用户可见
-    is_public: bool = False
-    # 库创建者（个人库仅创建者 + admin 可见）
-    submitted_by: uuid.UUID | None = None
-    # 创建者展示名（submitted_by 的 display_name，前端展示归属）
-    owner_name: str | None = None
-    # 请求者是否本库归属人（submitted_by==我）：个人库删除 / 申请转公共入口据此
-    is_owner: bool = False
-    # 是否「我的课题的库」（被我的课题关联 → 前端显示管理入口）
-    is_mine: bool
-    # 是否可管理本库：创建者 ∪ 无主库（见 services/libraries.can_manage_library，#614 后）
-    can_manage: bool
     paper_count: int
     concept_count: int
     last_compiled_at: datetime | None
@@ -56,7 +42,7 @@ class DirectionLibraryDetail(DirectionLibrarySummary):
 
 
 class LibraryCreate(BaseModel):
-    """独立新建方向文献库（POST /libraries，任意登录用户；新库即刻可用，无审批）。
+    """独立新建方向文献库（POST /libraries；新库即刻可用）。
 
     P9b：必填仅 name + statement；anchors 只填 arxiv-id 列表（抓取时解析元数据），
     keywords 可选。创建只是配置，不触发抓取、不花 token。
@@ -112,8 +98,6 @@ class DirectionLibraryUpdate(BaseModel):
     #: 学科包名。传 null 清空（回到只用内置 schema）；未知包名由 API 层拒绝，
     #: 免得存进一个永远匹配不到任何 schema 的名字。
     discipline: str | None = Field(default=None, max_length=64)
-    # 共享开关（#619）：审批流移除后创建者直接设置「公开给所有人」；None = 不改
-    is_public: bool | None = None
 
 
 class DuplicateCandidatePaper(BaseModel):

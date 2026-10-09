@@ -1,4 +1,4 @@
-"""#737 配置分层：用户偏好存 owner 用户的 settings。旧 system_settings 行的回退已删（#821 E2）。"""
+"""#737 配置分层：偏好存本地用户的 settings。旧 system_settings 行的回退已删（#821 E2）。"""
 
 from sqlalchemy import select
 
@@ -11,15 +11,16 @@ from tests.conftest import register_and_login
 async def _owner_settings_snapshot(session) -> dict:
     from app.services import owner_settings
 
-    owner = await owner_settings.owner_user(session)
+    owner = await owner_settings.local_user(session)
     assert owner is not None
     return dict(owner.settings or {})
 
 
-async def test_owner_is_earliest_active_user(client):
-    """偏好落在最早的活跃用户上——单机就是本地用户。
+async def test_preferences_land_on_the_local_user(client):
+    """偏好落在本地用户（local@polaris.desktop）上。
 
-    老安装库里可能还留着更晚的别的用户行（以前注册过的），直接入库模拟。
+    老安装库里可能还留着以前注册过的别的用户行，甚至比本地用户还早：仍然认本地
+    用户；本地用户行不在（或停用）时退回最早的活跃用户。直接入库模拟。
     """
     import datetime as dt
 
@@ -27,42 +28,36 @@ async def test_owner_is_earliest_active_user(client):
 
     from app.core.db import get_sessionmaker
     from app.services import owner_settings
-    from app.services.owner import reset_owner_cache
 
     await register_and_login(client)
     async with get_sessionmaker()() as session:
         local = await session.scalar(select(User).where(User.email == LOCAL_USER_EMAIL))
-        session.add(
-            User(
-                email="later@e.com",
-                hashed_password=PasswordHelper().hash("x"),
-                is_active=True,
-                is_superuser=False,
-                is_verified=True,
-                display_name="Later",
-                username="later",
-                created_at=local.created_at + dt.timedelta(days=1),
+        for email, delta in (("earlier@e.com", -1), ("later@e.com", 1)):
+            session.add(
+                User(
+                    email=email,
+                    hashed_password=PasswordHelper().hash("x"),
+                    is_active=True,
+                    is_superuser=False,
+                    is_verified=True,
+                    display_name=email,
+                    username=email.split("@")[0],
+                    created_at=local.created_at + dt.timedelta(days=delta),
+                )
             )
-        )
         await session.commit()
 
-        owner = await owner_settings.owner_user(session)
-        assert owner is not None and owner.email == LOCAL_USER_EMAIL
+        user = await owner_settings.local_user(session)
+        assert user is not None and user.email == LOCAL_USER_EMAIL
 
-        # 与 #722 的 owner 守卫共用同一事实源：进程内缓存，首用户失活也不换主……
         local.is_active = False
         await session.commit()
-        owner = await owner_settings.owner_user(session)
-        assert owner is not None and owner.email == LOCAL_USER_EMAIL
-
-        # ……重启进程（这里用 reset 模拟）后顺延到下一位活跃用户
-        reset_owner_cache()
-        owner = await owner_settings.owner_user(session)
-        assert owner is not None and owner.email == "later@e.com"
+        user = await owner_settings.local_user(session)
+        assert user is not None and user.email == "earlier@e.com"
 
 
 async def test_daily_preferences_live_on_the_owner(client):
-    """每日偏好落在 owner 的 settings 上；非 owner 被 #722 的守卫挡在 API 层。"""
+    """每日偏好落在本地用户的 settings 上。"""
     from app.core.db import get_sessionmaker
     from app.services import daily_feed
 

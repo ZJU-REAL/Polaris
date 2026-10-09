@@ -453,7 +453,7 @@ async def model_rerank(
             )
         output.sort(key=lambda item: (-item.score, item.identity))
         try:
-            model = await llm_router.model_name("rerank", user_id)
+            model = await llm_router.model_name("rerank")
         except Exception:  # model metadata is advisory; a successful rerank is still usable
             model = None
         return output[:limit], {

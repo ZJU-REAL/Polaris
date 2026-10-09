@@ -70,7 +70,7 @@ All four reference the same pool paper; they differ in ownership, scope, and wha
 | **Direction library** | `library_papers` / `LibraryPaper` | A public deployment-wide library or a personal one; has a definition, anchors, scoring rubric, ingest cadence | `status` (`candidate`→`scored`/`excluded`→`fetched`→`compiled`; `included` = manual), `relevance_score`, `tldr_note`, `trash_reason`, `scored_at`, tags |
 | **Topic related-work shelf** | `topic_papers` / `TopicPaper` | A topic's reading list ("相关研究") | `source_library_id`, `note`, `added_by`, `trashed_at` / `trashed_by` |
 | **Personal library** | `user_library_entries` / `UserLibraryEntry` | One user's saved papers + browsing history | `dedup_key`, `saved` + `saved_at`, `trashed_at`, snapshot of title/authors/etc., `last_paper_id` (soft link to the live pool paper, `SET NULL`), `note`, `visit_count` / `last_visited_at` |
-| **Daily feed** | `daily_feed_entries` / `DailyFeedEntry` | Lab-wide daily arXiv feed, rolling 7-day window (`DAILY_FEED_RETENTION_DAYS = 7`) | `feed_date`, `primary_category`, `categories`, `announce_type` (`new`/`cross`) |
+| **Daily feed** | `daily_feed_entries` / `DailyFeedEntry` | Daily arXiv feed, rolling 7-day window (`DAILY_FEED_RETENTION_DAYS = 7`) | `feed_date`, `primary_category`, `categories`, `announce_type` (`new`/`cross`) |
 
 All four read the paper's wiki from `paper_wikis`; none of them stores a copy. (The retired
 `wiki_content` / `wiki_snapshot` columns are still on the tables, holding pre-migration data.)
@@ -85,25 +85,17 @@ Key relationships:
 - **Personal library rows with `saved=False` are either browsing history or trash.** A pure browsing
   record and a trashed entry are both `saved=False`; `trashed_at` is what tells them apart. Neither
   keeps a paper alive during garbage collection.
-- **Papers are never owned — only the pool row exists once, and collections point at it.** Ownership
-  and billing are properties of the *library*, not of any paper.
+- **Papers are never owned — only the pool row exists once, and collections point at it.** Usage
+  is recorded against the *library*, not against any paper.
 
-### Who owns and manages a direction library
+### Direction libraries and topics
 
-A library is personal by default; its creator can make it public (visible to every account)
-directly — the approval flow was removed in #593 and the leftover `status` / `review_note` columns
-in #619. `direction_libraries.is_public` is all that is left.
+Polaris has one user, so every direction library is yours: library endpoints only check that you
+are signed in and that the library exists. `direction_libraries.submitted_by` still records who
+created a library (ingest usage is recorded under that user), and the old `is_public` column is
+left in the table unused (#842).
 
-**Management rights no longer follow the origin topic.** `can_manage_library()` in
-`services/libraries.py` accepts exactly two identities:
-
-1. the creator (`direction_libraries.submitted_by`);
-2. anyone, for unowned legacy libraries (`submitted_by` null) — with roles gone (#614) there is no
-   admin to fall back on, and a library nobody can manage would be worse.
-
-Being linked to a topic grants nothing (curators and the admin bypass were removed in #593/#614).
-
-Two consequences worth keeping straight:
+Two things worth keeping straight:
 
 - **`DirectionLibrary.project_id` is history, not ownership.** It records which topic the library was
   originally created from (and is `unique`, since that relationship was 1:1). Libraries created
@@ -117,10 +109,8 @@ Two consequences worth keeping straight:
   library behind this topic" — it resolves the origin library by `project_id`, else the
   first-associated one, else `None` — but it no longer creates anything.
 
-Topic-scoped literature endpoints (`/projects/{id}/...`) use a different gate,
-`get_managed_project()`: the topic's owner passes, plus the creator of the topic's implicit origin
-library. So owning the topic still lets you manage papers *through the topic*, just not through
-`/libraries/{id}/...`.
+Topic-scoped literature endpoints (`/projects/{id}/...`) go through `get_managed_project()`, which
+loads the topic and treats a missing topic as not found.
 
 ## Paper lifecycle
 
@@ -209,7 +199,7 @@ vector (`paper_vectors`) is always produced by the add / ingest paths; the chunk
   `POST /me/library/import`, which has no library.
 - **Author ↔ affiliation** (`services/affiliations.py`): per-author institutions, from OpenAlex
   (structured, for DOI papers) or an LLM read of the title page. The admin setting
-  `affiliations.extraction_mode` (a user preference on the deployment owner since #737) picks
+  `affiliations.extraction_mode` (a preference stored on the local user since #737) picks
   whether this runs at add time (`on_add`) or is folded into the
   compile call.
 

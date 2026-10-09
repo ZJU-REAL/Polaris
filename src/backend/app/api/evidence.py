@@ -32,7 +32,7 @@ async def resolve_library_evidence(
     user: User = Depends(current_active_user),
 ) -> EvidenceResolution:
     library = await libraries_service.get_library(session, library_id)
-    if library is None or not libraries_service.library_visible_to(library, user):
+    if library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
     paper = await papers_service.get_library_paper_view(
         session, library_id=library_id, project_id=None, paper_id=paper_id, with_concepts=False

@@ -1,4 +1,4 @@
-"""平台设置路由（仅平台主人：桌面档=本人；服务器档=首位用户）：机构抽取模式、论文级向量总闸等。"""
+"""平台设置路由（登录即可）：机构抽取模式、论文级向量总闸等。"""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,10 +40,9 @@ from app.services import literature_settings as literature_settings_service
 from app.services import managed_command_watchdog as watchdog_service
 from app.services import tts as tts_service
 from app.services.literature.multi_source import provider_failure_detail
-from app.services.owner import require_owner
 
 router = APIRouter(
-    prefix="/admin/settings", tags=["admin-settings"], dependencies=[Depends(require_owner)]
+    prefix="/admin/settings", tags=["admin-settings"], dependencies=[Depends(current_active_user)]
 )
 
 

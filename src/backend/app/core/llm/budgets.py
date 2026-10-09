@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -100,8 +99,8 @@ def validate_budgets(
             )
 
 
-async def resolve_budget(llm: Any, spec: InputBudget, user_id: uuid.UUID | None) -> int:
-    """从路由器取这个用户此刻生效的预算。
+async def resolve_budget(llm: Any, spec: InputBudget) -> int:
+    """从路由器取此刻生效的预算。
 
     测试替身和未接路由表的调用方没有 ``input_budget``：按默认值走，也就是改动前的
     行为——预算是可选的增强，拿不到时不能让编译/生成本身失败。
@@ -109,4 +108,4 @@ async def resolve_budget(llm: Any, spec: InputBudget, user_id: uuid.UUID | None)
     getter = getattr(llm, "input_budget", None)
     if getter is None:
         return spec.default
-    return await getter(spec, user_id)
+    return await getter(spec)

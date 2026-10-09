@@ -131,7 +131,7 @@ async def test_test_doubles_without_budgets_get_the_default():
         async def complete(self, *a, **k):  # pragma: no cover - 不会被调用
             raise AssertionError
 
-    assert await resolve_budget(_Stub(), LIBRARIAN_FULLTEXT, None) == 24_000
+    assert await resolve_budget(_Stub(), LIBRARIAN_FULLTEXT) == 24_000
 
 
 # ---- 端到端：设置页 → 路由器 ----

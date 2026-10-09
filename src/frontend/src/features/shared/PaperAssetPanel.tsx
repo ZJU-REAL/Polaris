@@ -113,12 +113,10 @@ export function PaperAssetPanel({
   libraryId,
   paperId,
   doi,
-  canManage,
 }: {
   libraryId: string;
   paperId: string;
   doi?: string | null;
-  canManage: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
@@ -244,42 +242,40 @@ export function PaperAssetPanel({
             {downloadMutation.isPending ? tr('下载中…', 'Downloading…') : tr('下载 PDF', 'Download PDF')}
           </button>
         )}
-        {canManage && (
-          <>
-            <input
-              ref={inputRef}
-              type="file"
-              accept="application/pdf,.pdf"
-              hidden
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
-                event.currentTarget.value = '';
-                if (file) uploadMutation.mutate(file);
-              }}
-            />
-            <select
-              className="input sm"
-              aria-label={tr('PDF 共享范围', 'PDF sharing scope')}
-              value={sharingScope}
-              disabled={uploadMutation.isPending}
-              onChange={(event) => setSharingScope(event.target.value as typeof sharingScope)}
-            >
-              <option value="private">{tr('私有授权', 'Private grant')}</option>
-              <option value="library">{tr('本库共享', 'Library shared')}</option>
-              <option value="public">{tr('公开复用', 'Public reuse')}</option>
-            </select>
-            <button className="btn btn-soft sm" disabled={uploadMutation.isPending} onClick={() => inputRef.current?.click()}>
-              <Icon name={uploadMutation.isPending ? 'refresh' : 'plus'} size={13} style={uploadMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
-              {uploadMutation.isPending ? tr('上传并排队…', 'Uploading and queuing…') : tr('上传 PDF', 'Upload PDF')}
+        <>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="application/pdf,.pdf"
+            hidden
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = '';
+              if (file) uploadMutation.mutate(file);
+            }}
+          />
+          <select
+            className="input sm"
+            aria-label={tr('PDF 共享范围', 'PDF sharing scope')}
+            value={sharingScope}
+            disabled={uploadMutation.isPending}
+            onChange={(event) => setSharingScope(event.target.value as typeof sharingScope)}
+          >
+            <option value="private">{tr('私有授权', 'Private grant')}</option>
+            <option value="library">{tr('本库共享', 'Library shared')}</option>
+            <option value="public">{tr('公开复用', 'Public reuse')}</option>
+          </select>
+          <button className="btn btn-soft sm" disabled={uploadMutation.isPending} onClick={() => inputRef.current?.click()}>
+            <Icon name={uploadMutation.isPending ? 'refresh' : 'plus'} size={13} style={uploadMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
+            {uploadMutation.isPending ? tr('上传并排队…', 'Uploading and queuing…') : tr('上传 PDF', 'Upload PDF')}
+          </button>
+          {preferred && (
+            <button className="btn btn-ghost sm" disabled={parseMutation.isPending || parsing} onClick={() => setReparseAsset(preferred)}>
+              <Icon name="refresh" size={13} />
+              {version?.status === 'failed' ? tr('重试解析', 'Retry parsing') : tr('重新解析', 'Reparse')}
             </button>
-            {preferred && (
-              <button className="btn btn-ghost sm" disabled={parseMutation.isPending || parsing} onClick={() => setReparseAsset(preferred)}>
-                <Icon name="refresh" size={13} />
-                {version?.status === 'failed' ? tr('重试解析', 'Retry parsing') : tr('重新解析', 'Reparse')}
-              </button>
-            )}
-          </>
-        )}
+          )}
+        </>
       </div>
 
       {version && (

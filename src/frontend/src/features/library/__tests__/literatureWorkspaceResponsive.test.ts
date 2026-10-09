@@ -14,14 +14,10 @@ const projectLibrary = readFileSync(
   fileURLToPath(new URL('../../wiki/WikiPage.tsx', import.meta.url)),
   'utf-8',
 );
-const publicLibrary = readFileSync(
-  fileURLToPath(new URL('../../libraries/LibraryBrowse.tsx', import.meta.url)),
-  'utf-8',
-);
 
 describe('literature workspace responsive layout', () => {
   it('marks each literature workspace without changing shared split behavior', () => {
-    for (const source of [personalLibrary, projectLibrary, publicLibrary]) {
+    for (const source of [personalLibrary, projectLibrary]) {
       expect(source).toContain('literature-workspace-tabs');
       expect(source).toContain('literature-workspace-card');
     }

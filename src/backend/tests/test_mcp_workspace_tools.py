@@ -244,7 +244,7 @@ async def test_list_and_get_library(client):
         "get_library",
         {"project_id": project_id, "library_id": str(uuid.uuid4())},
     )
-    assert "不存在或无权访问" in message
+    assert "不存在" in message
 
 
 # ---- 稿件 ----

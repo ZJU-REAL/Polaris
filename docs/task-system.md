@@ -215,7 +215,7 @@ leak into topic task lists. `kind` is stable across that migration, so it is the
 `LIBRARY_TASK_KINDS` in `src/frontend/src/features/voyages/VoyagesPage.tsx`.
 
 `daily_feed_sync` is the extreme case: it is a library-level kind that has *no* library either. Both
-scope columns are null because the daily feed is shared by every account.
+scope columns are null because the daily feed belongs to no single library.
 
 ---
 
@@ -227,8 +227,7 @@ scope columns are null because the daily feed is shared by every account.
 clauses:
 
 1. `project_id` is one of the topics I own (`projects.owner_id`; the membership table was removed in #625);
-2. `library_id` is one of the libraries I created (`direction_libraries.submitted_by`; curators
-   were removed in #593);
+2. `library_id` is set — every library is the user's own (#842);
 3. I started this run myself (`voyage_runs.created_by`) **and** the run has a scope (at least one of
    `project_id` / `library_id` is set);
 4. the run is platform-level (both scope ids null, e.g. the daily fetch) — visible to every
@@ -237,8 +236,7 @@ clauses:
 Clause 2 exists because a library task's `project_id` is deliberately left empty
 (`create_ingest_voyage` sets only `library_id`, so library tasks do not pollute topic task lists).
 Filtering by topic membership alone would hide them entirely, and standalone libraries with no origin
-topic are the normal case. Merely *linking* a library to a topic (`topic_source_libraries`) grants
-nothing here: the link means the topic consumes the library's papers, not that its members run it.
+topic are the normal case.
 
 Then, if `project_id` is passed as a query parameter, the list is additionally narrowed to that
 topic's own tasks **and library kinds are excluded** — those belong on the Library Tasks page.
@@ -256,14 +254,13 @@ reported as `404 VOYAGE_NOT_FOUND`, not `403` — existence is not leaked.
    the admin-only rule went away with roles (#614).
 2. **I started it** (`created_by`): the run I kicked off stays open to me.
 3. **Topic-scoped run** (`project_id` set): the caller must own that topic.
-4. **Library-scoped run** (`library_id` set): the caller must pass `can_manage_library()` — i.e. be
-   the library's creator (unowned legacy libraries are manageable by anyone).
+4. **Library-scoped run** (`library_id` set): visible — every library is the user's own (#842).
 
 `_visible_filter()` is the SQL mirror of this predicate and the two must be changed together:
 anything you can see in the list must open. (They used to diverge — the list counted tasks of
 libraries merely linked to my topic, the detail required library write access, so those rows 404ed.)
 
-`can_view_voyage()` needs the full `User` object (creator / library-ownership lookups);
+`can_view_voyage()` needs the full `User` object (creator / topic-ownership lookups);
 `get_voyage()` loads it when the call site only has a `user_id`.
 
 ### 3.3 Cancel, retry, and talking to a run
@@ -655,8 +652,7 @@ with `checks: [{"kind": "no_error"}]`, no approvals:
 
 Steps 1–6 hand values forward through `ctx.checkpoint` (`watermark_candidate`, `compiled_count`, …)
 and call `ctx.log()` per paper, so the terminal shows "scoring 12/50: `<title>`" rather than sitting
-mute for twenty minutes. Billing follows library ownership: a public library uses the system key, a
-personal one uses the creator's, and either way tokens are recorded against `library_id`.
+mute for twenty minutes. Usage is recorded under the library's creator and against `library_id`.
 
 **If it breaks.** Say arXiv is unreachable and step 1 returns an `error`. Pipeline mode allows 1
 attempt, so there is no in-place retry; there is no `on_failure: "fail"`, so the run goes to

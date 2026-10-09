@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # ---- 抽取模式 ----
 # on_add：论文入库/补全阶段就用专门的 LLM 调用解析机构（默认）；
 # on_compile：跳过专门调用，把机构映射折叠进 wiki 编译那一次 LLM（省一次调用）。
-# 用户偏好（#737 配置分层）：存 owner 用户的 settings['affiliations.extraction_mode']。
+# 用户偏好（#737 配置分层）：存本地用户的 settings['affiliations.extraction_mode']。
 AFFILIATION_MODE_USER_KEY = "affiliations.extraction_mode"
 AFFILIATION_MODES = ("on_add", "on_compile")
 DEFAULT_AFFILIATION_MODE = "on_add"
@@ -41,7 +41,7 @@ class InvalidAffiliationModeError(ValueError):
 
 
 async def get_affiliation_extraction_mode(session: AsyncSession) -> str:
-    """读取机构抽取模式（owner 用户偏好，默认 on_add；非法存量值回落默认）。"""
+    """读取机构抽取模式（本地用户偏好，默认 on_add；非法存量值回落默认）。"""
     value = await owner_settings.read_setting(
         session, AFFILIATION_MODE_USER_KEY
     )

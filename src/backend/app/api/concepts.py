@@ -138,7 +138,7 @@ async def get_concept(
     scope_library_id = library_id  # 只在显式带库时过滤关联论文
     if library_id is not None:
         library = await libraries_service.get_library(session, library_id)
-        if library is None or not libraries_service.library_visible_to(library, user):
+        if library is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
         project_id = library.project_id
     else:

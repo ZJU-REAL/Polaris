@@ -84,8 +84,7 @@ research topic you want the agent to inspect. The user-scoped `recall` and
 `remember` tools derive identity from the credential and need no project ID.
 The server verifies your access on every call. A task, manuscript, or library
 belonging to another topic is reported as not found, even when you can access
-it through another topic. Library visibility follows the platform's existing
-rules: your own personal libraries plus every shared library, and nothing more.
+it through another topic.
 
 You can also find a topic ID in the app's URL: `/t/<topic-id>`.
 
@@ -335,7 +334,7 @@ that breaks a tool fails the build rather than surfacing in your agent.
 | `缺少或非法的 project_id` | Call `list_accessible_projects`, select the matching topic, and pass its `project_id` to the next tool. |
 | `项目不存在或无权访问` | The `project_id` is wrong, or you can't access that topic. Call `list_accessible_projects` again to get the current accessible set. |
 | `该任务不属于本课题` / `本课题内不存在该稿件` | The id belongs to another topic. MCP sessions are scoped to one topic at a time. |
-| `文献库不存在或无权访问` | Someone else's personal library. Only your own and shared libraries are visible. |
+| `文献库不存在` | The library id is wrong or the library was deleted. Call `list_libraries` for the current ids. |
 | Empty corpus, no papers found | No library is linked to the topic yet — check `get_project_status`'s `source_libraries`. |
 | `mode` comes back `keyword` when you asked for `semantic` | The embedding service is down; results are degraded but usable. |
 | A figure download URL returns `FIGURE_LINK_INVALID` | The signed URL expired or was modified. Call `get_paper_figure` again to create a new link. |

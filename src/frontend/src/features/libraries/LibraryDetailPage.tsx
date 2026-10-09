@@ -4,14 +4,10 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { WikiWorkbench } from '../wiki/WikiPage';
-import { LibraryBrowse } from './LibraryBrowse';
 
 /* ============================================================
    /libraries/:id — 文献库详情（P5c + P6 治理）
-   - 可管理者（创建者）：完整工作台
-     （论文/概念/图谱/对话/建库/笔记/治理）。有起源课题的库走 project 作用域端点；
-     独立库（project_id=NULL）同一套工作台改走 /libraries 端点。
-   - 其他人：干净的只读浏览（论文 + 概念）。
+   完整工作台（论文/概念/图谱/对话/建库/笔记/治理），数据走 /libraries 端点。
    ============================================================ */
 
 export function LibraryDetailPage() {
@@ -58,21 +54,10 @@ export function LibraryDetailPage() {
     );
   }
 
-  const canManage = lib.can_manage;
-
   return (
     <div className="page fadeup page-fill" style={{ maxWidth: 1360, paddingBottom: 24 }}>
       {/* 库名与返回入口都在顶栏面包屑里（实验室 › 文献库 › 库名），页面不再单占一行 */}
-      {canManage ? (
-        <WikiWorkbench
-          pid={lib.project_id ?? undefined}
-          libraryId={lib.id}
-          canManage={canManage}
-          canManageDiscovery={canManage}
-        />
-      ) : (
-        <LibraryBrowse libraryId={lib.id} />
-      )}
+      <WikiWorkbench pid={lib.project_id ?? undefined} libraryId={lib.id} />
     </div>
   );
 }

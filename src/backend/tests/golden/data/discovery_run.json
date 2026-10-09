@@ -96,7 +96,6 @@
   },
   "create_library": {
     "cadence": null,
-    "can_manage": true,
     "concept_count": 0,
     "created_at": "<ts>",
     "definition": {
@@ -114,19 +113,14 @@
     "discipline": null,
     "id": "<uuid-2>",
     "interdisciplinary_domains": null,
-    "is_mine": false,
-    "is_owner": true,
-    "is_public": false,
     "last_compiled_at": null,
     "last_synced_at": null,
     "library_kind": "standard",
     "monthly_budget": null,
     "name": "Discovery Golden Library",
-    "owner_name": "Discovery Golden",
     "paper_count": 0,
     "project_id": null,
     "statement": "Deterministic golden-transcript library for the hypothesis pipeline.",
-    "submitted_by": "<uuid-1>",
     "updated_at": "<ts>"
   },
   "create_project": {

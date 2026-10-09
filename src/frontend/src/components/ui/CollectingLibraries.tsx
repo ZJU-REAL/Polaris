@@ -106,11 +106,6 @@ export function CollectingLibraries({
                 <span className="row gap6" style={{ minWidth: 0 }}>
                   <Icon name="layers" size={12} style={{ color: 'var(--text-3)' }} />
                   <span className="ellipsis" style={{ fontSize: 13 }}>{l.name}</span>
-                  {!l.is_public && (
-                    <span className="pill sm" style={{ background: 'var(--surface-3)', fontSize: 10 }}>
-                      {tr('个人', 'personal')}
-                    </span>
-                  )}
                 </span>
                 <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
                   {tr('相关度', 'relevance')} {scoreText(l.relevance_score)}

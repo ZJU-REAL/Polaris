@@ -26,12 +26,10 @@ from app.services import papers as papers_service
 router = APIRouter(tags=["paper-assets"])
 
 
-async def _library_for_manager(session: AsyncSession, library_id: uuid.UUID, user: User):
+async def _library(session: AsyncSession, library_id: uuid.UUID):
     library = await libraries_service.get_library(session, library_id)
-    if library is None or not libraries_service.library_visible_to(library, user):
+    if library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
-    if not await libraries_service.can_manage_library(session, user=user, library=library):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_ASSET_MANAGE_FORBIDDEN")
     return library
 
 
@@ -74,7 +72,7 @@ async def list_paper_assets(
     user: User = Depends(current_active_user),
 ) -> PaperAssetPage:
     library = await libraries_service.get_library(session, library_id)
-    if library is None or not libraries_service.library_visible_to(library, user):
+    if library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
     await _paper_in_library(session, library_id, paper_id, user)
     rows = await asset_service.list_assets(session, paper_id=paper_id, library_id=library_id)
@@ -101,7 +99,7 @@ async def upload_paper_asset(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> PaperAssetRead:
-    library = await _library_for_manager(session, library_id, user)
+    library = await _library(session, library_id)
     paper = await _paper_in_library(session, library_id, paper_id, user)
     content = await file.read(asset_service.MAX_PDF_BYTES + 1)
     try:
@@ -139,7 +137,7 @@ async def reuse_paper_asset(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> AssetGrantRead:
-    library = await _library_for_manager(session, library_id, user)
+    library = await _library(session, library_id)
     paper = await _paper_in_library(session, library_id, paper_id, user)
     asset = await session.get(asset_service.PaperAsset, body.asset_id)
     if asset is None or asset.paper_id != paper.id:
@@ -167,7 +165,7 @@ async def reuse_public_paper_asset(
     user: User = Depends(current_active_user),
 ) -> AssetGrantRead:
     """Link the existing public PDF for a DOI/identifier-resolved paper."""
-    library = await _library_for_manager(session, library_id, user)
+    library = await _library(session, library_id)
     await _paper_in_library(session, library_id, paper_id, user)
     try:
         grant = await asset_service.grant_public_asset_for_paper(
@@ -192,7 +190,7 @@ async def download_paper_asset(
     user: User = Depends(current_active_user),
 ) -> FileResponse:
     library = await libraries_service.get_library(session, library_id)
-    if library is None or not libraries_service.library_visible_to(library, user):
+    if library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
     await _paper_in_library(session, library_id, paper_id, user)
     row = await asset_service.readable_asset(session, asset_id=asset_id, library_id=library_id)
@@ -230,7 +228,7 @@ async def create_paper_content_version(
     queue: TaskQueue = Depends(get_task_queue),
 ) -> PaperContentVersionRead:
     """Queue a fresh parse attempt for an explicitly granted PDF asset."""
-    library = await _library_for_manager(session, library_id, user)
+    library = await _library(session, library_id)
     paper = await _paper_in_library(session, library_id, paper_id, user)
     row = await asset_service.readable_asset(session, asset_id=asset_id, library_id=library_id)
     if row is None or row[0].paper_id != paper.id:
@@ -252,7 +250,7 @@ async def get_current_paper_content_version(
     user: User = Depends(current_active_user),
 ) -> PaperContentVersionRead:
     library = await libraries_service.get_library(session, library_id)
-    if library is None or not libraries_service.library_visible_to(library, user):
+    if library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
     await _paper_in_library(session, library_id, paper_id, user)
     version = await content_service.current_content_version(session, paper_id=paper_id)

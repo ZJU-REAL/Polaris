@@ -181,7 +181,7 @@ function AgentRow({
   agent: AcpAgentRead;
   /** 它在模型路由里的位置：默认模型 / 没有默认时接管 / 都不是 */
   modelRole: 'default' | 'takeover' | null;
-  /** 取不到路由表（非主人）时不给这个按钮 */
+  /** 取不到路由表时不给这个按钮 */
   onMakeDefault?: () => void;
   makingDefault?: boolean;
 }) {
@@ -234,7 +234,6 @@ function AgentRow({
         <strong style={{ fontSize: 14 }}>{agent.name || agent.slug}</strong>
         <span className="pill sm">{agent.template === 'custom' ? tr('自定义', 'Custom') : agent.template}</span>
         {!agent.enabled && <span className="pill sm">{tr('已停用', 'Off')}</span>}
-        {agent.shared && <span className="pill sm">{tr('已共享', 'Shared')}</span>}
         {modelRole === 'default' && (
           <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
             {tr('默认模型', 'Default model')}
@@ -356,15 +355,6 @@ function AgentRow({
               aria-label={tr('启用', 'Enabled')}
             />
             {tr('启用（在助手里可选）', 'Enabled (selectable in the assistant)')}
-          </label>
-          <label className="row gap8" style={{ alignItems: 'center', fontSize: 13 }}>
-            <Switch
-              checked={agent.shared}
-              disabled={update.isPending}
-              onChange={(v) => update.mutate({ shared: v })}
-              aria-label={tr('共享', 'Shared')}
-            />
-            {tr('其他账号也能用（花的是你的额度）', 'Other accounts can use it too (on your quota)')}
           </label>
         </div>
       </div>
@@ -585,7 +575,7 @@ export function AcpAgentsSettings() {
   const [customOpen, setCustomOpen] = useState(false);
   const agents = agentsQ.data ?? [];
   const taken = agents.map((a) => a.slug);
-  // 路由表：标出谁是默认模型 / 谁在接管；非主人取不到就不标、不给按钮
+  // 路由表：标出谁是默认模型 / 谁在接管；取不到就不标、不给按钮
   const routesQ = useQuery({ queryKey: ['llm', 'routes'], queryFn: () => api.getLlmRoutes(), retry: false });
   const routes = routesQ.data;
   const defaultRoute = routes?.find((r) => r.stage === 'default');
@@ -631,7 +621,7 @@ export function AcpAgentsSettings() {
           <div className="empty">{tr('加载中…', 'Loading…')}</div>
         ) : agentsQ.isError ? (
           <div className="empty">
-            {tr('无法加载（只有平台主人能管理智能体）', 'Could not load (only the platform owner can manage agents)')}
+            {tr('无法加载智能体列表', 'Could not load the agents')}
             <div style={{ marginTop: 10 }}>
               <button className="btn btn-soft sm" onClick={() => void agentsQ.refetch()}>
                 {tr('重试', 'Retry')}

@@ -63,7 +63,7 @@ const SAMPLE_TOPIC = {
 /** 判重用：两种语言的名字都算「已经有示例课题了」。 */
 const SAMPLE_NAMES = [SAMPLE_TOPIC.zh.name, SAMPLE_TOPIC.en.name];
 
-/** 示例课题绑定的文献库（按名字匹配可见库；没有就退回第一个公共库）。 */
+/** 示例课题绑定的文献库（按名字匹配；没有就不绑）。 */
 const SAMPLE_LIBRARY_NAMES = ['Recursive Self-Improvement', 'RSI'];
 
 /** 示例课题的相关研究里预置的三篇论文（arXiv id）。 */
@@ -75,7 +75,7 @@ export function StartPage() {
   const { projects, isLoading, currentProjectId, setCurrentProjectId } = useProject();
   const [creatingSample, setCreatingSample] = useState(false);
 
-  // 示例课题的语料：挑一个已激活的公共库；没有就空着建（允许无语料）
+  // 示例课题的语料：有 RSI 方向的文献库就绑上；没有就空着建（允许无语料）
   const librariesQuery = useLibraries();
 
   function openTopic(id: string) {
@@ -92,11 +92,10 @@ export function StartPage() {
       return;
     }
     const preset = getLang() === 'en' ? SAMPLE_TOPIC.en : SAMPLE_TOPIC.zh;
-    // 语料优先绑 RSI 文献库（示例课题就是讲这个方向）；找不到才退回任一公共库
-    const visible = librariesQuery.data ?? [];
-    const lib =
-      visible.find((l) => SAMPLE_LIBRARY_NAMES.some((n) => l.name.toLowerCase().includes(n.toLowerCase()))) ??
-      visible.find((l) => l.is_public);
+    // 语料绑 RSI 文献库（示例课题就是讲这个方向）
+    const lib = (librariesQuery.data ?? []).find((l) =>
+      SAMPLE_LIBRARY_NAMES.some((n) => l.name.toLowerCase().includes(n.toLowerCase())),
+    );
     setCreatingSample(true);
     try {
       const created = await api.createProject({

@@ -14,7 +14,6 @@ from app.models.library_direction import DirectionLibrary
 from app.models.paper import Paper
 from app.models.paper_assets import AssetGrant, PaperAsset, PdfBlob
 from app.models.user import User
-from app.services import libraries as libraries_service
 
 MAX_PDF_BYTES = 100 * 1024 * 1024
 SHARING_SCOPES = frozenset({"private", "library", "public"})
@@ -78,12 +77,6 @@ def _write_blob(path: Path, content: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
-async def can_manage_library(
-    session: AsyncSession, *, library: DirectionLibrary, user: User
-) -> bool:
-    return await libraries_service.can_manage_library(session, user=user, library=library)
-
-
 def _paper_identity_keys(paper: Paper) -> set[str]:
     keys = {paper.dedup_key.lower()} if paper.dedup_key else set()
     if paper.doi:
@@ -111,8 +104,6 @@ async def create_or_reuse_asset(
     The blob is globally deduplicated, while the asset and grant remain explicit
     records. Existing private assets are never implicitly reused by another library.
     """
-    if not await can_manage_library(session, library=library, user=user):
-        raise AssetPermissionError("LIBRARY_ASSET_MANAGE_FORBIDDEN")
     if sharing_scope not in SHARING_SCOPES:
         raise AssetError("invalid sharing scope")
     if source not in {"oa", "upload", "extension", "arxiv", "manual", "unknown"}:
@@ -205,8 +196,6 @@ async def grant_existing_asset(
     user: User,
 ) -> AssetGrant:
     """Grant an existing asset only when its sharing policy allows reuse."""
-    if not await can_manage_library(session, library=target_library, user=user):
-        raise AssetPermissionError("LIBRARY_ASSET_MANAGE_FORBIDDEN")
     asset = await session.get(PaperAsset, asset_id)
     if asset is None:
         raise AssetNotFoundError("ASSET_NOT_FOUND")

@@ -143,14 +143,10 @@ async def test_create_library_admin_independent(client):
     body = resp.json()
     assert body["name"] == "独立库"
     assert body["project_id"] is None
-    assert body["is_mine"] is False
-    # P10：新建库即刻可用的个人库（非 public），无需审批（status 列已随 #619 删除）
-    assert body["is_public"] is False
 
 
 async def test_create_library_any_user_allowed(client):
-    """P10：建库权限放开——任意登录用户可建，新库 active 个人库、创建者自动成为策展人。"""
-    await _hdr(client, "p9b-admin5@example.com")  # 首个注册者=平台 admin，占位
+    """登录即可建库，新库即刻可用。"""
     member = await _hdr(client, "p9b-member5@example.com")
     resp = await client.post(
         "/api/libraries",
@@ -158,9 +154,7 @@ async def test_create_library_any_user_allowed(client):
         headers=member,
     )
     assert resp.status_code == 201, resp.text
-    body = resp.json()
-    assert body["is_public"] is False
-    assert body["can_manage"] is True  # 创建者可管理自己的个人库
+    assert resp.json()["name"] == "x"
 
 
 async def test_source_libraries_read_write_api(client):

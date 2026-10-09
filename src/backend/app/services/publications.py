@@ -10,17 +10,14 @@ import re
 import uuid
 from typing import Any, cast
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
 from app.models.library_direction import (
-    DirectionLibrary,
     LibraryPaper,
-    TopicSourceLibrary,
 )
 from app.models.paper import Paper
-from app.models.project import Project
 from app.models.publication import UserAuthorProfile, UserPublication
 from app.services.dedup import dedup_key_for as shared_dedup_key_for
 from app.services.paper_import import (
@@ -144,25 +141,12 @@ async def match_from_library(session: AsyncSession, *, user_id: uuid.UUID) -> in
     profile = await get_profile(session, user_id=user_id)
     if profile is None:
         return 0
-    # 扫描范围 = 用户课题关联的库 ∪ 自己创建的库。走关联表而不是
-    # DirectionLibrary.project_id：后者只认「当初从这个课题建的」，会漏掉课题
-    # 关联的独立库——而独立库是常态（P9c 起建课题不再自动建库）。
-    my_projects = select(Project.id).where(Project.owner_id == user_id)
-    my_libraries = select(TopicSourceLibrary.library_id).where(
-        TopicSourceLibrary.topic_id.in_(my_projects)
-    )
-    my_created = select(DirectionLibrary.id).where(DirectionLibrary.submitted_by == user_id)
+    # 扫描范围 = 全部文献库（单用户本地应用，每个库都是这个人的）
     stmt = (
         select(Paper)
         .distinct()
         .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-        .where(
-            or_(
-                LibraryPaper.library_id.in_(my_libraries),
-                LibraryPaper.library_id.in_(my_created),
-            ),
-            LibraryPaper.status != "excluded",
-        )
+        .where(LibraryPaper.status != "excluded")
     )
     papers = (await session.execute(stmt)).scalars().all()
     seen = await _existing_dedup_keys(session, user_id)

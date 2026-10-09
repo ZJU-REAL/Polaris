@@ -1,4 +1,4 @@
-"""LLM 配置路由（仅平台主人：桌面档=本人；服务器档=首位用户）。
+"""LLM 配置路由（模型 API、各环节路由、用量、调用日志）。
 
 接口清单见 docs/task-system.md §7（原 api-m1.md §2）。"""
 
@@ -28,25 +28,8 @@ from app.schemas.llm_admin import (
     UsageRow,
 )
 from app.services import llm_admin as llm_admin_service
-from app.services.owner import is_owner, require_owner
 
 router = APIRouter(prefix="/admin/llm", tags=["admin-llm"])
-
-
-async def config_scope(
-    user: User = Depends(current_active_user),
-    session: AsyncSession = Depends(get_session),
-) -> uuid.UUID | None:
-    """这次请求该读写哪一张配置表。
-
-    部署主人动部署级那张（``None`` → owner IS NULL），也就是所有人的回退底；
-    其他人动自己那张。同一个设置页，谁打开就配谁的——公有云里第二个注册的人
-    本来连页面都打不开（``require_owner``），而「登录后提示去配模型」这件事
-    只有在他真的配得了的时候才不是一句空话（#801）。
-
-    用量与调用日志不走这里：那两处看的是整个部署的账，仍然只对主人开放。
-    """
-    return None if await is_owner(session, user) else user.id
 
 
 def _provider_read(provider: LLMProviderConfig) -> ProviderRead:
@@ -62,10 +45,8 @@ def _provider_read(provider: LLMProviderConfig) -> ProviderRead:
     )
 
 
-async def _get_provider_or_404(
-    session: AsyncSession, provider_id: uuid.UUID, owner_id: uuid.UUID | None = None
-) -> LLMProviderConfig:
-    provider = await llm_admin_service.get_provider(session, provider_id, owner_id)
+async def _get_provider_or_404(session: AsyncSession, provider_id: uuid.UUID) -> LLMProviderConfig:
+    provider = await llm_admin_service.get_provider(session, provider_id)
     if provider is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROVIDER_NOT_FOUND")
     return provider
@@ -74,9 +55,9 @@ async def _get_provider_or_404(
 @router.get("/providers", response_model=list[ProviderRead])
 async def list_providers(
     session: AsyncSession = Depends(get_session),
-    scope: uuid.UUID | None = Depends(config_scope),
+    _user: User = Depends(current_active_user),
 ) -> list[ProviderRead]:
-    providers = await llm_admin_service.list_providers(session, scope)
+    providers = await llm_admin_service.list_providers(session)
     return [_provider_read(p) for p in providers]
 
 
@@ -84,10 +65,10 @@ async def list_providers(
 async def create_provider(
     data: ProviderCreate,
     session: AsyncSession = Depends(get_session),
-    scope: uuid.UUID | None = Depends(config_scope),
+    _user: User = Depends(current_active_user),
 ) -> ProviderRead:
     try:
-        provider = await llm_admin_service.create_provider(session, data, scope)
+        provider = await llm_admin_service.create_provider(session, data)
     except IntegrityError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="PROVIDER_NAME_EXISTS") from e
     return _provider_read(provider)
@@ -98,9 +79,9 @@ async def update_provider(
     provider_id: uuid.UUID,
     data: ProviderUpdate,
     session: AsyncSession = Depends(get_session),
-    scope: uuid.UUID | None = Depends(config_scope),
+    _user: User = Depends(current_active_user),
 ) -> ProviderRead:
-    provider = await _get_provider_or_404(session, provider_id, scope)
+    provider = await _get_provider_or_404(session, provider_id)
     provider = await llm_admin_service.update_provider(session, provider, data)
     return _provider_read(provider)
 
@@ -109,18 +90,18 @@ async def update_provider(
 async def delete_provider(
     provider_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    scope: uuid.UUID | None = Depends(config_scope),
+    _user: User = Depends(current_active_user),
 ) -> None:
-    provider = await _get_provider_or_404(session, provider_id, scope)
+    provider = await _get_provider_or_404(session, provider_id)
     await llm_admin_service.delete_provider(session, provider)
 
 
 @router.get("/routes", response_model=list[RouteItem])
 async def list_routes(
     session: AsyncSession = Depends(get_session),
-    scope: uuid.UUID | None = Depends(config_scope),
+    _user: User = Depends(current_active_user),
 ) -> list[RouteItem]:
-    routes = await llm_admin_service.list_routes(session, scope)
+    routes = await llm_admin_service.list_routes(session)
     return [RouteItem.model_validate(r, from_attributes=True) for r in routes]
 
 
@@ -128,10 +109,10 @@ async def list_routes(
 async def replace_routes(
     items: list[RouteItem],
     session: AsyncSession = Depends(get_session),
-    scope: uuid.UUID | None = Depends(config_scope),
+    _user: User = Depends(current_active_user),
 ) -> list[RouteItem]:
     try:
-        routes = await llm_admin_service.replace_routes(session, items, scope)
+        routes = await llm_admin_service.replace_routes(session, items)
     except llm_admin_service.InvalidRouteError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return [RouteItem.model_validate(r, from_attributes=True) for r in routes]
@@ -139,7 +120,7 @@ async def replace_routes(
 
 @router.get("/input-budgets", response_model=list[InputBudgetSpec])
 async def list_input_budgets(
-    _scope: uuid.UUID | None = Depends(config_scope),
+    _user: User = Depends(current_active_user),
 ) -> list[InputBudgetSpec]:
     """可调的输入预算清单（#811）。设置页照这张表画输入框，不在前端另抄一份。"""
     return [
@@ -159,20 +140,20 @@ async def list_input_budgets(
 async def test_model(
     data: TestModelRequest,
     session: AsyncSession = Depends(get_session),
-    scope: uuid.UUID | None = Depends(config_scope),
+    _user: User = Depends(current_active_user),
 ) -> TestModelResult:
     """最小化探测 provider+model 连通性（不经过路由表，不记账、不写调用日志）。"""
     if data.acp_agent_id is not None:
-        # 外部 agent（#840）：真拉起来答一句。与路由同一条可见性规则
+        # 外部 agent（#840）：真拉起来答一句
         from app.models.acp_agent import AcpAgent
 
         agent = await session.get(AcpAgent, data.acp_agent_id)
-        if agent is None or (scope is not None and not agent.shared):
+        if agent is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ACP_AGENT_NOT_FOUND")
         ok, latency_ms, error = await llm_admin_service.test_agent(agent, data.model)
         return TestModelResult(ok=ok, latency_ms=latency_ms, error=error)
     assert data.provider_id is not None
-    provider = await _get_provider_or_404(session, data.provider_id, scope)
+    provider = await _get_provider_or_404(session, data.provider_id)
     ok, latency_ms, error = await llm_admin_service.test_model(
         provider, data.model, data.capability
     )
@@ -181,7 +162,7 @@ async def test_model(
 
 @router.get("/usage", response_model=list[UsageRow])
 async def usage_report(
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
     project_id: uuid.UUID | None = Query(default=None),
     user_id: uuid.UUID | None = Query(default=None),
     days: int = Query(default=30, ge=1, le=365),
@@ -240,7 +221,7 @@ def _call_log_row(log: LLMCallLog) -> CallLogRow:
 @router.get("/call-logs/settings", response_model=CallLogSettings)
 async def get_call_log_settings(
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> CallLogSettings:
     return CallLogSettings(enabled=await llm_admin_service.get_call_logging_enabled(session))
 
@@ -249,7 +230,7 @@ async def get_call_log_settings(
 async def put_call_log_settings(
     data: CallLogSettings,
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> CallLogSettings:
     enabled = await llm_admin_service.set_call_logging_enabled(session, data.enabled)
     return CallLogSettings(enabled=enabled)
@@ -261,7 +242,7 @@ async def list_call_logs(
     offset: int = Query(default=0, ge=0),
     stage: str | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> CallLogPage:
     total, rows = await llm_admin_service.list_call_logs(
         session, stage=stage, limit=limit, offset=offset
@@ -272,7 +253,7 @@ async def list_call_logs(
 @router.delete("/call-logs")
 async def clear_call_logs(
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> dict[str, int]:
     deleted = await llm_admin_service.clear_call_logs(session)
     return {"deleted": deleted}
@@ -282,7 +263,7 @@ async def clear_call_logs(
 async def get_call_log(
     log_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> CallLogDetail:
     log = await llm_admin_service.get_call_log(session, log_id)
     if log is None:

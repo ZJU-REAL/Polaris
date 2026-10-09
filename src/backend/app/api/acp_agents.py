@@ -1,7 +1,6 @@
 """外部 agent（ACP 后端）的管理面（#836）。
 
-门槛是 **owner**，与外部 MCP 服务器同一条理由：登记一个 agent 等于声明「服务端进程
-可以拉起这条命令」，那是在服务器上执行任意程序的能力。桌面档位下 owner 就是本人。
+登记一个 agent 等于声明「本地引擎可以拉起这条命令」。门槛是登录（本地会话）。
 
 env 只进不出：写入时加密落库，读取时只回键名。
 """
@@ -14,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.models.acp_agent import AcpAgent
 from app.models.user import User
@@ -21,7 +21,6 @@ from app.services.acp import registry as acp_registry
 from app.services.acp.client import PERMISSION_POLICIES
 from app.services.acp.templates import CUSTOM, TEMPLATES, detect, get_template
 from app.services.mcp_hub.registry import decrypt_env, encrypt_env
-from app.services.owner import require_owner
 
 router = APIRouter(prefix="/acp-agents", tags=["acp-agents"])
 
@@ -40,7 +39,6 @@ class AcpAgentRead(BaseModel):
     args: list[Any] | None
     permission_policy: str
     enabled: bool
-    shared: bool
     last_probe: dict[str, Any] | None
     last_error: str | None
     last_probed_at: Any = None
@@ -62,7 +60,6 @@ class AcpAgentCreate(BaseModel):
     #: 新登记默认 ask（#838）：每次要改东西都问用户；没人回答时与 deny 一样拒绝
     permission_policy: str = "ask"
     enabled: bool = True
-    shared: bool = False
 
 
 class AcpAgentUpdate(BaseModel):
@@ -75,7 +72,6 @@ class AcpAgentUpdate(BaseModel):
     env: dict[str, str] | None = None
     permission_policy: str | None = None
     enabled: bool | None = None
-    shared: bool | None = None
 
 
 def _read(row: AcpAgent) -> AcpAgentRead:
@@ -108,7 +104,7 @@ async def _agents_changed(agent_id: uuid.UUID) -> None:
 
 
 @router.get("/templates")
-async def list_templates(_owner: User = Depends(require_owner)) -> list[dict[str, Any]]:
+async def list_templates(_user: User = Depends(current_active_user)) -> list[dict[str, Any]]:
     """内置模板 + 这台机器上装没装（只查 PATH，不拉起进程）。"""
     return [{**t.as_dict(), **detect(t)} for t in TEMPLATES]
 
@@ -116,7 +112,7 @@ async def list_templates(_owner: User = Depends(require_owner)) -> list[dict[str
 @router.get("", response_model=list[AcpAgentRead])
 async def list_agents(
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> list[AcpAgentRead]:
     rows = await session.execute(select(AcpAgent).order_by(AcpAgent.created_at))
     return [_read(row) for row in rows.scalars().all()]
@@ -126,7 +122,7 @@ async def list_agents(
 async def create_agent(
     data: AcpAgentCreate,
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> AcpAgentRead:
     _check_policy(data.permission_policy)
     _check_env(data.env)
@@ -150,7 +146,6 @@ async def create_agent(
         env_encrypted=encrypt_env(data.env),
         permission_policy=data.permission_policy,
         enabled=data.enabled,
-        shared=data.shared,
     )
     session.add(row)
     await session.commit()
@@ -171,7 +166,7 @@ async def update_agent(
     agent_id: uuid.UUID,
     data: AcpAgentUpdate,
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> AcpAgentRead:
     row = await _get(session, agent_id)
     fields = data.model_dump(exclude_unset=True)
@@ -181,7 +176,7 @@ async def update_agent(
     if "env" in fields:
         _check_env(fields["env"])
         row.env_encrypted = encrypt_env(fields["env"])
-    for key in ("name", "command", "enabled", "shared"):
+    for key in ("name", "command", "enabled"):
         if key in fields and fields[key] is not None:
             setattr(row, key, fields[key])
     if "args" in fields:
@@ -205,7 +200,7 @@ async def update_agent(
 async def probe_agent(
     agent_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> AcpAgentRead:
     """真拉起一次、做完握手。失败是**数据**（写进 last_error），不是 500。"""
     row = await _get(session, agent_id)
@@ -219,7 +214,7 @@ async def probe_agent(
 async def delete_agent(
     agent_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    _owner: User = Depends(require_owner),
+    _user: User = Depends(current_active_user),
 ) -> None:
     row = await _get(session, agent_id)
     from app.services.acp.pool import get_pool

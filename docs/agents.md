@@ -51,8 +51,8 @@ with its own command, arguments and environment variables.
 4. In the assistant panel, choose the agent from the backend picker. The choice
    is remembered per conversation; switch back to **Polaris** at any time.
 
-Only the owner — on the desktop app, you — can register agents, because
-registering one lets Polaris run that command on your computer.
+Registering an agent lets Polaris run that command on your computer, so only
+add agents you trust.
 
 ## The agent as Polaris's model
 

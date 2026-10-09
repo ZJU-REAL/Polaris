@@ -27,7 +27,7 @@ function invalidateNotes(qc: ReturnType<typeof useQueryClient>, paperId: string,
   void qc.invalidateQueries({ queryKey: ['papers', pid] });
 }
 
-/** 单条笔记卡片（作者 + 时间 + markdown，可就地编辑/删除）；共享文献库只读详情面板也复用。 */
+/** 单条笔记卡片（作者 + 时间 + markdown，可就地编辑/删除）。 */
 export function NoteCard({
   note,
   canEdit,

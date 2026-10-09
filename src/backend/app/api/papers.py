@@ -122,8 +122,7 @@ async def _paper_detail(
 
 
 async def _get_managed_project(session: AsyncSession, project_id: uuid.UUID, user: User):
-    """库管理校验（文献管理端点用）：课题主人 ∪ 隐式库创建者
-    （见 services/libraries.get_managed_project）。"""
+    """文献管理端点取课题（见 services/libraries.get_managed_project）。"""
     project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
@@ -395,7 +394,7 @@ async def get_project_paper(
 
     精确锁定起源库 (library, paper_id) 的成员行——相关度/状态/wiki 都是该库口径，
     不做跨库归并（对照无库作用域的 ``GET /papers/{id}``）。论文不在该课题库 → 404。
-    鉴权同课题其它文献管理端点（课题主人 ∪ 隐式库创建者）。
+    鉴权同课题其它文献管理端点。
     """
     await _get_managed_project(session, project_id, user)
     library = await libraries_service.get_library_for_project(session, project_id)
@@ -852,7 +851,7 @@ async def get_collecting_libraries(
     只列对请求者可见的库（个人库不外泄），且只算真正进了库的状态。
     """
     await _get_member_paper(session, paper_id, user, include_pool=True)
-    rows = await papers_service.collecting_libraries(session, paper_id, user)
+    rows = await papers_service.collecting_libraries(session, paper_id)
     return [CollectingLibraryRead(**row) for row in rows]
 
 
@@ -1044,7 +1043,7 @@ async def set_paper_my_tags(
 ) -> PaperMyTagsRead:
     """整组覆盖我给这篇打的个人标签（空数组=清空），只有我自己看得到。
 
-    可达口径同 my-meta（include_pool=True）：公共库 / 书架 / 个人库 / 每日推送里
+    可达口径同 my-meta（include_pool=True）：方向库 / 书架 / 个人库 / 每日推送里
     读得到的论文都能打——个人标签不动共享资产，不需要库管理权限。
     """
     paper = await _get_member_paper(session, paper_id, user, include_pool=True)

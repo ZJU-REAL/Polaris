@@ -147,7 +147,7 @@ class ChatAgentLoop:
         # 用户能对得上账单的那个名字，"agent" 不是。
         resolved_model = self._stage
         try:
-            _, route = await self._llm.resolve(self._stage, self._tool_ctx.user_id)
+            _, route = await self._llm.resolve(self._stage)
             resolved_model = route.model or self._stage
         except Exception:  # noqa: BLE001 — 取不到就退回 stage 名，不值得为它中断一轮
             pass

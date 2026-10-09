@@ -28,7 +28,6 @@ from app.core.llm.router import reset_llm_router  # noqa: E402
 from app.core.queue import get_task_queue  # noqa: E402
 from app.core.redis import get_redis_dep  # noqa: E402
 from app.main import create_app  # noqa: E402
-from app.services.owner import reset_owner_cache  # noqa: E402
 
 import app.models  # noqa: E402,F401  isort: skip  注册全部表
 
@@ -65,16 +64,6 @@ async def _stop_background_tasks() -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
     paper_enrich._TASKS.clear()
     queue_mod._queue = None
-
-
-@pytest_asyncio.fixture(autouse=True)
-def _fresh_owner_cache():
-    """owner id 是进程内缓存（#722）：每个用例都换新库/新用户集，先清缓存再跑。
-
-    autouse 而不是挂在 app 夹具里——不经 app 夹具的用例也可能间接触发解析，
-    统一在这里清一次最不容易漏。"""
-    reset_owner_cache()
-    yield
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -365,15 +354,15 @@ async def make_project_with_library(
 
 
 async def owner_of(session):
-    """部署主人的 User 行（= 最早注册的活跃用户）。
+    """本地用户的 User 行（services/local_user.py）。
 
-    #806 起每日订阅按人存。存量用例里「这个部署订了什么」的意思就是「唯一那个
-    （也就是首位）用户订了什么」，所以它们统一改成对着主人设置。
+    #806 起每日订阅存在用户身上。存量用例里「订了什么」的意思就是「本地用户订了
+    什么」，所以它们统一对着本地用户设置。
     """
     from app.models.user import User
-    from app.services.owner import resolve_owner_id
+    from app.services.local_user import local_user_id
 
-    owner_id = await resolve_owner_id(session)
+    owner_id = await local_user_id(session)
     # 说破而不是往下传一个 None：否则报的是服务层深处的 AttributeError，
     # 而真正的原因是这个用例还没注册任何用户
     assert owner_id is not None, "先注册一个用户：#806 起订阅按人存，没有人就没有订阅"

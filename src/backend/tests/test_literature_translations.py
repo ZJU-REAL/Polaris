@@ -24,7 +24,7 @@ class TranslationRouter:
         self.responses = list(responses)
         self.calls = []
 
-    async def model_name(self, stage, user_id=None):
+    async def model_name(self, stage):
         assert stage == "translation"
         return "translation-model-v1"
 

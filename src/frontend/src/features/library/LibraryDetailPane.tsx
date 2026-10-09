@@ -274,7 +274,7 @@ export function LibraryDetailPane({
             </button>
           ) : (
             // 手动添加、未纳入任何方向文献库：置灰不可点，hover 说明原因
-            <span title={tr('这篇是手动添加的，未纳入公共文献库', 'Manually added — not in any shared library')}>
+            <span title={tr('这篇是手动添加的，不在任何方向文献库里', 'Manually added — not in any direction library')}>
               <button className="btn btn-ghost sm" disabled style={{ opacity: 0.45, cursor: 'not-allowed' }}>
                 <Icon name="book" size={13} />
                 {tr('去文献库', 'Open library')}

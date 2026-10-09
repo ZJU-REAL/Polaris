@@ -26,24 +26,22 @@ DISMISSED_KEY = "onboarding.dismissed"
 async def _has_model(user: User) -> bool:
     """这个用户能不能真的打到一个对话模型。
 
-    问路由表而不是「他名下有没有 provider」：部署级配好了、他自己没配，同样是
-    能用的——自部署就是这种形状，不该反过来催他再配一份（#803 的合并语义）。
+    问路由表而不是「有没有 provider」：配了 provider 没配路由也打不到模型。
     """
     from app.core.llm.router import get_llm_router
 
     # 没配 default 也行：有外部 agent 时它会接管所有对话环节（#840）
-    return await get_llm_router().has_chat_model(user.id)
+    return await get_llm_router().has_chat_model()
 
 
 async def _library_counts(session: AsyncSession, user: User) -> tuple[int, int]:
-    """(自己建的库数量, 其中声明了学科的数量)。"""
+    """(文献库数量, 其中声明了学科的数量)。"""
 
     async def count(*where: Any) -> int:
         stmt = select(func.count()).select_from(DirectionLibrary).where(*where)
         return int((await session.execute(stmt)).scalar_one())
 
-    mine = DirectionLibrary.submitted_by == user.id
-    return await count(mine), await count(mine, DirectionLibrary.discipline.is_not(None))
+    return await count(), await count(DirectionLibrary.discipline.is_not(None))
 
 
 async def _has_machine(session: AsyncSession, user: User) -> bool:

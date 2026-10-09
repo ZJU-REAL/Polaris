@@ -5,13 +5,12 @@ import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
-import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type DirectionLibrarySummary } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { StatementInterview } from './StatementInterview';
-import { useLibraries, libraryPath, type LibraryFilters } from './hooks';
+import { useLibraries, libraryPath } from './hooks';
 import { DisciplineSelect } from './DisciplineSelect';
 import {
   InclusionSettingsForm,
@@ -22,9 +21,8 @@ import {
 
 /* ============================================================
    /libraries — 文献库列表（实验室区，P5c）
-   卡片流：库名 / 方向陈述 / 论文·概念数 / 最近更新；
-   我的课题关联的库有标识；点击进 /libraries/:id 详情。
-   平台管理员可在此新建独立共享文献库（与任何课题解耦）。
+   卡片流：库名 / 方向陈述 / 论文·概念数 / 最近更新；点击进 /libraries/:id 详情。
+   可在此新建独立文献库（与任何课题解耦）。
    ============================================================ */
 
 /** 圆角小勾选框（体系内样式，替代原生 checkbox）。与论文撰写/实验搭建一致。 */
@@ -58,26 +56,6 @@ function CheckBox({ checked, onToggle, title }: { checked: boolean; onToggle: ()
   );
 }
 
-// 过滤栏：归属类型（全部/个人/公共）候选。
-const TYPE_OPTIONS = [
-  { v: 'all', zh: '全部', en: 'All' },
-  { v: 'personal', zh: '个人', en: 'Personal' },
-  { v: 'public', zh: '公共', en: 'Public' },
-] as const;
-type LibraryTypeFilter = (typeof TYPE_OPTIONS)[number]['v'];
-
-/** 归属类型徽标：公共库（ok/绿）| 个人库（violet）。 */
-function TypeBadge({ isPublic }: { isPublic: boolean }) {
-  const cfg = isPublic
-    ? { zh: '公共', en: 'Public', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)' }
-    : { zh: '个人', en: 'Personal', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' };
-  return (
-    <span className="pill sm" style={{ background: cfg.bg, color: cfg.tx, flexShrink: 0 }}>
-      {tr(cfg.zh, cfg.en)}
-    </span>
-  );
-}
-
 function LibraryCard({
   lib,
   admin,
@@ -97,8 +75,6 @@ function LibraryCard({
 }) {
   const updated = lib.last_compiled_at ?? lib.last_synced_at;
   const activate = selectMode ? onToggleSelect : onOpen;
-  // 删除入口可见：归属人本人（后端 can_delete_library 同一口径，#614）。
-  const canDelete = lib.is_owner;
   return (
     <div
       className="card hoverable"
@@ -167,35 +143,20 @@ function LibraryCard({
             >
               {lib.name}
             </span>
-            <TypeBadge isPublic={lib.is_public} />
-            {lib.is_mine && (
-              <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)', flexShrink: 0 }}>
-                {tr('我在用', 'In use')}
-              </span>
-            )}
           </div>
-          {!lib.is_public && lib.owner_name && (
-            <div style={{ fontSize: 11.5, color: 'var(--text-4)', marginTop: 3 }}>
-              {tr(`${lib.owner_name} 的个人库`, `${lib.owner_name}’s personal library`)}
-            </div>
-          )}
         </div>
-        {canDelete ? (
-          <button
-            className="icon-btn"
-            title={tr('删除文献库', 'Delete library')}
-            aria-label={tr('删除文献库', 'Delete library')}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            style={{ flexShrink: 0, marginTop: -2, color: 'var(--text-4)' }}
-          >
-            <Icon name="trash" size={14} />
-          </button>
-        ) : selectMode ? null : (
-          <Icon name="arrow" size={14} style={{ color: 'var(--text-4)', flexShrink: 0, marginTop: 4 }} />
-        )}
+        <button
+          className="icon-btn"
+          title={tr('删除文献库', 'Delete library')}
+          aria-label={tr('删除文献库', 'Delete library')}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          style={{ flexShrink: 0, marginTop: -2, color: 'var(--text-4)' }}
+        >
+          <Icon name="trash" size={14} />
+        </button>
       </div>
       <div
         style={{
@@ -245,8 +206,7 @@ const EMPTY_INCLUSION: InclusionValue = {
 /**
  * 新建文献库弹窗（P9b：任意登录用户可建）。名称 + 一句话说明必填；
  * 收录设置（分类 / 关键词 / 锚点论文 / 打分标准）共用 InclusionSettingsForm，
- * 可点「AI 自动生成」按名称+说明推荐一整套。提交后即建个人 active 库（归属人=创建者），
- * 立即可用，跳详情页即可开始抓取。
+ * 可点「AI 自动生成」按名称+说明推荐一整套。提交后立即可用，跳详情页即可开始抓取。
  */
 function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
@@ -275,10 +235,7 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
   const mutation = useMutation({
     mutationFn: (input: Parameters<typeof api.createLibrary>[0]) => api.createLibrary(input),
     onSuccess: (lib) => {
-      toast(
-        tr('个人文献库已创建，立即可用，可以开始抓取了', 'Personal library created — it’s ready to use and ingest can start now'),
-        'ok',
-      );
+      toast(tr('文献库已创建，可以开始抓取了', 'Library created — ingest can start now'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['libraries'] });
       onClose();
       navigate(libraryPath(lib.id));
@@ -323,16 +280,13 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
       open={open}
       onClose={onClose}
       title={tr('新建文献库', 'New library')}
-      sub={tr(
-        '创建后是你的个人文献库，立即可用。',
-        'Created as your personal library — ready to use right away.',
-      )}
+      sub={tr('创建后立即可用。', 'Ready to use right away.')}
       width={640}
       footer={
         <>
           <button className="btn btn-ghost sm" onClick={onClose}>{tr('取消', 'Cancel')}</button>
           <button className="btn btn-primary sm" disabled={mutation.isPending} onClick={submit}>
-            {mutation.isPending ? tr('创建中…', 'Creating…') : tr('创建个人文献库', 'Create personal library')}
+            {mutation.isPending ? tr('创建中…', 'Creating…') : tr('创建文献库', 'Create library')}
           </button>
         </>
       }
@@ -408,22 +362,16 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
 export function LibrariesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [typeFilter, setTypeFilter] = useState<LibraryTypeFilter>('all');
-  const filters: LibraryFilters = { type: typeFilter };
-  const { data, isLoading, isError, refetch } = useLibraries(filters);
+  const { data, isLoading, isError, refetch } = useLibraries();
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
   const canCreate = !!me;
-  // role 治理已移除（#614）：批量管理入口对所有登录用户开放，删除权限由后端按创建者校验
   const admin = !!me;
   const [createOpen, setCreateOpen] = useState(false);
   // 多选态（仅 admin 可用）：selectMode 打开后每张卡可勾选，顶部出现批量操作栏
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const libraries = data ?? [];
-  // 我的课题关联的库排前面，其余按名称
-  const sorted = [...libraries].sort(
-    (a, b) => Number(b.is_mine) - Number(a.is_mine) || a.name.localeCompare(b.name),
-  );
+  const sorted = [...libraries].sort((a, b) => a.name.localeCompare(b.name));
 
   function toggleSelect(id: string) {
     setSelectedIds((prev) => {
@@ -507,14 +455,6 @@ export function LibrariesPage() {
     <div className="page fadeup" style={{ maxWidth: 1200 }}>
       {/* —— 筛选行：操作并在同一行右侧 —— */}
       <div className="row gap12" style={{ margin: '0 0 16px', flexWrap: 'wrap', alignItems: 'center' }}>
-        <div className="row gap8" style={{ alignItems: 'center' }}>
-          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{tr('归属', 'Type')}</span>
-          <Segmented
-            options={TYPE_OPTIONS.map((o) => ({ v: o.v, label: tr(o.zh, o.en) }))}
-            value={typeFilter}
-            onChange={(v) => setTypeFilter(v)}
-          />
-        </div>
         {canCreate && (
           <button
             className="btn btn-primary sm"

@@ -32,18 +32,18 @@ this and when can it change".
 | Environment (`POLARIS_*`) | Whoever starts the engine | **Machine facts**: values that describe the computer and its surroundings, fixed before the process starts. | database path, secret keys, data dir, proxies |
 | Kernel config tree + kernel KV (desktop SQLite) | The kernel | **Plugin composition and kernel behavior**: which plugins are loaded, their config, and settings that change what the kernel itself does. | plugin entries/enable state, plugin install records, market index endpoint (`PluginMetaStore` key `market:endpoint`) |
 | Electron store (`userData/config.json`) | The desktop shell | **Shell-only preferences**: things only the window chrome cares about, meaningless to the kernel or backend. | window bounds/maximized state |
-| Database | The application | **User and domain state**. Two sub-homes: *preferences* go to `users.settings` namespaced keys. Owner-level ones sit on the owner (the earliest active user — on the desktop, you) and are read/written through `app/services/owner_settings.py`; per-person ones — the daily subscription since #806 — sit on each user's own row and are read for whoever is asking, with no fallback to the owner; *platform-operational state* stays in `system_settings`. | owner-held preferences: `daily.sync_time`, `daily.retention_days`, `daily.sync_scope`, `tts.admin`, `affiliations.extraction_mode`; per-user preferences (same column, each user's own row): `daily.categories`, `daily.subscriptions`, `onboarding.dismissed`; operational: probe state, `claim_today` markers, relevance-anchor caches, active embedding space, LLM call-log switch, watchdog cap, experiment host facts, literature/document-processing docs (user-tunable fields share one atomic document with encrypted credential pools, so they conservatively stay put) |
+| Database | The application | **User and domain state**. Two sub-homes: *preferences* go to `users.settings` namespaced keys. They sit on the local user (`app/services/local_user.py`) and machine-level ones are read/written through `app/services/owner_settings.py`, which works without a request (the worker's cron reads them too); *platform-operational state* stays in `system_settings`. | preferences: `daily.sync_time`, `daily.retention_days`, `daily.sync_scope`, `tts.admin`, `affiliations.extraction_mode`, `daily.categories`, `daily.subscriptions`, `onboarding.dismissed`; operational: probe state, `claim_today` markers, relevance-anchor caches, active embedding space, LLM call-log switch, watchdog cap, experiment host facts, literature/document-processing docs (user-tunable fields share one atomic document with encrypted credential pools, so they conservatively stay put) |
 
 Placement test, in order:
 
 1. Known before the process starts, per-machine? → environment.
 2. Does it configure what the kernel loads or how the kernel behaves? → kernel tree/KV.
 3. Does only the desktop window chrome care? → electron store.
-4. Is it someone's preference? → `users.settings` (owner-scoped, namespaced key). Is it machine
+4. Is it the user's preference? → `users.settings` (namespaced key). Is it machine
    state, a derived cache, or an operator guardrail? → `system_settings`.
 
 Migration notes: the backend's read fallback to the legacy `system_settings` rows is gone (#821).
-Migration `d3f9a1c7e2b4` copies any legacy value the owner didn't have yet onto the owner, then
+Migration `d3f9a1c7e2b4` copies any legacy value the user didn't have yet onto the user, then
 deletes the legacy rows, so preferences have one home. The desktop market endpoint still reads
 through to the old electron-store value once (moving a non-default value into the kernel KV);
 removing that could drop a custom endpoint for anyone who hasn't opened the market since

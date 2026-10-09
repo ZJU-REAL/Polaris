@@ -194,8 +194,8 @@ export function AddPaperModal({
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--text-4)', marginTop: 10, lineHeight: 1.6 }}>
             {tr(
-              '自动查重；新论文只进这个课题和你的个人文献库，不影响公共文献库。',
-              'Duplicates are reused automatically; new papers go to this topic and your personal library only — the shared library is untouched.',
+              '自动查重；新论文只进这个课题和你的个人文献库，不进任何方向文献库。',
+              'Duplicates are reused automatically; new papers go to this topic and your personal library only — no direction library is changed.',
             )}
           </div>
         </div>

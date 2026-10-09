@@ -11,13 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import Experiment
 from app.models.idea import Idea
-from app.models.library_direction import LibraryPaper
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.manuscript import Manuscript
 from app.models.paper import Concept, Paper
 from app.models.voyage import VoyageRun
 from app.schemas.search import GlobalSearchHit
 from app.services.concepts import library_concept_ids
-from app.services.libraries import get_source_library_ids, visible_library_ids_stmt
+from app.services.libraries import get_source_library_ids
 from app.services.projects import in_my_projects
 
 _SNIPPET_CHARS = 120
@@ -41,8 +41,7 @@ async def global_search(
     """跨实体检索。**作用域二选一**：
 
     - ``user_id``：用户够得着的全部资产（顶栏 ⌘K 走这条）。判据复用
-      :func:`~app.services.libraries.visible_library_clause` 与
-      :func:`~app.services.projects.in_my_projects`，与列表页、详情页同一口径——
+      全部文献库与 :func:`~app.services.projects.in_my_projects`，与列表页、详情页同一口径——
       搜索比它们宽就是越权，比它们窄就是「明明收录了却搜不到」。
     - ``project_id``：只搜这个课题（agent 工具 ``global_search`` 走这条，它检索的
       本来就是课题内的想法/实验/稿件）。
@@ -66,7 +65,7 @@ async def global_search(
             return col == project_id
     else:
         assert user_id is not None
-        library_scope = visible_library_ids_stmt(user_id)
+        library_scope = select(DirectionLibrary.id)
         no_corpus = False  # 子查询为空时自然搜不到，不必先查一次
 
         def scoped(col):
