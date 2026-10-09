@@ -102,6 +102,14 @@ export async function kernelLocalBackend(): Promise<LocalBackendInfo | null> {
 export interface EngineBootstrapStatus {
   phase: string;
   done: boolean;
+  /** 当前阶段开始的时刻（epoch ms）；老宿主没有。 */
+  phaseStartedAt?: number;
+  /** 当前（或最近一个有输出的）阶段最后几行输出。 */
+  log?: string[];
+  /** 最近一行输出的时刻（epoch ms）。 */
+  lastOutputAt?: number;
+  /** python / install 阶段相对阶段开始的落盘字节数。 */
+  downloadedBytes?: number;
 }
 
 /**

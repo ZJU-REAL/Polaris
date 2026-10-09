@@ -44,6 +44,7 @@ import {
 } from '@polaris/kernel';
 
 import type { EngineBootstrapStatus, KernelStatus, LocalBackendInfo } from '../shared/contract';
+import { BootstrapProgressTracker } from './bootstrap-progress';
 import { bootstrapEngine } from './engine-bootstrap';
 
 let kernel: Kernel | null = null;
@@ -68,6 +69,20 @@ export function marketPluginsDir(): string {
  * - failed + done：内嵌引导或引擎启动失败
  */
 let bootstrapStatus: EngineBootstrapStatus = { phase: 'starting', done: false };
+
+/**
+ * 引导进度的细节（阶段耗时、输出尾巴、落盘字节数），只在走内嵌引导时存在。
+ * 读状态时现算合并——字节数在两行输出之间也在涨，不能只在回调里快照。
+ */
+let bootstrapTracker: BootstrapProgressTracker | null = null;
+
+/** 设置引导阶段，同步给 tracker 切阶段；done 时停掉量盘。 */
+function setBootstrapStatus(phase: string, done: boolean): void {
+  bootstrapStatus = { phase, done };
+  if (!bootstrapTracker) return;
+  bootstrapTracker.phase(phase);
+  if (done) bootstrapTracker.stop();
+}
 
 /** 本次启动引擎失败的已知原因（#850：端口被别的程序/残留旧引擎占着），给兜底页说清楚。 */
 let engineProblem: EnginePortProblem | null = null;
@@ -123,23 +138,28 @@ function parseEngineSpec(raw: string | undefined): LegacyEngineConfig | null {
  * 绝不让引导问题挡住窗口创建。
  */
 async function bootstrapPackagedEngine(): Promise<LegacyEngineConfig | null> {
+  const dataDir = app.getPath('userData');
+  bootstrapTracker = new BootstrapProgressTracker({ engineDir: join(dataDir, 'engine') });
   try {
     const config = await bootstrapEngine({
       resourcesDir: process.resourcesPath,
-      dataDir: app.getPath('userData'),
+      dataDir,
       onProgress: ({ phase, line }) => {
-        bootstrapStatus = { phase, done: false };
+        setBootstrapStatus(phase, false);
         // 首启会下载 Python 工具链，日志与首启等待页是仅有的可观测面
-        if (line) console.log(`[engine-bootstrap] ${line}`);
+        if (line) {
+          console.log(`[engine-bootstrap] ${line}`);
+          bootstrapTracker?.line(line);
+        }
       },
     });
     // 环境装好 ≠ 可用：引擎进程还要跑迁移并通过健康检查（下方 entry.update
     // 才等它），done 必须等引擎真的健康——否则首启等待页会提前放行，
     // 前端探测拿到 null 就落到「引擎没启动」页，等待整段白等。
-    bootstrapStatus = { phase: 'engine', done: false };
+    setBootstrapStatus('engine', false);
     return config;
   } catch (err) {
-    bootstrapStatus = { phase: 'failed', done: true };
+    setBootstrapStatus('failed', true);
     console.error('[kernel] 内嵌引擎引导失败：', err);
     return null;
   }
@@ -160,6 +180,8 @@ export async function startKernel(): Promise<Kernel> {
 async function doStartKernel(): Promise<Kernel> {
   // smoke 等场景会 stop 后再次 start：进度回到初始态，别让上一轮的
   // ready/failed 冒充本轮结论
+  bootstrapTracker?.stop();
+  bootstrapTracker = null;
   bootstrapStatus = { phase: 'starting', done: false };
   engineProblem = null;
   // 装配顺序（storage → baseUrl → 哈希复核 → 种子 → Loader → SqliteTree）
@@ -242,11 +264,9 @@ async function doStartKernel(): Promise<Kernel> {
   // idle——env 引擎的健康等待已在上方 entry.update 完成，前端拿 done 后
   // 探测 localBackend 即得最终答案。failed（引导抛错）保持原样不覆盖。
   if (bootstrapStatus.phase === 'engine') {
-    bootstrapStatus = localBackend().baseUrl
-      ? { phase: 'ready', done: true }
-      : { phase: 'failed', done: true };
+    setBootstrapStatus(localBackend().baseUrl ? 'ready' : 'failed', true);
   } else if (bootstrapStatus.phase === 'starting') {
-    bootstrapStatus = { phase: 'idle', done: true };
+    setBootstrapStatus('idle', true);
   }
   return instance;
 }
@@ -286,7 +306,7 @@ export function kernelStatus(): KernelStatus {
 
 /** kernel.engineBootstrapStatus 的实现：内嵌引擎引导进度（诊断/进度条用）。 */
 export function engineBootstrapStatus(): EngineBootstrapStatus {
-  return bootstrapStatus;
+  return bootstrapTracker ? { ...bootstrapStatus, ...bootstrapTracker.snapshot() } : bootstrapStatus;
 }
 
 /**

@@ -33,6 +33,7 @@ import {
   type BootstrapPhase,
   type EngineCommand,
 } from './main/engine-bootstrap';
+import { BootstrapProgressTracker, LOG_LINE_MAX } from './main/bootstrap-progress';
 
 const HEALTH_TIMEOUT_MS = 120_000;
 
@@ -252,6 +253,9 @@ async function main(): Promise<void> {
   let curPhase: BootstrapPhase | '' = '';
   let phaseStart = Date.now();
   let lineCount = 0;
+  // 与桌面主进程同一套进度观测：顺带核对首启等待页拿到的字段形态
+  const tracker = new BootstrapProgressTracker({ engineDir: join(dataDir, 'engine') });
+  const phaseBytes: [string, number | undefined][] = [];
 
   let failed = false;
   try {
@@ -261,12 +265,15 @@ async function main(): Promise<void> {
       dataDir,
       onProgress: ({ phase, line }) => {
         if (phase !== curPhase) {
+          if (curPhase) phaseBytes.push([curPhase, tracker.snapshot().downloadedBytes]);
+          tracker.phase(phase);
           if (curPhase) timings.push([curPhase, Date.now() - phaseStart]);
           console.log(`\n== phase: ${phase}`);
           curPhase = phase;
           phaseStart = Date.now();
           lineCount = 0;
         }
+        if (line) tracker.line(line);
         if (line && lineCount < 40) {
           console.log(`   ${line}`);
           lineCount++;
@@ -276,6 +283,14 @@ async function main(): Promise<void> {
     if (curPhase) timings.push([curPhase, Date.now() - phaseStart]);
     console.log(`\nbootstrap done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     for (const [phase, ms] of timings) console.log(`  ${phase.padEnd(8)} ${(ms / 1000).toFixed(1)}s`);
+    tracker.stop();
+    for (const [phase, bytes] of phaseBytes) {
+      if (bytes !== undefined) console.log(`  ${phase.padEnd(8)} ${(bytes / 1024 / 1024).toFixed(1)} MB on disk`);
+    }
+    const snap = tracker.snapshot();
+    if (!Array.isArray(snap.log) || snap.log.some((l) => typeof l !== 'string' || l.length > LOG_LINE_MAX || l.includes('\u001b'))) {
+      throw new Error(`进度快照的 log 形态不对：${JSON.stringify(snap.log)}`);
+    }
 
     const snapRoot = join(dataDir, 'engine', 'snapshots');
 

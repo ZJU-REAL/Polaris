@@ -74,18 +74,35 @@ function run(
   return new Promise((resolve, reject) => {
     const child = spawn(argv[0]!, argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'], env });
     const tail: string[] = [];
-    const capture = (chunk: Buffer): void => {
-      for (const line of chunk.toString().split('\n')) {
-        if (!line.trim()) continue;
-        tail.push(line);
-        if (tail.length > 50) tail.shift();
-        onProgress?.({ phase, line });
-      }
+    const emit = (line: string): void => {
+      if (!line.trim()) return;
+      tail.push(line);
+      if (tail.length > 50) tail.shift();
+      onProgress?.({ phase, line });
     };
-    child.stdout!.on('data', capture);
-    child.stderr!.on('data', capture);
+    // 每个流各留一段「半行」：data 块可能切在行中间，拼上下一块再按行发
+    const capture = () => {
+      let partial = '';
+      const onData = (chunk: Buffer): void => {
+        const parts = (partial + chunk.toString()).split('\n');
+        partial = parts.pop() ?? '';
+        for (const line of parts) emit(line);
+      };
+      const flush = (): void => {
+        emit(partial);
+        partial = '';
+      };
+      return { onData, flush };
+    };
+    const out = capture();
+    const err = capture();
+    child.stdout!.on('data', out.onData);
+    child.stderr!.on('data', err.onData);
     child.on('error', reject);
-    child.on('exit', (code, signal) => {
+    // close 而非 exit：exit 时 stdio 可能还有没读完的尾巴，close 保证流已读尽
+    child.on('close', (code, signal) => {
+      out.flush();
+      err.flush();
       if (code === 0) resolve();
       else {
         reject(
