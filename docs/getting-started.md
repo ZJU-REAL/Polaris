@@ -77,10 +77,9 @@ Work through these in order; each unlocks the next.
 4. **Optional: configure the daily feed** — **Settings → Daily papers** sets the subscribed
    categories and the daily fetch time. The engine checks every few minutes whether the fetch is
    due, so the feed only updates while the app is running.
-5. **Optional: enable PolarisBuddy's tool loop** — the in-app assistant's multi-turn tool loop is
-   off by default (it re-sends history and tool schemas every round, so it costs more than one-shot
-   chat). It is switched on by the environment variable `POLARIS_CHAT_AGENT_ENABLED=1`; the engine
-   inherits the app's environment, so start the app from a terminal with that variable set.
+5. **Assistant** — PolarisBuddy, the in-app assistant, works as soon as a model or an agent is
+   set up. Its multi-turn tool loop re-sends history and tool definitions every round, so it uses
+   more than one-shot chat; to turn it off, start the app with `POLARIS_CHAT_AGENT_ENABLED=0`.
 
 > [!WARNING]
 > The Experiment Lab connects to real GPU servers over SSH and runs generated code there. Every

@@ -15,7 +15,7 @@ from tests.conftest import register_and_login
 
 @pytest.fixture
 def agent_on(monkeypatch):
-    """打开助手开关（默认关：它每轮重发历史与工具 schema，成本不是一个量级）。
+    """显式打开助手开关（现在默认就开；保留它让用例不依赖默认值）。
 
     get_settings 是 lru_cache 的，光改环境变量不生效——两头都要清缓存。
     """
@@ -46,10 +46,23 @@ async def _headers(client, email: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {await register_and_login(client, email=email)}"}
 
 
-async def test_the_endpoint_is_hidden_when_the_flag_is_off(client):
-    """开关关着时端点直接 404——不是 403，别让它出现在能力探测里。"""
+async def test_the_assistant_is_on_by_default():
+    """桌面端从不设这个变量：默认就得能用（v0.5.4 默认关，助手整个用不了）。"""
+    from app.core.config import Settings
+
+    assert Settings().chat_agent_enabled is True
+
+
+async def test_the_endpoint_is_hidden_when_the_flag_is_off(client, monkeypatch):
+    """显式关掉时端点直接 404——不是 403，别让它出现在能力探测里。"""
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("POLARIS_CHAT_AGENT_ENABLED", "false")
+    get_settings.cache_clear()
     headers = await _headers(client, "agent-off@example.com")
     resp = await client.post("/api/chat/conversations", json={}, headers=headers)
+    monkeypatch.delenv("POLARIS_CHAT_AGENT_ENABLED")
+    get_settings.cache_clear()
     assert resp.status_code == 404
     assert resp.json()["detail"] == "CHAT_AGENT_DISABLED"
 

@@ -116,9 +116,9 @@ class Settings(BaseSettings):
     # 不再按 env 分支强关：曾经的 prod-only 守卫在 desktop 档（与 prod 互斥）
     # 永不触发，等于形同虚设；与其靠猜环境，不如统一信任「显式设置」这一个来源。
     llm_fake_fallback: bool = False
-    #: 全局助手（Claude Code 式工具循环）。默认关：它每轮都要重发历史与工具 schema，
-    #: 成本与现有一次性对话不是一个量级，先按部署开。
-    chat_agent_enabled: bool = False
+    #: 全局助手（多轮工具循环）。单机单用户应用里它是核心功能，默认开；
+    #: 设 POLARIS_CHAT_AGENT_ENABLED=0 可关掉（每轮重发历史与工具定义，比一次性对话贵）。
+    chat_agent_enabled: bool = True
 
     # ---- 文献 API ----
     s2_api_key: str = Field(

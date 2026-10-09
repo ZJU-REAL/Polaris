@@ -63,7 +63,7 @@ upgrading.
 | `POLARIS_SESSION_LIFETIME_SECONDS` | Session lifetime in seconds. There is no refresh-token mechanism, so the default is long. | `2592000` (30 days) |
 | `POLARIS_ACP_LLM_CONCURRENCY` | How many model calls one agent backend answers at once (each is a separate agent process). Read from the process environment only, not from `.env`. See [Agent backends](./agents.md). | `4` |
 | `POLARIS_LLM_FAKE_FALLBACK` | Fall back to the built-in fake LLM provider when no route is configured (key-less demos and tests only). Strictly opt-in: off unless explicitly set to `1`, and never set by the product itself. When off, AI features return `LLM_NOT_CONFIGURED` instead of fabricated content. | (unset) |
-| `POLARIS_CHAT_AGENT_ENABLED` | Enable PolarisBuddy's multi-turn tool loop. Off by default because each round re-sends the conversation history and tool schemas, which costs far more than one-shot chat. | (unset), set `1` to enable |
+| `POLARIS_CHAT_AGENT_ENABLED` | PolarisBuddy's multi-turn tool loop. Each round re-sends the conversation history and tool definitions, so it uses more than one-shot chat. | on; set `0` to turn off |
 | `POLARIS_GITHUB_REPO` | Upstream `owner/name` repository. Currently unread by the backend (feedback opens a pre-filled GitHub new-issue page straight from the frontend). | `ZJU-REAL/Polaris` |
 | `POLARIS_PUBLIC_BASE_URL` | Engine root used to build stdio MCP download links. HTTP MCP always reuses the origin of its current `/mcp` request and ignores this setting. | (empty), for example, `http://127.0.0.1:8000` |
 | `POLARIS_MCP_DOWNLOAD_LINK_TTL_SECONDS` | Lifetime of signed paper-figure download links, in seconds. Values are limited to 60 seconds through 24 hours. | `900` |
