@@ -5,16 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "polaris-backend"
 version = "0.1.0"
-description = "Polaris 自动 AI 科研平台 — backend (FastAPI + ARQ worker)"
+description = "Polaris 自动 AI 科研平台 — local engine (FastAPI, single process)"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "sqlalchemy[asyncio]>=2.0.40",
-    "asyncpg>=0.30",
     "alembic>=1.14",
     "fastapi-users[sqlalchemy]>=14.0",
-    "arq>=0.26",
     "redis>=5",
     "pydantic>=2.11",
     "pydantic-settings>=2.6",
@@ -34,7 +32,7 @@ dependencies = [
     # SQLite 上的语义检索在 Python 侧打余弦分（services/vector_search.py）；
     # 缺了也能跑（退回纯 Python），只是慢一个数量级
     "numpy>=1.26",
-    # desktop 档位运行时依赖（POLARIS_PROFILE=desktop：SQLite + 进程内 redis 替身）
+    # 单进程本地引擎：SQLite + 进程内 redis 替身（fakeredis 依赖 redis 包）
     "aiosqlite>=0.20",
     "fakeredis>=2.26",
 ]

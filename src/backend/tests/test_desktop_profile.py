@@ -1,23 +1,18 @@
-"""desktop 档位（POLARIS_PROFILE=desktop）：单进程、内联任务队列、进程内 redis。"""
+"""单进程本地引擎（#842 起唯一的形态）：内联任务队列、进程内 redis。"""
 
 import asyncio
 
 import pytest
-from pydantic import ValidationError
 
-from app.core.config import Settings
-from app.core.queue import InlineTaskQueue, UnregisteredTaskError
+from app.core.queue import InlineTaskQueue, UnregisteredTaskError, get_task_queue
 
 
-def test_desktop_profile_forbids_prod_env():
-    with pytest.raises(ValidationError):
-        Settings(profile="desktop", env="prod")
+async def test_the_task_queue_is_always_inline(monkeypatch):
+    import app.core.queue as queue_mod
 
-
-def test_desktop_profile_flag():
-    assert Settings(profile="desktop").is_desktop
-    # 显式钉 server：整套测试可能在 POLARIS_PROFILE=desktop 下运行（A2 验收方式）。
-    assert not Settings(profile="server").is_desktop
+    monkeypatch.setattr(queue_mod, "_queue", None)
+    assert isinstance(await get_task_queue(), InlineTaskQueue)
+    monkeypatch.setattr(queue_mod, "_queue", None)
 
 
 @pytest.mark.asyncio
@@ -80,11 +75,10 @@ async def test_inline_ctx_redis_reenqueues_inline(monkeypatch):
     assert ran == ["parent:root", "child:child"]
 
 
-def test_desktop_redis_is_in_process(monkeypatch):
+def test_redis_is_in_process(monkeypatch):
     import app.core.redis as redis_mod
 
     monkeypatch.setattr(redis_mod, "_client", None)
-    monkeypatch.setattr("app.core.redis.get_settings", lambda: Settings(profile="desktop"))
     client = redis_mod.get_redis()
     assert type(client).__module__.startswith("fakeredis")
     monkeypatch.setattr(redis_mod, "_client", None)

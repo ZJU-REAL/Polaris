@@ -13,11 +13,6 @@ def _desktop_settings():
     return Settings(profile="desktop")
 
 
-async def test_local_session_absent_in_server_profile(client):
-    resp = await client.post("/api/auth/local-session")
-    assert resp.status_code == 404
-
-
 async def test_local_session_provisions_admin_and_is_idempotent(client, monkeypatch):
     monkeypatch.setattr("app.api.auth.get_settings", _desktop_settings)
 

@@ -24,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # 例外地从 api 层拿 current_active_user：require_owner 是给路由挂的 FastAPI 依赖，
 # 认证栈（fastapi-users）装配在 app.api.auth，不值得为一个依赖再拆一层。无循环导入。
 from app.api.auth import current_active_user
-from app.core.config import get_settings
 from app.core.db import get_session
 from app.models.user import User
 
@@ -58,11 +57,12 @@ async def resolve_owner_id(session: AsyncSession) -> uuid.UUID | None:
 
 
 async def is_owner(session: AsyncSession, user: User) -> bool:
-    """这个用户是不是平台主人（桌面档=本人；服务器档=首位用户）。"""
-    if get_settings().is_desktop:
-        return True
-    owner_id = await resolve_owner_id(session)
-    return owner_id is not None and user.id == owner_id
+    """这个用户是不是平台主人。
+
+    单用户本地引擎（#842）：登录进来的就是机器的主人。不按「首位用户」算——老的
+    桌面安装里可能先注册过别的账号，按首位用户算会把本地用户挡在设置页外面。
+    """
+    return True
 
 
 async def require_owner(

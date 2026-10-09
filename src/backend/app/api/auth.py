@@ -180,7 +180,8 @@ async def auth_capabilities() -> dict[str, bool]:
         "email": enabled,
         "password_reset": enabled,
         "register_email_code": enabled,
-        "local_session": settings.is_desktop,
+        # 本地会话是进入引擎的唯一方式（#842）
+        "local_session": True,
     }
 
 
@@ -199,8 +200,6 @@ async def local_session(
     被发现。本地用户的密码是随机散列、永远无法用于登录——会话只能经这个端点
     取得，而它只在单机档位存在。
     """
-    if not get_settings().is_desktop:
-        raise HTTPException(status.HTTP_404_NOT_FOUND)
     user = (
         await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
     ).scalar_one_or_none()
