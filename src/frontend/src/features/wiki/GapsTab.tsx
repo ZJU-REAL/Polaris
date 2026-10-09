@@ -13,11 +13,11 @@ import { tr } from '../../lib/i18n';
    ============================================================ */
 
 const KIND_META: Record<GapKind, { zh: string; en: string; tone: string }> = {
-  gap: { zh: '没人解决的问题', en: 'Open problem', tone: 'var(--accent)' },
+  gap: { zh: '未解决的问题', en: 'Open problem', tone: 'var(--accent)' },
   contradiction: { zh: '矛盾的结论', en: 'Contradiction', tone: 'var(--warn-tx)' },
   uncertainty: { zh: '尚不确定', en: 'Uncertain', tone: 'var(--text-3)' },
   negative_result: { zh: '失败的尝试', en: 'Negative result', tone: 'var(--danger-tx)' },
-  limitation: { zh: '作者自述局限', en: 'Limitation', tone: 'var(--text-3)' },
+  limitation: { zh: '局限', en: 'Limitation', tone: 'var(--text-3)' },
 };
 
 const KIND_FILTERS: (GapKind | 'all')[] = [
@@ -46,7 +46,7 @@ function GapCard({ entry, onOpenPaper }: { entry: LibraryGapEntry; onOpenPaper: 
         <KindBadge kind={entry.kind} />
         <span
           style={{ fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--accent)', minWidth: 0 }}
-          title={tr('点击打开论文', 'Click to open the paper')}
+          title={tr('打开论文', 'Open paper')}
           onClick={() => onOpenPaper(entry.paper_id)}
         >
           {entry.paper_title}
@@ -96,8 +96,8 @@ export function GapsTab({
       <div style={{ padding: '14px 16px 10px', borderBottom: '1px solid var(--border)' }}>
         <div style={{ fontSize: 13, color: 'var(--text-2)' }}>
           {tr(
-            '从库内论文全文里自动整理：别人还没解决的问题、相互矛盾的结论、失败的尝试。每条都附原文出处。',
-            'Auto-collected from full texts in this library: open problems, contradictory findings, failed attempts — each anchored to a verbatim quote.',
+            '从论文全文中整理出的未解决问题、矛盾结论和失败尝试，均附原文。',
+            'Open problems, conflicting findings and failed attempts from the full texts, each with a quote.',
           )}
         </div>
         <div className="row gap6 wrap" style={{ marginTop: 10 }}>
@@ -111,13 +111,13 @@ export function GapsTab({
 
       <div className="scroll" style={{ overflowY: 'auto', flex: 1, padding: 16 }}>
         {isLoading ? (
-          <div className="empty">{tr('整理研究缺口…', 'Collecting research gaps…')}</div>
+          <div className="empty">{tr('加载中…', 'Loading…')}</div>
         ) : isError ? (
           <EmptyState
             compact
             icon="x"
-            title={tr('无法加载研究缺口', 'Failed to load research gaps')}
-            desc={tr('后端不可用或接口尚未就绪，稍后重试。', 'Backend unavailable or API not ready — try again later.')}
+            title={tr('无法加载研究缺口', 'Couldn’t load research gaps')}
+            desc={tr('请确认本机引擎正在运行。', 'Check that the local engine is running.')}
           />
         ) : entries.length === 0 ? (
           <EmptyState
@@ -125,8 +125,8 @@ export function GapsTab({
             icon="bulb"
             title={tr('还没有条目', 'Nothing here yet')}
             desc={tr(
-              '论文全文就位后会自动整理；也可能这个筛选下确实没有。',
-              'Entries appear automatically once full texts are processed; or this filter simply has none.',
+              '论文全文处理完后会出现在这里。',
+              'Entries appear once full texts are processed.',
             )}
           />
         ) : (
@@ -137,7 +137,7 @@ export function GapsTab({
                   <Icon name="scale" size={14} />
                   <b style={{ fontSize: 13 }}>{tr('疑似矛盾的结论', 'Possible contradictions')}</b>
                   <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                    {tr('按共同关键词自动匹配，请对照双方原文核实', 'Matched by shared keywords — verify against both quotes')}
+                    {tr('按共同关键词匹配，请对照原文核实', 'Matched by shared keywords. Check both quotes.')}
                   </span>
                 </div>
                 <div className="col gap10" style={{ marginTop: 10 }}>
@@ -145,7 +145,7 @@ export function GapsTab({
                     <div key={i} className="col gap6">
                       <GapCard entry={pair.a} onOpenPaper={onOpenPaper} />
                       <div style={{ fontSize: 11, color: 'var(--text-3)', textAlign: 'center' }}>
-                        {tr('↕ 说法对不上', '↕ These disagree')}
+                        {tr('↕ 结论不一致', '↕ These disagree')}
                         {pair.shared_terms.length > 0 && ` · ${pair.shared_terms.join(' / ')}`}
                       </div>
                       <GapCard entry={pair.b} onOpenPaper={onOpenPaper} />

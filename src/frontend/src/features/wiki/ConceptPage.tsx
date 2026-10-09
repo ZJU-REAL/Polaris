@@ -34,12 +34,12 @@ export function ConceptPage() {
       try {
         const hit = pickConceptByName(await api.lookupConcept(name), name);
         if (!hit) {
-          toast(tr(`概念「${name}」还没入库`, `“${name}” is not in the knowledge base yet`), 'info');
+          toast(tr(`还没有概念「${name}」`, `No concept named “${name}” yet`), 'info');
           return;
         }
         navigate(conceptPath(hit.id, libraryId));
       } catch {
-        toast(tr('概念解析失败（后端不可用）', 'Concept lookup failed (backend unavailable)'), 'error');
+        toast(tr('无法查找概念，请确认本机引擎正在运行', 'Couldn’t look up the concept. Check that the local engine is running.'), 'error');
       }
     },
     [navigate, libraryId],
@@ -64,8 +64,8 @@ export function ConceptPage() {
           <EmptyState
             compact
             icon="x"
-            title={tr('无法加载概念详情', 'Failed to load concept')}
-            desc={tr('链接里没有概念 id。', 'The link carries no concept id.')}
+            title={tr('无法打开这个概念', 'Couldn’t open this concept')}
+            desc={tr('链接不完整。', 'The link is incomplete.')}
           />
         )}
       </div>

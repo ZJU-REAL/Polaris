@@ -56,14 +56,14 @@ export function PresentationModal({
       }),
     onSuccess: (run) => {
       toast(
-        tr('PPT 生成任务已发起，完成后可在任务详情页下载', 'PPT task started — download it from the task detail page when done'),
+        tr('已开始生成 PPT，完成后在任务详情中下载', 'Generating slides. Download them from the task when done.'),
         'ok',
       );
       onClose();
       navigate(`/voyages/${run.id}`);
     },
     onError: (e) =>
-      toast(`${tr('发起失败：', 'Failed to start: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法开始：', 'Couldn’t start: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   function toggle(id: string) {
@@ -81,17 +81,17 @@ export function PresentationModal({
       open
       onClose={onClose}
       width={640}
-      title={tr('生成论文分享 PPT', 'Generate paper sharing PPT')}
+      title={tr('生成论文分享 PPT', 'Generate paper slides')}
       sub={tr(
-        '按实验室模板生成，模板规范可在技能页调整',
-        'Generated from the built-in template',
+        '使用内置模板，可在技能页调整',
+        'Uses the built-in template. You can change it on the Skills page.',
       )}
       footer={
         <>
           <span style={{ marginRight: 'auto', fontSize: 11.5, color: 'var(--text-3)' }}>
             {tr(`已选 ${selected.length} 篇`, `${selected.length} selected`)}
             {mode === 'survey' && selected.length < 2
-              ? tr('（梳理模式至少选 2 篇）', '(survey mode needs at least 2)')
+              ? tr('，多篇梳理至少选 2 篇', '. A survey needs at least 2.')
               : ''}
           </span>
           <button className="btn btn-ghost" onClick={onClose}>
@@ -102,7 +102,7 @@ export function PresentationModal({
             disabled={!canSubmit || createMutation.isPending}
             onClick={() => createMutation.mutate()}
           >
-            {createMutation.isPending ? tr('发起中…', 'Starting…') : tr('生成 PPT', 'Generate PPT')}
+            {createMutation.isPending ? tr('正在开始…', 'Starting…') : tr('生成 PPT', 'Generate PPT')}
           </button>
         </>
       }
@@ -111,7 +111,7 @@ export function PresentationModal({
         <Segmented<Mode>
           options={[
             { v: 'single', label: tr('单篇分享', 'Single paper') },
-            { v: 'survey', label: tr('多篇梳理', 'Multi-paper survey') },
+            { v: 'survey', label: tr('多篇梳理', 'Survey') },
           ]}
           value={mode}
           onChange={(m) => {
@@ -143,7 +143,7 @@ export function PresentationModal({
             compact
             icon="book"
             title={tr('没有可选论文', 'No papers to pick')}
-            desc={tr('先在建库与同步里收录论文', 'Add papers via Ingest & sync first')}
+            desc={tr('先在「检索与同步」中添加论文。', 'Add papers under “Search & sync” first.')}
           />
         ) : (
           papers.map((p) => {
@@ -171,7 +171,7 @@ export function PresentationModal({
                     className="pill sm"
                     style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)', flexShrink: 0 }}
                   >
-                    {tr('已精读', 'Compiled')}
+                    {tr('已解读', 'Summarized')}
                   </span>
                 )}
               </label>
@@ -182,14 +182,14 @@ export function PresentationModal({
 
       <FormField
         label={tr('讲者备注', 'Speaker notes')}
-        hint={tr('可选：听众背景、要突出的侧重点', 'Optional: audience background and points to highlight')}
+        hint={tr('可选，例如听众背景和重点', 'Optional. Audience and focus, for example.')}
       >
         <textarea
           className="textarea"
           rows={2}
           placeholder={tr(
-            '例如：面向组会分享，听众了解 LLM 基础，重点讲清训练闭环',
-            'e.g. lab meeting talk, audience knows LLM basics, focus on the training loop',
+            '例如 组会分享，听众了解 LLM 基础，重点讲训练闭环',
+            'e.g. Lab meeting, audience knows LLM basics, focus on the training loop',
           )}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
@@ -197,8 +197,8 @@ export function PresentationModal({
       </FormField>
       <p style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 8 }}>
         {tr(
-          '提示：优先选择已精读的论文，PPT 内容与配图会更充实。',
-          'Tip: prefer compiled papers — the slides get richer content and figures.',
+          '已解读的论文生成的 PPT 内容和配图更完整。',
+          'Summarized papers give fuller slides with figures.',
         )}
       </p>
     </Modal>

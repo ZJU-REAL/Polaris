@@ -145,7 +145,7 @@ export function LibraryTasksPage() {
       out.push({
         key: 'daily',
         title: tr('每日新论文', 'Daily papers'),
-        hint: tr('全局共享，不属于任何文献库', 'Shared globally, not tied to a library'),
+        hint: tr('所有文献库共用', 'Shared by all libraries'),
         icon: 'refresh',
         items: newest(daily),
       });
@@ -154,8 +154,8 @@ export function LibraryTasksPage() {
     if (other.length > 0) {
       out.push({
         key: 'other',
-        title: tr('其它任务', 'Other tasks'),
-        hint: tr('既不属于文献库也不属于每日新论文', 'Neither a library nor the daily feed'),
+        title: tr('其他任务', 'Other tasks'),
+        hint: tr('不属于任何文献库', 'Not tied to a library'),
         icon: 'sparkle',
         items: newest(other),
       });
@@ -196,8 +196,8 @@ export function LibraryTasksPage() {
         <div className="card">
           <EmptyState
             icon="x"
-            title={tr('无法加载任务列表', 'Failed to load tasks')}
-            desc={tr('后端不可用或接口尚未就绪，稍后可重试。', 'Backend unavailable or endpoint not ready — try again later.')}
+            title={tr('无法加载任务', 'Couldn’t load tasks')}
+            desc={tr('请确认本机引擎正在运行。', 'Check that the local engine is running.')}
             compact
             action={
               <button className="btn btn-soft" onClick={() => void refetch()}>
@@ -211,13 +211,13 @@ export function LibraryTasksPage() {
         <div className="card">
           <EmptyState
             icon="compass"
-            title={tr('暂无任务', 'No tasks yet')}
+            title={tr('还没有任务', 'No tasks yet')}
             desc={
               filter !== 'all' || kindFilter !== 'all'
-                ? tr('当前筛选条件下没有任务，换个筛选试试。', 'No tasks match the current filters — try different ones.')
+                ? tr('没有符合筛选的任务。', 'No tasks match the filters.')
                 : tr(
-                    '建库、增量更新与每日新论文的任务会出现在这里。想法生成、实验等课题任务在课题工作台看。',
-                    'Library builds, incremental syncs and the daily paper feed show up here. Idea generation, experiments and other topic tasks live in the topic workbench.',
+                    '建库、同步和每日新论文的任务会出现在这里。',
+                    'Library builds, syncs and daily paper fetches appear here.',
                   )
             }
             compact

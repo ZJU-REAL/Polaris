@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '../../components/ui/Toast';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { api, type DirectionLibraryDetail, type DuplicateCandidatePaper, type ProjectDefinition } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../libraries/InclusionSettingsForm';
 import { InterdisciplinaryScopePanel } from '../projects/InterdisciplinaryScopePanel';
 import { DisciplineSelect, disciplineFieldValue } from '../libraries/DisciplineSelect';
+import { PanelSection as Section, PanelHint as SectionHint } from './shared';
 
 /** library.definition → 收录设置表单初值 */
 function fromDefinition(def: ProjectDefinition | null): InclusionValue {
@@ -25,12 +27,23 @@ function fromDefinition(def: ProjectDefinition | null): InclusionValue {
 }
 
 /* ============================================================
-   文献库治理页签：
-   - 库信息编辑；
-   - 本月 AI 用量展示（#734 起纯展示：预算硬限额已移除，不再暂停任务，
+   文献库设置页签（原「治理」）：
+   - 基本信息 / 学科 / 收录设置：各自保存，只有改动过才出现保存按钮，
+     同一时刻页面上通常只有一个主按钮；
+   - 本月用量展示（#734 起纯展示：预算硬限额已移除，不再暂停任务，
      旧的「每月预算」输入随之撤下——参考上限仅在用量条上呈现）；
    - 重复论文候选与合并（不可撤销）。
+   版式：单列、分节标签在内容外、行内左标签右控件，不再一节一张卡
+   （外层工作台本身就是一张卡，再套卡就是卡中卡）。
    ============================================================ */
+
+function SaveButton({ pending, disabled, onClick }: { pending: boolean; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button className="btn btn-primary sm" disabled={pending || disabled} onClick={onClick}>
+      {pending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+    </button>
+  );
+}
 
 export function GovernanceTab({ libraryId }: { libraryId: string }) {
   const { data: lib } = useQuery({
@@ -40,18 +53,20 @@ export function GovernanceTab({ libraryId }: { libraryId: string }) {
   });
 
   return (
-    <div className="col gap16" style={{ padding: 20, overflowY: 'auto' }}>
-      {lib && <LibraryInfoCard lib={lib} />}
-      {lib?.library_kind === 'interdisciplinary' && lib.project_id && (
-        <InterdisciplinaryLibraryScope projectId={lib.project_id} library={lib} />
-      )}
-      {lib && <DisciplineCard lib={lib} />}
-      {lib && (
-        // 交叉库的收录范围由课题的交叉研究设置决定，这里只读
-        <InclusionSettingsCard lib={lib} readOnly={lib.library_kind === 'interdisciplinary'} />
-      )}
-      <BudgetCard libraryId={libraryId} />
-      <DuplicatesCard libraryId={libraryId} />
+    <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
+      <div className="col" style={{ gap: 20, maxWidth: 760, margin: '0 auto', padding: '4px 24px 48px' }}>
+        {lib && <LibraryInfoSection lib={lib} />}
+        {lib?.library_kind === 'interdisciplinary' && lib.project_id && (
+          <InterdisciplinaryLibraryScope projectId={lib.project_id} library={lib} />
+        )}
+        {lib && <DisciplineSection lib={lib} />}
+        {lib && (
+          // 交叉库的收录范围由课题的交叉研究设置决定，这里只读
+          <InclusionSettingsSection lib={lib} readOnly={lib.library_kind === 'interdisciplinary'} />
+        )}
+        <BudgetSection libraryId={libraryId} />
+        <DuplicatesSection libraryId={libraryId} />
+      </div>
     </div>
   );
 }
@@ -79,12 +94,12 @@ function InterdisciplinaryLibraryScope({
 /* —— 重复论文候选与合并 —— */
 
 const REASON_LABEL: Record<string, { zh: string; en: string }> = {
-  arxiv: { zh: '同一 arXiv 编号', en: 'Same arXiv id' },
+  arxiv: { zh: '同一 arXiv 编号', en: 'Same arXiv ID' },
   doi: { zh: '同一 DOI', en: 'Same DOI' },
   title: { zh: '标题相同', en: 'Same title' },
 };
 
-function DuplicatesCard({ libraryId }: { libraryId: string }) {
+function DuplicatesSection({ libraryId }: { libraryId: string }) {
   const queryClient = useQueryClient();
   const { data: groups, isLoading, isError } = useQuery({
     queryKey: ['library-duplicates', libraryId],
@@ -100,98 +115,102 @@ function DuplicatesCard({ libraryId }: { libraryId: string }) {
       void queryClient.invalidateQueries({ queryKey: ['library', libraryId] });
       void queryClient.invalidateQueries({ queryKey: ['papers'] });
     },
-    onError: () => toast(tr('合并失败，请重试', 'Merge failed, please retry'), 'error'),
+    onError: () => toast(tr('无法合并，请重试', 'Couldn’t merge. Try again.'), 'error'),
   });
 
-  function confirmMerge(keep: DuplicateCandidatePaper, drop: DuplicateCandidatePaper) {
-    const ok = window.confirm(
-      `${tr('确定合并这两篇论文？', 'Merge these two papers?')}\n\n` +
-        `${tr('保留：', 'Keep: ')}${keep.title}\n${tr('并入后删除：', 'Merge & delete: ')}${drop.title}\n\n` +
-        tr(
-          '被删除那篇的解读、笔记、划线、收藏等会全部并到保留的那篇上。此操作不可撤销。',
-          'Its wiki, notes, highlights and stars will all move to the kept paper. This cannot be undone.',
-        ),
-    );
-    if (ok) merge.mutate({ keep_id: keep.id, drop_id: drop.id });
-  }
+  const [pendingMerge, setPendingMerge] = useState<{ keep: DuplicateCandidatePaper; drop: DuplicateCandidatePaper } | null>(null);
 
   return (
-    <section className="card" style={{ padding: 18 }}>
-      <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>
-        {tr('重复论文', 'Duplicate papers')}
-      </h3>
-      <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+    <Section label={tr('重复论文', 'Duplicate papers')}>
+      <SectionHint>
         {tr(
-          '合并会保留更完整的一篇，另一篇的内容并入后删除，不可撤销。',
-          'Merging keeps the more complete row and folds the other into it, then deletes it — irreversible.',
+          '合并后只保留一篇，另一篇的笔记和解读会并入其中。',
+          'Merging keeps one paper and moves the other’s notes and summary into it.',
         )}
-      </p>
+      </SectionHint>
       {isLoading ? (
-        <div className="skel" style={{ height: 48 }} />
+        <div className="skel" style={{ height: 40 }} />
       ) : isError ? (
-        <div className="muted" style={{ fontSize: 13 }}>{tr('候选加载失败', 'Failed to load candidates')}</div>
+        <div className="muted" style={{ fontSize: 13 }}>{tr('无法加载重复论文', 'Couldn’t load duplicates')}</div>
       ) : !groups || groups.length === 0 ? (
-        <div className="muted" style={{ fontSize: 13 }}>
-          {tr('没有发现疑似重复的论文。', 'No suspected duplicates found.')}
-        </div>
+        <div className="muted" style={{ fontSize: 13 }}>{tr('没有疑似重复的论文', 'No likely duplicates')}</div>
       ) : (
-        <div className="col gap12">
+        <div className="settings-list">
           {groups.map((group, gi) => {
             const keep = group.papers[0];
             if (!keep) return null;
             return (
-              <div
-                key={`${group.reason}-${keep.id}-${gi}`}
-                style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}
-              >
-                <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+              <div key={`${group.reason}-${keep.id}-${gi}`} className="col" style={{ gap: 8, padding: '12px 0' }}>
+                <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
                   {tr(REASON_LABEL[group.reason]?.zh ?? group.reason, REASON_LABEL[group.reason]?.en ?? group.reason)}
                 </div>
-                <div className="col gap8">
-                  {group.papers.map((paper, pi) => (
-                    <div key={paper.id} className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
-                      <div className="col" style={{ minWidth: 0 }}>
-                        <div className="row gap8" style={{ minWidth: 0 }}>
-                          <span style={{ fontSize: 13, fontWeight: pi === 0 ? 650 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {paper.title}
-                          </span>
-                          {pi === 0 && (
-                            <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)', flexShrink: 0 }}>
-                              {tr('建议保留', 'Suggested keep')}
-                            </span>
-                          )}
-                        </div>
-                        <span className="muted" style={{ fontSize: 12 }}>
-                          {paper.year ?? tr('年份未知', 'Year unknown')} · {paper.source ?? tr('来源未知', 'Unknown source')} ·{' '}
-                          {tr('全文分段 ', 'Chunks ')}{paper.chunk_count}
-                          {paper.has_wiki ? ` · ${tr('已有解读', 'Has wiki')}` : ''}
-                        </span>
-                      </div>
-                      {pi > 0 && (
-                        <button
-                          className="btn btn-soft sm"
-                          disabled={merge.isPending}
-                          onClick={() => confirmMerge(keep, paper)}
-                          style={{ flexShrink: 0 }}
+                {group.papers.map((paper, pi) => (
+                  <div key={paper.id} className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
+                    <div className="col" style={{ minWidth: 0 }}>
+                      <div className="row gap8" style={{ minWidth: 0 }}>
+                        <span
+                          className="ellipsis"
+                          title={paper.title}
+                          style={{ fontSize: 13, fontWeight: pi === 0 ? 600 : 400, minWidth: 0 }}
                         >
-                          {tr('并入保留行', 'Merge into keep')}
-                        </button>
-                      )}
+                          {paper.title}
+                        </span>
+                        {pi === 0 && (
+                          <span style={{ fontSize: 12, color: 'var(--accent-text)', flexShrink: 0 }}>
+                            {tr('建议保留', 'Keep (suggested)')}
+                          </span>
+                        )}
+                      </div>
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        {paper.year ?? tr('年份未知', 'Year unknown')} · {paper.source ?? tr('来源未知', 'Unknown source')} ·{' '}
+                        {paper.chunk_count > 0 ? tr('有全文', 'Full text') : tr('无全文', 'No full text')}
+                        {paper.has_wiki ? ` · ${tr('有解读', 'Summarized')}` : ''}
+                      </span>
                     </div>
-                  ))}
-                </div>
+                    {pi > 0 && (
+                      <button
+                        className="btn btn-ghost sm"
+                        disabled={merge.isPending}
+                        onClick={() => setPendingMerge({ keep, drop: paper })}
+                        style={{ flexShrink: 0 }}
+                      >
+                        {tr('合并', 'Merge')}
+                      </button>
+                    )}
+                  </div>
+                ))}
               </div>
             );
           })}
         </div>
       )}
-    </section>
+      <ConfirmModal
+        open={!!pendingMerge}
+        onClose={() => setPendingMerge(null)}
+        title={tr('合并这两篇论文？', 'Merge these papers?')}
+        message={
+          pendingMerge
+            ? tr(
+                `「${pendingMerge.drop.title}」的笔记、划线和解读会并入「${pendingMerge.keep.title}」，然后被删除。此操作无法撤销。`,
+                `Notes, highlights and the summary of “${pendingMerge.drop.title}” move into “${pendingMerge.keep.title}”, then it’s deleted. This can’t be undone.`,
+              )
+            : ''
+        }
+        confirmText={tr('合并', 'Merge')}
+        danger
+        busy={merge.isPending}
+        onConfirm={() => {
+          if (pendingMerge) merge.mutate({ keep_id: pendingMerge.keep.id, drop_id: pendingMerge.drop.id });
+          setPendingMerge(null);
+        }}
+      />
+    </Section>
   );
 }
 
 /* —— 本月用量展示（原「预算进度」；上限只是参考，不再是闸门） —— */
 
-function BudgetCard({ libraryId }: { libraryId: string }) {
+function BudgetSection({ libraryId }: { libraryId: string }) {
   const { data: budget, isError } = useQuery({
     queryKey: ['library-budget', libraryId],
     queryFn: () => api.getLibraryBudget(libraryId),
@@ -204,40 +223,39 @@ function BudgetCard({ libraryId }: { libraryId: string }) {
   const barColor = ratio >= 1 ? 'var(--danger)' : ratio >= 0.8 ? 'var(--warn)' : 'var(--accent)';
 
   return (
-    <section className="card" style={{ padding: 18 }}>
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 700 }}>{tr('本月 AI 用量', 'AI usage this month')}</h3>
-        {budget && <span className="muted" style={{ fontSize: 12 }}>{budget.month}</span>}
-      </div>
+    <Section
+      label={tr('本月用量', 'Usage this month')}
+      action={budget ? <span className="muted mono" style={{ fontSize: 12 }}>{budget.month}</span> : undefined}
+    >
       {isError ? (
-        <div className="muted" style={{ fontSize: 13 }}>{tr('用量加载失败', 'Failed to load usage')}</div>
+        <div className="muted" style={{ fontSize: 13 }}>{tr('无法加载用量', 'Couldn’t load usage')}</div>
       ) : !budget ? (
         <div className="skel" style={{ height: 34 }} />
       ) : (
         <div className="col gap8">
-          <div className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}>
+          <div className="row" style={{ justifyContent: 'space-between', fontSize: 13, gap: 12, flexWrap: 'wrap' }}>
             <span>
               {tr('已用 ', 'Used ')}
-              <strong>{budget.used_tokens.toLocaleString()}</strong>
+              <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{budget.used_tokens.toLocaleString()}</strong>
               {' tokens'}
               <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>
-                {tr('输入 ', 'in ')}{budget.prompt_tokens.toLocaleString()} · {tr('输出 ', 'out ')}
+                {tr('输入 ', 'Input ')}{budget.prompt_tokens.toLocaleString()} · {tr('输出 ', 'Output ')}
                 {budget.completion_tokens.toLocaleString()}
               </span>
             </span>
             <span className="muted" style={{ fontSize: 12 }}>
               {limited
-                ? `${tr('参考上限 ', 'Reference cap ')}${budget.monthly_budget!.toLocaleString()}`
-                : tr('未设参考上限', 'No reference cap')}
+                ? `${tr('参考上限 ', 'Reference limit ')}${budget.monthly_budget!.toLocaleString()}`
+                : tr('未设参考上限', 'No reference limit')}
             </span>
           </div>
           {limited && (
-            <div style={{ height: 8, borderRadius: 4, background: 'var(--surface-3)', overflow: 'hidden' }}>
+            <div style={{ height: 6, borderRadius: 3, background: 'var(--surface-3)', overflow: 'hidden' }}>
               <div
                 style={{
                   width: `${Math.round(ratio * 100)}%`,
                   height: '100%',
-                  borderRadius: 4,
+                  borderRadius: 3,
                   background: barColor,
                   transition: 'width .3s',
                 }}
@@ -245,22 +263,22 @@ function BudgetCard({ libraryId }: { libraryId: string }) {
             </div>
           )}
           {budget.exhausted && (
-            <div style={{ color: 'var(--warn)', fontSize: 13 }}>
+            <SectionHint>
               {tr(
-                '本月用量已超过参考上限（仅提示，任务照常运行）。',
-                'Usage has passed the reference cap this month (informational only — tasks keep running).',
+                '本月用量已超过参考上限，任务照常运行。',
+                'Usage is over this month’s reference limit. Tasks keep running.',
               )}
-            </div>
+            </SectionHint>
           )}
         </div>
       )}
-    </section>
+    </Section>
   );
 }
 
-/* —— 库信息 —— */
+/* —— 基本信息 —— */
 
-function LibraryInfoCard({ lib }: { lib: DirectionLibraryDetail }) {
+function LibraryInfoSection({ lib }: { lib: DirectionLibraryDetail }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(lib.name);
   const [statement, setStatement] = useState(lib.statement ?? '');
@@ -281,47 +299,48 @@ function LibraryInfoCard({ lib }: { lib: DirectionLibraryDetail }) {
         statement: statement.trim() || null,
       }),
     onSuccess: () => {
-      toast(tr('库信息已保存', 'Library info saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['library', lib.id] });
       void queryClient.invalidateQueries({ queryKey: ['libraries'] });
       void queryClient.invalidateQueries({ queryKey: ['library-budget', lib.id] });
     },
-    onError: () => toast(tr('保存失败，请重试', 'Save failed, please retry'), 'error'),
+    onError: () => toast(tr('无法保存，请重试', 'Couldn’t save. Try again.'), 'error'),
   });
 
   return (
-    <section className="card" style={{ padding: 18 }}>
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 700 }}>{tr('库信息', 'Library info')}</h3>
-        <button
-          className="btn btn-primary sm"
-          disabled={!dirty || save.isPending || !name.trim()}
-          onClick={() => save.mutate()}
-        >
-          {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
-        </button>
-      </div>
-      <div className="col gap12">
-        <label className="col gap6">
-          <span className="muted" style={{ fontSize: 12 }}>{tr('名称', 'Name')}</span>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={255} />
-        </label>
-        <label className="col gap6">
-          <span className="muted" style={{ fontSize: 12 }}>{tr('方向描述', 'Description')}</span>
+    <Section
+      first
+      label={tr('基本信息', 'Details')}
+      action={dirty ? <SaveButton pending={save.isPending} disabled={!name.trim()} onClick={() => save.mutate()} /> : undefined}
+    >
+      <div className="settings-list">
+        <div className="settings-row" style={{ flexWrap: 'wrap' }}>
+          <div className="settings-row-text" style={{ fontSize: 13 }}>{tr('名称', 'Name')}</div>
+          <input
+            className="input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={255}
+            style={{ width: 360, maxWidth: '100%' }}
+          />
+        </div>
+        <div className="col" style={{ gap: 8, padding: '12px 0 4px' }}>
+          <div style={{ fontSize: 13 }}>{tr('方向说明', 'Scope')}</div>
           <textarea
             className="textarea"
             rows={3}
-            style={{ resize: 'none', height: 78 }}
+            style={{ resize: 'vertical', minHeight: 72 }}
             value={statement}
             onChange={(e) => setStatement(e.target.value)}
             placeholder={tr(
-              '例：研究长时程运行的 LLM 智能体。关注记忆压缩、错误恢复、长期一致性评测；偏重方法与系统设计，不收纯 prompt 工程和纯应用报告。',
-              'e.g. Long-running LLM agents. Focus on memory compaction, error recovery and long-horizon consistency evaluation; methods and system design rather than prompt engineering or application reports.',
+              '例如 Long-running LLM agents: memory compaction, error recovery, long-horizon evaluation. No pure prompt engineering.',
+              'e.g. Long-running LLM agents: memory compaction, error recovery, long-horizon evaluation. No pure prompt engineering.',
             )}
           />
-        </label>
+          <SectionHint>{tr('用来判断论文是否相关，建议用英文写。', 'Used to judge relevance. English works best.')}</SectionHint>
+        </div>
       </div>
-    </section>
+    </Section>
   );
 }
 
@@ -333,7 +352,7 @@ function LibraryInfoCard({ lib }: { lib: DirectionLibraryDetail }) {
  */
 const LEGACY_LIBRARY_SOURCES = ['arxiv'];
 
-function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail; readOnly?: boolean }) {
+function InclusionSettingsSection({ lib, readOnly }: { lib: DirectionLibraryDetail; readOnly?: boolean }) {
   const queryClient = useQueryClient();
   const [value, setValue] = useState<InclusionValue>(() => fromDefinition(lib.definition));
   // arXiv 分类快捷项跟库的学科走；没选学科就只有自由输入
@@ -344,6 +363,9 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
     setValue(fromDefinition(lib.definition));
   }, [lib]);
 
+  // 只有改动过才出现保存按钮：页面同时只露一个主按钮
+  const dirty = JSON.stringify(value) !== JSON.stringify(fromDefinition(lib.definition));
+
   const save = useMutation({
     mutationFn: () =>
       api.updateLibrary(lib.id, {
@@ -352,34 +374,29 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
         anchors: value.anchors.filter((a) => a.title.trim() || (a.arxiv_id ?? '').trim()),
       }),
     onSuccess: () => {
-      toast(tr('收录设置已保存', 'Inclusion settings saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['library', lib.id] });
       void queryClient.invalidateQueries({ queryKey: ['libraries'] });
     },
-    onError: () => toast(tr('保存失败，请重试', 'Save failed, please retry'), 'error'),
+    onError: () => toast(tr('无法保存，请重试', 'Couldn’t save. Try again.'), 'error'),
   });
 
   return (
-    <section className="card" style={{ padding: 18 }}>
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 700 }}>{tr('收录设置', 'Inclusion settings')}</h3>
-        {!readOnly && (
-          <button className="btn btn-primary sm" disabled={save.isPending} onClick={() => save.mutate()}>
-            {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
-          </button>
-        )}
-      </div>
-      <p className="muted" style={{ fontSize: 12, marginBottom: 16 }}>
+    <Section
+      label={tr('收录设置', 'Inclusion')}
+      action={!readOnly && dirty ? <SaveButton pending={save.isPending} onClick={() => save.mutate()} /> : undefined}
+    >
+      <SectionHint>
         {readOnly
           ? tr(
-              '交叉库的收录范围由课题的交叉研究设置决定，这里只能查看。',
-              'This cross-field library takes its scope from the topic’s cross-field settings, so it is read-only here.',
+              '交叉库的收录范围跟随课题设置，这里只能查看。',
+              'This cross-field library follows its topic’s settings, so it’s read-only here.',
             )
           : tr(
-              '建库检索从这里勾选的来源按关键词取文献（选了 arXiv 时还可按分类筛），再按打分标准判定相关性；不设打分标准则只按方向说明打分。',
-              'Library builds search the sources ticked here by keyword (arXiv can also be narrowed by category), then score relevance against the rubric; without a rubric, scoring uses the statement alone.',
+              '决定从哪里检索、用哪些关键词，以及如何判断相关。',
+              'Choose where to search, which keywords to use and how relevance is judged.',
             )}
-      </p>
+      </SectionHint>
       <InclusionSettingsForm
         value={value}
         onChange={setValue}
@@ -389,14 +406,14 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
         defaultSources={LEGACY_LIBRARY_SOURCES}
         arxivQuickPicks={arxivQuickPicks}
       />
-    </section>
+    </Section>
   );
 }
 
 /* —— 学科口径（#775）——
    装了学科包却没有入口的话，包里那套字段永远用不上：抽取照旧按机器学习的口径
    （baseline / dataset）走，而做结构、做合成、做临床的人看不出为什么方法卡答非所问。
-   这张卡就是那个入口。 */
+   这一节就是那个入口。 */
 
 /**
  * 选择框的值 → PATCH 里的 discipline。
@@ -406,7 +423,7 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
  */
 export const disciplinePatchValue = disciplineFieldValue;
 
-function DisciplineCard({ lib }: { lib: DirectionLibraryDetail }) {
+function DisciplineSection({ lib }: { lib: DirectionLibraryDetail }) {
   const queryClient = useQueryClient();
   const [value, setValue] = useState<string>(lib.discipline ?? '');
 
@@ -416,35 +433,27 @@ function DisciplineCard({ lib }: { lib: DirectionLibraryDetail }) {
     // 空字符串 = 清空，回到内置口径；后端按 null 处理
     mutationFn: () => api.updateLibrary(lib.id, { discipline: disciplinePatchValue(value) }),
     onSuccess: () => {
-      toast(tr('学科口径已保存', 'Discipline saved'), 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['library', lib.id] });
       void queryClient.invalidateQueries({ queryKey: ['libraries'] });
     },
-    onError: () => toast(tr('保存失败，请重试', 'Save failed, please retry'), 'error'),
+    onError: () => toast(tr('无法保存，请重试', 'Couldn’t save. Try again.'), 'error'),
   });
 
   const dirty = (lib.discipline ?? '') !== value;
 
   return (
-    <section className="card" style={{ padding: 18 }}>
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 700 }}>{tr('学科口径', 'Discipline')}</h3>
-        <button
-          className="btn btn-primary sm"
-          disabled={save.isPending || !dirty}
-          onClick={() => save.mutate()}
-        >
-          {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
-        </button>
-      </div>
-      <p className="muted" style={{ fontSize: 12, marginBottom: 16 }}>
+    <Section
+      label={tr('学科', 'Discipline')}
+      action={dirty ? <SaveButton pending={save.isPending} onClick={() => save.mutate()} /> : undefined}
+    >
+      <SectionHint>
         {tr(
-          '决定本库论文的方法卡按哪套字段抽取。默认的通用口径是机器学习的形状（目的、手段、基线、数据集）；选一个学科后换成该领域自己的字段，比如结构工程的「构件 / 作用 / 分析 / 验证」。只影响之后新抽取的论文。',
-          'Sets which fields the method card is extracted into. The default is shaped for machine learning (purpose, mechanism, baseline, dataset); picking a discipline swaps in that field’s own — structure, actions, analysis and validation for structural engineering, say. Applies to papers extracted from now on.',
+          '决定方法卡提取哪些字段，只影响之后处理的论文。',
+          'Sets the fields extracted into method cards. Applies to papers processed from now on.',
         )}
-      </p>
-
-      <DisciplineSelect value={value} onChange={setValue} />
-    </section>
+      </SectionHint>
+      <DisciplineSelect value={value} onChange={setValue} maxWidth={360} compact />
+    </Section>
   );
 }

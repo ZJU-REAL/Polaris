@@ -5,6 +5,7 @@ import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { toast } from '../../components/ui/Toast';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type DirectionLibrarySummary } from '../../lib/api';
@@ -153,7 +154,7 @@ function LibraryCard({
             e.stopPropagation();
             onDelete();
           }}
-          style={{ flexShrink: 0, marginTop: -2, color: 'var(--text-4)' }}
+          style={{ flexShrink: 0, marginTop: -2, color: 'var(--text-3)', border: 'none', background: 'transparent', boxShadow: 'none' }}
         >
           <Icon name="trash" size={14} />
         </button>
@@ -170,7 +171,7 @@ function LibraryCard({
           minHeight: 38,
         }}
       >
-        {lib.statement ?? tr('这个方向还没有写一句话介绍。', 'No statement for this direction yet.')}
+        {lib.statement ?? tr('还没有方向说明', 'No scope yet')}
       </div>
       <div
         className="row gap10"
@@ -187,7 +188,7 @@ function LibraryCard({
           {tr(`${lib.concept_count} 个概念`, `${lib.concept_count} concepts`)}
         </span>
         <span className="mono" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-4)' }}>
-          {updated ? `${tr('更新于', 'Updated')} ${fmtTime(updated)}` : tr('还没有内容', 'Empty')}
+          {updated ? `${tr('更新于', 'Updated')} ${fmtTime(updated)}` : tr('还没有论文', 'No papers yet')}
         </span>
       </div>
     </div>
@@ -235,13 +236,13 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
   const mutation = useMutation({
     mutationFn: (input: Parameters<typeof api.createLibrary>[0]) => api.createLibrary(input),
     onSuccess: (lib) => {
-      toast(tr('文献库已创建，可以开始抓取了', 'Library created — ingest can start now'), 'ok');
+      toast(tr('已创建文献库', 'Library created'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['libraries'] });
       onClose();
       navigate(libraryPath(lib.id));
     },
     onError: (err) => {
-      toast(`${tr('创建失败：', 'Create failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error');
+      toast(`${tr('无法创建：', 'Couldn’t create: ')}${err instanceof Error ? err.message : String(err)}`, 'error');
     },
   });
 
@@ -251,7 +252,7 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
       return;
     }
     if (!statement.trim()) {
-      toast(tr('请填写一句话说明', 'Enter a one-sentence statement'), 'info');
+      toast(tr('请填写方向说明', 'Enter a scope'), 'info');
       return;
     }
     // 只选了来源、没填分类和关键词，也必须把 keywords 发出去：
@@ -280,7 +281,6 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
       open={open}
       onClose={onClose}
       title={tr('新建文献库', 'New library')}
-      sub={tr('创建后立即可用。', 'Ready to use right away.')}
       width={640}
       footer={
         <>
@@ -294,11 +294,11 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
       <div style={{ marginTop: 4 }}>
         <FormField label={tr('名称', 'Name')}>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)}
-            placeholder={tr('如：稀疏注意力', 'e.g. Sparse attention')} />
+            placeholder={tr('例如 稀疏注意力', 'e.g. Sparse attention')} />
         </FormField>
         <FormField
-          label={tr('方向描述', 'Statement')}
-          hint={tr('必填，用于挑论文和打分', 'Required — selects and scores papers')}
+          label={tr('方向说明', 'Scope')}
+          hint={tr('用来判断论文是否相关', 'Used to judge which papers are relevant')}
         >
           <div className="row gap8" style={{ alignItems: 'center', marginBottom: 6 }}>
             <button
@@ -306,37 +306,34 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
               disabled={!name.trim()}
               title={
                 name.trim()
-                  ? tr('AI 按四个环节提问，帮你把方向说清楚', 'AI asks four questions to pin the direction down')
+                  ? tr('回答几个问题，生成方向说明', 'Answer a few questions to draft the scope')
                   : tr('先填名称', 'Enter a name first')
               }
               onClick={() => setInterviewOpen(true)}
             >
               <Icon name="sparkle" size={12} />
-              {tr('AI 访谈生成', 'Write it with AI')}
+              {tr('AI 帮写', 'Draft with AI')}
             </button>
-            <span className="muted" style={{ fontSize: 11.5 }}>
-              {tr('不知道怎么写就用它', 'Use this if you are unsure what to write')}
-            </span>
           </div>
           <textarea className="textarea" rows={2} value={statement} onChange={(e) => setStatement(e.target.value)}
             placeholder={tr(
-              '例：研究长时程运行的 LLM 智能体。关注记忆压缩、错误恢复、长期一致性评测；偏重方法与系统设计，不收纯 prompt 工程和纯应用报告。',
-              'e.g. Long-running LLM agents. Focus on memory compaction, error recovery and long-horizon consistency evaluation; methods and system design rather than prompt engineering or application reports.',
+              '例如 Long-running LLM agents: memory compaction, error recovery, long-horizon evaluation. No pure prompt engineering.',
+              'e.g. Long-running LLM agents: memory compaction, error recovery, long-horizon evaluation. No pure prompt engineering.',
             )} />
           <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5, marginTop: 4 }}>
             {tr(
-              '写清四件事效果最好：研究问题、研究对象、关注的子问题、偏重哪类方法。用英文写——语料是英文论文摘要，中文描述会让向量匹配失准。',
-              'Four things help most: the research question, the subject, the sub-problems, and which kinds of method you favour. Write it in English — the corpus is English abstracts, and a Chinese statement skews vector matching.',
+              '建议用英文写明研究问题、对象和偏好的方法，匹配更准。',
+              'Write it in English and name the question, subject and preferred methods for better matches.',
             )}
           </div>
         </FormField>
         <div className="hr" style={{ margin: '4px 0 16px' }} />
-        <FormField label={tr('学科口径', 'Discipline')}>
+        <FormField label={tr('学科', 'Discipline')}>
           <DisciplineSelect value={discipline} onChange={setDiscipline} />
           <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5, marginTop: 4 }}>
             {tr(
-              '决定论文的方法卡按哪套字段抽取。通用口径是机器学习的形状（目的、手段、基线、数据集），选一个学科后换成该领域自己的字段。',
-              'Sets which fields the method card is extracted into. The general fields are shaped for machine learning (purpose, mechanism, baseline, dataset); picking a discipline swaps in that field’s own.',
+              '决定方法卡提取哪些字段。',
+              'Sets the fields extracted into method cards.',
             )}
           </div>
         </FormField>
@@ -367,6 +364,8 @@ export function LibrariesPage() {
   const canCreate = !!me;
   const admin = !!me;
   const [createOpen, setCreateOpen] = useState(false);
+  // 待确认删除的文献库（单个或批量）
+  const [pendingDelete, setPendingDelete] = useState<DirectionLibrarySummary[] | null>(null);
   // 多选态（仅 admin 可用）：selectMode 打开后每张卡可勾选，顶部出现批量操作栏
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -403,8 +402,8 @@ export function LibrariesPage() {
       if (e instanceof ApiError && e.status === 409 && e.message.includes('LIBRARY_HAS_TOPICS')) {
         const ok = window.confirm(
           tr(
-            `文献库${lib.name}仍被课题关联，确定连同关联一起删除吗？`,
-            `Library “${lib.name}” is still linked to topics — delete it together with those links?`,
+            `文献库「${lib.name}」已关联课题，仍要删除吗？关联会一并解除。`,
+            `“${lib.name}” is linked to topics. Delete it anyway? The links will be removed.`,
           ),
         );
         if (!ok) return false;
@@ -436,7 +435,7 @@ export function LibrariesPage() {
       clearSelection();
       if (failed.length > 0) {
         toast(
-          tr(`已删除 ${deleted} 个，${failed.length} 个失败：${failed[0]}`, `Deleted ${deleted}, ${failed.length} failed: ${failed[0]}`),
+          tr(`已删除 ${deleted} 个，${failed.length} 个未能删除：${failed[0]}`, `Deleted ${deleted}. Couldn’t delete ${failed.length}: ${failed[0]}`),
           'error',
         );
       } else if (deleted > 0) {
@@ -448,7 +447,7 @@ export function LibrariesPage() {
         toast(tr('已取消删除', 'Deletion cancelled'), 'info');
       }
     },
-    onError: (err) => toast(`${tr('删除失败：', 'Delete failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('无法删除：', 'Couldn’t delete: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
   return (
@@ -469,10 +468,10 @@ export function LibrariesPage() {
           <button
             className={`btn sm ${selectMode ? 'btn-primary' : 'btn-soft'}`}
             onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
-            title={tr('批量选择', 'Multi-select')}
+            title={tr('选择多个文献库', 'Select several libraries')}
           >
             <Icon name="check" size={13} />
-            {tr('多选', 'Multi-select')}
+            {tr('多选', 'Select')}
           </button>
         )}
         {/* 全选放工具栏：不再插入额外行导致卡片下移 */}
@@ -505,8 +504,8 @@ export function LibrariesPage() {
       ) : isError ? (
         <EmptyState
           icon="x"
-          title={tr('无法加载文献库列表', 'Failed to load libraries')}
-          desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or API not ready.')}
+          title={tr('无法加载文献库', 'Couldn’t load libraries')}
+          desc={tr('请确认本机引擎正在运行。', 'Check that the local engine is running.')}
           action={
             <button className="btn btn-soft sm" onClick={() => void refetch()}>
               {tr('重试', 'Retry')}
@@ -520,7 +519,7 @@ export function LibrariesPage() {
           desc={
             canCreate
               ? undefined
-              : tr('创建课题后会自动生成对应方向的文献库。', 'A direction library is created together with each topic.')
+              : tr('新建课题时会一并创建文献库。', 'A library is created with each new topic.')
           }
           action={
             canCreate ? (
@@ -553,16 +552,7 @@ export function LibrariesPage() {
               selected={selectedIds.has(lib.id)}
               onOpen={() => navigate(libraryPath(lib.id))}
               onToggleSelect={() => toggleSelect(lib.id)}
-              onDelete={() => {
-                const ok = window.confirm(
-                  tr(
-                    `确定删除文献库${lib.name}吗？此操作不可撤销。`,
-                    `Delete library "${lib.name}"? This cannot be undone.`,
-                  ),
-                );
-                if (!ok) return;
-                deleteMutation.mutate([lib]);
-              }}
+              onDelete={() => setPendingDelete([lib])}
             />
           ))}
         </div>
@@ -592,25 +582,35 @@ export function LibrariesPage() {
               onClick={() => {
                 const targets = sorted.filter((l) => selectedIds.has(l.id));
                 if (targets.length === 0) return;
-                const ok = window.confirm(
-                  tr(
-                    `确定删除选中的 ${targets.length} 个文献库吗？此操作不可撤销。`,
-                    `Delete ${targets.length} selected libraries? This cannot be undone.`,
-                  ),
-                );
-                if (!ok) return;
-                deleteMutation.mutate(targets);
+                setPendingDelete(targets);
               }}
             >
               <Icon name="trash" size={13} />
-              {deleteMutation.isPending ? tr('删除中…', 'Deleting…') : tr('批量删除', 'Delete selected')}
+              {deleteMutation.isPending ? tr('删除中…', 'Deleting…') : tr('删除', 'Delete')}
             </button>
             <button className="btn btn-ghost sm" disabled={deleteMutation.isPending} onClick={clearSelection}>
-              {tr('取消选择', 'Clear')}
+              {tr('取消选择', 'Clear selection')}
             </button>
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        open={!!pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        title={
+          pendingDelete?.length === 1
+            ? tr(`删除文献库「${pendingDelete[0]!.name}」？`, `Delete library “${pendingDelete[0]!.name}”?`)
+            : tr(`删除 ${pendingDelete?.length ?? 0} 个文献库？`, `Delete ${pendingDelete?.length ?? 0} libraries?`)
+        }
+        message={tr('删除后无法恢复。', 'This can’t be undone.')}
+        confirmText={tr('删除', 'Delete')}
+        danger
+        onConfirm={() => {
+          if (pendingDelete) deleteMutation.mutate(pendingDelete);
+          setPendingDelete(null);
+        }}
+      />
     </div>
   );
 }

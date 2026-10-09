@@ -88,12 +88,12 @@ export function usePoolConceptNav() {
       try {
         const hit = pickConceptByName(await api.lookupConcept(name), name);
         if (!hit) {
-          toast(tr(`概念「${name}」还没入库`, `“${name}” is not in the knowledge base yet`), 'info');
+          toast(tr(`还没有概念「${name}」`, `No concept named “${name}” yet`), 'info');
           return;
         }
         navigate(conceptPath(hit.id));
       } catch {
-        toast(tr('概念解析失败（后端不可用）', 'Concept lookup failed (backend unavailable)'), 'error');
+        toast(tr('无法查找概念，请确认本机引擎正在运行', 'Couldn’t look up the concept. Check that the local engine is running.'), 'error');
       }
     },
     [navigate],
@@ -244,7 +244,7 @@ export function SemanticSwitch({
       style={{ flexShrink: 0, opacity: disabled ? 0.5 : 1 }}
       title={
         title ??
-        tr('打开后按意思检索，而不是字面匹配关键词', 'Search by meaning instead of literal keyword matching')
+        tr('按意思搜索，而非字面匹配', 'Search by meaning, not exact words')
       }
     >
       <span
@@ -258,7 +258,7 @@ export function SemanticSwitch({
           color: checked ? 'var(--accent-text)' : 'var(--text-3)',
         }}
       >
-        {tr('语义检索', 'Semantic')}
+        {tr('语义搜索', 'Semantic')}
       </span>
       <Switch checked={checked} onChange={onChange} disabled={disabled} aria-labelledby={labelId} />
     </div>
@@ -299,7 +299,7 @@ export function AdvancedToggle({
         position: 'relative',
         ...(open || active ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : {}),
       }}
-      title={title ?? tr('高级检索', 'Advanced search')}
+      title={title ?? tr('更多筛选', 'More filters')}
       onClick={onToggle}
     >
       <Icon name="sliders" size={14} />
@@ -334,7 +334,7 @@ export function AdvancedPanel({ children, onClear }: { children: ReactNode; onCl
           style={{ alignSelf: 'flex-start', height: 22, fontSize: 10.5 }}
           onClick={onClear}
         >
-          {tr('清空高级条件', 'Clear advanced filters')}
+          {tr('清除筛选', 'Clear filters')}
         </button>
       )}
     </div>
@@ -415,9 +415,9 @@ export function MyTagField({
       style={{ height: 26, fontSize: 11.5, width: '100%', padding: '0 6px' }}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      title={title ?? tr('按我的标签过滤（只有你自己看得到）', 'Filter by my tag (only you can see these)')}
+      title={title ?? tr('按我的标签筛选', 'Filter by my tags')}
     >
-      <option value="">{tr('全部我的标签', 'All my tags')}</option>
+      <option value="">{tr('全部标签', 'All tags')}</option>
       {myTags.map((t) => (
         <option key={t.name} value={t.name}>
           {t.name}（{t.paper_count}）
@@ -452,7 +452,7 @@ export function AuthorLinks({
           {onFilter ? (
             <span
               className="author-link"
-              title={tr(`只看 ${a.name} 的论文`, `Show only ${a.name}'s papers`)}
+              title={tr(`只看 ${a.name} 的论文`, `Show only papers by ${a.name}`)}
               {...clickable(() => onFilter(a.name))}
             >
               {a.name}
@@ -547,4 +547,24 @@ export function YearRangeField({
       />
     </div>
   );
+}
+
+/* ---------------- 设置类面板分节 ---------------- */
+
+/** 设置类面板的分节（文献库设置 / 检索与同步共用）：小号分节标签（右侧可放操作）+ 内容。节与节之间用细线分隔。 */
+export function PanelSection({ label, action, first, children }: { label: string; action?: ReactNode; first?: boolean; children: ReactNode }) {
+  return (
+    <section className="col" style={{ gap: 10, paddingTop: first ? 16 : 20, borderTop: first ? 'none' : '0.5px solid var(--border)' }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', minHeight: 28, gap: 12 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.04em' }}>{label}</span>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** 一句话说明：次要文字色、单行为宜。 */
+export function PanelHint({ children }: { children: ReactNode }) {
+  return <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>{children}</div>;
 }

@@ -64,7 +64,7 @@ export function LibraryPicker({
               <div className="row gap8">
                 <span style={{ fontSize: 13.5, fontWeight: 650 }}>{lib.name}</span>
                 {lib.library_kind === 'interdisciplinary' && (
-                  <span className="pill sm">{tr('专属交叉库', 'Dedicated interdisciplinary')}</span>
+                  <span className="pill sm">{tr('交叉库', 'Cross-field')}</span>
                 )}
               </div>
               <div
@@ -79,7 +79,7 @@ export function LibraryPicker({
                   overflow: 'hidden',
                 }}
               >
-                {lib.statement ?? tr('这个方向还没有写一句话介绍。', 'No statement yet.')}
+                {lib.statement ?? tr('还没有方向说明', 'No scope yet')}
               </div>
               <div className="row gap10" style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 4 }}>
                 <span>{tr(`${lib.paper_count} 篇论文`, `${lib.paper_count} papers`)}</span>

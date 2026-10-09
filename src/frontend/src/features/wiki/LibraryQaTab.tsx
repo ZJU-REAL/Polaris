@@ -13,10 +13,10 @@ import { tr } from '../../lib/i18n';
    ============================================================ */
 
 const VIA_LABELS: Record<string, { zh: string; en: string }> = {
-  vector: { zh: '语义检索', en: 'retrieval' },
-  expansion: { zh: '查询扩展', en: 'expansion' },
-  citation: { zh: '引文关联', en: 'citation' },
-  direct: { zh: '全库直供', en: 'whole library' },
+  vector: { zh: '语义检索', en: 'Semantic match' },
+  expansion: { zh: '相关查询', en: 'Related query' },
+  citation: { zh: '引用关系', en: 'Citation' },
+  direct: { zh: '全库', en: 'Whole library' },
 };
 
 /** 回答里的 [paper_id] 引用 → 可点击的 [n] 角标（n = 该论文在证据卡里的编号）。 */
@@ -42,7 +42,7 @@ function AnswerText({
             key={i}
             role="link"
             tabIndex={0}
-            title={tr('点击打开对应论文', 'Open the cited paper')}
+            title={tr('打开论文', 'Open paper')}
             onClick={() => onOpenPaper(part)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') onOpenPaper(part);
@@ -107,8 +107,8 @@ export function LibraryQaTab({
           style={{ flex: 1 }}
           value={question}
           placeholder={tr(
-            '向整个文献库提问；回答只依据检索到的证据，每个引用都可回溯…',
-            'Ask the whole library; answers cite retrieved evidence only…',
+            '例如 这个方向的方法可以分几类？',
+            'e.g. What are the main method families here?',
           )}
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => {
@@ -116,19 +116,19 @@ export function LibraryQaTab({
           }}
         />
         <button className="btn btn-primary sm" disabled={mutation.isPending || !question.trim()} onClick={ask}>
-          {mutation.isPending ? tr('检索作答中…', 'Answering…') : tr('提问', 'Ask')}
+          {mutation.isPending ? tr('正在回答…', 'Answering…') : tr('提问', 'Ask')}
         </button>
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-4)' }}>
         {tr(
-          '深度问答：查询扩展 + 引文关联补召回 + 重排后，只依据证据作答（不看证据外的内容）。',
-          'Deep Q&A: query expansion + citation-graph recall + reranking; the answer is grounded in the evidence below.',
+          '翻遍全库找证据后作答，只依据下方列出的证据。',
+          'Searches the whole library and answers only from the evidence listed below.',
         )}
       </div>
 
       {mutation.isError && (
         <div className="card" style={{ padding: 12, color: 'var(--danger-tx, #c00)', fontSize: 12 }}>
-          {tr('提问失败：', 'Request failed: ')}
+          {tr('无法回答：', 'Couldn’t answer: ')}
           {mutation.error instanceof Error ? mutation.error.message : String(mutation.error)}
         </div>
       )}
@@ -136,8 +136,8 @@ export function LibraryQaTab({
       {!result && !mutation.isPending && !mutation.isError && (
         <EmptyState
           icon="chat"
-          title={tr('问一个需要翻遍全库才能答的问题', 'Ask something that takes the whole library to answer')}
-          desc={tr('例如：这个方向的方法可以分几类？谁和谁在互相引用？', 'e.g. What are the main method families? Who cites whom?')}
+          title={tr('提一个需要综合全库才能回答的问题', 'Ask a question that needs the whole library')}
+          desc={tr('例如 哪些工作在互相引用？', 'e.g. Which papers cite each other?')}
         />
       )}
 
@@ -147,7 +147,7 @@ export function LibraryQaTab({
             <AnswerText answer={result.answer} paperIndex={paperIndex} onOpenPaper={onOpenPaper} />
             {result.queries.length > 0 && (
               <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--text-4)' }}>
-                {tr('执行过的检索：', 'Queries run: ')}
+                {tr('检索词：', 'Searched for: ')}
                 {result.queries.join(tr('；', '; '))}
               </div>
             )}
@@ -156,7 +156,7 @@ export function LibraryQaTab({
           {result.evidence.length > 0 && (
             <div className="col" style={{ gap: 6 }}>
               <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
-                {tr(`证据 · ${result.evidence.length} 条`, `Evidence · ${result.evidence.length}`)}
+                {tr(`${result.evidence.length} 条证据`, `${result.evidence.length} pieces of evidence`)}
               </span>
               {result.evidence.map((e, i) => (
                 <div
@@ -185,7 +185,7 @@ export function LibraryQaTab({
                           whiteSpace: 'nowrap',
                           minWidth: 0,
                         }}
-                        title={`${e.title} · ${tr('点击打开论文', 'click to open paper')}`}
+                        title={`${e.title} · ${tr('打开论文', 'Open paper')}`}
                         onClick={() => onOpenPaper(e.paper_id)}
                       >
                         {e.title || e.paper_id}
@@ -206,7 +206,7 @@ export function LibraryQaTab({
                   <button
                     className="icon-btn"
                     style={{ width: 22, height: 22, border: 'none', background: 'transparent', flexShrink: 0 }}
-                    title={tr('打开论文详情', 'Open paper detail')}
+                    title={tr('打开论文', 'Open paper')}
                     onClick={() => onOpenPaper(e.paper_id)}
                   >
                     <Icon name="layers" size={12} />

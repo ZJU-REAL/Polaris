@@ -68,7 +68,7 @@ function MethodCardView({
             minWidth: 0,
             flex: 1,
           }}
-          title={`${card.title} · ${tr('点击打开论文', 'click to open paper')}`}
+          title={`${card.title} · ${tr('打开论文', 'Open paper')}`}
           onClick={() => onOpenPaper(card.paper_id)}
         >
           {card.title}
@@ -77,7 +77,7 @@ function MethodCardView({
           <span
             className="mono"
             style={{ fontSize: 10, color: 'var(--text-4)', flexShrink: 0 }}
-            title={tr('目的相似度', 'purpose similarity')}
+            title={tr('目的相似度', 'Purpose similarity')}
           >
             {card.similarity.toFixed(2)}
           </span>
@@ -144,8 +144,8 @@ export function MethodsTab({
           style={{ flex: 1, minWidth: 220 }}
           value={input}
           placeholder={tr(
-            '描述你想达成的目标，找库里论文的做法…',
-            'Describe the goal; find how papers in this library approach it…',
+            '例如 降低长文本推理的显存占用',
+            'e.g. Reduce memory use in long-context inference',
           )}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -154,14 +154,14 @@ export function MethodsTab({
         />
         <Segmented<MethodSearchMode>
           options={[
-            { v: 'same_purpose', label: tr('找同类做法', 'Similar approaches') },
-            { v: 'different_mechanism', label: tr('找异类机制', 'Different mechanisms') },
+            { v: 'same_purpose', label: tr('相似做法', 'Similar approaches') },
+            { v: 'different_mechanism', label: tr('不同思路', 'Different approaches') },
           ]}
           value={mode}
           onChange={setMode}
         />
         <button className="btn btn-primary sm" disabled={!input.trim()} onClick={submit}>
-          {tr('搜方法', 'Search')}
+          {tr('搜索', 'Search')}
         </button>
         {searching && (
           <button
@@ -178,23 +178,23 @@ export function MethodsTab({
       <div style={{ fontSize: 11, color: 'var(--text-4)' }}>
         {mode === 'same_purpose'
           ? tr(
-              '找同类做法：按「要达成什么」找目的相近的论文。',
-              'Similar approaches: papers whose purpose is closest to your goal.',
+              '目的与你的目标最接近的论文。',
+              'Papers whose purpose is closest to your goal.',
             )
           : tr(
-              '找异类机制：目的和你相近、但用了不同思路的论文排在前面——找灵感用。',
-              'Different mechanisms: papers with a similar purpose but a different approach come first.',
+              '目的相近、但思路不同的论文排在前面。',
+              'Papers with a similar purpose but a different approach come first.',
             )}
         {searching && searchQuery.data?.mode_used === 'keyword' && (
           <span style={{ marginLeft: 6 }}>
-            {tr('（语义检索暂不可用，已按关键词匹配）', '(semantic search unavailable; matched by keywords)')}
+            {tr('（语义搜索暂不可用，已改用关键词）', '(Semantic search unavailable, so keywords were used.)')}
           </span>
         )}
       </div>
 
       {error && (
         <div className="card" style={{ padding: 12, color: 'var(--danger-tx, #c00)', fontSize: 12 }}>
-          {tr('加载方法库失败（后端不可用）', 'Failed to load the method library (backend unavailable)')}
+          {tr('无法加载方法卡，请确认本机引擎正在运行', 'Couldn’t load method cards. Check that the local engine is running.')}
         </div>
       )}
       {loading && <div className="skel" style={{ height: 120 }} />}
@@ -209,10 +209,10 @@ export function MethodsTab({
           }
           desc={
             searching
-              ? tr('换个说法描述目标试试。', 'Try describing the goal differently.')
+              ? tr('试试换一种说法。', 'Try describing it differently.')
               : tr(
-                  '论文全文就位后会自动抽出方法卡（目的 / 机制 / 基线 / 数据集 / 流程）。',
-                  'Method cards (purpose / mechanism / baselines / datasets / protocol) are extracted automatically once full text is available.',
+                  '论文全文处理完后会生成方法卡。',
+                  'Method cards appear once full texts are processed.',
                 )
           }
         />
@@ -222,7 +222,7 @@ export function MethodsTab({
         <div className="col" style={{ gap: 10 }}>
           {!searching && (
             <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
-              {tr(`方法卡 · ${cards.length} 张`, `Method cards · ${cards.length}`)}
+              {tr(`${cards.length} 张方法卡`, `${cards.length} method cards`)}
             </span>
           )}
           {cards.map((card) => (

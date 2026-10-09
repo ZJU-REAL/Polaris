@@ -32,9 +32,9 @@ function CellContent({ cell }: { cell: ComparisonCell }) {
     return (
       <span
         style={{ color: 'var(--text-3)', fontStyle: 'italic' }}
-        title={tr('可在论文详情里运行抽取', 'Run extraction from the paper detail pane')}
+        title={tr('可在论文详情中提取', 'Extract it from the paper’s detail pane')}
       >
-        {tr('未抽取', 'Not extracted')}
+        {tr('未提取', 'Not extracted')}
       </span>
     );
   }
@@ -65,7 +65,7 @@ export function ComparisonModal({
     const csv = comparisonToCsv(data, {
       fieldLabel,
       fieldColumnTitle: tr('字段', 'Field'),
-      absentText: tr('未抽取', 'Not extracted'),
+      absentText: tr('未提取', 'Not extracted'),
     });
     // BOM 让 Excel 认出 UTF-8（中文表头/正文不乱码）；纯函数不掺编码关注点，在这加
     saveBlob(
@@ -86,8 +86,8 @@ export function ComparisonModal({
         </>
       }
       sub={tr(
-        '按结构化抽取字段并排对比所选论文；「未抽取」的论文可在论文详情里运行抽取后再来。',
-        'Side-by-side view over structured extraction fields; run extraction from the paper detail pane for “not extracted” papers.',
+        '按提取的字段并排对比所选论文。',
+        'The selected papers side by side, field by field.',
       )}
       footer={
         <div className="row gap8" style={{ justifyContent: 'flex-end' }}>
@@ -102,13 +102,13 @@ export function ComparisonModal({
       }
     >
       {isLoading ? (
-        <div className="empty">{tr('生成对比表…', 'Building comparison…')}</div>
+        <div className="empty">{tr('加载中…', 'Loading…')}</div>
       ) : isError || !data ? (
         <EmptyState
           compact
           icon="x"
-          title={tr('无法生成对比表', 'Failed to build the comparison')}
-          desc={tr('后端不可用或所选论文已不在本库，稍后重试。', 'Backend unavailable or the papers left this library — try again later.')}
+          title={tr('无法生成对比表', 'Couldn’t build the comparison')}
+          desc={tr('所选论文可能已不在本库，或本机引擎未运行。', 'The papers may have left this library, or the local engine isn’t running.')}
         />
       ) : (
         <div style={{ overflowX: 'auto', maxHeight: '62vh', overflowY: 'auto' }}>

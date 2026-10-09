@@ -159,7 +159,7 @@ export function InclusionSettingsForm({
     <div className="col gap16">
       {/* —— 文献来源：先问「从哪里找」 —— */}
       <div className="col gap6">
-        <BlockLabel zh="文献来源" en="Literature sources" />
+        <BlockLabel zh="来源" en="Sources" />
         {readOnly ? (
           /* 只读时摆出十个灰按钮、其中两个亮着，读的人要自己找亮的那几个。
              与下面几块一致：只显示选中的 */
@@ -173,8 +173,8 @@ export function InclusionSettingsForm({
         ) : sourcesQuery.isError ? (
           <div className="muted" style={{ fontSize: 12.5 }}>
             {tr(
-              `无法加载来源列表，将使用：${defaultSources.join('、')}。`,
-              `Could not load the source list — ${defaultSources.join(', ')} will be used.`,
+              `无法加载来源，将使用 ${defaultSources.join('、')}`,
+              `Couldn’t load sources. Using ${defaultSources.join(', ')}.`,
             )}
           </div>
         ) : (
@@ -194,8 +194,8 @@ export function InclusionSettingsForm({
             </div>
             <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
               {tr(
-                '默认勾选的是所选学科常用的来源，可以增减：生物医学常用 PubMed / Europe PMC，化学与工程常用 Crossref，CS 与物理常用 arXiv，OpenAlex 覆盖全部学科。',
-                'Pre-selected from the discipline above; add or remove as you like. Life sciences use PubMed / Europe PMC, chemistry and engineering Crossref, CS and physics arXiv; OpenAlex covers every field.',
+                '已按学科预选常用来源，OpenAlex 覆盖所有学科。',
+                'Pre-selected for your discipline. OpenAlex covers every field.',
               )}
             </div>
           </>
@@ -205,7 +205,7 @@ export function InclusionSettingsForm({
       {/* —— arXiv 分类：只在选了 arXiv 时出现 —— */}
       {arxivSelected && (
       <div className="col gap6">
-        <BlockLabel zh="arXiv 分类（可选，只作用于 arXiv）" en="arXiv categories (optional, arXiv only)" />
+        <BlockLabel zh="arXiv 分类（可选）" en="arXiv categories (optional)" />
         {readOnly ? (
           arxiv_categories.length > 0 ? (
             <div className="row gap6 wrap">
@@ -217,7 +217,7 @@ export function InclusionSettingsForm({
             <div className="muted" style={{ fontSize: 12.5 }}>
               {/* 曾写「使用默认分类」——而默认回退早在 #720 A4 就删掉了，
                   实际是完全不带分类过滤。照抄旧文案等于告诉用户一件没发生的事 */}
-              {tr('未限定分类，按关键词检索全站', 'No category filter — searching by keywords')}
+              {tr('不限分类', 'Any category')}
             </div>
           )
         ) : (
@@ -239,8 +239,8 @@ export function InclusionSettingsForm({
                 className="input"
                 style={{ width: 170 }}
                 placeholder={tr(
-                  `分类代码，如 ${arxivQuickPicks[0] ?? 'physics.optics'}`,
-                  `category code, e.g. ${arxivQuickPicks[0] ?? 'physics.optics'}`,
+                  `例如 ${arxivQuickPicks[0] ?? 'physics.optics'}`,
+                  `e.g. ${arxivQuickPicks[0] ?? 'physics.optics'}`,
                 )}
                 value={customCat}
                 onChange={(e) => setCustomCat(e.target.value)}
@@ -257,7 +257,7 @@ export function InclusionSettingsForm({
 
       {/* —— 检索关键词 chips —— */}
       <div className="col gap6">
-        <BlockLabel zh="包括关键词" en="Include terms" />
+        <BlockLabel zh="关键词" en="Keywords" />
         {include.length > 0 ? (
           <div className="row gap6 wrap">
             {include.map((k) => (
@@ -277,7 +277,7 @@ export function InclusionSettingsForm({
             ))}
           </div>
         ) : readOnly ? (
-          <div className="muted" style={{ fontSize: 12.5 }}>{tr('未设检索关键词', 'No search terms set')}</div>
+          <div className="muted" style={{ fontSize: 12.5 }}>{tr('未设置关键词', 'No keywords')}</div>
         ) : null}
         {!readOnly && (
           <input
@@ -297,18 +297,18 @@ export function InclusionSettingsForm({
               }
             }}
             onBlur={() => { if (kwDraft.trim()) addKeywords('include', kwDraft); }}
-            placeholder={tr('输入关键词后回车或逗号添加，如 agent', 'Type a term, press Enter or comma, e.g. agent')}
+            placeholder={tr('例如 agent，按回车添加', 'e.g. agent, then press Enter')}
           />
         )}
       </div>
 
       {/* —— 排除关键词 chips —— */}
       <div className="col gap6">
-        <BlockLabel zh="排除关键词" en="Exclude terms" />
+        <BlockLabel zh="排除关键词" en="Excluded keywords" />
         <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
           {tr(
-            '命中就不收，检索、打分、每日同步三处都生效。用来挡掉和本方向撞词的其他领域，宁缺毋滥。',
-            'Matching papers are never admitted — in search, in scoring, and in the daily sync. Use it for other fields that share vocabulary with yours; keep it short.',
+            '含这些词的论文不会加入本库。',
+            'Papers containing these words are never added.',
           )}
         </div>
         {exclude.length > 0 ? (
@@ -330,7 +330,7 @@ export function InclusionSettingsForm({
             ))}
           </div>
         ) : readOnly ? (
-          <div className="muted" style={{ fontSize: 12.5 }}>{tr('未设排除关键词', 'No exclude terms set')}</div>
+          <div className="muted" style={{ fontSize: 12.5 }}>{tr('未设置排除关键词', 'No excluded keywords')}</div>
         ) : null}
         {!readOnly && (
           <input
@@ -349,7 +349,7 @@ export function InclusionSettingsForm({
               }
             }}
             onBlur={() => { if (exDraft.trim()) addKeywords('exclude', exDraft); }}
-            placeholder={tr('输入后回车或逗号添加，如 speech recognition', 'Type a term, press Enter or comma')}
+            placeholder={tr('例如 speech recognition，按回车添加', 'e.g. speech recognition, then press Enter')}
           />
         )}
       </div>
@@ -358,20 +358,20 @@ export function InclusionSettingsForm({
       {showRubric && (
         <div className="col gap8">
           <BlockLabel
-            zh="打分标准"
-            en="Scoring rubric"
+            zh="相关度评分标准"
+            en="Relevance criteria"
             right={
               readOnly ? undefined : (
                 <button type="button" className="btn btn-soft sm" onClick={addRubric}>
                   <Icon name="plus" size={12} />
-                  {tr('添加维度', 'Add dimension')}
+                  {tr('添加标准', 'Add criterion')}
                 </button>
               )
             }
           />
           {rubric.length === 0 ? (
             <div className="muted" style={{ fontSize: 12.5 }}>
-              {tr('未设维度：只按方向说明判定相关性。', 'No dimensions — relevance is judged by the statement only.')}
+              {tr('未设置标准，将按方向说明判断相关度。', 'No criteria. Relevance is judged from the scope.')}
             </div>
           ) : (
             <div className="col gap10">
@@ -380,24 +380,24 @@ export function InclusionSettingsForm({
                   <div className="row gap8" style={{ alignItems: 'flex-start' }}>
                     <div className="col gap8" style={{ flex: 1, minWidth: 0 }}>
                       <label className="col gap4">
-                        <span className="muted" style={{ fontSize: 11.5 }}>{tr('维度名', 'Dimension name')}</span>
+                        <span className="muted" style={{ fontSize: 11.5 }}>{tr('名称', 'Name')}</span>
                         <input
                           className="input"
                           value={r.name}
                           disabled={readOnly}
                           onChange={(e) => updateRubric(i, { name: e.target.value })}
-                          placeholder={tr('如 方法新颖性', 'e.g. Methodological novelty')}
+                          placeholder={tr('例如 方法新颖性', 'e.g. Methodological novelty')}
                         />
                       </label>
                       <label className="col gap4">
-                        <span className="muted" style={{ fontSize: 11.5 }}>{tr('打分标准描述', 'What counts as a good score')}</span>
+                        <span className="muted" style={{ fontSize: 11.5 }}>{tr('高分标准', 'What scores high')}</span>
                         <textarea
                           className="textarea"
                           rows={2}
                           value={r.description}
                           disabled={readOnly}
                           onChange={(e) => updateRubric(i, { description: e.target.value })}
-                          placeholder={tr('这一维度怎样算高分', 'Describe what a high score looks like on this dimension')}
+                          placeholder={tr('例如 提出了新的训练方法或架构', 'e.g. Proposes a new training method or architecture')}
                         />
                       </label>
                       <div className="col gap4">
@@ -423,8 +423,8 @@ export function InclusionSettingsForm({
                       <button
                         type="button"
                         className="icon-btn"
-                        title={tr('删除维度', 'Remove dimension')}
-                        aria-label={tr('删除维度', 'Remove dimension')}
+                        title={tr('删除标准', 'Remove criterion')}
+                        aria-label={tr('删除标准', 'Remove criterion')}
                         onClick={() => removeRubric(i)}
                         style={{ flexShrink: 0 }}
                       >

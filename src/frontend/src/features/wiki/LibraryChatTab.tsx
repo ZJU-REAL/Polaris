@@ -63,13 +63,13 @@ function ChatFigure({
 
   if (query.isError) return null; // 图缺失静默跳过
   if (!url) {
-    return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{tr('配图加载中…', 'loading figure…')}</span>;
+    return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{tr('加载中…', 'Loading…')}</span>;
   }
   return (
     <img
       src={url}
-      alt={tr('论文配图', 'paper figure')}
-      title={tr('点击打开论文', 'click to open paper')}
+      alt={tr('论文配图', 'Paper figure')}
+      title={tr('打开论文', 'Open paper')}
       onClick={() => onOpenPaper(paperId)}
       style={{
         display: 'block',
@@ -122,7 +122,7 @@ function SourceCard({
               whiteSpace: 'nowrap',
               minWidth: 0,
             }}
-            title={`${s.title} · ${tr('点击打开详情', 'click to open detail')}`}
+            title={`${s.title} · ${tr('打开', 'Open')}`}
             onClick={() => onOpenPaper(s.paper_id)}
           >
             {s.title}
@@ -156,7 +156,7 @@ function SourceCard({
         <button
           className="icon-btn"
           style={{ width: 22, height: 22, border: 'none', background: 'transparent' }}
-          title={tr('打开论文详情', 'Open paper detail')}
+          title={tr('打开论文', 'Open paper')}
           onClick={() => onOpenPaper(s.paper_id)}
         >
           <Icon name="layers" size={12} />
@@ -164,7 +164,7 @@ function SourceCard({
         <button
           className="icon-btn"
           style={{ width: 22, height: 22, border: 'none', background: 'transparent' }}
-          title={tr('去阅读（PDF + AI 伴读）', 'Read (PDF + AI companion)')}
+          title={tr('阅读原文', 'Read paper')}
           onClick={() => navigate(`/papers/${s.paper_id}/read`, { state: readerFrom(location, 'wiki') })}
         >
           <Icon name="book" size={12} />
@@ -189,7 +189,7 @@ function SourceList({
   return (
     <div className="col" style={{ gap: 4, marginTop: 10, paddingTop: 8, borderTop: '0.5px solid var(--border)' }}>
       <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
-        {tr(`引用来源 · ${sources.length} 篇`, `Sources · ${sources.length}`)}
+        {tr(`${sources.length} 篇来源`, `${sources.length} sources`)}
       </span>
       {shown.map((s) => (
         <SourceCard key={s.index} s={s} onOpenPaper={onOpenPaper} onWikiLink={onWikiLink} />
@@ -199,7 +199,7 @@ function SourceList({
           onClick={() => setOpen(!open)}
           style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11, color: 'var(--accent-text)', textAlign: 'left' }}
         >
-          {open ? tr('收起', 'Collapse') : tr(`展开全部 ${sources.length} 篇来源`, `Show all ${sources.length} sources`)}
+          {open ? tr('收起', 'Collapse') : tr(`显示全部 ${sources.length} 篇`, `Show all ${sources.length}`)}
         </button>
       )}
     </div>
@@ -230,19 +230,19 @@ export function LibraryChatTab({
       libraryId ? api.rebuildLibraryFulltextIndex(libraryId) : api.rebuildFulltextIndex(scopePid),
     onSuccess: (r) => {
       if (r.papers_indexed === 0) {
-        toast(tr('全文索引已是最新', 'Full-text index is up to date'), 'info');
+        toast(tr('索引已是最新', 'Index is up to date'), 'info');
       } else {
         toast(
           tr(
-            `已为 ${r.papers_indexed} 篇论文建好全文索引（${r.chunks_created} 段）`,
-            `Indexed ${r.papers_indexed} papers (${r.chunks_created} chunks)`,
+            `已为 ${r.papers_indexed} 篇论文建立索引`,
+            `Indexed ${r.papers_indexed} papers`,
           ),
           'ok',
         );
       }
     },
     onError: (e) =>
-      toast(`${tr('索引重建失败：', 'Index rebuild failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+      toast(`${tr('无法建立索引：', 'Couldn’t build the index: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // [n] 引用角标：可点击，悬停显示论文标题；编号不在来源清单里则按原文渲染
@@ -254,7 +254,7 @@ export function LibraryChatTab({
         <span
           role="link"
           tabIndex={0}
-          title={`${src.title} · ${tr('点击打开', 'click to open')}`}
+          title={`${src.title} · ${tr('打开', 'Open')}`}
           onClick={() => onOpenPaper(src.paper_id)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') onOpenPaper(src.paper_id);
@@ -303,7 +303,7 @@ export function LibraryChatTab({
                 }
               } else if (event === 'done') ctrl.onDone();
               else if (event === 'error') {
-                let detail = tr('服务端出错', 'Server error');
+                let detail = tr('本机引擎出错，请重试', 'The local engine hit an error. Try again.');
                 try {
                   detail = (JSON.parse(dataStr) as { detail?: string }).detail ?? detail;
                 } catch {
@@ -327,7 +327,7 @@ export function LibraryChatTab({
             }
           } else if (event === 'done') ctrl.onDone();
           else if (event === 'error') {
-            let detail = tr('服务端出错', 'Server error');
+            let detail = tr('本机引擎出错，请重试', 'The local engine hit an error. Try again.');
             try {
               detail = (JSON.parse(dataStr) as { detail?: string }).detail ?? detail;
             } catch {
@@ -347,34 +347,34 @@ export function LibraryChatTab({
       surfaceKey={libraryId ? `library-standalone:${libraryId}` : `library:${scopePid}`}
       pid={scopePid}
       libraryId={libraryId}
-      title={tr('文献对话', 'Library chat')}
+      title={tr('对话', 'Chat')}
       contextKinds={libraryId ? ['paper', 'concept'] : ['paper', 'idea', 'experiment', 'concept']}
       hint={tr(
-        '回答基于从整个文献库检索到的全文片段；[n] 为引用来源编号。',
-        'Answers are grounded in full-text passages from the whole library; [n] marks a source number.',
+        '回答依据本库论文全文，[n] 为来源编号。',
+        'Answers draw on full texts in this library. [n] marks a source.',
       )}
       headerAction={
         !canRebuild ? undefined : (
           <button
             className="btn btn-ghost sm"
             style={{ height: 26, fontSize: 10.5, flexShrink: 0 }}
-            title={tr('给较早入库、还没建全文索引的论文补索引', 'Backfill the full-text index for older papers')}
+            title={tr('为还没有索引的论文建立索引', 'Index papers that aren’t indexed yet')}
             disabled={rebuildMutation.isPending}
             onClick={() => rebuildMutation.mutate()}
           >
             <Icon name="refresh" size={11} style={rebuildMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
-            {tr('补建索引', 'Rebuild index')}
+            {tr('补建索引', 'Update index')}
           </button>
         )
       }
       emptyIcon="chat"
       emptyTitle={tr('和整个文献库对话', 'Chat with the whole library')}
       emptyDesc={tr(
-        '输入 / 可指定某几篇，@ 可分享给同事或群。',
-        'Type / to pin specific papers, @ to share with teammates.',
+        '输入 / 可指定论文。',
+        'Type / to pick specific papers.',
       )}
       suggestions={SUGGESTIONS}
-      placeholder={tr('提问，或输入 / 放入上下文、@ 分享…', 'Ask, or type / for context, @ to share…')}
+      placeholder={tr('提问，或输入 / 指定论文…', 'Ask a question, or type / to pick papers…')}
       renderAssistant={(m: ChatMsg) => (
         <Markdown
           source={m.content}

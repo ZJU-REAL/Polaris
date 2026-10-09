@@ -37,15 +37,15 @@ export function LibraryDetailPage() {
       <div className="page fadeup" style={{ maxWidth: 1360 }}>
         <EmptyState
           icon="x"
-          title={tr('打不开这个文献库', 'Cannot open this library')}
-          desc={tr('文献库不存在，或后端暂时不可用。', 'It does not exist, or the backend is unavailable.')}
+          title={tr('无法打开这个文献库', 'Couldn’t open this library')}
+          desc={tr('它可能已被删除，或本机引擎未运行。', 'It may have been deleted, or the local engine isn’t running.')}
           action={
             <div className="row gap10">
               <button className="btn btn-soft sm" onClick={() => void refetch()}>
                 {tr('重试', 'Retry')}
               </button>
               <button className="btn btn-ghost sm" onClick={() => navigate('/libraries')}>
-                {tr('回文献库列表', 'Back to libraries')}
+                {tr('返回文献库', 'Back to libraries')}
               </button>
             </div>
           }
