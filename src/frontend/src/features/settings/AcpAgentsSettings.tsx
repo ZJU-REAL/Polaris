@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { FormField } from '../../components/ui/FormField';
 import { Switch } from '../../components/ui/Switch';
@@ -46,6 +46,14 @@ import { takeoverAgent, withDefaultAgent } from './llmRoutingModel';
 
 export const AGENTS_KEY = ['acp-agents'] as const;
 const TEMPLATES_KEY = ['acp-templates'] as const;
+
+/** 智能体增删、启停之后要跟着刷新的：列表、助手里的「谁来答」、模型路由（后端删智能体时
+    会连带删掉指向它的路由行；启停会改变谁来接管）。 */
+export function invalidateAfterAgentChange(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: AGENTS_KEY });
+  void queryClient.invalidateQueries({ queryKey: ['chat-backends'] });
+  void queryClient.invalidateQueries({ queryKey: ['llm'] });
+}
 
 function errText(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
@@ -194,9 +202,7 @@ function AgentRow({
     if (row) {
       queryClient.setQueryData<AcpAgentRead[]>(AGENTS_KEY, (old) => old?.map((a) => (a.id === row.id ? row : a)));
     }
-    void queryClient.invalidateQueries({ queryKey: AGENTS_KEY });
-    // 助手面板里的「谁来答」跟着变
-    void queryClient.invalidateQueries({ queryKey: ['chat-backends'] });
+    invalidateAfterAgentChange(queryClient);
   };
 
   const update = useMutation({
@@ -489,8 +495,7 @@ function CustomAgentForm({ taken, onDone }: { taken: string[]; onDone: () => voi
         permission_policy: policy,
       }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: AGENTS_KEY });
-      void queryClient.invalidateQueries({ queryKey: ['chat-backends'] });
+      invalidateAfterAgentChange(queryClient);
       toast(tr('已添加', 'Added'), 'ok');
       onDone();
     },
@@ -587,7 +592,8 @@ export function AcpAgentsSettings() {
     // PUT 是整表覆盖：拿当前整表，只换掉「默认」那一行
     mutationFn: (a: AcpAgentRead) => api.putLlmRoutes(withDefaultAgent(routes ?? [], a.id)),
     onSuccess: (_, a) => {
-      void queryClient.invalidateQueries({ queryKey: ['llm', 'routes'] });
+      // 路由表那边没保存的改动不会被冲掉：它按行合并服务端的新表（rebaseDrafts）
+      void queryClient.invalidateQueries({ queryKey: ['llm'] });
       toast(tr(`默认模型已改为「${a.name || a.slug}」`, `Default model is now "${a.name || a.slug}"`), 'ok');
     },
     onError: (e) => toast(`${tr('设置失败', 'Could not set it')}：${errText(e)}`, 'error'),
@@ -596,8 +602,7 @@ export function AcpAgentsSettings() {
   const addTemplate = useMutation({
     mutationFn: (t: AcpAgentTemplate) => createDeduped({ slug: t.id, template: t.id }, taken),
     onSuccess: (row) => {
-      void queryClient.invalidateQueries({ queryKey: AGENTS_KEY });
-      void queryClient.invalidateQueries({ queryKey: ['chat-backends'] });
+      invalidateAfterAgentChange(queryClient);
       toast(tr(`已添加 ${row.name}`, `Added ${row.name}`), 'ok');
     },
     onError: (e) => toast(`${tr('添加失败', 'Could not add')}：${errText(e)}`, 'error'),

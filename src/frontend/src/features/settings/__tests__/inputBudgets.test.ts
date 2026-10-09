@@ -87,6 +87,8 @@ describe('routes keep their window and budgets on save', () => {
     // 行 → 路由的拼装在 llmRoutingModel.buildRoute（单测见 llmRouting.test.ts），这里钉住保存时把两样都传进去
     expect(page).toContain('contextWindow: parsePositiveInt(r.context_window)');
     expect(page).toContain('budgets: budgetsPayload(r.budgets');
-    expect(page).toContain("context_window: r.context_window ? String(r.context_window) : ''");
+    // 读回草稿的转换搬到了 llmRoutingModel.routeToDraft
+    const model = readFileSync(join(__dirname, '..', 'llmRoutingModel.ts'), 'utf8');
+    expect(model).toContain("context_window: r.context_window ? String(r.context_window) : ''");
   });
 });

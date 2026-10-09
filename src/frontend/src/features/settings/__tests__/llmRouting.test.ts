@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   answerStatus,
   buildRoute,
+  draftsFromRoutes,
+  draftsDirty,
   parseTargetValue,
+  rebaseDrafts,
   resolveTabParam,
   targetValueOf,
   takeoverAgent,
@@ -159,5 +162,47 @@ describe('no-model error detection', () => {
     expect(isLlmNotConfigured('Error: LLMNotConfiguredError: ...')).toBe(true);
     expect(isLlmNotConfigured('No model configured — add an agent backend or a model API')).toBe(true);
     expect(isLlmNotConfigured('rate limited')).toBe(false);
+  });
+});
+
+describe('routing drafts survive server changes (#850)', () => {
+  const server0 = draftsFromRoutes([
+    route('default', { provider_id: 'p1' }, 'deepseek-chat'),
+    route('embedding', { provider_id: 'emb' }, 'bge-m3'),
+    route('summarize', { provider_id: 'p1' }, 'deepseek-chat'),
+  ]);
+
+  it('"Use as default model" elsewhere keeps unsaved edits on other rows', () => {
+    // 用户在路由表里改了 summarize、加了 writing，还没保存
+    const rows = {
+      ...server0,
+      summarize: { ...server0.summarize!, model: 'deepseek-reasoner' },
+      writing: { ...server0.default!, model: 'deepseek-chat' },
+    };
+    expect(draftsDirty(server0, rows)).toBe(true);
+    // 智能体设置那边把默认改成了 Claude Code（服务端整表）
+    const server1 = draftsFromRoutes(withDefaultAgent(
+      [
+        route('default', { provider_id: 'p1' }, 'deepseek-chat'),
+        route('embedding', { provider_id: 'emb' }, 'bge-m3'),
+        route('summarize', { provider_id: 'p1' }, 'deepseek-chat'),
+      ],
+      'a1',
+    ));
+    const merged = rebaseDrafts(server0, rows, server1);
+    expect(merged.default).toMatchObject({ acp_agent_id: 'a1', provider_id: '' });
+    expect(merged.summarize!.model).toBe('deepseek-reasoner');
+    expect(merged.writing).toBeDefined();
+    expect(merged.embedding).toEqual(server1.embedding);
+  });
+
+  it('rows removed on the server (a deleted agent) disappear unless the user edited them', () => {
+    const base = draftsFromRoutes([route('default', { acp_agent_id: 'a1' }), route('summarize', { acp_agent_id: 'a1' })]);
+    const server = draftsFromRoutes([]);
+    expect(rebaseDrafts(base, base, server)).toEqual({});
+    // 用户清掉的行不会被服务端那份复活
+    const cleared = { default: base.default! };
+    expect(rebaseDrafts(base, cleared, base)).toEqual({ default: base.default });
+    expect(draftsDirty(base, { ...base })).toBe(false);
   });
 });

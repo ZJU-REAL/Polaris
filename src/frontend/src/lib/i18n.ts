@@ -49,7 +49,8 @@ function subscribe(fn: () => void): () => void {
 
 /** 响应式读当前语言（App 根部用它触发整树重挂载）。 */
 export function useLang(): Lang {
-  return useSyncExternalStore(subscribe, getLang);
+  // 第三个参数给服务端渲染（测试里的 renderToStaticMarkup）用，取值同一处
+  return useSyncExternalStore(subscribe, getLang, getLang);
 }
 
 /** 按当前语言取文案；英文缺失时回退中文。 */

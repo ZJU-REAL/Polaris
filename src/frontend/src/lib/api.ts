@@ -5594,7 +5594,7 @@ export const api = {
     return request(`/chat/buddy/greeting${page ? `?page=${encodeURIComponent(page)}` : ''}`);
   },
   listAssistantConversations(): Promise<
-    { id: string; title: string; last_message_at: string | null; project_id: string | null }[]
+    { id: string; title: string; last_message_at: string | null; project_id: string | null; backend?: string | null }[]
   > {
     return request('/chat/conversations');
   },

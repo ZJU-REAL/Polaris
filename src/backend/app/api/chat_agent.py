@@ -41,6 +41,7 @@ from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.llm.base import TextBlock, ThinkingBlock, ToolResultBlock, ToolUseBlock
 from app.core.llm.router import get_llm_router
+from app.models.conversation import Conversation
 from app.models.user import User
 from app.schemas.chat_agent import (
     ConversationCreate,
@@ -99,6 +100,14 @@ def _require_enabled() -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CHAT_AGENT_DISABLED")
 
 
+def _conv_read(conv: Conversation) -> ConversationRead:
+    """会话 → 接口形状；回答方存在 settings 里，单独取出来给前端。"""
+    read = ConversationRead.model_validate(conv, from_attributes=True)
+    backend = (conv.settings or {}).get("backend")
+    read.backend = str(backend) if backend else None
+    return read
+
+
 @router.post("/conversations", response_model=ConversationRead, status_code=201)
 async def create_conversation(
     payload: ConversationCreate,
@@ -119,7 +128,7 @@ async def create_conversation(
         project_id=payload.project_id,
     )
     await session.commit()
-    return ConversationRead.model_validate(conv, from_attributes=True)
+    return _conv_read(conv)
 
 
 @router.get("/conversations", response_model=list[ConversationRead])
@@ -134,7 +143,7 @@ async def list_conversations(
     rows = await store.list_conversations(
         session, user_id=user.id, scope_kind=scope_kind, scope_id=scope_id, limit=limit
     )
-    return [ConversationRead.model_validate(r, from_attributes=True) for r in rows]
+    return [_conv_read(r) for r in rows]
 
 
 @router.patch("/conversations/{conversation_id}", response_model=ConversationRead)
@@ -151,7 +160,7 @@ async def rename_conversation(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONVERSATION_NOT_FOUND")
     conv.title = payload.title.strip()[:_TITLE_LIMIT]
     await session.commit()
-    return ConversationRead.model_validate(conv, from_attributes=True)
+    return _conv_read(conv)
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)

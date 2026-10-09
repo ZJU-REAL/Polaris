@@ -79,24 +79,15 @@ export function InterdisciplinaryScopePanel({
   const [rationale, setRationale] = useState('');
   const [model, setModel] = useState('');
 
-  const meQuery = useQuery({
-    queryKey: ['me'],
-    queryFn: () => api.me(),
-    retry: false,
-    staleTime: 60_000,
-  });
-  const canManage = !!meQuery.data && project.owner_id === meQuery.data.id;
 
   const scopeQuery = useQuery({
     queryKey: ['interdisciplinary-scope', project.id],
     queryFn: () => api.getInterdisciplinaryScope(project.id),
-    enabled: canManage,
     retry: false,
   });
   const versionsQuery = useQuery({
     queryKey: ['interdisciplinary-scope-versions', project.id],
     queryFn: () => api.listInterdisciplinaryScopeVersions(project.id),
-    enabled: canManage,
     retry: false,
   });
 
@@ -159,30 +150,6 @@ export function InterdisciplinaryScopePanel({
   const scopeMissing = scopeQuery.error instanceof ApiError && scopeQuery.error.status === 404;
   const versions = versionsQuery.data ?? [];
   const latest = scopeQuery.data;
-
-  if (meQuery.isLoading) {
-    return <section className="card interdisciplinary-profile-card"><div className="skel interdisciplinary-profile-skeleton" /></section>;
-  }
-
-  if (!canManage) {
-    return (
-      <section className="card interdisciplinary-profile-card">
-        <div className="interdisciplinary-profile-head">
-          <div>
-            <span className="pill sm">{tr('跨学科研究', 'Interdisciplinary')}</span>
-            <h3>{tr('学科范围与专属证据库', 'Scope and dedicated evidence library')}</h3>
-            <p>{tr('完整交叉范围仅对课题创建者和平台管理员开放。', 'The complete scope is available to the topic owner and platform admins.')}</p>
-          </div>
-          {dedicatedLibrary && (
-            <button className="btn btn-soft sm" onClick={() => navigate(`/libraries/${dedicatedLibrary.id}`)}>
-              <Icon name="book" size={12} />
-              {tr('打开专属库', 'Open library')}
-            </button>
-          )}
-        </div>
-      </section>
-    );
-  }
 
   if (scopeQuery.isLoading && !editing) {
     return <section className="card interdisciplinary-profile-card"><div className="skel interdisciplinary-profile-skeleton" /></section>;

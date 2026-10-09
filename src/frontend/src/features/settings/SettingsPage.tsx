@@ -56,7 +56,9 @@ import {
   answerStatus,
   buildRoute,
   draftComplete,
+  draftsFromRoutes,
   parseTargetValue,
+  rebaseDrafts,
   resolveTabParam,
   takeoverAgent,
   targetValueOf,
@@ -1596,23 +1598,15 @@ function RoutesSection() {
   const [showAll, setShowAll] = useState(false);
   const tests = useModelTests(api.testLlmModel);
 
+  // 上次从服务端拿到的那份：用来分辨草稿里哪些行用户动过
+  const baseRef = useRef<Record<string, RouteDraft>>({});
   useEffect(() => {
     if (!routesQuery.data) return;
-    const next: Record<string, RouteDraft> = {};
-    for (const r of routesQuery.data) {
-      next[r.stage] = {
-        provider_id: r.provider_id ?? '',
-        acp_agent_id: r.acp_agent_id ?? '',
-        model: r.model,
-        temperature: r.temperature === null || r.temperature === undefined ? '' : String(r.temperature),
-        effort: r.effort ?? '',
-        context_window: r.context_window ? String(r.context_window) : '',
-        budgets: Object.fromEntries(
-          Object.entries(r.input_budgets ?? {}).map(([k, v]) => [k, String(v)]),
-        ),
-      };
-    }
-    setRows(next);
+    const server = draftsFromRoutes(routesQuery.data);
+    // 服务端变了（「设为默认模型」、删了智能体……）：没动过的行跟上，动过的保留
+    const base = baseRef.current;
+    baseRef.current = server;
+    setRows((prev) => rebaseDrafts(base, prev, server));
   }, [routesQuery.data]);
 
   const saveMutation = useMutation({
@@ -1633,6 +1627,8 @@ function RoutesSection() {
     },
     onSuccess: () => {
       toast(tr('模型路由表已保存', 'Model routing saved'), 'ok');
+      // 刚存下的就是新的底稿：服务端回来的（规整过写法的）表整行替换，不算用户改动
+      baseRef.current = rows;
       void queryClient.invalidateQueries({ queryKey: ['llm', 'routes'] });
     },
     onError: (err) => toast(`${tr('保存失败', 'Save failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
@@ -2999,10 +2995,12 @@ export function SettingsPage() {
   const param = searchParams.get('tab');
   const [tab, setTabState] = useState<Tab>(() => initialTabOf(param));
   // 只在落地那一次定位到智能体区；切走再切回来不再跳
-  const [focusAgents] = useState(() => resolveTabParam(param).focus === 'agents');
+  const [focusAgents, setFocusAgents] = useState(() => resolveTabParam(param).focus === 'agents');
   // 切换时同步到地址栏（replace，不堆历史）：刷新、复制链接都停在同一节
   const setTab = (next: Tab) => {
     setTabState(next);
+    // 一切换标签页，落地那次的定位就用掉了（LlmTab 重新挂载时不再跳）
+    setFocusAgents(false);
     setSearchParams(
       (prev) => {
         const out = new URLSearchParams(prev);
