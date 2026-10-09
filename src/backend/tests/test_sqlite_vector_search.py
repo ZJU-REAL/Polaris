@@ -1,6 +1,6 @@
 """SQLite 上的语义检索：候选在 SQL 里圈、余弦在 Python 侧算（services/vector_search.py）。
 
-每个检索入口都要验证同一件事：排序按余弦降序，且 pgvector 那条 SQL 里的每一个过滤
+每个检索入口都要验证同一件事：排序按余弦降序，且候选语句里的每一个过滤
 条件在这里同样生效——库外的、回收站/候选状态的、别的向量空间的、维度不对的，一律不出现。
 测试库就是 SQLite，所以这些是真正跑过检索的端到端用例，而不是源码级守卫。
 """
@@ -10,6 +10,9 @@ import math
 import uuid
 
 import pytest
+from sqlalchemy import JSON, Column, Integer, String, select, text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import declarative_base
 
 from app.core.db import get_sessionmaker
 from app.core.embedding_space import EmbeddingSpace
@@ -178,7 +181,6 @@ async def _corpus(client):
 async def test_paper_search_ranks_within_library_and_filters(client):
     _headers, main_pid, _owner, ids, library_ids = await _corpus(client)
     async with get_sessionmaker()() as session:
-        assert papers_service.semantic_search_supported(session)
         rows = await papers_service.semantic_search_papers(
             session, project_id=main_pid, query_vector=QUERY, space=SPACE, limit=10
         )
@@ -266,7 +268,6 @@ async def test_chunk_search_by_library_filters_like_sql(client):
                 ("bad-dim", [1.0], SPACE),
             ],
         )
-        assert chunks_service.chunk_vector_search_supported(session)
         rows = await chunks_service.semantic_search_chunks(
             session, library_ids=library_ids, query_vector=QUERY, space=SPACE, limit=10
         )
@@ -467,3 +468,256 @@ async def test_fulltext_vector_search_enforces_scope_and_grant(app, client):
             )
             == []
         )
+
+
+# ---- 读取方式（#850）：不跨打分持有游标、打分不占事件循环、跨库段落检索有上限 ----
+
+_ScanBase = declarative_base()
+
+
+class _ScanRow(_ScanBase):
+    """独立的小表：只测 vector_search 的读/算方式，不碰业务表。"""
+
+    __tablename__ = "vs_scan_rows"
+    id = Column(Integer, primary_key=True)
+    space = Column(String, nullable=False)
+    embedding = Column(JSON, nullable=False)
+
+
+async def _scan_engine(tmp_path, n, dim, *, seed=0, timeout=5.0):
+    """建一个文件型 SQLite（与线上同一种锁语义），塞 n 条 dim 维向量。"""
+    import numpy as np
+
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path}/scan.db", connect_args={"timeout": timeout}
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(_ScanBase.metadata.create_all)
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS vs_writes (x INTEGER)"))
+    rng = np.random.default_rng(seed)
+    matrix = rng.standard_normal((n, dim))
+    # 造几组完全相同的向量：同分时的先后也要与「一次扫完」一致
+    matrix[5] = matrix[3]
+    matrix[n - 1] = matrix[3]
+    async with AsyncSession(engine) as session:
+        for start in range(0, n, 5000):
+            session.add_all(
+                [
+                    _ScanRow(id=i, space="s", embedding=[float(x) for x in matrix[i]])
+                    for i in range(start, min(n, start + 5000))
+                ]
+            )
+            await session.commit()
+    query = [float(x) for x in rng.standard_normal(dim)]
+    return engine, matrix, query
+
+
+def _scan_stmt():
+    return select(_ScanRow.id, vector_search.raw_embedding(_ScanRow.embedding)).where(
+        _ScanRow.space == "s"
+    )
+
+
+def _slow_scoring(monkeypatch, seconds):
+    """让每批打分慢下来，把扫描拉长到能观察并发的程度（新旧实现都走 TopK.add）。"""
+    import time
+
+    original = vector_search.TopK.add
+
+    def slow_add(self, rows):
+        time.sleep(seconds)
+        return original(self, rows)
+
+    monkeypatch.setattr(vector_search.TopK, "add", slow_add)
+
+
+async def test_chunked_search_matches_one_shot_scoring(tmp_path):
+    """分批回查 + 线程打分，与把全部行一次性交给 top_k_cosine 的结果逐项一致（含同分）。"""
+    engine, matrix, query = await _scan_engine(tmp_path, 257, 8)
+    try:
+        reference = vector_search.top_k_cosine(
+            query, [(i, list(matrix[i])) for i in range(len(matrix))], 40
+        )
+        async with AsyncSession(engine) as session:
+            for batch_size in (1, 7, 100, 1000):
+                stats = vector_search.SearchStats()
+                hits = await vector_search.search_statement(
+                    session, _scan_stmt(), query, 40, batch_size=batch_size, stats=stats
+                )
+                assert [k for k, _ in hits] == [k for k, _ in reference], batch_size
+                for (_, a), (_, b) in zip(hits, reference, strict=True):
+                    assert a == pytest.approx(b)
+                assert stats.candidates == stats.scanned == 257
+    finally:
+        await engine.dispose()
+
+
+async def test_concurrent_write_succeeds_during_a_long_scan(tmp_path, monkeypatch):
+    """扫描期间另一个连接提交写入：写入方只等一批的读取，不等整次扫描。
+
+    旧实现开着流式游标打分，共享锁一直占到扫完，写入等满 busy timeout 后报
+    "database is locked"。这里把写入方的 busy timeout 设得远小于扫描时长。
+    """
+    import asyncio
+    import time
+
+    engine, _matrix, query = await _scan_engine(tmp_path, 20000, 16, timeout=1.0)
+    _slow_scoring(monkeypatch, 0.15)  # 20000 / 1000 = 20 批 → 扫描约 3 秒
+    try:
+        scan_done = asyncio.Event()
+
+        async def scan():
+            async with AsyncSession(engine) as session:
+                hits = await vector_search.search_statement(session, _scan_stmt(), query, 10)
+            scan_done.set()
+            return hits
+
+        async def write():
+            await asyncio.sleep(0.5)
+            async with AsyncSession(engine) as session:
+                started = time.perf_counter()
+                await session.execute(text("INSERT INTO vs_writes VALUES (1)"))
+                await session.commit()
+                return time.perf_counter() - started, scan_done.is_set()
+
+        hits, (waited, scan_finished_first) = await asyncio.gather(scan(), write())
+        assert len(hits) == 10
+        assert not scan_finished_first, "写入应在扫描进行中完成"
+        assert waited < 1.0
+    finally:
+        await engine.dispose()
+
+
+async def test_scoring_does_not_block_the_event_loop(tmp_path, monkeypatch):
+    """打分在线程里跑：扫描期间另一个协程照常每 10ms 醒一次。"""
+    import asyncio
+    import time
+
+    engine, _matrix, query = await _scan_engine(tmp_path, 3000, 16)
+    _slow_scoring(monkeypatch, 0.2)  # 3 批，每批在线程里「算」0.2 秒
+    gaps: list[float] = []
+    try:
+
+        async def ticker():
+            last = time.perf_counter()
+            while True:
+                await asyncio.sleep(0.01)
+                now = time.perf_counter()
+                gaps.append(now - last)
+                last = now
+
+        tick = asyncio.create_task(ticker())
+        async with AsyncSession(engine) as session:
+            hits = await vector_search.search_statement(session, _scan_stmt(), query, 5)
+        tick.cancel()
+        assert len(hits) == 5
+        assert len(gaps) > 20
+        assert max(gaps) < 0.15, f"事件循环被卡住 {max(gaps):.3f}s"
+    finally:
+        await engine.dispose()
+
+
+async def _narrowing_corpus(client):
+    """主库里 best/good/far 三篇各 4 个分段；far 的论文级向量最不像，但它有一段最像。"""
+    _headers, _pid, _owner, ids, library_ids = await _corpus(client)
+    chunk_owner = {}
+    async with get_sessionmaker()() as session:
+        for name, vecs in {
+            "best": [[2.0, 0.5, 0.0], GOOD, FAR, FAR],
+            "good": [[2.0, 0.8, 0.0], FAR, FAR, FAR],
+            "far": [BEST, FAR, FAR, FAR],  # 段落级最像，但论文级排第三
+        }.items():
+            for seq, vec in enumerate(vecs):
+                chunk = PaperChunk(paper_id=ids[name], seq=seq, text=f"{name} chunk {seq}")
+                session.add(chunk)
+                await session.flush()
+                session.add(_vector_row(PaperChunkVector, "chunk_id", chunk.id, vec))
+                chunk_owner[chunk.id] = name
+        await session.commit()
+    return ids, library_ids, chunk_owner
+
+
+def _count_scored_rows(monkeypatch):
+    """数一数实际读出向量、交给打分的行（不靠 SearchStats，直接在打分入口计数）。"""
+    seen: list[int] = []
+    original = vector_search._add_in_key_order
+
+    def counting(top, keys, rows):
+        seen.append(len(rows))
+        return original(top, keys, rows)
+
+    monkeypatch.setattr(vector_search, "_add_in_key_order", counting)
+    return seen
+
+
+async def test_chunk_search_narrows_to_top_papers_over_budget(client, monkeypatch):
+    from app.core.config import get_settings
+
+    ids, library_ids, chunk_owner = await _narrowing_corpus(client)
+
+    # 预算之内：与从前一样逐段全扫，far 那段最像排第一
+    async with get_sessionmaker()() as session:
+        stats = vector_search.SearchStats()
+        rows = await chunks_service.semantic_search_chunks(
+            session, library_ids=library_ids, query_vector=QUERY, space=SPACE, limit=3, stats=stats
+        )
+    assert chunk_owner[rows[0][0].id] == "far"
+    assert stats.narrowed_to_papers is None
+    assert stats.candidates == stats.scanned == 12
+
+    # 超出预算：先按论文级向量挑 2 篇（best、good），只在它们的 8 段里排
+    monkeypatch.setattr(get_settings(), "vector_search_row_budget", 5)
+    monkeypatch.setattr(get_settings(), "vector_search_narrow_papers", 2)
+    scored = _count_scored_rows(monkeypatch)
+    async with get_sessionmaker()() as session:
+        stats = vector_search.SearchStats()
+        rows = await chunks_service.semantic_search_chunks(
+            session, library_ids=library_ids, query_vector=QUERY, space=SPACE, limit=3, stats=stats
+        )
+    assert [chunk_owner[c.id] for c, _ in rows] == ["best", "good", "best"]
+    assert rows[0][1] == pytest.approx(_cos(QUERY, [2.0, 0.5, 0.0]))
+    assert stats.candidates == 12
+    assert stats.narrowed_to_papers == 2
+    assert stats.scanned == 8
+    # 打分入口实际收到的行：论文级 4 条（best/good/far/bad-dim 的论文向量）+ 收窄后的
+    # 8 段——全部 12 段的向量从来没被读出来过
+    assert scored == [4, 8]
+
+    # 显式给了 paper_ids 的调用（伴读/个人库）不收窄
+    async with get_sessionmaker()() as session:
+        rows = await chunks_service.semantic_search_chunks(
+            session,
+            library_ids=library_ids,
+            query_vector=QUERY,
+            space=SPACE,
+            limit=1,
+            paper_ids=[ids["far"]],
+        )
+    assert chunk_owner[rows[0][0].id] == "far"
+
+
+async def test_search_chunks_tool_reports_narrowing(client, monkeypatch):
+    """全局助手的段落检索：跨全部库时收窄，并在结果里如实说明。"""
+    import app.tools as tools
+    from app.core.config import get_settings
+    from app.core.llm.router import LLMRouter
+    from app.tools import ToolContext
+    from app.tools.scope import all_library_ids
+
+    ids, library_ids, _chunk_owner = await _narrowing_corpus(client)
+    async with get_sessionmaker()() as session:
+        everything = tuple(await all_library_ids(session))
+    assert set(library_ids) <= set(everything)
+
+    async def fake_embed_query(session, text, **_kwargs):
+        return QUERY, SPACE
+
+    monkeypatch.setattr("app.tools.knowledge.embed_query", fake_embed_query)
+    monkeypatch.setattr(get_settings(), "vector_search_row_budget", 5)
+    monkeypatch.setattr(get_settings(), "vector_search_narrow_papers", 2)
+    ctx = ToolContext(project_id=None, llm=LLMRouter(), library_ids=everything)
+    res = await tools.run_tool(ctx, "search_chunks", {"query": "anything", "k": 3})
+    assert res["mode"] == "semantic"
+    assert res["narrowed_to_papers"] == 2
+    assert res["note"]
+    assert {c["paper_id"] for c in res["chunks"]} <= {str(ids["best"]), str(ids["good"])}

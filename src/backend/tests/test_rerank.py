@@ -166,8 +166,6 @@ async def _setup_semantic_project(client, monkeypatch):
         # 语义检索要求平台已有激活向量空间（否则查询向量无从归属，直接降级关键词）
         await ensure_space(session)
 
-    monkeypatch.setattr(papers_service, "semantic_search_supported", lambda session: True)
-
     async def fake_vector_search(session, *, project_id, query_vector, space, limit):
         from tests.conftest import membership_of
 

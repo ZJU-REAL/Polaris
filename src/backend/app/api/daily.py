@@ -113,7 +113,7 @@ async def list_papers(
     mode_used = "keyword"
     items: list[dict] = []
     total = 0
-    if mode == "semantic" and q and q.strip() and papers_service.semantic_search_supported(session):
+    if mode == "semantic" and q and q.strip():
         try:
             vector, space = await embed_query(session, q.strip(), user_id=user.id)
             rows = await daily_service.semantic_search_daily(

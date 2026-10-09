@@ -31,7 +31,11 @@ def _keyword_retrieval(monkeypatch):
     """SQLite 上也有向量检索了（services/vector_search.py），而 fake 嵌入下每篇论文都有
     向量，首轮就会把整库召回、扩展和引文补召回无从验证。这里的用例测的是流水线的
     分轮逻辑，不是向量排序，所以把检索钉在可精确控制命中的关键词路径上。"""
-    monkeypatch.setattr(chunks_service, "chunk_vector_search_supported", lambda session: False)
+
+    async def _no_vector_hits(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(chunks_service, "semantic_search_chunks", _no_vector_hits)
 
 
 # 每篇正文只含「自己该被谁命中」的词，互不串词（fake/query 等词也都只出现在 B）

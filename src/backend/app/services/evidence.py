@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import unicodedata
 import uuid
@@ -12,7 +11,6 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from sqlalchemy import exists, select
-from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.evidence import PaperEvidenceAnchor
@@ -437,12 +435,6 @@ class FulltextChunkHit:
     score: float
 
 
-def fulltext_vector_search_supported(session: AsyncSession) -> bool:
-    """版本化全文向量检索可用吗：postgres 走 pgvector，其余方言在 Python 侧打分。"""
-    del session
-    return True
-
-
 def _library_scope_exists(library_ids: Sequence[uuid.UUID]):
     from app.services.papers import PAPER_STATUS_GROUPS
 
@@ -518,71 +510,48 @@ async def semantic_search_current_fulltext(
     query_vector: list[float],
     space_key: str,
     limit: int,
+    stats: vector_search.SearchStats | None = None,
 ) -> list[FulltextChunkHit]:
-    """Search current full-text vectors with permission checks in correlated EXISTS."""
-    if not library_ids or not fulltext_vector_search_supported(session):
-        return []
-    if not vector_search.uses_pgvector(session):
-        # 同一套权限过滤（当前版本 + 就绪状态 + 库成员 + 资产授权），Python 侧打分
-        candidates = (
-            select(
-                PaperContentChunkVector.chunk_id,
-                PaperContentVersion.paper_id,
-                vector_search.raw_embedding(PaperContentChunkVector.embedding),
-            )
-            .join(PaperContentChunk, PaperContentChunk.id == PaperContentChunkVector.chunk_id)
-            .join(
-                PaperContentVersion,
-                PaperContentVersion.id == PaperContentChunk.content_version_id,
-            )
-            .where(
-                PaperContentChunkVector.space == space_key,
-                PaperContentVersion.is_current.is_(True),
-                PaperContentVersion.status.in_(_READY_CONTENT_STATUSES),
-                _library_scope_exists(library_ids),
-                _asset_grant_exists(library_ids),
-            )
-        )
-        hits = await vector_search.search_statement(
-            session, candidates, query_vector, max(1, limit)
-        )
-        return await _fulltext_hits_for_scores(
-            session, [(chunk_id, paper_id, score) for (chunk_id, paper_id), score in hits]
-        )
-    from app.services.papers import PAPER_STATUS_GROUPS
+    """Search current full-text vectors with permission checks in correlated EXISTS.
 
-    rows = (
-        await session.execute(
-            sa_text(
-                "SELECT c.id, cv.paper_id, "
-                "1 - (v.embedding <=> CAST(:qv AS vector)) AS score "
-                "FROM paper_content_chunk_vectors v "
-                "JOIN paper_content_chunks c ON c.id = v.chunk_id "
-                "JOIN paper_content_versions cv ON cv.id = c.content_version_id "
-                "WHERE v.space = :space AND cv.is_current = true "
-                "AND cv.status = ANY(CAST(:content_statuses AS varchar[])) "
-                "AND EXISTS (SELECT 1 FROM library_papers lp "
-                "WHERE lp.paper_id = cv.paper_id "
-                "AND lp.library_id = ANY(CAST(:libs AS uuid[])) "
-                "AND lp.status = ANY(CAST(:paper_statuses AS varchar[]))) "
-                "AND EXISTS (SELECT 1 FROM asset_grants ag "
-                "WHERE ag.asset_id = cv.asset_id "
-                "AND ag.library_id = ANY(CAST(:libs AS uuid[])) "
-                "AND ag.status = 'active' AND ag.can_read = true) "
-                "ORDER BY score DESC LIMIT :k"
-            ),
-            {
-                "qv": json.dumps(query_vector),
-                "space": space_key,
-                "libs": [str(value) for value in library_ids],
-                "content_statuses": list(_READY_CONTENT_STATUSES),
-                "paper_statuses": list(PAPER_STATUS_GROUPS["library"]),
-                "k": max(1, limit),
-            },
+    Filters: current version, ready status, library membership, asset grant. Scoring
+    runs in Python (services/vector_search.py) with the row budget of
+    ``vector_search.budgeted_search``: over many libraries the candidates are first
+    narrowed to the most relevant papers by paper-level vectors (see ``stats``).
+    """
+    if not library_ids:
+        return []
+    candidates = (
+        select(
+            PaperContentChunkVector.chunk_id,
+            PaperContentVersion.paper_id,
+            vector_search.raw_embedding(PaperContentChunkVector.embedding),
         )
-    ).all()
+        .join(PaperContentChunk, PaperContentChunk.id == PaperContentChunkVector.chunk_id)
+        .join(
+            PaperContentVersion,
+            PaperContentVersion.id == PaperContentChunk.content_version_id,
+        )
+        .where(
+            PaperContentChunkVector.space == space_key,
+            PaperContentVersion.is_current.is_(True),
+            PaperContentVersion.status.in_(_READY_CONTENT_STATUSES),
+            _library_scope_exists(library_ids),
+            _asset_grant_exists(library_ids),
+        )
+    )
+    hits = await vector_search.budgeted_search(
+        session,
+        candidates,
+        paper_column=PaperContentVersion.paper_id,
+        library_ids=library_ids,
+        query_vector=query_vector,
+        space_key=space_key,
+        limit=max(1, limit),
+        stats=stats,
+    )
     return await _fulltext_hits_for_scores(
-        session, [(row.id, row.paper_id, float(row.score)) for row in rows]
+        session, [(chunk_id, paper_id, score) for (chunk_id, paper_id), score in hits]
     )
 
 

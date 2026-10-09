@@ -4,13 +4,12 @@
 浏览记录）里消失，可召回（回到收藏）、可彻底删除、可清空。
 """
 
-import json
 import uuid
 from typing import cast
 
 from sqlalchemy import Text as SAText
 from sqlalchemy import cast as sa_cast
-from sqlalchemy import delete, exists, func, or_, select, text, update
+from sqlalchemy import delete, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embedding_space import EmbeddingSpace
@@ -171,8 +170,8 @@ async def semantic_saved_entries(
     """对本人收藏、且软引用论文有向量的条目跑余弦检索，返回 (条目, 相似度) 降序。
 
     候选集 = saved 且 last_paper_id 非空的条目里，其论文在 ``space`` 下已建向量的那些
-    （覆盖不全的已知限制：没生成向量的收藏不会命中）。postgres 上 pgvector 在 SQL 里
-    排，其余方言在 Python 侧打分（services/vector_search.py）。条目自身带 title/authors
+    （覆盖不全的已知限制：没生成向量的收藏不会命中），在 Python 侧打分
+    （services/vector_search.py）。条目自身带 title/authors
     快照，命中即可直接渲染成个人库行。
     """
     stmt = select(UserLibraryEntry).where(
@@ -188,39 +187,19 @@ async def semantic_saved_entries(
     }
     if not by_pid:
         return []
-    if not vector_search.uses_pgvector(session):
-        from app.models.vectors import PaperVector
+    from app.models.vectors import PaperVector
 
-        hits = await vector_search.search_statement(
-            session,
-            select(PaperVector.paper_id, vector_search.raw_embedding(PaperVector.embedding)).where(
-                # 子查询而不是展开 id 列表：收藏多时不撞 SQLite 的绑定参数上限
-                PaperVector.paper_id.in_(stmt.with_only_columns(UserLibraryEntry.last_paper_id)),
-                PaperVector.space == space.key,
-            ),
-            query_vector,
-            limit,
-        )
-        return [(by_pid[pid], score) for pid, score in hits if pid in by_pid]
-    qv = json.dumps(query_vector)
-    rows = (
-        await session.execute(
-            text(
-                "SELECT v.paper_id AS id, 1 - (v.embedding <=> CAST(:qv AS vector)) AS score "
-                "FROM paper_vectors v "
-                "WHERE v.paper_id = ANY(CAST(:ids AS uuid[])) AND v.space = :space "
-                "ORDER BY score DESC "
-                "LIMIT :k"
-            ),
-            {
-                "qv": qv,
-                "ids": [str(pid) for pid in by_pid],
-                "k": limit,
-                "space": space.key,
-            },
-        )
-    ).all()
-    return [(by_pid[row.id], float(row.score)) for row in rows if row.id in by_pid]
+    hits = await vector_search.search_statement(
+        session,
+        select(PaperVector.paper_id, vector_search.raw_embedding(PaperVector.embedding)).where(
+            # 子查询而不是展开 id 列表：收藏多时不撞 SQLite 的绑定参数上限
+            PaperVector.paper_id.in_(stmt.with_only_columns(UserLibraryEntry.last_paper_id)),
+            PaperVector.space == space.key,
+        ),
+        query_vector,
+        limit,
+    )
+    return [(by_pid[pid], score) for pid, score in hits if pid in by_pid]
 
 
 async def purge_entry(session: AsyncSession, *, entry: UserLibraryEntry) -> None:

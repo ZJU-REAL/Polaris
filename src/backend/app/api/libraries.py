@@ -692,7 +692,7 @@ async def search_library(
     mode_used = "keyword"
     reranked = False
     paper_rows: list = []
-    if mode == "semantic" and papers_service.semantic_search_supported(session):
+    if mode == "semantic":
         try:
             vector, space = await embed_query(session, q, user_id=user.id)
             candidates = await papers_service.semantic_search_papers(

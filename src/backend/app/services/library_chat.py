@@ -277,26 +277,23 @@ async def _retrieve_chunks(
     管理员换了嵌入模型而索引尚未重建——统一 rollback 后逐级降级（向量 → 关键词 →
     空，空由调用方走论文摘要兜底）。传 paper_ids 时把检索限制在这些论文内。
     """
-    if chunks_service.chunk_vector_search_supported(session):
-        try:
-            vector, space = await embed_query(
-                session, question, user_id=user_id, project_id=project_id
-            )
-            rows = await chunks_service.semantic_search_chunks(
-                session,
-                library_ids=library_ids,
-                query_vector=vector,
-                space=space,
-                limit=MAX_CHUNKS,
-                paper_ids=paper_ids,
-            )
-            if rows:
-                return rows
-        except NotImplementedError:
-            pass
-        except Exception:  # noqa: BLE001 — 检索失败降级，不打断对话
-            logger.warning("chunk vector search failed; falling back to keyword", exc_info=True)
-            await session.rollback()  # postgres 报错后事务已中止，先回滚
+    try:
+        vector, space = await embed_query(session, question, user_id=user_id, project_id=project_id)
+        rows = await chunks_service.semantic_search_chunks(
+            session,
+            library_ids=library_ids,
+            query_vector=vector,
+            space=space,
+            limit=MAX_CHUNKS,
+            paper_ids=paper_ids,
+        )
+        if rows:
+            return rows
+    except NotImplementedError:
+        pass
+    except Exception:  # noqa: BLE001 — 检索失败降级，不打断对话
+        logger.warning("chunk vector search failed; falling back to keyword", exc_info=True)
+        await session.rollback()  # 失败的事务先回滚再降级
     try:
         return await chunks_service.keyword_search_chunks(
             session, library_ids=library_ids, q=question, limit=MAX_CHUNKS, paper_ids=paper_ids

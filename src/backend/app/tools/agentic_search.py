@@ -184,7 +184,7 @@ async def scan_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 
         rows: list[tuple[Any, float]] = []
         used = "keyword"
-        if mode == "semantic" and papers_service.semantic_search_supported(session):
+        if mode == "semantic":
             try:
                 vector, space = await embed_query(
                     session,

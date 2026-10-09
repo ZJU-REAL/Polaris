@@ -118,25 +118,22 @@ async def _search_round(
     project_id: uuid.UUID | None,
 ) -> list[tuple[PaperChunk, float]]:
     """执行一轮检索：向量优先，关键词降级，任何失败不上抛（与 library_chat 同路径）。"""
-    if chunks_service.chunk_vector_search_supported(session):
-        try:
-            vector, space = await embed_query(
-                session, query, user_id=user_id, project_id=project_id
-            )
-            rows = await chunks_service.semantic_search_chunks(
-                session,
-                library_ids=[library_id],
-                query_vector=vector,
-                space=space,
-                limit=TOP_K,
-            )
-            if rows:
-                return rows
-        except NotImplementedError:
-            pass
-        except Exception:  # noqa: BLE001 — 检索失败降级关键词，不打断问答
-            logger.warning("rag vector search failed; falling back to keyword", exc_info=True)
-            await session.rollback()  # postgres 报错后事务已中止，先回滚
+    try:
+        vector, space = await embed_query(session, query, user_id=user_id, project_id=project_id)
+        rows = await chunks_service.semantic_search_chunks(
+            session,
+            library_ids=[library_id],
+            query_vector=vector,
+            space=space,
+            limit=TOP_K,
+        )
+        if rows:
+            return rows
+    except NotImplementedError:
+        pass
+    except Exception:  # noqa: BLE001 — 检索失败降级关键词，不打断问答
+        logger.warning("rag vector search failed; falling back to keyword", exc_info=True)
+        await session.rollback()  # 失败的事务先回滚再降级
     try:
         return await chunks_service.keyword_search_chunks(
             session, library_ids=[library_id], q=query, limit=TOP_K
