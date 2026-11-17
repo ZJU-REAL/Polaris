@@ -183,6 +183,98 @@ async def _enqueue_reclaim(ctx: dict[str, Any], vid: uuid.UUID) -> bool:
     return True
 
 
+async def retry_paused_voyages(ctx: dict[str, Any], now: Any = None) -> list[str]:
+    """定时任务（每分钟）：因临时性故障停住、且自动重试到点了的航程，重新排上 resume。
+
+    什么时候重试、还剩几次都存在航程自己的 checkpoint["auto_retry"] 里（引擎停下它的
+    时候排的，见 failures.schedule_auto_retry），所以引擎重启不丢：重启后这个任务第一次
+    跑就会看到已经过点的那些。
+
+    每条航程只会被拉起一次：状态用条件 UPDATE 从 paused_error 改成 executing，同时把
+    ``next_at`` 清掉；两次调用撞在一起只有一个改得动。用户这时点了取消或手动重试，
+    状态已经不是 paused_error，同样改不动。
+
+    返回本次拉起的航程 id。``now`` 供测试注入时钟。"""
+    from sqlalchemy import select, update
+
+    from app.agents.voyage.failures import auto_retry_attempt, auto_retry_due_at
+    from app.core.queue import voyage_job_id
+    from app.models.base import utcnow
+    from app.models.voyage import VoyageRun
+    from app.services import ideas as ideas_service
+
+    current = now or utcnow()
+    async with get_sessionmaker()() as session:
+        candidates = (
+            (
+                await session.execute(
+                    select(VoyageRun.id).where(
+                        VoyageRun.status == "paused_error",
+                        VoyageRun.checkpoint["auto_retry"]["next_at"].as_string().is_not(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    is_running = getattr(ctx["redis"], "is_running", None)
+    resumed: list[str] = []
+    for vid in candidates:
+        job_id = voyage_job_id(vid)
+        if is_running is not None and is_running(job_id):
+            continue  # 上一个驱动者还在收尾：下一分钟再来
+        async with get_sessionmaker()() as session:
+            run = await session.get(VoyageRun, vid)
+            if run is None or run.status != "paused_error":
+                continue
+            due = auto_retry_due_at(run.checkpoint)
+            if due is None or due > current:
+                continue
+            try:
+                # 同课题已有另一条 idea 类任务在跑：先不抢，等它跑完（下一分钟再看）
+                await ideas_service.ensure_no_other_idea_voyage(session, run)
+            except ideas_service.IdeaVoyageConflictError:
+                await session.rollback()
+                continue
+            attempt = auto_retry_attempt(run.checkpoint)
+            checkpoint = dict(run.checkpoint or {})
+            checkpoint["auto_retry"] = {"attempt": attempt, "next_at": None}
+            result = await session.execute(
+                update(VoyageRun)
+                .where(VoyageRun.id == vid, VoyageRun.status == "paused_error")
+                .values(status="executing", checkpoint=checkpoint)
+            )
+            if result.rowcount == 0:
+                await session.rollback()
+                continue
+            await session.commit()
+            cursor, created_by = run.cursor, run.created_by
+        await ctx["redis"].enqueue_job("resume_voyage", str(vid), _job_id=job_id)
+        resumed.append(str(vid))
+        try:
+            bus = EventBus(get_redis())
+            await bus.publish_voyage_event(
+                vid,
+                "log",
+                {
+                    "message": f"自动重试（第 {attempt} 次）",
+                    "level": "info",
+                    "at": utcnow().isoformat(),
+                },
+            )
+            await bus.publish_voyage_event(vid, "status", {"status": "executing", "cursor": cursor})
+            if created_by is not None:
+                await bus.publish_notify(
+                    created_by,
+                    {"type": "voyage.status", "voyage_id": str(vid), "status": "executing"},
+                )
+        except Exception:  # noqa: BLE001 — 事件只是让界面刷新得快一点
+            logger.warning("could not publish auto-retry events for voyage %s", vid, exc_info=True)
+    if resumed:
+        logger.info("auto-retrying %d paused voyage(s): %s", len(resumed), resumed)
+    return resumed
+
+
 async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
     """启动对账：认领无人执行的在途航程（见 IN_FLIGHT_STATUSES）。
 

@@ -114,6 +114,13 @@ class VoyageRead(BaseModel):
     updated_at: datetime
     # 仅 status == paused_error 时非空：这次为什么停下来
     last_error: VoyageErrorRead | None = None
+    # 因临时性故障停住时，引擎会自己再试（停下后第 1、5、20 分钟各一次）。
+    # retry_at：下一次自动重试的时刻；没排（不是临时性故障 / 三次用完 / 不在
+    # paused_error）为 null。界面据此显示「N 分钟后自动重试」。
+    retry_at: datetime | None = None
+    # 已经排到第几次自动重试（1..3；0 = 没有自动重试过）。retry_at 非空时它就是
+    # 即将进行的那一次；retry_at 为空且等于 3 说明自动重试已用完，要人来处理。
+    retry_attempt: int = 0
 
     @model_validator(mode="wrap")
     @classmethod
@@ -131,8 +138,14 @@ class VoyageRead(BaseModel):
         return obj
 
     def _apply_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        from app.agents.voyage.failures import auto_retry_attempt, auto_retry_due_at
+        from app.models.voyage import TERMINAL_STATUSES
+
+        if self.status not in TERMINAL_STATUSES:
+            self.retry_attempt = auto_retry_attempt(checkpoint)
         if self.status != "paused_error":
             return
+        self.retry_at = auto_retry_due_at(checkpoint)
         raw = checkpoint.get("last_error")
         if isinstance(raw, dict) and raw.get("code") and raw.get("message"):
             try:

@@ -37,7 +37,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agents.voyage.actions import ActionContext
 from app.agents.voyage.checks import run_deterministic_checks
 from app.agents.voyage.errorsig import error_signature
-from app.agents.voyage.failures import MESSAGES, describe_failure, error_record
+from app.agents.voyage.failures import (
+    MESSAGES,
+    clear_auto_retry,
+    describe_failure,
+    error_record,
+    schedule_auto_retry,
+)
 from app.agents.voyage.helm import Helm
 from app.agents.voyage.navigator import Navigator, NavigatorError, done_criteria_for_kind
 from app.agents.voyage.plan_edit import SIGNAL_TABLES, PlanEditError
@@ -109,6 +115,7 @@ async def park_run(
         checkpoint = dict(run.checkpoint or {})
         checkpoint["last_error"] = error
         checkpoint.pop("reclaim", None)
+        schedule_auto_retry(checkpoint, error)
         result = await session.execute(
             update(VoyageRun)
             .where(VoyageRun.id == run_id, VoyageRun.status == previous)
@@ -1174,6 +1181,11 @@ class VoyageEngine:
             level="success" if passed else "error",
             step_id=step_row.id,
         )
+        if passed and "auto_retry" in (run.checkpoint or {}):
+            # 往前走了一步：之前那次故障算过去了，下次再出临时性故障重新从 1 分钟数起
+            checkpoint = dict(run.checkpoint or {})
+            clear_auto_retry(checkpoint)
+            run.checkpoint = checkpoint
         step_row.tokens = self._sum_usage(action_usage or {}, verify_usage)
         self._archive_attempt(step_row)
         self._accumulate_usage(run, step_row.tokens)
@@ -1364,9 +1376,12 @@ class VoyageEngine:
     async def _pause_on_error(
         self, session: AsyncSession, run: VoyageRun, error: dict[str, Any]
     ) -> None:
-        """停到 paused_error，原因存进 checkpoint["last_error"]（界面与自动重试都读它）。"""
+        """停到 paused_error，原因存进 checkpoint["last_error"]（界面与自动重试都读它）。
+
+        临时性故障顺手排好下一次自动重试（1 / 5 / 20 分钟），由定时任务到点续跑。"""
         checkpoint = dict(run.checkpoint or {})
         checkpoint["last_error"] = error
+        schedule_auto_retry(checkpoint, error)
         run.checkpoint = checkpoint
         await session.commit()
         await self._set_status(session, run, "paused_error")

@@ -52,6 +52,9 @@ def default_jobs() -> list[PeriodicJob]:
         PeriodicJob("daily_feed_sync", 900, 60, tasks.daily_feed_sync),
         PeriodicJob("daily_publication_match", 900, 90, tasks.daily_publication_match),
         PeriodicJob("reconcile_stale_voyages", 600, 120, tasks.reconcile_stale_voyages),
+        # 因临时性故障停住的航程到点自动重试。重试时刻存在库里，这里只负责到点去看；
+        # 开机 30 秒后先看一次，关机期间过点的那些就在这时补上。
+        PeriodicJob("retry_paused_voyages", 60, 30, tasks.retry_paused_voyages),
         PeriodicJob(
             "watch_unanswered_managed_commands", 300, 50, tasks.watch_unanswered_managed_commands
         ),

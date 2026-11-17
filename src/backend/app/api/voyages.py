@@ -13,6 +13,7 @@ from redis.asyncio import Redis
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.voyage.failures import clear_auto_retry
 from app.api.auth import current_active_user
 from app.api.chat_stream import sse_frame as _sse_frame
 from app.core.db import get_session
@@ -381,6 +382,13 @@ async def cancel_voyage(
         run = await voyages_service.cancel_voyage(session, run)
     except voyages_service.VoyageAlreadyFinishedError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="VOYAGE_ALREADY_FINISHED") from e
+    # 取消了就不该再有排着的自动重试（定时任务只碰 paused_error，本来也拉不起它；
+    # 这里把记录也清掉，库里不留一个指向未来的重试时刻）
+    checkpoint = dict(run.checkpoint or {})
+    if clear_auto_retry(checkpoint):
+        run.checkpoint = checkpoint
+        await session.commit()
+        await session.refresh(run)
     return VoyageRead.model_validate(run)
 
 
@@ -420,6 +428,10 @@ async def resume_voyage(
     if run.status != "paused_error":
         raise HTTPException(status.HTTP_409_CONFLICT, detail="VOYAGE_NOT_PAUSED_ERROR")
     await _ensure_idea_voyage_can_resume(session, run)
+    # 人接手了：排着的自动重试作废，之后再出临时性故障重新从头数
+    checkpoint = dict(run.checkpoint or {})
+    if clear_auto_retry(checkpoint):
+        run.checkpoint = checkpoint
     run.status = "executing"
     await session.commit()
     await queue.enqueue("resume_voyage", str(run.id))

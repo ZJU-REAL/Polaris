@@ -53,6 +53,8 @@ def test_every_periodic_job_is_scheduled():
         "daily_publication_match",
         "reconcile_stale_voyages",
         "watch_unanswered_managed_commands",
+        # 后加的：临时性故障停住的任务到点自动重试
+        "retry_paused_voyages",
     }
 
 

@@ -18,6 +18,7 @@ import json
 import socket
 import sqlite3
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.agents.voyage.errorsig import error_text
@@ -233,6 +234,64 @@ def error_record(
     return record
 
 
+# ---- 临时性故障的自动重试 ----
+#
+# 停在 paused_error 的任务，原因是临时性的就自己过一会儿再试：第 1、5、20 分钟各一次，
+# 三次都不行才真的停着等人。状态存在 checkpoint["auto_retry"]：
+#
+#     {"attempt": 已排到第几次（1..3）, "next_at": 下一次的时刻（ISO）| None}
+#
+# 存在库里而不是内存里的定时器：引擎重启后定时任务照样能看到到点的那一条。
+
+AUTO_RETRY_DELAYS_MINUTES: tuple[int, ...] = (1, 5, 20)
+
+
+def schedule_auto_retry(
+    checkpoint: dict[str, Any], error: dict[str, Any], *, now: datetime | None = None
+) -> None:
+    """任务刚因 ``error`` 停下来：临时性故障且次数没用完就排下一次，否则不排。
+
+    原地改 ``checkpoint``。不是临时性的也要把挂着的 ``next_at`` 清掉——上一次是网络
+    问题、这一次是密钥错了，就不该再自己试了。
+    """
+    state = checkpoint.get("auto_retry")
+    state = state if isinstance(state, dict) else {}
+    attempt = int(state.get("attempt", 0) or 0)
+    if error.get("transient") is True and attempt < len(AUTO_RETRY_DELAYS_MINUTES):
+        due = (now or utcnow()) + timedelta(minutes=AUTO_RETRY_DELAYS_MINUTES[attempt])
+        checkpoint["auto_retry"] = {"attempt": attempt + 1, "next_at": due.isoformat()}
+    elif state:
+        checkpoint["auto_retry"] = {"attempt": attempt, "next_at": None}
+
+
+def clear_auto_retry(checkpoint: dict[str, Any]) -> bool:
+    """人接手了（取消、手动重试）或任务往前走了：自动重试的计数作废。返回是否改了。"""
+    return checkpoint.pop("auto_retry", None) is not None
+
+
+def auto_retry_due_at(checkpoint: dict[str, Any] | None) -> datetime | None:
+    """排好的下一次自动重试时刻；没排（或数据坏了）返回 None。"""
+    state = (checkpoint or {}).get("auto_retry")
+    raw = state.get("next_at") if isinstance(state, dict) else None
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        due = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return due if due.tzinfo is not None else due.replace(tzinfo=UTC)
+
+
+def auto_retry_attempt(checkpoint: dict[str, Any] | None) -> int:
+    state = (checkpoint or {}).get("auto_retry")
+    if not isinstance(state, dict):
+        return 0
+    try:
+        return max(0, int(state.get("attempt", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def describe_failure(exc: BaseException, *, source: str) -> dict[str, Any]:
     """异常 → ``last_error`` 记录。"""
     found = classify_failure(exc)
@@ -246,9 +305,14 @@ def describe_failure(exc: BaseException, *, source: str) -> dict[str, Any]:
 
 
 __all__ = [
+    "AUTO_RETRY_DELAYS_MINUTES",
     "MESSAGES",
     "FailureClass",
+    "auto_retry_attempt",
+    "auto_retry_due_at",
     "classify_failure",
+    "clear_auto_retry",
+    "schedule_auto_retry",
     "describe_failure",
     "error_record",
 ]
