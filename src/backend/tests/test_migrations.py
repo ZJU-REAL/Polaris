@@ -9,8 +9,9 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b2f6d1c93e47"  # 解读的证据定位信息单独一列，不再嵌在正文里 (#873)
-WIKI_EVIDENCE_REVISION = HEAD_REVISION
+HEAD_REVISION = "c7a1e4d9b3f2"  # 待处理的想法晋级/投稿审批自动通过（不再自己审批自己）
+SELF_APPROVAL_REVISION = HEAD_REVISION
+WIKI_EVIDENCE_REVISION = "b2f6d1c93e47"  # 解读的证据定位信息单独一列，不再嵌在正文里 (#873)
 TERMINAL_LOG_PK_REVISION = "9a4c2e7b1d58"  # SQLite：voyage_terminal_logs.id 改成 INTEGER 主键
 USER_ROWS_MERGE_REVISION = "7d2e4f9a1b63"  # 单用户：别的用户行的数据并到本地用户 (#850)
 SINGLE_USER_REVISION = "3c7d9e1f5a20"  # 单用户：LLM 配置并成一张表、agent 去掉共享列 (#842)
@@ -669,7 +670,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         engine.dispose()
     assert "evidence" in wiki_columns
 
-    # 先退掉证据列：定位信息回到正文末尾，列删掉。
+    # 先退掉「待处理审批自动通过」：只动数据，退回是空操作。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == WIKI_EVIDENCE_REVISION
+    assert "evidence" in columns["paper_wikis"]
+
+    # 再退掉证据列：定位信息回到正文末尾，列删掉。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == TERMINAL_LOG_PK_REVISION
@@ -2273,3 +2280,109 @@ def test_wiki_evidence_moves_out_of_the_summary_text(tmp_path):
 
     command.upgrade(cfg, "head")
     assert stored()["a" * 32] == (body, evidence)
+
+
+def test_pending_self_approval_gates_are_resolved(tmp_path):
+    """升级时把还挂着的想法晋级 / 投稿审批自动通过，并把批准的结果落到想法和稿件上。
+
+    这两类操作现在直接改状态，审批接口也不再联动它们——不处理的话存量 pending 行
+    会永远留在审批列表里，想法和稿件卡在半路。别的种类、已决策的行一律不动；
+    申请之后又被淘汰的想法保持淘汰。
+    """
+    import uuid as uuid_mod
+
+    db_path = tmp_path / "gates.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, WIKI_EVIDENCE_REVISION)
+
+    names = [
+        "idea",
+        "idea_rejected",
+        "idea_other",
+        "ms",
+        "ms_compiled",
+        "g_idea",
+        "g_idea_rejected",
+        "g_idea_gone",
+        "g_ms",
+        "g_ms_compiled",
+        "g_budget",
+        "g_old_reject",
+    ]
+    ids = {name: f"{i:032x}" for i, name in enumerate(names, start=1)}
+    project_id = "f" * 32
+
+    def dashed(hex32: str) -> str:
+        return str(uuid_mod.UUID(hex32))
+
+    gates = [
+        ("g_idea", "idea_promotion", "pending", {"idea_id": dashed(ids["idea"])}),
+        ("g_idea_rejected", "idea_promotion", "pending", {"idea_id": dashed(ids["idea_rejected"])}),
+        ("g_idea_gone", "idea_promotion", "pending", {"idea_id": "not-a-uuid"}),
+        ("g_ms", "paper_submission", "pending", {"manuscript_id": dashed(ids["ms"])}),
+        (
+            "g_ms_compiled",
+            "paper_submission",
+            "pending",
+            {"manuscript_id": dashed(ids["ms_compiled"])},
+        ),
+        ("g_budget", "compute_budget", "pending", {"voyage_id": dashed("9" * 32)}),
+        ("g_old_reject", "idea_promotion", "rejected", {"idea_id": dashed(ids["idea_other"])}),
+    ]
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            for name, status in (
+                ("idea", "under_review"),
+                ("idea_rejected", "rejected"),
+                ("idea_other", "candidate"),
+            ):
+                _insert(conn, "ideas", id=ids[name], project_id=project_id, status=status)
+            for name, status in (("ms", "under_review"), ("ms_compiled", "compiled")):
+                _insert(conn, "manuscripts", id=ids[name], project_id=project_id, status=status)
+            for name, kind, status, payload in gates:
+                _insert(
+                    conn,
+                    "gates",
+                    id=ids[name],
+                    project_id=project_id,
+                    kind=kind,
+                    status=status,
+                    payload=payload,
+                )
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, SELF_APPROVAL_REVISION)
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            gate_rows = {
+                row[0]: (row[1], row[2])
+                for row in conn.execute(text("SELECT id, status, decided_at FROM gates"))
+            }
+            idea_status = {
+                row[0]: row[1] for row in conn.execute(text("SELECT id, status FROM ideas"))
+            }
+            ms_status = {
+                row[0]: row[1] for row in conn.execute(text("SELECT id, status FROM manuscripts"))
+            }
+    finally:
+        engine.dispose()
+
+    for name in ("g_idea", "g_idea_rejected", "g_idea_gone", "g_ms", "g_ms_compiled"):
+        status, decided_at = gate_rows[ids[name]]
+        assert status == "approved" and decided_at is not None, name
+    assert gate_rows[ids["g_budget"]] == ("pending", None)  # 任务自己的确认照旧等人
+    assert gate_rows[ids["g_old_reject"]][0] == "rejected"
+    assert idea_status == {
+        ids["idea"]: "promoted",
+        ids["idea_rejected"]: "rejected",
+        ids["idea_other"]: "candidate",
+    }
+    assert ms_status == {ids["ms"]: "submitted", ids["ms_compiled"]: "compiled"}
+
+    # 退回是空操作，数据留在批准后的状态；再升一次也不出错
+    command.downgrade(cfg, WIKI_EVIDENCE_REVISION)
+    command.upgrade(cfg, "head")

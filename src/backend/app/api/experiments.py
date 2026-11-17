@@ -158,6 +158,7 @@ async def create_experiment(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
+    bus: EventBus = Depends(get_event_bus),
 ) -> ExperimentRead:
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
@@ -168,8 +169,6 @@ async def create_experiment(
         )
     except experiments_service.IdeaNotFoundError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="IDEA_NOT_FOUND") from e
-    except experiments_service.IdeaNotPromotedError as e:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEA_NOT_PROMOTED") from e
     except experiments_service.CredentialNotFoundError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CREDENTIAL_NOT_FOUND") from e
     except experiments_service.RunnerHostNotFoundError as e:
@@ -178,6 +177,10 @@ async def create_experiment(
         # 凭据被吊销/资源没绑凭据：请求本身合法但资源当前用不了 → 409
         raise HTTPException(status.HTTP_409_CONFLICT, detail="RESOURCE_UNAVAILABLE") from e
     await queue.enqueue("run_voyage", str(voyage.id))
+    # 发起实验会顺带选中这个想法：通知想法页/列表刷新状态
+    await bus.publish_notify(
+        user.id, {"type": "idea.status", "idea_id": str(data.idea_id), "status": "promoted"}
+    )
     return experiments_service.to_read(experiment, idea_title)
 
 

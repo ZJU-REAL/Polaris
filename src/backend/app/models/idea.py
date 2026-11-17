@@ -10,7 +10,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.db import Base
 from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
-# 状态流转：candidate →(锦标赛) under_review →(闸门批准) promoted；人工可置 rejected
+# 状态流转：candidate →(锦标赛) under_review；用户选中 → promoted（界面叫「已选中」，
+# 发起实验也会选中）；取消选中回 candidate；人工可置 rejected
 IDEA_STATUSES = ("candidate", "under_review", "promoted", "rejected")
 
 # 深度分级（docs/task-system.md §7）：sketch=阶段0方向草案，proposal=深耕产物（Research Proposal）

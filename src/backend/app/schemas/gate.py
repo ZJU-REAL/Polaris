@@ -9,15 +9,13 @@ from pydantic import BaseModel, ConfigDict
 
 class GateCreate(BaseModel):
     project_id: uuid.UUID
-    kind: str  # idea_promotion | compute_budget | paper_submission | idea_goal | idea_pivot
+    kind: str  # compute_budget | idea_goal | idea_pivot
     payload: dict[str, Any] | None = None
     requested_by: str
 
 
 class GateDecision(BaseModel):
     comment: str | None = None
-    # M5-C：paper_submission 闸门批准时跳过 review_passed 前置（管理员 override）
-    override: bool = False
 
 
 class GateRead(BaseModel):

@@ -36,6 +36,7 @@ from app.schemas.experiment import (
     ExperimentRead,
     ExperimentRunRead,
 )
+from app.services import ideas as ideas_service
 from app.services import ssh_exec
 from app.services.managed_commands import OperationContext, RepairScope, redact_text
 from app.services.managed_ssh import ManagedCommandHandle, ManagedGPUUsage, ManagedStopResult
@@ -49,10 +50,6 @@ DEFAULT_BUDGET: dict[str, Any] = {"max_hours": 0, "max_runs": 10, "no_improve_st
 
 class IdeaNotFoundError(Exception):
     """idea 不存在或不属于该项目。"""
-
-
-class IdeaNotPromotedError(Exception):
-    """idea 未晋级（status != promoted）。"""
 
 
 class CredentialNotFoundError(Exception):
@@ -158,8 +155,6 @@ async def create_experiment(
     idea = await session.get(Idea, data.idea_id)
     if idea is None or idea.project_id != project.id:
         raise IdeaNotFoundError(str(data.idea_id))
-    if idea.status != "promoted":
-        raise IdeaNotPromotedError(str(idea.id))
     # 执行目标二选一（#685）：resource_id 指定已注册的 runner 主机（凭据从资源上取，
     # 顺带吃到租约/吊销联动那套语义）；不给则按老路径直接用 credential_id——
     # 存量前端只传 credential_id，行为零变化。
@@ -206,6 +201,8 @@ async def create_experiment(
         server_host=credential.host if credential is not None else None,
     )
     session.add(experiment)
+    # 发起实验就是选中了这个想法：不要求先去点一次「选中」（同一事务，建不成就一起回滚）
+    await ideas_service.pick_idea(session, idea, user_id=user_id)
     await session.flush()
     experiment.workdir = ssh_exec.workdir_for(str(experiment.id))
 

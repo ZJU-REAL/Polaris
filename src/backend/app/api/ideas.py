@@ -17,7 +17,6 @@ from app.models.project import Project
 from app.models.review import ReviewSession
 from app.models.user import User
 from app.schemas.common import BatchResult, TrashBatchAction
-from app.schemas.gate import GateRead
 from app.schemas.idea import (
     DeepIdeaRequest,
     DeepStateRead,
@@ -267,9 +266,9 @@ async def update_idea(
     user: User = Depends(current_active_user),
     bus: EventBus = Depends(get_event_bus),
 ) -> IdeaRead:
-    """人工淘汰（status=rejected）；其他状态转换走 promote/锦标赛专用接口。"""
+    """人工改状态：选中（promoted）/ 取消选中（candidate）/ 淘汰（rejected）。"""
     idea = await _member_idea(session, idea_id, user)
-    idea = await ideas_service.set_idea_status(session, idea, data.status)
+    idea = await ideas_service.set_idea_status(session, idea, data.status, user_id=user.id)
     await bus.publish_notify(
         user.id,
         {"type": "idea.status", "idea_id": str(idea.id), "status": idea.status},
@@ -277,29 +276,21 @@ async def update_idea(
     return IdeaRead.model_validate(idea)
 
 
-@router.post(
-    "/ideas/{idea_id}/promote", response_model=GateRead, status_code=status.HTTP_201_CREATED
-)
+@router.post("/ideas/{idea_id}/promote", response_model=IdeaRead)
 async def promote_idea(
     idea_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
     bus: EventBus = Depends(get_event_bus),
-) -> GateRead:
-    """创建 idea_promotion 闸门（pending）；审批通过后 gates approve 联动置 promoted。"""
+) -> IdeaRead:
+    """选中这个想法：直接置 promoted，没有审批；已选中的再调一次原样返回。"""
     idea = await _member_idea(session, idea_id, user)
-    if not await ideas_service.can_promote(session, project_id=idea.project_id, user=user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="PROMOTE_FORBIDDEN")
-    if idea.status == "promoted":
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEA_ALREADY_PROMOTED")
-    if await ideas_service.find_pending_promotion_gate(session, idea.id) is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="PROMOTION_ALREADY_PENDING")
-    gate = await ideas_service.create_promotion_gate(session, idea, user)
-    gate_read = GateRead.model_validate(gate)
+    idea = await ideas_service.set_idea_status(session, idea, "promoted", user_id=user.id)
     await bus.publish_notify(
-        user.id, {"type": "gate.created", "gate": gate_read.model_dump(mode="json")}
+        user.id,
+        {"type": "idea.status", "idea_id": str(idea.id), "status": idea.status},
     )
-    return gate_read
+    return IdeaRead.model_validate(idea)
 
 
 # ---- 评审锦标赛 ----

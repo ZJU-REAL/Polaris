@@ -12,6 +12,7 @@ from app.agents.voyage import VoyageEngine
 from app.core.db import get_sessionmaker
 from app.core.llm.fake import FakeProvider
 from app.core.llm.router import LLMRouter
+from app.models.activity import Activity
 from app.models.idea import Idea
 from app.models.review import ReviewMessage, ReviewSession
 from tests.conftest import RecordingBus, register_and_login
@@ -424,52 +425,58 @@ async def test_custom_personas_used_in_messages(client, queue_stub):
     assert idea_a  # 引用消除 lint 告警
 
 
-async def test_promote_gate_approve_links_idea_status(client, queue_stub, bus_recorder):
+async def test_pick_sets_status_directly_without_a_gate(client, queue_stub, bus_recorder):
+    """选中 = 直接置 promoted：不建闸门、不用自己审批自己；再点一次是空操作。"""
     project_id, headers = await _setup_project(client)
-    idea_id = await _seed_idea(project_id, "待晋级想法", status="under_review")
+    idea_id = await _seed_idea(project_id, "要选中的想法", status="under_review")
 
-    # owner promote → 创建 idea_promotion 闸门（pending）+ gate.created 通知
     resp = await client.post(f"/api/ideas/{idea_id}/promote", headers=headers)
-    assert resp.status_code == 201, resp.text
-    gate = resp.json()
-    assert gate["kind"] == "idea_promotion" and gate["status"] == "pending"
-    assert gate["payload"]["idea_id"] == idea_id
-    created_events = [m for _, m in bus_recorder.notify if m["type"] == "gate.created"]
-    assert created_events and created_events[0]["gate"]["id"] == gate["id"]
-
-    # 已有 pending 晋级闸门 → 409
-    resp = await client.post(f"/api/ideas/{idea_id}/promote", headers=headers)
-    assert resp.status_code == 409
-    assert resp.json()["detail"] == "PROMOTION_ALREADY_PENDING"
-
-    # gates approve 联动：idea.status=promoted + WS idea.status 事件；不入队 resume（无 voyage_id）
-    resp = await client.post(f"/api/gates/{gate['id']}/approve", headers=headers)
     assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "approved"
-    assert queue_stub.jobs == []  # 晋级闸门与航程无关
-    resp = await client.get(f"/api/ideas/{idea_id}", headers=headers)
-    assert resp.json()["status"] == "promoted"
-    status_events = [m for _, m in bus_recorder.notify if m["type"] == "idea.status"]
-    assert {"type": "idea.status", "idea_id": idea_id, "status": "promoted"} in status_events
+    assert resp.json()["id"] == idea_id and resp.json()["status"] == "promoted"
+    assert (await client.get(f"/api/ideas/{idea_id}", headers=headers)).json()[
+        "status"
+    ] == "promoted"
 
-    # 已晋级 → 再 promote 409
+    # 没有任何闸门，也没有 gate.created 通知；与任务无关所以不入队
+    for status_filter in ("pending", "decided"):
+        resp = await client.get(
+            f"/api/gates?project_id={project_id}&status={status_filter}", headers=headers
+        )
+        assert resp.json() == []
+    assert not [m for _, m in bus_recorder.notify if m["type"] == "gate.created"]
+    assert queue_stub.jobs == []
+    status_events = [m for _, m in bus_recorder.notify if m["type"] == "idea.status"]
+    assert status_events == [{"type": "idea.status", "idea_id": idea_id, "status": "promoted"}]
+
+    # 已选中再选一次：200 原样返回，活动流里只记一次
     resp = await client.post(f"/api/ideas/{idea_id}/promote", headers=headers)
-    assert resp.status_code == 409
-    assert resp.json()["detail"] == "IDEA_ALREADY_PROMOTED"
+    assert resp.status_code == 200 and resp.json()["status"] == "promoted"
+    async with get_sessionmaker()() as session:
+        picked = (
+            (await session.execute(select(Activity).where(Activity.kind == "idea.promoted")))
+            .scalars()
+            .all()
+        )
+    assert len(picked) == 1 and picked[0].payload == {"idea_id": idea_id}
 
 
-async def test_patch_idea_rejected_only(client, queue_stub, bus_recorder):
+async def test_patch_idea_pick_unpick_reject(client, queue_stub, bus_recorder):
+    """PATCH 可以选中、取消选中、淘汰，都能反悔；under_review 只由评审任务写。"""
     project_id, headers = await _setup_project(client)
-    idea_id = await _seed_idea(project_id, "将被淘汰的想法")
+    idea_id = await _seed_idea(project_id, "来回改状态的想法")
 
-    # 只允许 rejected
-    resp = await client.patch(f"/api/ideas/{idea_id}", json={"status": "promoted"}, headers=headers)
+    resp = await client.patch(
+        f"/api/ideas/{idea_id}", json={"status": "under_review"}, headers=headers
+    )
     assert resp.status_code == 422
-    resp = await client.patch(f"/api/ideas/{idea_id}", json={"status": "rejected"}, headers=headers)
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "rejected"
-    status_events = [m for _, m in bus_recorder.notify if m["type"] == "idea.status"]
-    assert {"type": "idea.status", "idea_id": idea_id, "status": "rejected"} in status_events
+    for target in ("promoted", "candidate", "rejected", "candidate"):
+        resp = await client.patch(f"/api/ideas/{idea_id}", json={"status": target}, headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == target
+    status_events = [m["status"] for _, m in bus_recorder.notify if m["type"] == "idea.status"]
+    assert status_events == ["promoted", "candidate", "rejected", "candidate"]
+    resp = await client.get(f"/api/gates?project_id={project_id}", headers=headers)
+    assert resp.json() == []
 
 
 async def test_idea_counts_exclude_the_recycle_bin(client, queue_stub):

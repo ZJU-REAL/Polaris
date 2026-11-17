@@ -1369,12 +1369,6 @@ async def test_create_experiment_validation(client, queue_stub, fake_ssh):
     project_id, headers = await _setup_project(client)
     cred_id = await _create_credential(client, headers)
 
-    # idea 未晋级 → 409
-    candidate_id = await _seed_idea(project_id, status="candidate")
-    resp = await _create_experiment(client, headers, project_id, candidate_id, cred_id)
-    assert resp.status_code == 409
-    assert resp.json()["detail"] == "IDEA_NOT_PROMOTED"
-
     # idea 不存在 → 404
     resp = await _create_experiment(client, headers, project_id, str(uuid.uuid4()), cred_id)
     assert resp.status_code == 404
@@ -1390,6 +1384,35 @@ async def test_create_experiment_validation(client, queue_stub, fake_ssh):
     resp = await _create_experiment(client, headers, project_id, promoted_id, cred_id)
     assert resp.status_code == 201
     assert resp.json()["budget"] == {"max_hours": 0, "max_runs": 10, "no_improve_stop": 2}
+
+
+async def test_experiment_from_an_unpicked_idea_picks_it(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """发起实验就是选中：候选想法不用先点「选中」；建不成的请求不改想法状态。"""
+    project_id, headers = await _setup_project(client)
+    cred_id = await _create_credential(client, headers)
+    idea_id = await _seed_idea(project_id, status="candidate")
+
+    async def idea_status() -> str:
+        async with get_sessionmaker()() as session:
+            return (await session.get(Idea, uuid.UUID(idea_id))).status
+
+    # 凭据不对 → 404，想法仍是候选
+    resp = await _create_experiment(client, headers, project_id, idea_id, str(uuid.uuid4()))
+    assert resp.status_code == 404
+    assert await idea_status() == "candidate"
+
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["idea_id"] == idea_id
+    assert await idea_status() == "promoted"
+    assert {"type": "idea.status", "idea_id": idea_id, "status": "promoted"} in [
+        m for _, m in bus_recorder.notify
+    ]
+    # 选中没有产生审批（这批用例开了 confirm_budget，但预算确认要等计划跑完才建）
+    resp = await client.get(f"/api/gates?project_id={project_id}", headers=headers)
+    assert resp.json() == []
 
 
 async def test_code_browser_live_listing_and_read(client, queue_stub, fake_ssh, bus_recorder):

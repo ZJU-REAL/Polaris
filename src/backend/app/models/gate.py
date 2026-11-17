@@ -17,7 +17,7 @@ class Gate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    # idea_promotion | compute_budget | paper_submission | idea_goal | idea_pivot
+    # compute_budget | idea_goal | idea_pivot（idea_promotion / paper_submission 只剩历史行）
     kind: Mapped[str] = mapped_column(String(64), nullable=False)
     # pending | approved | rejected
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True, nullable=False)

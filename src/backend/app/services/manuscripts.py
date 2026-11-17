@@ -5,9 +5,8 @@
 - fact-pack：从 idea + experiment（假设/指标/图表）+ 项目文献库（compiled/included，
   bibkey 走 citations.assign_citation_keys）组装的防幻觉事实源；
 - 写作 voyage（kind=paper_writing）：同 manuscript 互斥；
-- submit：latest_compile.status=ok + review_passed（M5-C）双前置，创建
-  paper_submission 闸门，审批通过 → status=submitted（gates API 联动
-  decide_submission_from_gate；review_passed 缺失时管理员可用 override 审批跳过）。
+- submit：要求 latest_compile.status=ok，直接置 status=submitted（没有审批；
+  review_passed 不是前置，界面在确认框里提醒）。
 """
 
 import contextlib
@@ -27,7 +26,6 @@ from sqlalchemy.orm import selectinload
 from app.core.config import get_settings
 from app.models.activity import Activity
 from app.models.experiment import Experiment
-from app.models.gate import Gate
 from app.models.idea import Idea
 from app.models.library_direction import LibraryPaper
 from app.models.manuscript import Manuscript, ManuscriptFile
@@ -102,10 +100,6 @@ class StructureError(Exception):
 
 class CompileRequiredError(Exception):
     """submit / review 前置：最新编译不存在或未通过。"""
-
-
-class ReviewRequiredError(Exception):
-    """submit 前置（M5-C）：评审未通过（review_passed=false）。"""
 
 
 # ---- 模板 pack ----
@@ -953,72 +947,29 @@ async def create_writing_voyage(
 
 async def submit_manuscript(
     session: AsyncSession, *, manuscript: Manuscript, user_id: uuid.UUID
-) -> Gate:
+) -> Manuscript:
+    """标记为已投稿：直接置 submitted，没有审批（界面上是一个确认对话框）。
+
+    仍然要求最新一次编译成功——没有 PDF 就没有可投的东西。评审没通过不拦：
+    投不投是用户自己的决定，界面在确认框里提醒一句。已投稿的再调一次原样返回。
+    """
     latest = manuscript.latest_compile or {}
     if latest.get("status") != "ok":
         raise CompileRequiredError(str(manuscript.id))
-    # M5-C：前置从 compile-ok 升级为 review_passed（管理员可在 gate 审批时 override）
-    if not manuscript.review_passed:
-        raise ReviewRequiredError(str(manuscript.id))
-    gate = Gate(
-        project_id=manuscript.project_id,
-        kind="paper_submission",
-        payload={
-            "manuscript_id": str(manuscript.id),
-            "title": manuscript.title,
-            "compile_version": latest.get("version"),
-            "review_passed": manuscript.review_passed,
-        },
-        requested_by=f"user:{user_id}",
-    )
-    session.add(gate)
-    manuscript.status = "under_review"
+    if manuscript.status == "submitted":
+        return manuscript
+    manuscript.status = "submitted"
     session.add(
         Activity(
             project_id=manuscript.project_id,
             actor=f"user:{user_id}",
-            kind="manuscript.submitted_for_review",
-            message=f"论文投稿待审批：{manuscript.title}",
-            payload={"manuscript_id": str(manuscript.id)},
-        )
-    )
-    await session.commit()
-    await session.refresh(gate)
-    return gate
-
-
-async def gate_manuscript(session: AsyncSession, gate: Gate) -> Manuscript | None:
-    """paper_submission 闸门指向的稿件（payload.manuscript_id）。"""
-    if gate.kind != "paper_submission":
-        return None
-    raw = (gate.payload or {}).get("manuscript_id")
-    if not raw:
-        return None
-    try:
-        manuscript_id = uuid.UUID(str(raw))
-    except ValueError:
-        return None
-    return await session.get(Manuscript, manuscript_id)
-
-
-async def decide_submission_from_gate(
-    session: AsyncSession, gate: Gate, *, approved: bool
-) -> Manuscript | None:
-    """gates 审批联动：paper_submission 批准 → submitted；驳回 → 回退 compiled。"""
-    manuscript = await gate_manuscript(session, gate)
-    if manuscript is None or manuscript.status != "under_review":
-        return None
-    manuscript.status = "submitted" if approved else "compiled"
-    session.add(
-        Activity(
-            project_id=manuscript.project_id,
-            actor=f"user:{gate.decided_by}" if gate.decided_by else "system",
-            kind="manuscript.submitted" if approved else "manuscript.submit_rejected",
-            message=(
-                f"论文《{manuscript.title}》投稿审批"
-                + ("通过，已标记为 submitted" if approved else "被驳回")
-            ),
-            payload={"manuscript_id": str(manuscript.id), "gate_id": str(gate.id)},
+            kind="manuscript.submitted",
+            message=f"论文《{manuscript.title}》已标记为已投稿",
+            payload={
+                "manuscript_id": str(manuscript.id),
+                "compile_version": latest.get("version"),
+                "review_passed": manuscript.review_passed,
+            },
         )
     )
     await session.commit()

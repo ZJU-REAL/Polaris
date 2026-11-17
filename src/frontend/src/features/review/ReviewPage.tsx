@@ -13,6 +13,7 @@ import { toast } from '../../components/ui/Toast';
 import { topicPath, useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { errorText } from '../../lib/errors';
 import {
   api,
   ApiError,
@@ -171,7 +172,7 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
 /* ---------------- Tab ① 排行榜 ---------------- */
 
 // 表头与各行是独立 grid，列宽必须定宽才能上下对齐；状态列要放得下
-// 「评审中 under review」pill，操作列要放得下「图标 + 发起实验」，
+// 「评审中 under review」pill，操作列要放得下「图标 + 开始实验」，
 // 否则右对齐的操作区会向左溢出、盖住状态标签
 const LB_GRID = '36px minmax(220px,1fr) 64px 150px 48px 48px 150px 136px';
 // 标题列给 220px 下限、其余定宽列合计 632px、7 个 12px gap、左右 padding 36：
@@ -198,15 +199,15 @@ function LeaderboardTab({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const promoteMutation = useMutation({
-    mutationFn: (ideaId: string) => api.promoteIdea(ideaId),
+  const pickMutation = useMutation({
+    mutationFn: (ideaId: string) => api.pickIdea(ideaId),
     onSuccess: () => {
-      toast(tr('已提交晋级审批', 'Sent for promotion approval'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['gates'] });
+      toast(tr('已选中', 'Picked'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['leaderboard', pid] });
       void queryClient.invalidateQueries({ queryKey: ['ideas'] });
+      void queryClient.invalidateQueries({ queryKey: ['idea'] });
     },
-    onError: (e) => toast(`${tr('无法晋级：', 'Couldn’t promote: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(errorText(e), 'error'),
   });
 
   if (loading) return <div className="empty" style={{ padding: 40 }}>{tr('加载中…', 'Loading…')}</div>;
@@ -265,7 +266,7 @@ function LeaderboardTab({
           <span />
         </div>
         {rows.map((r, i) => {
-          const promotable = (r.status === 'candidate' || r.status === 'under_review');
+          const pickable = (r.status === 'candidate' || r.status === 'under_review');
           return (
             <div
               key={r.id}
@@ -327,23 +328,23 @@ function LeaderboardTab({
                 >
                   <Icon name="scale" size={13} />
                 </button>
-                {promotable && (
+                {pickable && (
                   <button
                     className="btn btn-soft sm"
-                    disabled={running || promoteMutation.isPending}
-                    onClick={() => promoteMutation.mutate(r.id)}
+                    disabled={running || pickMutation.isPending}
+                    onClick={() => pickMutation.mutate(r.id)}
                   >
-                    {tr('晋级', 'Promote')}
+                    {tr('选中', 'Pick')}
                   </button>
                 )}
                 {r.status === 'promoted' && (
                   <button
                     className="btn btn-soft sm"
-                    title={tr('用这个想法新建实验', 'Start an experiment from this idea')}
+                    title={tr('为这个想法开始实验', 'Start an experiment for this idea')}
                     onClick={() => navigate(topicPath(pid, `experiment?new=${r.id}`))}
                   >
                     <Icon name="flask" size={12} />
-                    {tr('发起实验', 'Start experiment')}
+                    {tr('开始实验', 'Start experiment')}
                   </button>
                 )}
               </div>

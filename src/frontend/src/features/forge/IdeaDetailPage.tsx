@@ -17,16 +17,17 @@ import {
   type ReviewSessionRead,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { useShell } from '../../app/AppShell';
 import { topicPath, useProject } from '../../app/project';
 import { DiscussionPanel } from '../review/DiscussionPanel';
 import { DiscussionBubble } from '../review/messages';
+import { errorText } from '../../lib/errors';
+import { IdeaActionCard } from './IdeaActionCard';
 import { compositeOf, DepthBadge, ResearchTypeBadge, RubricBar, SCORE_DIMS } from './ideaShared';
 
 /* ============================================================
    /ideas/:id — idea 详情（M3 + Idea 2.0）
    content markdown（[[paper:uuid]] → 库内论文链接）、四维分数 +
-   rationale 折叠、parent papers 链接（跳 wiki）、晋级 / 人工淘汰、
+   rationale 折叠、parent papers 链接（跳 wiki）、选中 / 开始实验 / 淘汰、
    研究方案：研究目标卡片 + 依据文献 + 评审修订记录（只读），
    底部人机讨论区。
    ============================================================ */
@@ -420,7 +421,6 @@ export function IdeaDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { openGates } = useShell();
   const { currentProjectId } = useProject();
 
   const ideaQuery = useQuery({
@@ -439,24 +439,26 @@ export function IdeaDetailPage() {
     void queryClient.invalidateQueries({ queryKey: ['forge-state'] });
   }
 
-  const promoteMutation = useMutation({
-    mutationFn: () => api.promoteIdea(id!),
-    onSuccess: (gate) => {
-      toast(tr('已提交晋级审批', 'Sent for approval'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['gates'] });
+  // 选中 / 取消选中 / 淘汰 / 恢复：都是直接改状态，可以反悔
+  const statusMutation = useMutation({
+    mutationFn: (status: 'candidate' | 'promoted' | 'rejected') =>
+      status === 'promoted' ? api.pickIdea(id!) : api.patchIdea(id!, { status }),
+    onSuccess: (updated, requested) => {
+      const wasRejected = idea?.status === 'rejected';
+      toast(
+        requested === 'promoted'
+          ? tr('已选中', 'Picked')
+          : requested === 'rejected'
+            ? tr('已淘汰', 'Rejected')
+            : wasRejected
+              ? tr('已恢复为候选', 'Restored')
+              : tr('已取消选中', 'Unpicked'),
+        'ok',
+      );
+      queryClient.setQueryData<IdeaDetail>(['idea', id], (prev) => (prev ? { ...prev, status: updated.status } : prev));
       invalidateIdea();
-      openGates(gate.id);
     },
-    onError: (e) => toast(`${tr('晋级失败：', 'Promotion failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
-
-  const rejectMutation = useMutation({
-    mutationFn: () => api.patchIdea(id!, { status: 'rejected' }),
-    onSuccess: () => {
-      toast(tr('已淘汰', 'Rejected'), 'ok');
-      invalidateIdea();
-    },
-    onError: (e) => toast(`${tr('淘汰失败：', 'Reject failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(errorText(e), 'error'),
   });
 
   // —— [[paper:uuid]] → 库内论文链接（标题优先取依据文献 / 来源论文 / 目标 grounding） ——
@@ -512,8 +514,6 @@ export function IdeaDetailPage() {
       </div>
     );
   }
-
-  const actionable = idea.status === 'candidate' || idea.status === 'under_review';
 
   return (
     <div className="page fadeup">
@@ -611,37 +611,16 @@ export function IdeaDetailPage() {
             )}
           </div>
 
-          {/* 操作 */}
-          <div className="card card-pad" style={{ background: actionable ? 'var(--accent-soft)' : 'var(--surface-2)' }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{tr('晋级或淘汰', 'Promote or reject')}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.55, marginBottom: 14 }}>
-              {actionable
-                ? tr('晋级需要审批，通过后进入实验阶段。', 'Promotion needs your approval, then the idea moves to experiments.')
-                : idea.status === 'promoted'
-                  ? tr('已晋级。', 'Promoted.')
-                  : tr('已淘汰。', 'Rejected.')}
-            </div>
-            <div className="row gap8">
-              <button
-                className="btn btn-primary"
-                style={{ flex: 1, justifyContent: 'center' }}
-                disabled={!actionable || promoteMutation.isPending}
-                onClick={() => promoteMutation.mutate()}
-              >
-                <Icon name="arrow" size={14} />
-                {tr('晋级', 'Promote')}
-              </button>
-              <button
-                className="btn btn-ghost"
-                style={{ flex: 1, justifyContent: 'center' }}
-                disabled={!actionable || rejectMutation.isPending}
-                onClick={() => rejectMutation.mutate()}
-              >
-                <Icon name="x" size={14} />
-                {tr('淘汰', 'Reject')}
-              </button>
-            </div>
-          </div>
+          {/* 下一步：选中 → 开始实验 */}
+          <IdeaActionCard
+            status={idea.status}
+            busy={statusMutation.isPending}
+            onPick={() => statusMutation.mutate('promoted')}
+            onUnpick={() => statusMutation.mutate('candidate')}
+            onReject={() => statusMutation.mutate('rejected')}
+            onRestore={() => statusMutation.mutate('candidate')}
+            onStartExperiment={() => navigate(topicPath(idea.project_id, `experiment?new=${idea.id}`))}
+          />
 
           {/* 辩论记录入口 */}
           <button

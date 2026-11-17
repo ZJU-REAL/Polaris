@@ -14,7 +14,6 @@ from app.models.idea import IDEA_STATUSES, Idea
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project
-from app.models.user import User
 from app.models.voyage import IN_FLIGHT_STATUSES, TERMINAL_STATUSES, VoyageRun
 from app.schemas.idea import DeepIdeaRequest, ForgeKnobs
 from app.schemas.review import TournamentRequest
@@ -639,8 +638,14 @@ async def purge_ideas(
     return n
 
 
-async def set_idea_status(session: AsyncSession, idea: Idea, status: str) -> Idea:
-    idea.status = status
+async def set_idea_status(
+    session: AsyncSession, idea: Idea, status: str, *, user_id: uuid.UUID | None = None
+) -> Idea:
+    """人工改状态：选中（promoted）/ 取消选中（candidate）/ 淘汰（rejected），都可以反悔。"""
+    if status == "promoted":
+        await pick_idea(session, idea, user_id=user_id)
+    else:
+        idea.status = status
     await session.commit()
     await session.refresh(idea)
     return idea
@@ -675,70 +680,25 @@ async def seed_idea_brief(session: AsyncSession, idea: Idea) -> dict[str, Any] |
     return {"id": seed.id, "title": seed.title} if seed is not None else None
 
 
-# ---- 晋级（idea_promotion 闸门） ----
+# ---- 选中（直接改状态，没有审批） ----
 
 
-async def can_promote(session: AsyncSession, *, project_id: uuid.UUID, user: User) -> bool:
-    """promote 权限：项目 owner。成员机制移除（#625）后可见性==归属，走到这里的
-    请求几乎必然放行；保留显式判据是为了闸门语义不隐式依赖上游鉴权。"""
-    project = await session.get(Project, project_id)
-    return project is not None and project.owner_id == user.id
+async def pick_idea(session: AsyncSession, idea: Idea, *, user_id: uuid.UUID | None) -> Idea:
+    """选中一个想法：status 直接置 promoted（库里的值沿用旧名，界面叫「已选中」）。
 
-
-async def find_pending_promotion_gate(session: AsyncSession, idea_id: uuid.UUID) -> Gate | None:
-    stmt = select(Gate).where(
-        Gate.kind == "idea_promotion",
-        Gate.status == "pending",
-        Gate.payload["idea_id"].as_string() == str(idea_id),
-    )
-    return (await session.execute(stmt)).scalars().first()
-
-
-async def create_promotion_gate(session: AsyncSession, idea: Idea, user: User) -> Gate:
-    gate = Gate(
-        project_id=idea.project_id,
-        kind="idea_promotion",
-        payload={"idea_id": str(idea.id), "idea_title": idea.title},
-        requested_by=f"user:{user.id}",
-    )
-    session.add(gate)
+    单用户应用里「申请 → 自己审批」只是多点两下，所以这里没有闸门。已选中的再选
+    一次是空操作；发起实验也走这里（开始实验本身就是决定）。不提交，由调用方提交。
+    """
+    if idea.status == "promoted":
+        return idea
+    idea.status = "promoted"
     session.add(
         Activity(
             project_id=idea.project_id,
-            actor=f"user:{user.id}",
-            kind="idea.promote_requested",
-            message=f"想法「{idea.title}」申请晋级，等待人工审批",
-            payload={"idea_id": str(idea.id), "gate_id": None},
+            actor=f"user:{user_id}" if user_id else "system",
+            kind="idea.promoted",
+            message=f"已选中想法「{idea.title}」",
+            payload={"idea_id": str(idea.id)},
         )
     )
-    await session.commit()
-    await session.refresh(gate)
-    return gate
-
-
-async def promote_from_gate(session: AsyncSession, gate: Gate) -> Idea | None:
-    """gates approve 联动：payload.idea_id 存在则把 idea 置为 promoted，返回该 idea。"""
-    raw = (gate.payload or {}).get("idea_id")
-    if not raw:
-        return None
-    try:
-        idea_id = uuid.UUID(str(raw))
-    except ValueError:
-        return None
-    idea = await session.get(Idea, idea_id)
-    if idea is None:
-        return None
-    if idea.status != "promoted":
-        idea.status = "promoted"
-        session.add(
-            Activity(
-                project_id=idea.project_id,
-                actor=f"user:{gate.decided_by}" if gate.decided_by else "system",
-                kind="idea.promoted",
-                message=f"想法「{idea.title}」已通过审批晋级",
-                payload={"idea_id": str(idea.id), "gate_id": str(gate.id)},
-            )
-        )
-        await session.commit()
-        await session.refresh(idea)
     return idea

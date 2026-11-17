@@ -1,4 +1,4 @@
-"""实验（promoted idea 的验证执行，与 experiment voyage 1:1）与单次运行记录。"""
+"""实验（一个想法的验证执行，与 experiment voyage 1:1）与单次运行记录。"""
 
 import uuid
 from datetime import datetime

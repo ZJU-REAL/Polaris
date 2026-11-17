@@ -12,6 +12,9 @@ import { topicPath, useProject } from '../../app/project';
 import { Markdown } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { errorText } from '../../lib/errors';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { submitConfirmMessage } from '../writer/shared';
 import {
   api,
   ApiError,
@@ -957,28 +960,23 @@ export function PaperReviewPage() {
   const computedPassed = rating != null && rating >= 6 && fabricated === 0;
   const reviewPassed = selected ? (detail?.review_passed ?? computedPassed) : false;
 
-  // —— 申请投稿 ——
+  // —— 标记为已投稿（确认后直接生效，没有审批） ——
+  const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
   const submitMutation = useMutation({
     mutationFn: () => api.submitManuscript(msId!),
     onSuccess: () => {
-      toast(tr('已提交投稿审批', 'Sent for submission approval'), 'ok');
+      toast(tr('已标记为已投稿', 'Marked as submitted'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['manuscript', msId] });
       void queryClient.invalidateQueries({ queryKey: ['manuscripts'] });
-      void queryClient.invalidateQueries({ queryKey: ['gates'] });
     },
     onError: (e) => {
-      if (e instanceof ApiError && e.status === 409) {
-        if (e.message.includes('REVIEW_REQUIRED')) {
-          toast(tr('请先通过同行评审再投稿', 'Pass peer review before submitting'), 'error');
-        } else if (e.message.includes('COMPILE_REQUIRED')) {
-          toast(tr('请先成功编译稿件，可在编辑器中按 ⌘S', 'Compile the manuscript first. Press ⌘S in the editor.'), 'error');
-        } else {
-          toast(`${tr('无法投稿：', 'Couldn’t submit: ')}${e.message}`, 'error');
-        }
+      if (e instanceof ApiError && e.status === 409 && e.message.includes('COMPILE_REQUIRED')) {
+        toast(tr('请先成功编译稿件，可在编辑器中按 ⌘S', 'Compile the manuscript first. Press ⌘S in the editor.'), 'error');
       } else {
-        toast(`${tr('无法投稿：', 'Couldn’t submit: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(errorText(e), 'error');
       }
     },
+    onSettled: () => setSubmitConfirmOpen(false),
   });
 
   function onRevise() {
@@ -1289,22 +1287,26 @@ export function PaperReviewPage() {
               </button>
               <button
                 className={`btn ${reviewPassed ? 'btn-primary' : 'btn-soft'}`}
-                disabled={!reviewPassed || submitMutation.isPending}
-                title={
-                  reviewPassed
-                    ? tr('提交投稿审批', 'Request submission approval')
-                    : tr('通过同行评审后才能投稿', 'Pass peer review before submitting')
-                }
-                onClick={() => submitMutation.mutate()}
+                disabled={submitMutation.isPending || detail?.status === 'submitted'}
+                onClick={() => setSubmitConfirmOpen(true)}
               >
                 <Icon name="arrow" size={14} />
-                {submitMutation.isPending ? tr('提交中…', 'Submitting…') : tr('申请投稿', 'Request submission')}
+                {detail?.status === 'submitted' ? tr('已投稿', 'Submitted') : tr('标记为已投稿', 'Mark as submitted')}
               </button>
             </div>
           </div>
         </>
       )}
 
+      <ConfirmModal
+        open={submitConfirmOpen}
+        onClose={() => setSubmitConfirmOpen(false)}
+        title={tr('标记为已投稿？', 'Mark as submitted?')}
+        message={submitConfirmMessage(reviewPassed)}
+        confirmText={tr('标记为已投稿', 'Mark as submitted')}
+        busy={submitMutation.isPending}
+        onConfirm={() => submitMutation.mutate()}
+      />
       {msId && pid && (
         <StartReviewModal open={modalOpen} onClose={() => setModalOpen(false)} msId={msId} pid={pid} />
       )}

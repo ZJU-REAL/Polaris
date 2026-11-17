@@ -78,7 +78,7 @@ const STATUS_FILTERS: { v: StatusFilter; zh: string; en: string }[] = [
   { v: 'all', zh: '全部', en: 'All' },
   { v: 'candidate', zh: '候选', en: 'Candidate' },
   { v: 'under_review', zh: '评审中', en: 'In review' },
-  { v: 'promoted', zh: '已晋级', en: 'Promoted' },
+  { v: 'promoted', zh: '已选中', en: 'Picked' },
   { v: 'rejected', zh: '已淘汰', en: 'Rejected' },
 ];
 
@@ -93,7 +93,7 @@ const SORTS: { v: IdeaSort; zh: string; en: string }[] = [
 const FUNNEL_STAGES: { key: keyof NonNullable<ForgeState['idea_counts']>; zh: string; en: string }[] = [
   { key: 'candidate', zh: '候选', en: 'Candidates' },
   { key: 'under_review', zh: '评审中', en: 'In review' },
-  { key: 'promoted', zh: '已晋级', en: 'Promoted' },
+  { key: 'promoted', zh: '已选中', en: 'Picked' },
 ];
 
 function FunnelBar({ state }: { state: ForgeState | undefined }) {

@@ -113,7 +113,8 @@ class IdeaDetail(IdeaRead):
 
 
 class IdeaUpdate(BaseModel):
-    status: Literal["rejected"]  # 仅人工淘汰；其他状态转换走专用接口
+    # 选中（promoted）/ 取消选中（candidate）/ 淘汰（rejected）；under_review 只由评审任务写
+    status: Literal["candidate", "promoted", "rejected"]
 
 
 class IdeaLeaderboardEntry(IdeaRead):

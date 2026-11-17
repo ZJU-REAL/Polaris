@@ -11,8 +11,8 @@ from app.core.db import Base
 from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 # 状态流转（docs/task-system.md §7（原 api-m5-b.md §1/§5/§7））：
-#   draft →(写作 voyage) writing →(编译 ok) compiled →(submit) under_review
-#   →(paper_submission 闸门批准) submitted；approved 为 Wave 3 评审通过预留
+#   draft →(写作 voyage) writing →(编译 ok) compiled →(submit，用户确认) submitted；
+#   under_review 是旧的「投稿待审批」中间态，不再写入；approved 为 Wave 3 评审通过预留
 MANUSCRIPT_STATUSES = (
     "draft",
     "writing",
@@ -51,7 +51,7 @@ class Manuscript(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(32), default="tectonic", server_default="tectonic", nullable=False
     )
     # 论文评审通过标记（docs/task-system.md §7）：meta.rating ≥ 6 且无 fabricated 引用
-    # → true；submit 前置条件（未通过 409 REVIEW_REQUIRED）
+    # → true；不拦投稿，界面在投稿确认框里提醒
     review_passed: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )

@@ -83,3 +83,13 @@ export const DEFAULT_SECTIONS = [
   'results',
   'conclusion',
 ];
+
+/** 「标记为已投稿」确认框的正文：没通过评审时多提醒一句，但不拦。 */
+export function submitConfirmMessage(reviewPassed: boolean | undefined): string {
+  return reviewPassed
+    ? tr('稿件会标记为「已投稿」。', 'The manuscript is marked as submitted.')
+    : tr(
+        '这篇稿件还没有通过评审。确认后会标记为「已投稿」。',
+        'This manuscript hasn’t passed review. It will be marked as submitted.',
+      );
+}

@@ -20,6 +20,7 @@ import {
 } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { errorText } from '../../lib/errors';
 import { topicPath, useProject } from '../../app/project';
 import { useIsCompact, useIsMobile } from '../../lib/useBreakpoint';
 import type { ProviderStatus } from '../../lib/yjs-provider';
@@ -32,7 +33,7 @@ import { AssistPanel, type AssistMode } from './AssistPanel';
 import { HistoryModal } from './HistoryModal';
 import { MoreMenu } from './MoreMenu';
 import { AiDisclosureModal } from '../../components/ui/AiDisclosureModal';
-import { colorForUser, ruleText, sectionText, type AiWritingState } from './shared';
+import { colorForUser, ruleText, sectionText, submitConfirmMessage, type AiWritingState } from './shared';
 
 /* ============================================================
    /writer/:id — 论文编辑工作台（全屏三栏）：
@@ -542,18 +543,18 @@ export function WriterEditorPage() {
   const submitMutation = useMutation({
     mutationFn: () => api.submitManuscript(id),
     onSuccess: () => {
-      toast(tr('已提交投稿审批', 'Sent for submission approval'), 'ok');
+      toast(tr('已标记为已投稿', 'Marked as submitted'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['manuscript', id] });
       void queryClient.invalidateQueries({ queryKey: ['manuscripts'] });
-      void queryClient.invalidateQueries({ queryKey: ['gates'] });
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409 && e.message.includes('COMPILE_REQUIRED')) {
         toast(tr('请先成功编译一次再投稿', 'Compile successfully before submitting'), 'error');
       } else {
-        toast(`${tr('无法投稿：', 'Couldn’t submit: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(errorText(e), 'error');
       }
     },
+    onSettled: () => setSubmitConfirmOpen(false),
   });
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
   function onSubmit() {
@@ -869,8 +870,8 @@ export function WriterEditorPage() {
             {
               key: 'submit',
               icon: 'arrow',
-              label: submitMutation.isPending ? tr('提交中…', 'Submitting…') : tr('投稿', 'Submit'),
-              title: ms.status === 'submitted' ? tr('已投稿', 'Submitted') : tr('提交投稿审批', 'Request submission approval'),
+              label: tr('标记为已投稿', 'Mark as submitted'),
+              title: ms.status === 'submitted' ? tr('已投稿', 'Submitted') : undefined,
               disabled: submitMutation.isPending || isWriting || ms.status === 'submitted',
               onSelect: onSubmit,
             },
@@ -1262,14 +1263,11 @@ export function WriterEditorPage() {
       <ConfirmModal
         open={submitConfirmOpen}
         onClose={() => setSubmitConfirmOpen(false)}
-        title={tr('提交投稿审批？', 'Request submission approval?')}
-        message={tr('在审批中批准后，稿件会标记为「已投稿」。', 'Once you approve it, the manuscript is marked as submitted.')}
-        confirmText={tr('提交', 'Submit')}
+        title={tr('标记为已投稿？', 'Mark as submitted?')}
+        message={submitConfirmMessage(ms.review_passed)}
+        confirmText={tr('标记为已投稿', 'Mark as submitted')}
         busy={submitMutation.isPending}
-        onConfirm={() => {
-          submitMutation.mutate();
-          setSubmitConfirmOpen(false);
-        }}
+        onConfirm={() => submitMutation.mutate()}
       />
       {currentFile && (
         <HistoryModal

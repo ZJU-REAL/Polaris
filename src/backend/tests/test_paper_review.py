@@ -9,7 +9,7 @@
 - guardrail 拒绝 → 重生成 ×2 → unreliable 排除聚合；
 - 核验三态（respx mock S2/OpenAlex）与 OpenAlex 降级；
 - 查错数字比对 / reviewer JSON 校验 / 聚合降权 纯函数单测；
-- submit 前置 REVIEW_REQUIRED 与 gate approve override 跳过；
+- 评审不通过不拦投稿；
 - 评审历史列表与 manuscript session 消息权限。
 """
 
@@ -245,9 +245,9 @@ async def test_review_fail_writes_revision_notes_and_rolls_back_status(client, q
     statuses = [m["status"] for _, m in bus.notify if m.get("type") == "manuscript.status"]
     assert "compiled" in statuses  # WS manuscript.status
 
-    # 不通过后 submit 仍被拦（REVIEW_REQUIRED）
+    # 评审不通过不拦投稿：投不投由用户决定（界面在确认框里提醒）
     resp = await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)
-    assert resp.status_code == 409 and resp.json()["detail"] == "REVIEW_REQUIRED"
+    assert resp.status_code == 200 and resp.json()["status"] == "submitted"
 
 
 # ---- fabricated 强制不通过 + 支撑性标记 ----
@@ -514,46 +514,6 @@ def test_aggregate_reviews_median_and_downweight():
     # 人设解析：自定义不足三个用默认补齐
     personas = pr.resolve_review_personas([{"name": "自定义", "stance": "s"}])
     assert [p["name"] for p in personas] == ["自定义", "建设性领域专家", "严格实验复现者"]
-
-
-# ---- submit 前置升级与 gate override ----
-
-
-async def test_submit_review_required_and_gate_override(client, bus_recorder, queue_stub):
-    project_id, headers = await _setup_project(client)
-    resp = await _create_manuscript(client, headers, project_id)
-    ms_id = resp.json()["id"]
-    resp = await client.post(f"/api/manuscripts/{ms_id}/compile", headers=headers)
-    assert resp.json()["status"] == "ok"
-
-    # 编译 ok 但 review_passed=false → 409 REVIEW_REQUIRED
-    resp = await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)
-    assert resp.status_code == 409 and resp.json()["detail"] == "REVIEW_REQUIRED"
-
-    async with get_sessionmaker()() as session:
-        ms = await session.get(Manuscript, uuid.UUID(ms_id))
-        ms.review_passed = True
-        await session.commit()
-    resp = await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)
-    assert resp.status_code == 201, resp.text
-    gate = resp.json()
-    assert gate["payload"]["review_passed"] is True
-
-    # 提交后评审被否（review_passed 回 false）→ 无 override 审批 409，闸门保持 pending
-    async with get_sessionmaker()() as session:
-        ms = await session.get(Manuscript, uuid.UUID(ms_id))
-        ms.review_passed = False
-        await session.commit()
-    resp = await client.post(f"/api/gates/{gate['id']}/approve", json={}, headers=headers)
-    assert resp.status_code == 409 and resp.json()["detail"] == "REVIEW_REQUIRED"
-
-    # 管理员 override=true → 跳过前置，正常批准并联动 submitted
-    resp = await client.post(
-        f"/api/gates/{gate['id']}/approve", json={"override": True}, headers=headers
-    )
-    assert resp.status_code == 200, resp.text
-    detail = (await client.get(f"/api/manuscripts/{ms_id}", headers=headers)).json()
-    assert detail["status"] == "submitted"
 
 
 # ---- 评审历史与 manuscript session 消息权限 ----

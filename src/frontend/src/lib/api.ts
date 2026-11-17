@@ -4392,13 +4392,13 @@ export const api = {
   getIdea(id: string): Promise<IdeaDetail> {
     return request<IdeaDetail>(`/ideas/${id}`);
   },
-  /** 人工淘汰（其他状态转换走专用接口）。 */
-  patchIdea(id: string, input: { status: 'rejected' }): Promise<IdeaRead> {
+  /** 改状态：选中（promoted）/ 取消选中或恢复（candidate）/ 淘汰（rejected）。直接生效，没有审批。 */
+  patchIdea(id: string, input: { status: 'candidate' | 'promoted' | 'rejected' }): Promise<IdeaRead> {
     return requestJson<IdeaRead>(`/ideas/${id}`, 'PATCH', input);
   },
-  /** 发起晋级 → 创建 idea_promotion Gate（pending）。 */
-  promoteIdea(id: string): Promise<GateRead> {
-    return request<GateRead>(`/ideas/${id}/promote`, { method: 'POST' });
+  /** 选中一个想法：状态直接变成 promoted（界面叫「已选中」）。 */
+  pickIdea(id: string): Promise<IdeaRead> {
+    return request<IdeaRead>(`/ideas/${id}/promote`, { method: 'POST' });
   },
   /** 软删除：移入回收站（仅 owner/admin，否则 403）。 */
   trashIdea(id: string): Promise<void> {
@@ -4761,9 +4761,9 @@ export const api = {
   draftManuscript(id: string, input: DraftManuscriptInput): Promise<VoyageRead> {
     return requestJson<VoyageRead>(`/manuscripts/${id}/draft`, 'POST', input);
   },
-  /** 投稿：创建 paper_submission 审批；未通过同行评审 → 409 REVIEW_REQUIRED（M5-C 前为 COMPILE_REQUIRED）。 */
-  submitManuscript(id: string): Promise<GateRead> {
-    return request<GateRead>(`/manuscripts/${id}/submit`, { method: 'POST' });
+  /** 标记为已投稿：直接生效，没有审批；最新一次编译没成功 → 409 COMPILE_REQUIRED。 */
+  submitManuscript(id: string): Promise<ManuscriptRead> {
+    return request<ManuscriptRead>(`/manuscripts/${id}/submit`, { method: 'POST' });
   },
 
   // —— M5-C · 论文同行评审 ——

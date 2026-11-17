@@ -26,7 +26,6 @@ from app.core.llm.router import get_llm_router
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.manuscript import Manuscript, ManuscriptFile
 from app.models.user import User
-from app.schemas.gate import GateRead
 from app.schemas.manuscript import (
     AssistRequest,
     BatchResult,
@@ -1106,31 +1105,21 @@ async def list_manuscript_reviews(
 # ---- §7 投稿 ----
 
 
-@router.post(
-    "/manuscripts/{manuscript_id}/submit",
-    response_model=GateRead,
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/manuscripts/{manuscript_id}/submit", response_model=ManuscriptRead)
 async def submit_manuscript(
     manuscript_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
     bus: EventBus = Depends(get_event_bus),
-) -> GateRead:
+) -> ManuscriptRead:
+    """标记为已投稿：直接改状态，没有审批；最新编译没成功 → 409 COMPILE_REQUIRED。"""
     manuscript = await _member_manuscript(session, manuscript_id, user)
     try:
-        gate = await manuscripts_service.submit_manuscript(
+        manuscript = await manuscripts_service.submit_manuscript(
             session, manuscript=manuscript, user_id=user.id
         )
     except manuscripts_service.CompileRequiredError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="COMPILE_REQUIRED") from e
-    except manuscripts_service.ReviewRequiredError as e:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="REVIEW_REQUIRED") from e
-    gate_read = GateRead.model_validate(gate)
-    await bus.publish_notify(
-        user.id,
-        {"type": "gate.created", "gate": gate_read.model_dump(mode="json")},
-    )
     await bus.publish_notify(
         user.id,
         {
@@ -1139,4 +1128,4 @@ async def submit_manuscript(
             "status": manuscript.status,
         },
     )
-    return gate_read
+    return ManuscriptRead.model_validate(manuscript)

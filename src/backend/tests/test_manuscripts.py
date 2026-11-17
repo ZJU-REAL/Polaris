@@ -1,4 +1,4 @@
-"""M5-B 稿件 API 测试：模板展开 / fact-pack 组装与刷新 / 文件管理 / submit 前置与闸门联动。
+"""M5-B 稿件 API 测试：模板展开 / fact-pack 组装与刷新 / 文件管理 / submit（直接标记已投稿）。
 
 （docs/task-system.md §7；编译与写作 voyage 见 test_latex_compile / test_writing_voyage）
 """
@@ -324,7 +324,8 @@ async def test_manuscript_batch_trash_restore_empty(client):
     assert {m["id"] for m in (await active()).json()} == {ids[0], ids[2]}
 
 
-async def test_submit_requires_ok_compile_then_gate_flow(client, bus_recorder, queue_stub):
+async def test_submit_marks_submitted_without_a_gate(client, bus_recorder, queue_stub):
+    """投稿 = 直接标记 submitted：只要求编译成功；评审没通过不拦，也不建闸门。"""
     project_id, headers = await _setup_project(client)
     resp = await _create_manuscript(client, headers, project_id)
     ms_id = resp.json()["id"]
@@ -333,7 +334,7 @@ async def test_submit_requires_ok_compile_then_gate_flow(client, bus_recorder, q
     resp = await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)
     assert resp.status_code == 409 and resp.json()["detail"] == "COMPILE_REQUIRED"
 
-    # 种一个 ok 的 latest_compile（真实编译见 test_latex_compile）
+    # 种一个 ok 的 latest_compile（真实编译见 test_latex_compile）；review_passed 保持 false
     async with get_sessionmaker()() as session:
         ms = await session.get(Manuscript, uuid.UUID(ms_id))
         ms.status = "compiled"
@@ -347,58 +348,27 @@ async def test_submit_requires_ok_compile_then_gate_flow(client, bus_recorder, q
         }
         await session.commit()
 
-    # M5-C：编译 ok 但评审未通过 → 409 REVIEW_REQUIRED
     resp = await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)
-    assert resp.status_code == 409 and resp.json()["detail"] == "REVIEW_REQUIRED"
-    async with get_sessionmaker()() as session:
-        ms = await session.get(Manuscript, uuid.UUID(ms_id))
-        ms.review_passed = True
-        await session.commit()
-
-    resp = await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)
-    assert resp.status_code == 201, resp.text
-    gate = resp.json()
-    assert gate["kind"] == "paper_submission"
-    assert gate["payload"]["manuscript_id"] == ms_id
-    assert gate["payload"]["compile_version"] == 3
-    detail = (await client.get(f"/api/manuscripts/{ms_id}", headers=headers)).json()
-    assert detail["status"] == "under_review"
-    assert any(m.get("type") == "gate.created" for _, m in bus_recorder.notify)
-
-    # 重复 submit：状态非 ok 前置不变（latest_compile 仍 ok → 允许再次创建？不——
-    # under_review 中再次 submit 会再建闸门；此处只验证审批联动）
-    resp = await client.post(f"/api/gates/{gate['id']}/approve", json={}, headers=headers)
-    assert resp.status_code == 200
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["id"] == ms_id and resp.json()["status"] == "submitted"
+    assert resp.json()["review_passed"] is False
     detail = (await client.get(f"/api/manuscripts/{ms_id}", headers=headers)).json()
     assert detail["status"] == "submitted"
     assert any(
         m.get("type") == "manuscript.status" and m.get("status") == "submitted"
         for _, m in bus_recorder.notify
     )
+    # 没有闸门
+    assert not [m for _, m in bus_recorder.notify if m.get("type") == "gate.created"]
+    for status_filter in ("pending", "decided"):
+        resp = await client.get(
+            f"/api/gates?project_id={project_id}&status={status_filter}", headers=headers
+        )
+        assert resp.json() == []
 
-
-async def test_submit_reject_rolls_back_to_compiled(client, bus_recorder, queue_stub):
-    project_id, headers = await _setup_project(client)
-    resp = await _create_manuscript(client, headers, project_id)
-    ms_id = resp.json()["id"]
-    async with get_sessionmaker()() as session:
-        ms = await session.get(Manuscript, uuid.UUID(ms_id))
-        ms.status = "compiled"
-        ms.review_passed = True  # M5-C submit 前置
-        ms.latest_compile = {
-            "version": 1,
-            "status": "ok",
-            "pdf_available": True,
-            "diagnostics": [],
-            "compiled_at": "2026-07-14T00:00:00+00:00",
-            "duration_ms": 900,
-        }
-        await session.commit()
-    gate = (await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)).json()
-    resp = await client.post(f"/api/gates/{gate['id']}/reject", json={}, headers=headers)
-    assert resp.status_code == 200
-    detail = (await client.get(f"/api/manuscripts/{ms_id}", headers=headers)).json()
-    assert detail["status"] == "compiled"
+    # 再调一次原样返回
+    resp = await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)
+    assert resp.status_code == 200 and resp.json()["status"] == "submitted"
 
 
 async def test_manuscript_list(client):

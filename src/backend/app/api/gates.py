@@ -2,9 +2,8 @@
 
 - 课题主人可见与可审批本项目闸门；
 - approve：payload.voyage_id 存在时入队 resume_voyage 恢复航程；
-  payload.idea_id 存在时联动 idea.status=promoted 并发布 idea.status 事件（M3）；
-  paper_submission 闸门批准前置稿件 review_passed（M5-C），管理员可传
-  override=true 跳过；
+- 选中想法、标记投稿不再经过闸门（直接改状态），这里只剩任务自己发起的确认
+  （confirm_goal / confirm_budget 等）；
 - reject：关联航程置 failed；
 - 决策后向 ``notify:user:{user_id}`` 发布 gate.decided（#721 频道按用户组织）。
 """
@@ -24,8 +23,6 @@ from app.models.voyage import VoyageRun
 from app.schemas.gate import GateDecision, GateRead
 from app.services import experiments as experiments_service
 from app.services import gates as gates_service
-from app.services import ideas as ideas_service
-from app.services import manuscripts as manuscripts_service
 from app.services import voyage_messages as messages_service
 
 router = APIRouter(prefix="/gates", tags=["gates"])
@@ -65,16 +62,6 @@ async def _decide(
     bus: EventBus,
 ) -> GateRead:
     gate = await _get_decidable_gate(session, gate_id, user)
-
-    # M5-C：paper_submission 批准前置 review_passed；管理员可传 override=true 跳过
-    if approved and gate.kind == "paper_submission" and gate.status == "pending":
-        manuscript = await manuscripts_service.gate_manuscript(session, gate)
-        if (
-            manuscript is not None
-            and not manuscript.review_passed
-            and not (data is not None and data.override)
-        ):
-            raise HTTPException(status.HTTP_409_CONFLICT, detail="REVIEW_REQUIRED")
 
     try:
         gate = await gates_service.decide_gate(
@@ -142,29 +129,6 @@ async def _decide(
                         "status": experiment.status,
                     },
                 )
-
-    # idea 晋级联动（M3）：批准 idea_promotion 闸门 → idea.status=promoted + WS 事件
-    if approved:
-        idea = await ideas_service.promote_from_gate(session, gate)
-        if idea is not None:
-            await bus.publish_notify(
-                user.id,
-                {"type": "idea.status", "idea_id": str(idea.id), "status": idea.status},
-            )
-
-    # 投稿联动（M5-B）：paper_submission 批准 → submitted；驳回 → 回退 compiled
-    manuscript = await manuscripts_service.decide_submission_from_gate(
-        session, gate, approved=approved
-    )
-    if manuscript is not None:
-        await bus.publish_notify(
-            user.id,
-            {
-                "type": "manuscript.status",
-                "manuscript_id": str(manuscript.id),
-                "status": manuscript.status,
-            },
-        )
 
     await bus.publish_notify(
         user.id,
