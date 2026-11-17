@@ -24,8 +24,9 @@ pipeline score 的口径：节点**首次参赛前**的 score。多轮扩展下�
 
 import uuid
 from itertools import combinations
-from typing import Any
+from typing import Any, Literal
 
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.router import LLMRouter
@@ -33,7 +34,7 @@ from app.models.hypothesis import HypothesisNode
 from app.models.voyage import VoyageRun
 from app.services import hypothesis_tree as tree_service
 
-# 与管线四环节共用同一套 JSON 调用约定（解析重试 + usage 如实归并），刻意不再抄一份
+# 与管线四环节共用同一套结构化调用约定（complete_json + usage 如实归并），刻意不再抄一份
 from app.services.hypothesis_pipeline import _complete_json
 
 # LLM 环节（router.py STAGES / 前端 LLM_STAGES 同步登记）：短 JSON 判定走短档
@@ -50,7 +51,12 @@ POLARIS_HYP_COMPARE
 你是研究假设对比裁判。输入 JSON 里是两个假设（a / b），各带陈述、逐子命题的
 文献接地立场（support/refute/speculation）与查新结论（known/novel/uncertain）。
 判断哪个更值得优先投入验证——综合新颖性、证据扎实度与可检验性；难分高下时
-如实判平局。只输出 JSON：{"winner": "a|b|tie", "rationale": "一句话理由"}"""
+如实判平局。输出 JSON：{"winner": "a|b|tie", "rationale": "一句话理由"}"""
+
+
+class CompareOut(BaseModel):
+    winner: Literal["a", "b", "tie"]
+    rationale: str
 
 
 def pick_contenders(nodes: list[HypothesisNode]) -> list[HypothesisNode]:
@@ -82,15 +88,6 @@ def _brief(node: HypothesisNode) -> dict[str, Any]:
             for e in subclaims
             if isinstance(e, dict)
         ],
-    }
-
-
-def _validate_compare(data: Any) -> dict[str, str]:
-    if not isinstance(data, dict) or data.get("winner") not in ("a", "b", "tie"):
-        raise ValueError('compare 输出需含 "winner"（a|b|tie）')
-    return {
-        "winner": str(data["winner"]),
-        "rationale": str(data.get("rationale") or "").strip(),
     }
 
 
@@ -146,18 +143,19 @@ async def run_tournament(
     games: dict[str, int] = {str(n.id): 0 for n in contenders}
     for a, b in combinations(contenders, 2):
         match_usage = {"prompt_tokens": 0, "completion_tokens": 0}
-        verdict = await _complete_json(
+        compared = await _complete_json(
             llm,
             COMPARE_STAGE,
             system=COMPARE_SYSTEM_PROMPT,
             payload={"a": _brief(a), "b": _brief(b)},
-            validate=_validate_compare,
+            schema=CompareOut,
             usage=match_usage,
             user_id=user_id,
             project_id=project_id,
             library_id=library_id,
             voyage_id=run.id,
         )
+        verdict = {"winner": compared.winner, "rationale": compared.rationale.strip()}
         id_a, id_b = str(a.id), str(b.id)
         games[id_a] += 1
         games[id_b] += 1

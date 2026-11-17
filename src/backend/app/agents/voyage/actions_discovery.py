@@ -4,7 +4,7 @@
 
 - ``hypothesis.seed``：树空时按研究方向生成根假设入树；
 - ``hypothesis.expand``：对当前最优 open 节点跑四段假设管线（#648，
-  services/hypothesis_pipeline.py）：generate 产 2-3 个子候选，逐个
+  services/hypothesis_pipeline.py）：generate 产最多 4 个子候选，逐个
   ground → novelty → feasibility → score 写进节点，低分自动剪枝；
 - ``hypothesis.prune``：显式剪枝入口，写 score 并级联剪枝（留痕不删）；
 - ``discovery.summarize``：把整棵树（含被剪分支）汇总成研究方案产物后收束。
@@ -28,10 +28,12 @@ import json
 import uuid
 from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.agents.voyage.actions import ActionContext, register
 from app.core.db import get_sessionmaker
+from app.core.llm import budgets
 from app.core.llm.base import Message
 from app.models.hypothesis import HypothesisNode
 from app.models.voyage import VoyageRun
@@ -43,17 +45,23 @@ from app.services import hypothesis_tree as tree_service
 # LLM 环节：结构化 JSON 生成，走中档耐心（core/llm/router.py 的 _MEDIUM_CALL_STAGES）
 _STAGE = "discovery_plan"
 
-_MAX_JSON_ATTEMPTS = 3
 # 每轮扩展的子候选上限：管线 generate 按它要候选，多给截断（去重后可能更少）
-_MAX_CHILDREN = 3
+_MAX_CHILDREN = budgets.DISCOVERY_CHILDREN_PER_ROUND
 
 SEED_SYSTEM_PROMPT = """\
 POLARIS_DISCOVERY_SEED
 你是 Navigator，负责为一个研究方向提出树搜索的根假设：一条值得展开验证的、
-可检验的核心研究假设。只输出一个 JSON 对象，不要输出任何其他文字：
+可检验的核心研究假设。输出一个 JSON 对象：
 {"statement": "假设陈述（一句话，可检验）", "rationale": "一句话依据", \
 "score": 0 到 1 的先验看好程度}
 """
+
+
+class SeedOut(BaseModel):
+    statement: pipeline.NonEmptyStr
+    rationale: str
+    score: float
+
 
 SUMMARY_SYSTEM_PROMPT = """\
 POLARIS_DISCOVERY_SUMMARY
@@ -87,9 +95,11 @@ def _params_of(ctx: ActionContext) -> dict[str, Any]:
 
 def _max_expansions(ctx: ActionContext) -> int:
     try:
-        return max(0, int(_params_of(ctx).get("max_expansions", 3)))
+        return max(
+            0, int(_params_of(ctx).get("max_expansions", budgets.DISCOVERY_DEFAULT_EXPANSIONS))
+        )
     except (TypeError, ValueError):
-        return 3
+        return budgets.DISCOVERY_DEFAULT_EXPANSIONS
 
 
 def _tournament_enabled(ctx: ActionContext) -> bool:
@@ -150,59 +160,11 @@ def _account_node_usage(ctx: ActionContext, node_id: str, usage: dict[str, Any])
     ledger[node_id] = entry
 
 
-# ---- LLM JSON 调用（带 usage 回传：每节点记账需要它，_complete_json 不返回） ----
-
-
-def _extract_json(content: str) -> Any:
-    start = content.find("{")
-    end = content.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError("no JSON object found")
-    return json.loads(content[start : end + 1])
-
-
-async def _complete_json_with_usage(
-    ctx: ActionContext, *, system: str, user: str, validate
-) -> tuple[Any, dict[str, int]]:
-    """LLM JSON 请求：解析/校验失败重试；返回 (结果, 累计 usage)。
-
-    重试轮次的 token 也计入 usage——记账要如实反映这一步真实花了多少。
-    """
-    total = {"prompt_tokens": 0, "completion_tokens": 0}
-    last_error: Exception | None = None
-    for _attempt in range(_MAX_JSON_ATTEMPTS):
-        result = await ctx.llm.complete(
-            _STAGE,
-            [Message(role="system", content=system), Message(role="user", content=user)],
-            user_id=ctx.run.created_by,
-            project_id=ctx.run.project_id,
-            library_id=ctx.run.library_id,
-            voyage_id=ctx.run.id,
-        )
-        usage = result.usage or {}
-        total["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
-        total["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
-        try:
-            return validate(_extract_json(result.content)), total
-        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
-            last_error = e
-    raise ValueError(f"LLM 连续输出非法 JSON：{last_error}")
-
-
 def _clamp_score(raw: Any) -> float | None:
     try:
         return min(1.0, max(0.0, float(raw)))
     except (TypeError, ValueError):
         return None
-
-
-def _validate_seed(data: Any) -> dict[str, Any]:
-    if not isinstance(data, dict) or not str(data.get("statement") or "").strip():
-        raise ValueError('seed 输出需含非空 "statement"')
-    return {
-        "statement": str(data["statement"]).strip(),
-        "score": _clamp_score(data.get("score")),
-    }
 
 
 # ---- 树状态 → 下一步信号（决策的唯一出口，seed/expand 共用） ----
@@ -274,19 +236,30 @@ async def hypothesis_seed(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         run = await session.get(VoyageRun, ctx.run.id)
         root = await _root_of(session, ctx.run.id)
         if root is None:
-            seed, usage = await _complete_json_with_usage(
-                ctx,
-                system=SEED_SYSTEM_PROMPT,
-                user=f"研究方向：{direction}",
-                validate=_validate_seed,
+            # 结构化调用：模型调用失败抛带 transient 的 LLMError，由引擎决定重试还是停下
+            seeded = await ctx.llm.complete_json(
+                _STAGE,
+                [
+                    Message(role="system", content=SEED_SYSTEM_PROMPT),
+                    Message(role="user", content=f"研究方向：{direction}"),
+                ],
+                schema=SeedOut,
+                user_id=ctx.run.created_by,
+                project_id=ctx.run.project_id,
+                library_id=ctx.run.library_id,
+                voyage_id=ctx.run.id,
             )
+            usage = {
+                "prompt_tokens": int(seeded.usage.get("prompt_tokens", 0) or 0),
+                "completion_tokens": int(seeded.usage.get("completion_tokens", 0) or 0),
+            }
             root = await tree_service.create_node(
                 session,
                 run,
                 parent_id=None,
                 kind="hypothesis",
-                statement=seed["statement"],
-                score=seed["score"],
+                statement=seeded.data.statement,
+                score=_clamp_score(seeded.data.score),
             )
             _account_node_usage(ctx, str(root.id), usage)
             why = "树为空：按研究方向生成根假设"
@@ -338,7 +311,7 @@ async def _apply_prune(session, ctx: ActionContext, entry: dict[str, Any]) -> st
 
 @register("hypothesis.expand")
 async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
-    """对当前最优 open 节点扩展一轮（#648 起走四段管线）：generate 产 2-3 个
+    """对当前最优 open 节点扩展一轮（#648 起走四段管线）：generate 产最多 4 个
     子候选，逐个 ground → novelty → feasibility → score 全部算完后一次性落库，
     低于 pipeline.MIN_VIABLE_SCORE 的子节点当场剪枝（级联、留痕不删），父节点
     转 expanded。

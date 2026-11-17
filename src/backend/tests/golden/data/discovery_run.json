@@ -153,12 +153,12 @@
           },
           "<uuid-8>": {
             "completion_tokens": 91,
-            "prompt_tokens": 492
+            "prompt_tokens": 489
           }
         },
         "total": {
           "completion_tokens": 321,
-          "prompt_tokens": 2166
+          "prompt_tokens": 2163
         }
       },
       "branches": [
@@ -578,13 +578,13 @@
               "statement": "围绕「structured agent planning」的核心假设（fake root）",
               "usage": {
                 "completion_tokens": 27,
-                "prompt_tokens": 52
+                "prompt_tokens": 49
               }
             },
             "started_at": "<ts>",
             "tokens": {
               "completion_tokens": 27,
-              "prompt_tokens": 52
+              "prompt_tokens": 49
             },
             "verdict": {
               "passed": true,
@@ -603,7 +603,7 @@
           "statement": "围绕「structured agent planning」的核心假设（fake root）",
           "usage": {
             "completion_tokens": 27,
-            "prompt_tokens": 52
+            "prompt_tokens": 49
           }
         },
         "params": {},
@@ -618,7 +618,7 @@
         "title": "生成根假设",
         "tokens": {
           "completion_tokens": 27,
-          "prompt_tokens": 52
+          "prompt_tokens": 49
         },
         "verdict": {
           "passed": true,
@@ -780,8 +780,8 @@
     "updated_at": "<ts>",
     "usage": {
       "completion_tokens": 340,
-      "prompt_tokens": 2261,
-      "total_tokens": 2601
+      "prompt_tokens": 2258,
+      "total_tokens": 2598
     }
   }
 }

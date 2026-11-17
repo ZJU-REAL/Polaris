@@ -91,6 +91,36 @@ FORGE_EXCERPT = InputBudget(
 INPUT_BUDGETS: tuple[InputBudget, ...] = (LIBRARIAN_FULLTEXT, FORGE_CONTEXT, FORGE_EXCERPT)
 
 
+# ---- 固定上限（不随配置变）----
+#
+# 「一次调用给模型看多少材料」的常量集中放在这里，调用处只引用名字。它们是按 Claude
+# 的窗口定的：1M token 的上下文里，十几条 1,500 字的证据片段只是零头，而片段太短
+# （原来是 300 字）往往带不全它要佐证的那句论断。成本型的旋钮（每次检索多少篇、
+# 最多跑几轮）不在这里，在各自的请求 schema 里。
+
+# 假设探索（agents/voyage/actions_discovery.py、services/hypothesis_pipeline.py）
+#: 没指定时跑几轮扩展。每轮约「子假设数 × 4」次模型调用；上限在 schemas/voyage.py。
+DISCOVERY_DEFAULT_EXPANSIONS = 4
+#: 每轮扩展最多产出几个子假设。
+DISCOVERY_CHILDREN_PER_ROUND = 4
+#: 一个假设最多拆成几条子命题。
+HYPOTHESIS_MAX_SUBCLAIMS = 6
+#: 每条子命题给模型挑选的检索片段数（接地与查新共用）。
+HYPOTHESIS_EVIDENCE_PER_SUBCLAIM = 12
+#: 引文远端 / 多样窗两路灵感各取几条。
+HYPOTHESIS_INSPIRATIONS_PER_ROUTE = 8
+#: 方法类比 / 未连接概念对 / 开放缺口三路燃料各取几条。
+HYPOTHESIS_FUELS_PER_ROUTE = 8
+#: 灵感与证据片段的截断长度（字符）。
+HYPOTHESIS_SNIPPET_CHARS = 1_500
+
+# 库内检索（services/library_rag.py）
+#: 每轮检索取回的片段数。假设生成的语义近邻一路直接用它。
+RAG_TOP_K = 24
+#: 送去重排的候选上限（重排是一次模型调用，输入要有上界）。
+RAG_RERANK_POOL = 80
+
+
 def budgets_for(stage: str) -> dict[str, InputBudget]:
     return {b.key: b for b in INPUT_BUDGETS if b.stage == stage}
 

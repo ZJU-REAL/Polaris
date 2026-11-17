@@ -27,6 +27,7 @@ from tests.conftest import (
     make_project_with_library,
     register_and_login,
 )
+from tests.vector_helpers import index_chunks
 
 # ---- 纯函数：伪造一次两轮探索的完整现场 ----
 
@@ -263,6 +264,7 @@ async def _run_discovery(client, queue_stub) -> tuple[str, dict]:
                 )
             )
         await session.commit()
+        await index_chunks(session)
     resp = await client.post(
         "/api/voyages",
         json={

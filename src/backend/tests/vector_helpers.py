@@ -10,7 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embedding_space import EmbeddingSpace, active_space, set_active_space
-from app.core.llm.fake import EMBEDDING_DIM
+from app.core.llm.fake import EMBEDDING_DIM, fake_embedding
+from app.models.paper import PaperChunk
 from app.models.vectors import IdeaVector, PaperChunkVector, PaperVector
 from app.services.embedding import (
     upsert_chunk_vector,
@@ -54,6 +55,23 @@ async def set_chunk_vector(
     await ensure_space(session, space)
     await upsert_chunk_vector(session, chunk_id, vector or [0.0] * space.dim, space)
     await session.commit()
+
+
+async def index_chunks(session: AsyncSession, *, paper_ids: list[uuid.UUID] | None = None) -> int:
+    """给片段建向量（fake 的词袋嵌入，与检索时的查询向量同一空间），返回建了几条。
+
+    假设探索只走语义检索，没有向量索引的库会直接报「语义检索不可用」——测试库
+    手工塞了片段之后要调它，等于真实流程里的「论文索引完成」。
+    """
+    await ensure_space(session)
+    stmt = select(PaperChunk).order_by(PaperChunk.paper_id, PaperChunk.seq)
+    if paper_ids is not None:
+        stmt = stmt.where(PaperChunk.paper_id.in_(paper_ids))
+    chunks = (await session.execute(stmt)).scalars().all()
+    for chunk in chunks:
+        await upsert_chunk_vector(session, chunk.id, fake_embedding(chunk.text), FAKE_SPACE)
+    await session.commit()
+    return len(chunks)
 
 
 async def set_idea_vector(

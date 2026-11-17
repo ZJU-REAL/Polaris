@@ -23,9 +23,11 @@ from pathlib import Path
 import pytest
 
 from app.agents.voyage.engine import VoyageEngine
+from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
 from tests.conftest import RecordingBus
 from tests.golden.normalize import Normalizer
+from tests.vector_helpers import index_chunks
 
 GOLDEN_PATH = Path(__file__).parent / "data" / "discovery_run.json"
 
@@ -122,6 +124,11 @@ async def test_discovery_chain_matches_golden(client, queue_stub, monkeypatch):
         await client.post(f"/api/libraries/{library['id']}/index/rebuild", headers=headers),
         200,
     )
+    # 补全任务在这条链里是关掉的（见上），所以重建索引只切出了摘要片段、没有向量。
+    # 假设探索只走语义检索（没有向量索引会明确报错，不退回关键词），这里补上
+    # 补全本该建好的片段向量——非 HTTP 步骤，不进 transcript。
+    async with get_sessionmaker()() as session:
+        assert await index_chunks(session) == 2
     run = await step(
         "create_discovery",
         await client.post(

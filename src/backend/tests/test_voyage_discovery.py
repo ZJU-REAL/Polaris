@@ -1,7 +1,7 @@
 """discovery 任务（#642 D2 + #648 D3）：树搜索规划 + 四段假设管线端到端。
 
 - 计划模板只有播种一步（树才是真源），后续每轮由 plan_signal 经确定性分支表展开；
-- 创建入口的参数定形（direction/library_id 必填 / max_expansions 默认 3 /
+- 创建入口的参数定形（direction/library_id 必填 / max_expansions 默认 4 /
   tournament 先存不实现）+ 库可见性校验；
 - fake provider 下端到端：每轮扩展走 generate → ground → novelty → feasibility →
   score 管线，子节点带三类证据数据落库（fake 确定性中间态 score=0.25）；
@@ -34,6 +34,7 @@ from tests.conftest import (
     make_project_with_library,
     register_and_login,
 )
+from tests.vector_helpers import ensure_space, index_chunks
 
 # ---- 纯函数：计划模板 + 确定性分支表 ----
 
@@ -89,8 +90,13 @@ _CORPUS_HIT = (
 _CORPUS_MISS = "alpine botanical taxonomy notes. " + "高山植物志的形态描述。" * 30
 
 
-async def _make_workspace(client, *, corpus: str = _CORPUS_HIT) -> tuple[str, uuid.UUID, dict]:
-    """建课题 + 关联库 + 两篇带片段的成员论文，返回 (project_id, library_id, headers)。"""
+async def _make_workspace(
+    client, *, corpus: str = _CORPUS_HIT, indexed: bool = True
+) -> tuple[str, uuid.UUID, dict]:
+    """建课题 + 关联库 + 两篇带片段的成员论文，返回 (project_id, library_id, headers)。
+
+    ``indexed=False``：片段不建向量（平台已有向量空间，但这个库检索不到任何东西）。
+    """
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
     project_id, library_id = await make_project_with_library(
@@ -114,6 +120,10 @@ async def _make_workspace(client, *, corpus: str = _CORPUS_HIT) -> tuple[str, uu
                 )
             )
         await session.commit()
+        if indexed:
+            await index_chunks(session)
+        else:
+            await ensure_space(session)
     return project_id, library_id, headers
 
 
@@ -198,11 +208,11 @@ async def test_discovery_create_api_normalizes_params(client, queue_stub):
     async with get_sessionmaker()() as session:
         run = await session.get(VoyageRun, uuid.UUID(run_id))
         params = (run.checkpoint or {})["params"]
-        # 参数在创建时定形：方向去空白、扩展数缺省 3、tournament 先存不实现；
+        # 参数在创建时定形：方向去空白、扩展数缺省 4、tournament 先存不实现；
         # 库关联同时落列（费用记账/列表过滤按列走，params 只是输入存档）
         assert params["direction"] == "LLM agent 的长期记忆机制"
         assert params["library_id"] == str(library_id)
-        assert params["max_expansions"] == 3
+        assert params["max_expansions"] == 4
         assert params["tournament"] is False
         assert run.library_id == library_id
 
@@ -357,9 +367,11 @@ async def test_discovery_run_is_replayable(client, queue_stub):
 
 
 async def test_discovery_low_score_children_auto_pruned(client, queue_stub):
-    """库里没有任何相关语料：接地检索空手 → 全 speculation → score=0 < 0.15 →
+    """库里检索不到任何片段：接地检索空手 → 全 speculation → score=0 < 0.15 →
     两个子候选当场剪枝（留痕不删）→ 无 open 节点 → 直接转汇总。"""
-    project_id, library_id, _headers = await _make_workspace(client, corpus=_CORPUS_MISS)
+    project_id, library_id, _headers = await _make_workspace(
+        client, corpus=_CORPUS_MISS, indexed=False
+    )
     run_id = await _make_run(project_id, library_id, direction="东岸洋流建模", max_expansions=3)
     await _engine().run(run_id)
 
@@ -553,3 +565,42 @@ async def test_discovery_prune_action_cascades(client, queue_stub):
     assert str(target.id) in pruned and children <= pruned  # 级联整个子树
     assert next(n for n in nodes if n.id == target.id).score == 0.1
     assert len(nodes) == 5  # 留痕不删
+
+
+async def test_discovery_without_a_semantic_index_does_not_finish_as_done(client, queue_stub):
+    """库里有片段但从没建过向量：以前悄悄退回关键词检索，中文方向匹配不到英文论文，
+    任务照样「完成」并交出一棵没有文献依据的树。现在扩展这一步明确失败，树不长。"""
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, library_id = await make_project_with_library(
+        client, headers, name="unindexed-discovery", statement="没有语义索引的库"
+    )
+    async with get_sessionmaker()() as session:
+        paper = await add_paper(
+            session, project_id=project_id, title="Unindexed", status="compiled"
+        )
+        session.add(PaperChunk(paper_id=paper.id, seq=0, text=_CORPUS_HIT, source="fulltext"))
+        await session.commit()
+    run_id = await _make_run(
+        project_id, library_id, direction="可验证的 agent 工作流", max_expansions=1
+    )
+    await _engine().run(run_id)
+
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, run_id)
+        assert run.status != "done"
+        assert "discovery-summary.json" not in ((run.checkpoint or {}).get("artifacts") or {})
+        steps = (
+            (
+                await session.execute(
+                    select(VoyageStep).where(VoyageStep.run_id == run_id).order_by(VoyageStep.rank)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    expand = [s for s in steps if s.action == "hypothesis.expand"]
+    assert expand and all(s.status != "passed" for s in expand)
+    assert any("semantic search unavailable" in json.dumps(s.observation or {}) for s in expand)
+    nodes = await _tree(run_id)
+    assert len(nodes) == 1  # 只有根假设：没有检索就没有扩展

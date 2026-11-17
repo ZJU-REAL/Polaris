@@ -1,26 +1,45 @@
 """文献→假设四段管线（#648，services/hypothesis_pipeline.py）：逐段确定性用例。
 
-sqlite 测试库没有 pgvector，检索原语走关键词降级路径；fake provider 的四个
-marker 输出全部确定性（见 core/llm/fake.py），因此每段的输入→输出可以精确断言：
+检索是严格的语义检索（fake 的词袋嵌入：用词重叠越多越靠前），测试库在塞完片段后
+建好向量（tests/vector_helpers.index_chunks）；fake provider 的四个 marker 输出全部
+确定性（见 core/llm/fake.py），因此每段的输入→输出可以精确断言：
 
 - generate：三路灵感取材（语义近邻 / 引文 2 跳远端 / 多样窗）+ 去重折叠；
-- ground：拆子命题 → top-5 检索 → 只许从检索集内选 + 越界引用降 speculation；
+- ground：拆子命题 → top-12 检索 → 只许从检索集内选 + 越界引用降 speculation；
 - novelty：换措辞复检 + 逐子命题 verdict（speculation 不送 judge）；
 - feasibility：确定性资源信号 + fake 风险论证；
 - score：novel 比例 × support 覆盖率 的乘积公式。
 """
 
+import json
 import uuid
 
+import httpx
+import pytest
+from pydantic import ValidationError
+from sqlalchemy import select
+
 from app.core.db import get_sessionmaker
+from app.core.llm import budgets
+from app.core.llm.errors import (
+    LLMAuthError,
+    LLMError,
+    LLMOverloadedError,
+    LLMRateLimitedError,
+    LLMRefusalError,
+    LLMSchemaError,
+)
+from app.core.llm.fake import FakeProvider
 from app.core.llm.router import LLMRouter
 from app.models.library_direction import DirectionLibrary
 from app.models.paper import Paper, PaperChunk
 from app.models.paper_citation import PaperCitation
 from app.models.paper_extraction import PaperExtraction
 from app.services import hypothesis_pipeline as pipeline
+from app.services import library_rag
 from app.services.method_index import refresh_paper_method_index
 from tests.conftest import add_concept, add_paper, make_project_with_library, register_and_login
+from tests.vector_helpers import ensure_space, index_chunks
 
 DIRECTION = "agent planning verification"
 
@@ -32,8 +51,11 @@ BODY_B = "distant structural relative body. " + "远端论文的论述。" * 20
 BODY_C = "unrelated diverse window body. " + "多样窗论文的论述。" * 20
 
 
-async def _setup(client, *, with_citations: bool = False):
-    """建库 + 四篇带片段的成员论文（可选 A→M→B 引文链），返回 (library_id, ids)。"""
+async def _setup(client, *, with_citations: bool = False, indexed: bool = True):
+    """建库 + 四篇带片段的成员论文（可选 A→M→B 引文链），返回 (library_id, ids)。
+
+    ``indexed=False``：片段不建向量（平台已有向量空间，但这个库检索不到任何东西）。
+    """
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
     project_id, library_id = await make_project_with_library(
@@ -74,6 +96,10 @@ async def _setup(client, *, with_citations: bool = False):
                 )
             )
         await session.commit()
+        if indexed:
+            await index_chunks(session)
+        else:
+            await ensure_space(session)
     return library_id, ids
 
 
@@ -324,8 +350,8 @@ async def test_ground_selects_real_paper_and_marks_speculation(client):
 
 
 async def test_ground_without_hits_is_all_speculation(client):
-    """库里检索不到任何相关片段：不许硬选 → 全部 speculation。"""
-    library_id, _ids = await _setup(client)
+    """库里检索不到任何片段：不许硬选 → 全部 speculation。"""
+    library_id, _ids = await _setup(client, indexed=False)
     async with get_sessionmaker()() as session:
         result = await pipeline.ground(
             session,
@@ -418,3 +444,237 @@ async def test_feasibility_empty_grounding_still_reports_signals(client):
     assert signals["grounded_paper_count"] == 0
     assert signals["venues"] == {} and signals["year_range"] is None
     assert signals["related_chunk_hits"] == 0
+
+
+# ---- 严格检索：语义检索用不了时明确失败，不退回关键词 ----
+
+
+async def _setup_without_any_vectors(client):
+    """有片段、但平台从没建过向量（没有向量空间）的库。"""
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, library_id = await make_project_with_library(
+        client, headers, name="unindexed-lib", statement="没有语义索引的库"
+    )
+    async with get_sessionmaker()() as session:
+        paper = await add_paper(
+            session, project_id=project_id, title="Unindexed", status="compiled"
+        )
+        session.add(PaperChunk(paper_id=paper.id, seq=0, text=BODY_A, source="fulltext"))
+        await session.commit()
+    return library_id
+
+
+async def test_retrieval_without_an_index_raises_instead_of_keyword_search(client):
+    library_id = await _setup_without_any_vectors(client)
+    async with get_sessionmaker()() as session:
+        # 问答用的宽松检索照旧降级到关键词，能命中
+        loose = await library_rag.retrieve_round(
+            session, library_id=library_id, query=DIRECTION, user_id=None, project_id=None
+        )
+        assert len(loose) == 1
+        # 假设管线的严格检索：没有语义索引就是明确的、要人处理的错误
+        with pytest.raises(library_rag.RetrievalUnavailableError) as exc:
+            await pipeline.generate(
+                session, LLMRouter(), library_id=library_id, direction=DIRECTION
+            )
+    err = exc.value
+    assert isinstance(err, LLMError)
+    assert err.code == "RETRIEVAL_UNAVAILABLE" and err.transient is False
+    assert "语义索引" in err.user_message
+
+
+@pytest.mark.parametrize(
+    ("failure", "transient"),
+    [
+        (httpx.ConnectError("gateway down"), True),
+        (
+            httpx.HTTPStatusError(
+                "rate limited",
+                request=httpx.Request("POST", "http://gw.test/v1/embeddings"),
+                response=httpx.Response(429),
+            ),
+            True,
+        ),
+        (
+            httpx.HTTPStatusError(
+                "bad key",
+                request=httpx.Request("POST", "http://gw.test/v1/embeddings"),
+                response=httpx.Response(401),
+            ),
+            False,
+        ),
+    ],
+)
+async def test_embedding_failure_is_typed_by_whether_a_retry_can_help(
+    client, monkeypatch, failure, transient
+):
+    library_id, _ids = await _setup(client)
+
+    async def _fail(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(library_rag, "embed_query", _fail)
+    async with get_sessionmaker()() as session:
+        with pytest.raises(library_rag.RetrievalUnavailableError) as exc:
+            await pipeline.ground(session, LLMRouter(), library_id=library_id, statement="s")
+        assert exc.value.transient is transient
+        # 宽松检索不受影响：同样的失败下照旧降级
+        rows = await library_rag.retrieve_round(
+            session, library_id=library_id, query=DIRECTION, user_id=None, project_id=None
+        )
+        assert rows
+
+
+# ---- 模型调用失败：判断不出来才降级，没跑成要上抛 ----
+
+
+def _router_with(fake: FakeProvider) -> LLMRouter:
+    router = LLMRouter()
+    router.override_provider(fake)
+    return router
+
+
+def _support_grounding(ids) -> list[dict]:
+    return [{"subclaim": DIRECTION, "stance": "support", "paper_ids": [str(ids["A"])]}]
+
+
+async def test_novelty_degrades_to_uncertain_only_when_the_model_cannot_judge(client):
+    library_id, ids = await _setup(client)
+    fake = FakeProvider()
+    fake.fail_next(LLMSchemaError("still invalid after the repair"), schema=pipeline.NoveltyOut)
+    async with get_sessionmaker()() as session:
+        result = await pipeline.novelty(
+            session,
+            _router_with(fake),
+            library_id=library_id,
+            statement="stmt",
+            grounding=_support_grounding(ids),
+        )
+        entry = result["report"]["subclaims"][0]
+        assert entry["verdict"] == "uncertain" and entry["judged"] is False
+        # 限流不是「判断不出来」：这一步没跑成，原样抛出去让上层重试
+        fake.fail_next(LLMRateLimitedError("HTTP 429"), schema=pipeline.NoveltyOut)
+        with pytest.raises(LLMRateLimitedError):
+            await pipeline.novelty(
+                session,
+                _router_with(fake),
+                library_id=library_id,
+                statement="stmt",
+                grounding=_support_grounding(ids),
+            )
+
+
+async def test_feasibility_keeps_signals_when_the_risk_note_cannot_be_written(client):
+    library_id, ids = await _setup(client)
+    fake = FakeProvider()
+    fake.fail_next(LLMRefusalError("cyber"), schema=pipeline.RiskNoteOut)
+    async with get_sessionmaker()() as session:
+        result = await pipeline.feasibility(
+            session,
+            _router_with(fake),
+            library_id=library_id,
+            statement=DIRECTION,
+            grounding=_support_grounding(ids),
+        )
+        assert result["feasibility"]["signals"]["grounded_paper_count"] == 1
+        assert "风险论证生成失败" in result["feasibility"]["risk_note"]
+        fake.fail_next(LLMAuthError("HTTP 401"), schema=pipeline.RiskNoteOut)
+        with pytest.raises(LLMAuthError):
+            await pipeline.feasibility(
+                session,
+                _router_with(fake),
+                library_id=library_id,
+                statement=DIRECTION,
+                grounding=_support_grounding(ids),
+            )
+
+
+async def test_generate_and_ground_failures_are_typed_not_invalid_json(client):
+    """生成与接地没有降级路径：模型调用失败就是这一步失败，错误带着是否可重试。"""
+    library_id, _ids = await _setup(client)
+    fake = FakeProvider()
+    async with get_sessionmaker()() as session:
+        fake.fail_next(LLMOverloadedError("HTTP 529"), schema=pipeline.GenerateOut)
+        with pytest.raises(LLMOverloadedError) as exc:
+            await pipeline.generate(
+                session, _router_with(fake), library_id=library_id, direction=DIRECTION
+            )
+        assert exc.value.transient is True
+        fake.fail_next(LLMSchemaError("bad shape"), schema=pipeline.GroundOut)
+        with pytest.raises(LLMSchemaError) as exc:
+            await pipeline.ground(session, _router_with(fake), library_id=library_id, statement="s")
+        assert exc.value.transient is False
+
+
+# ---- schema 与上限 ----
+
+
+def test_output_schemas_reject_empty_statements_and_unknown_labels():
+    with pytest.raises(ValidationError):
+        pipeline.GenerateOut.model_validate({"candidates": []})
+    with pytest.raises(ValidationError):
+        pipeline.GenerateOut.model_validate({"candidates": [{"statement": "  ", "rationale": ""}]})
+    with pytest.raises(ValidationError):
+        pipeline.SubclaimsOut.model_validate({"subclaims": []})
+    with pytest.raises(ValidationError):
+        pipeline.GroundOut.model_validate(
+            {"items": [{"index": 0, "stance": "maybe", "paper_ids": []}]}
+        )
+    with pytest.raises(ValidationError):
+        pipeline.NoveltyOut.model_validate(
+            {"items": [{"index": 0, "verdict": "new", "paper_ids": []}]}
+        )
+    out = pipeline.GenerateOut.model_validate(
+        {"candidates": [{"statement": "  trimmed  ", "rationale": "r"}]}
+    )
+    assert out.candidates[0].statement == "trimmed"
+
+
+def test_every_schema_is_accepted_by_structured_outputs():
+    """发给 Claude 的 schema：对象全封闭、不带接口不支持的约束。"""
+    import anthropic
+
+    from app.agents.voyage.actions_discovery import SeedOut
+    from app.services.hypothesis_tournament import CompareOut
+
+    for schema in (
+        SeedOut,
+        pipeline.GenerateOut,
+        pipeline.SubclaimsOut,
+        pipeline.GroundOut,
+        pipeline.NoveltyOut,
+        pipeline.RiskNoteOut,
+        CompareOut,
+    ):
+        wire = json.dumps(anthropic.transform_schema(schema))
+        assert '"additionalProperties": false' in wire, schema.__name__
+        assert '"minLength"' not in wire and '"minimum"' not in wire, schema.__name__
+        assert "$ref" not in wire or "$defs" in wire
+
+
+def test_discovery_limits_live_in_budgets():
+    assert (budgets.HYPOTHESIS_EVIDENCE_PER_SUBCLAIM, pipeline.GROUND_TOP_K) == (12, 12)
+    assert (budgets.HYPOTHESIS_SNIPPET_CHARS, pipeline.SNIPPET_CHARS) == (1_500, 1_500)
+    assert (budgets.HYPOTHESIS_MAX_SUBCLAIMS, pipeline.MAX_SUBCLAIMS) == (6, 6)
+    assert pipeline.INSPIRATION_PER_ROUTE == pipeline.FUEL_PER_ROUTE == 8
+    assert (library_rag.TOP_K, library_rag.RERANK_POOL) == (24, 80)
+    assert budgets.DISCOVERY_CHILDREN_PER_ROUND == 4
+    assert budgets.DISCOVERY_DEFAULT_EXPANSIONS == 4
+    assert str(pipeline.MAX_SUBCLAIMS) in pipeline.GROUND_SPLIT_SYSTEM_PROMPT
+
+
+async def test_evidence_snippets_carry_up_to_1500_chars(client):
+    library_id, ids = await _setup(client)
+    async with get_sessionmaker()() as session:
+        chunk = (
+            await session.execute(select(PaperChunk).where(PaperChunk.paper_id == ids["A"]))
+        ).scalar_one()
+        chunk.text = "agent planning verification " + "x" * 3_000
+        await session.commit()
+        await index_chunks(session, paper_ids=[ids["A"]])
+        result = await pipeline.ground(
+            session, LLMRouter(), library_id=library_id, statement=f"关于 {DIRECTION} 的机制假设"
+        )
+    snippet = result["grounding"][0]["snippets"][0]
+    assert len(snippet) == 1_500

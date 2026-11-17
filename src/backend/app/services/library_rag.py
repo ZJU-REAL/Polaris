@@ -22,6 +22,9 @@
 检索底座复用 chunks.py：embedding 可用走向量，否则关键词降级；首轮与
 扩展轮共用同一条降级路径（降级后 ``via`` 仍按轮次记 vector/expansion——它标的是
 「这条证据怎么来的」，不是用了哪个检索引擎）。
+
+问答可以降级，假设探索不可以：``retrieve_round(strict=True)`` 在语义检索用不了时
+抛 :class:`RetrievalUnavailableError`，不退回关键词（见该函数）。
 """
 
 import json
@@ -30,10 +33,13 @@ import re
 import uuid
 from dataclasses import dataclass
 
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.llm import budgets
 from app.core.llm.base import Message
+from app.core.llm.errors import LLMError, classify
 from app.core.llm.router import LLMRouter
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper, PaperChunk
@@ -44,9 +50,9 @@ from app.services.papers import PAPER_STATUS_GROUPS
 
 logger = logging.getLogger(__name__)
 
-TOP_K = 8  # 每轮检索取回的片段数
+TOP_K = budgets.RAG_TOP_K  # 每轮检索取回的片段数
 MAX_EXPANSION_QUERIES = 3  # 每轮扩展最多补几条查询
-RERANK_POOL = 24  # 送重排的候选上限（重排是一次 LLM 调用，输入要有上界）
+RERANK_POOL = budgets.RAG_RERANK_POOL  # 送重排的候选上限（一次 LLM 调用，输入要有上界）
 TOP_N_EVIDENCE = 8  # 重排后进入作答的证据数
 SNIPPET_CHARS = 360  # 证据卡片上的片段截断
 RERANK_DOC_CHARS = 600  # 送重排的单条文本截断
@@ -109,6 +115,50 @@ def _json_payload(content: str) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+class RetrievalUnavailableError(LLMError):
+    """语义检索此刻用不了，而调用方要求不许退回关键词检索。
+
+    ``transient`` 看原因：向量服务连不上、限流、5xx 是暂时的，过一会儿重试可能就好；
+    还没有向量索引、没有配置向量模型、换了向量模型没重建索引，重试没有用，要人处理。
+    """
+
+    code = "RETRIEVAL_UNAVAILABLE"
+    transient = True
+    user_message = "语义检索暂时不可用，请稍后重试"
+
+    def __init__(
+        self, detail: str, *, user_message: str | None = None, transient: bool | None = None
+    ) -> None:
+        super().__init__(detail, user_message=user_message, transient=transient)
+        # 步骤失败时界面显示的就是这段文字：先说人话，技术细节放括号里
+        self.args = (f"{self.user_message}（{detail}）",)
+
+
+def _retrieval_unavailable(exc: BaseException) -> RetrievalUnavailableError:
+    """把语义检索的失败原因归类成给用户看得懂的错误。"""
+    if isinstance(exc, NotImplementedError):
+        # embed_query 的三种「用不了」：没配向量模型、还没建过任何向量、换了模型没重建
+        return RetrievalUnavailableError(
+            f"semantic search unavailable: {exc}",
+            transient=False,
+            user_message="文献库还没有可用的语义索引，请先完成论文索引",
+        )
+    detail = f"embedding request failed: {type(exc).__name__}: {exc}"
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status in (400, 401, 403, 404, 422):
+            return RetrievalUnavailableError(
+                detail,
+                transient=False,
+                user_message="向量模型服务拒绝了请求，请在设置中检查密钥和模型",
+            )
+        return RetrievalUnavailableError(detail)
+    typed = classify(exc)
+    if typed is not None:
+        return RetrievalUnavailableError(detail, transient=typed.transient)
+    return RetrievalUnavailableError(detail)
+
+
 async def _search_round(
     session: AsyncSession,
     *,
@@ -116,8 +166,15 @@ async def _search_round(
     query: str,
     user_id: uuid.UUID | None,
     project_id: uuid.UUID | None,
+    strict: bool = False,
 ) -> list[tuple[PaperChunk, float]]:
-    """执行一轮检索：向量优先，关键词降级，任何失败不上抛（与 library_chat 同路径）。"""
+    """执行一轮检索：向量优先，关键词降级，任何失败不上抛（与 library_chat 同路径）。
+
+    ``strict=True``（假设探索用）时只走语义检索：向量用不了就抛
+    :class:`RetrievalUnavailableError`，没有命中就如实返回空。关键词检索按字面匹配，
+    中文的研究方向匹配不到英文论文，悄悄降级的结果是一棵没有任何文献依据的假设树
+    照样以「完成」收场。
+    """
     try:
         vector, space = await embed_query(session, query, user_id=user_id, project_id=project_id)
         rows = await chunks_service.semantic_search_chunks(
@@ -127,11 +184,15 @@ async def _search_round(
             space=space,
             limit=TOP_K,
         )
-        if rows:
+        if rows or strict:
             return rows
-    except NotImplementedError:
-        pass
-    except Exception:  # noqa: BLE001 — 检索失败降级关键词，不打断问答
+    except NotImplementedError as e:
+        if strict:
+            raise _retrieval_unavailable(e) from e
+    except Exception as e:  # noqa: BLE001 — 检索失败降级关键词，不打断问答
+        if strict:
+            await session.rollback()
+            raise _retrieval_unavailable(e) from e
         logger.warning("rag vector search failed; falling back to keyword", exc_info=True)
         await session.rollback()  # 失败的事务先回滚再降级
     try:
@@ -145,7 +206,8 @@ async def _search_round(
 
 
 # D3 假设管线（services/hypothesis_pipeline.py，#648）复用的确定性检索原语别名：
-# 一轮检索 = 向量优先、关键词降级、失败不上抛。公开命名以示这是稳定的复用面；
+# 一轮检索 = 向量优先；默认关键词降级、失败不上抛，管线传 strict=True 关掉降级。
+# 公开命名以示这是稳定的复用面；
 # answer() 完整流水线里的 LLM 环节（查询扩展/重排/作答）**不在**此复用面之内——
 # 接地与查新要的是「同样输入永远同样证据集」，不能混进判断性环节。
 retrieve_round = _search_round
@@ -197,7 +259,6 @@ async def _expand_queries(
                 content=json.dumps({"question": question, "hits": hits}, ensure_ascii=False),
             ),
         ],
-        temperature=0.0,
         user_id=user_id,
         project_id=project_id,
     )
@@ -335,7 +396,6 @@ async def _rerank(
                 content=json.dumps({"question": question, "items": items}, ensure_ascii=False),
             ),
         ],
-        temperature=0.0,
         user_id=user_id,
         project_id=project_id,
     )
@@ -436,7 +496,6 @@ async def _answer_from_evidence(
             Message(role="system", content=_ANSWER_SYSTEM),
             Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
         ],
-        temperature=0.0,
         user_id=user_id,
         project_id=project_id,
     )

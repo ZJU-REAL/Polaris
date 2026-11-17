@@ -17,7 +17,7 @@ LLM 只负责五件判断性的事——组合灵感成假设、拆子命题、�
    → ``hyp_generate`` 一次调用组合出 n 个候选 → SequenceMatcher 相似度 >0.85
    折叠去重（Stanford 100+ 研究者盲评：LLM 假设多样性坍缩严重，大量采样后
    去重是必要步骤，§12）。
-2. **ground**：``hyp_ground`` 拆子命题（≤5）→ 逐子命题确定性检索 top-5 →
+2. **ground**：``hyp_ground`` 拆子命题（≤6）→ 逐子命题确定性检索 top-12 →
    同环节第二次调用只允许从检索结果里**选择** paper_id + 立场（support/refute）
    或判 speculation；后处理校验所选 id ∈ 检索集，越界一律降为 speculation——
    引用只能指向真实检索结果，结构上杜绝编造引文（各模型引文伪造率 14–95%）。
@@ -31,18 +31,26 @@ score = novel 比例 × support 覆盖率。选这个最笨的公式是有意的
 可解释、各自单调（新颖子命题越多越值得做，有文献支持的子命题越多越扎实），
 乘积天然惩罚偏科——全新颖但无接地是空中楼阁，全接地但不新颖是重复劳动。
 加权、校准、两两对比这些精细化留给 D4 锦标赛，先让分数「能解释给人听」。
+
+模型调用一律走 ``LLMRouter.complete_json``：每个环节一个 Pydantic schema，服务端按
+schema 约束输出；失败是带 ``transient`` 的类型化错误（core/llm/errors.py），不再有
+「回了一段不是 JSON 的文字就原样重问三遍」。检索是严格的语义检索——向量用不了时
+抛 ``RetrievalUnavailableError``，不退回关键词（见 ``_retrieve``）。
 """
 
 import json
 import logging
 import uuid
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Annotated, Any, Literal
 
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.llm import budgets
 from app.core.llm.base import Message
+from app.core.llm.errors import LLMRefusalError, LLMSchemaError, LLMTruncatedError
 from app.core.llm.router import LLMRouter
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperChunk
@@ -61,18 +69,66 @@ NOVELTY_STAGE = "hyp_novelty"
 FEASIBILITY_STAGE = "hyp_feasibility"
 
 DEFAULT_CANDIDATES = 6  # generate 默认一次要多少候选（去重前）
-MAX_SUBCLAIMS = 5  # 子命题上限：多了检索与判定成本线性涨，而假设该是聚焦的
-GROUND_TOP_K = 5  # 每条子命题送给 LLM 挑选的检索结果数
+# 「给模型看多少」的上限统一登记在 core/llm/budgets.py，这里只取名字
+# 子命题上限：多了检索与判定成本线性涨，而假设该是聚焦的
+MAX_SUBCLAIMS = budgets.HYPOTHESIS_MAX_SUBCLAIMS
+GROUND_TOP_K = budgets.HYPOTHESIS_EVIDENCE_PER_SUBCLAIM  # 每条子命题送给 LLM 挑选的检索结果数
 DEDUP_THRESHOLD = 0.85  # 陈述相似度超过它视为同一假设（去重折叠）
-INSPIRATION_PER_ROUTE = 3  # 引文远端 / 多样窗两路各取几条灵感
-FUEL_PER_ROUTE = 3  # 三路燃料各取几条（#670）：prompt 是稀缺资源，燃料给最强的 top-3
-SNIPPET_CHARS = 300  # 灵感与证据片段的截断长度
+INSPIRATION_PER_ROUTE = budgets.HYPOTHESIS_INSPIRATIONS_PER_ROUTE  # 引文远端 / 多样窗各取几条
+FUEL_PER_ROUTE = budgets.HYPOTHESIS_FUELS_PER_ROUTE  # 三路燃料各取几条（#670）
+SNIPPET_CHARS = budgets.HYPOTHESIS_SNIPPET_CHARS  # 灵感与证据片段的截断长度
 DENSITY_LIMIT = 50  # 相关片段密度统计的计数上限（信号要的是量级，不是全量）
 # expand 后低于此分自动剪枝（actions_discovery 消费）。0.15 = 「不到一半子命题
 # 新颖 × 不到一半有支持」量级以下：两个维度都不及格的假设不值得占用后续预算
 MIN_VIABLE_SCORE = 0.15
 
-_MAX_JSON_ATTEMPTS = 3
+# 「模型给不出这段判断」的三种失败：结构两次都不对、写不完、拒答。查新与风险论证
+# 遇到它们按既有约定降级（见各自的函数）；网络、限流、密钥这类失败不在其中——
+# 那不是判断不出来，是这一步没跑成，要原样抛出去让整步重试或交给人处理。
+_NO_JUDGEMENT = (LLMSchemaError, LLMTruncatedError, LLMRefusalError)
+
+
+# ---- 各环节的输出 schema ----
+
+NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class CandidateOut(BaseModel):
+    statement: NonEmptyStr
+    rationale: str
+
+
+class GenerateOut(BaseModel):
+    candidates: list[CandidateOut] = Field(min_length=1)
+
+
+class SubclaimsOut(BaseModel):
+    subclaims: list[NonEmptyStr] = Field(min_length=1)
+
+
+class GroundItemOut(BaseModel):
+    index: int
+    stance: Literal["support", "refute", "speculation"]
+    paper_ids: list[str]
+
+
+class GroundOut(BaseModel):
+    items: list[GroundItemOut]
+
+
+class NoveltyItemOut(BaseModel):
+    index: int
+    verdict: Literal["known", "novel", "uncertain"]
+    paper_ids: list[str]
+
+
+class NoveltyOut(BaseModel):
+    items: list[NoveltyItemOut]
+
+
+class RiskNoteOut(BaseModel):
+    risk_note: NonEmptyStr
+
 
 GENERATE_SYSTEM_PROMPT = """\
 POLARIS_HYP_GENERATE
@@ -84,14 +140,14 @@ citation_far=引文图远端、diverse=多样窗口片段）。输入可能还�
 - open_gaps：文献指出的未解问题（gap/矛盾/负结果的原文归纳）。
 请把方向与灵感/燃料**组合**成最多 n 个彼此不同、可检验的研究假设（鼓励跨片段、
 跨燃料组合，而不是逐条改写；有燃料时优先消费燃料——它们是库里最值得下注的线索）。
-只输出 JSON：{"candidates": [{"statement": "假设陈述（一句话，可检验）", \
+输出 JSON：{"candidates": [{"statement": "假设陈述（一句话，可检验）", \
 "rationale": "一句话依据（引用了哪路灵感或燃料）"}]}"""
 
-GROUND_SPLIT_SYSTEM_PROMPT = """\
+GROUND_SPLIT_SYSTEM_PROMPT = f"""\
 POLARIS_HYP_GROUND
-你是假设分解器。把输入 JSON 里的假设陈述拆成最多 5 条可独立检索验证的子命题
+你是假设分解器。把输入 JSON 里的假设陈述拆成最多 {MAX_SUBCLAIMS} 条可独立检索验证的子命题
 （每条一句话，合起来覆盖假设的关键断言）。
-只输出 JSON：{"subclaims": ["...", "..."]}"""
+输出 JSON：{{"subclaims": ["...", "..."]}}"""
 
 GROUND_SELECT_SYSTEM_PROMPT = """\
 POLARIS_HYP_GROUND
@@ -99,7 +155,7 @@ POLARIS_HYP_GROUND
 （各带 paper_id）。对每条子命题：若某些片段支持/反驳它，给出立场和所依据的
 paper_id 列表；检索结果都不相关时判 speculation（推测，paper_ids 留空）。
 **只允许使用 retrieved 里出现过的 paper_id，禁止编造。**
-只输出 JSON：{"items": [{"index": <原样回传>, \
+输出 JSON：{"items": [{"index": <原样回传>, \
 "stance": "support|refute|speculation", "paper_ids": ["..."]}]}"""
 
 NOVELTY_SYSTEM_PROMPT = """\
@@ -108,7 +164,7 @@ POLARIS_HYP_NOVELTY
 片段。对每条判定：该子命题是否已被这些文献覆盖——
 known（已有文献明确覆盖）| novel（文献未覆盖，是新的）| uncertain（证据不足以判定）。
 paper_ids 只允许来自 evidence。
-只输出 JSON：{"items": [{"index": <原样回传>, \
+输出 JSON：{"items": [{"index": <原样回传>, \
 "verdict": "known|novel|uncertain", "paper_ids": ["..."]}]}"""
 
 FEASIBILITY_SYSTEM_PROMPT = """\
@@ -116,7 +172,7 @@ POLARIS_HYP_FEASIBILITY
 你是可行性风险论证员。输入 JSON 里是假设陈述和已经确定性统计好的资源信号
 （接地文献数、venue/年份分布、库内相关片段密度）。**不要重新估计这些数字**，
 只基于它们写一段简短的风险论证（哪些信号偏弱、验证该假设前要补什么）。
-只输出 JSON：{"risk_note": "..."}"""
+输出 JSON：{"risk_note": "..."}"""
 
 
 # ---- 通用小件 ----
@@ -128,48 +184,38 @@ def _merge_usage(total: dict[str, int], usage: dict[str, Any] | None) -> dict[st
     return total
 
 
-def _extract_json(content: str) -> Any:
-    start = content.find("{")
-    end = content.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError("no JSON object found")
-    return json.loads(content[start : end + 1])
-
-
-async def _complete_json(
+async def _complete_json[T: BaseModel](
     llm: LLMRouter,
     stage: str,
     *,
     system: str,
     payload: dict[str, Any],
-    validate,
+    schema: type[T],
     usage: dict[str, int],
     user_id: uuid.UUID | None,
     project_id: uuid.UUID | None,
     library_id: uuid.UUID,
     voyage_id: uuid.UUID | None,
-) -> Any:
-    """LLM JSON 请求：解析/校验失败重试，重试轮次的 token 也如实并入 usage。"""
-    last_error: Exception | None = None
-    for _attempt in range(_MAX_JSON_ATTEMPTS):
-        result = await llm.complete(
-            stage,
-            [
-                Message(role="system", content=system),
-                Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
-            ],
-            temperature=0.0,
-            user_id=user_id,
-            project_id=project_id,
-            library_id=library_id,
-            voyage_id=voyage_id,
-        )
-        _merge_usage(usage, result.usage)
-        try:
-            return validate(_extract_json(result.content))
-        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
-            last_error = e
-    raise ValueError(f"{stage} 连续输出非法 JSON：{last_error}")
+) -> T:
+    """一次结构化调用：system 是环节提示，payload 序列化成 user 消息。
+
+    token 并入 ``usage``（修复重问的那一次也在 ``result.usage`` 里）。失败抛
+    ``LLMError``，不在这里吞。
+    """
+    result = await llm.complete_json(
+        stage,
+        [
+            Message(role="system", content=system),
+            Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
+        ],
+        schema=schema,
+        user_id=user_id,
+        project_id=project_id,
+        library_id=library_id,
+        voyage_id=voyage_id,
+    )
+    _merge_usage(usage, result.usage)
+    return result.data
 
 
 def _ordered_paper_ids(chunks: list[PaperChunk]) -> list[str]:
@@ -224,13 +270,22 @@ async def _retrieve(
     project_id: uuid.UUID | None,
     limit: int,
 ) -> list[PaperChunk]:
-    """确定性检索原语：复用 RAG 的单轮检索（向量优先、关键词降级），截前 limit 条。
+    """确定性检索原语：复用 RAG 的单轮语义检索，截前 limit 条。
 
     刻意不走 library_rag.answer 的完整流水线——那里面有查询扩展和重排两次 LLM
     判断，接地/查新要的是「同样输入永远同样证据集」的确定性检索。
+
+    ``strict=True``：向量用不了时抛 ``RetrievalUnavailableError``，不退回关键词检索。
+    关键词按字面匹配，中文方向对不上英文论文，降级之后每条子命题都检索不到东西、
+    整棵树全是「推测」，任务却照样显示完成。宁可这一步明确失败。
     """
     rows = await library_rag.retrieve_round(
-        session, library_id=library_id, query=query, user_id=user_id, project_id=project_id
+        session,
+        library_id=library_id,
+        query=query,
+        user_id=user_id,
+        project_id=project_id,
+        strict=True,
     )
     return [chunk for chunk, _score in rows[:limit]]
 
@@ -450,24 +505,6 @@ def dedup_candidates(
     return kept
 
 
-def _validate_generate(data: Any) -> list[dict[str, Any]]:
-    if not isinstance(data, dict) or not isinstance(data.get("candidates"), list):
-        raise ValueError('generate 输出需含 "candidates" 列表')
-    out = []
-    for raw in data["candidates"]:
-        if not isinstance(raw, dict) or not str(raw.get("statement") or "").strip():
-            continue
-        out.append(
-            {
-                "statement": str(raw["statement"]).strip(),
-                "rationale": str(raw.get("rationale") or "").strip(),
-            }
-        )
-    if not out:
-        raise ValueError("generate 未给出任何含非空 statement 的候选")
-    return out
-
-
 async def generate(
     session: AsyncSession,
     llm: LLMRouter,
@@ -524,18 +561,19 @@ async def generate(
     if fuel_sections:
         # 全空时不加键：无燃料的 payload 与纯检索路逐字节一致（行为等价判据）
         payload["fuels"] = fuel_sections
-    raw = await _complete_json(
+    out = await _complete_json(
         llm,
         GENERATE_STAGE,
         system=GENERATE_SYSTEM_PROMPT,
         payload=payload,
-        validate=_validate_generate,
+        schema=GenerateOut,
         usage=usage,
         user_id=user_id,
         project_id=project_id,
         library_id=library_id,
         voyage_id=voyage_id,
     )
+    raw = [{"statement": c.statement, "rationale": c.rationale.strip()} for c in out.candidates]
     return {
         "candidates": dedup_candidates(raw[:n_candidates]),
         "usage": usage,
@@ -556,21 +594,6 @@ async def generate(
 
 
 # ---- 2) 文献接地：拆子命题 → 确定性检索 → 只许从检索集内选 ----
-
-
-def _validate_subclaims(data: Any) -> list[str]:
-    if not isinstance(data, dict) or not isinstance(data.get("subclaims"), list):
-        raise ValueError('ground 拆分输出需含 "subclaims" 列表')
-    out = [str(s).strip() for s in data["subclaims"] if str(s or "").strip()]
-    if not out:
-        raise ValueError("ground 未拆出任何非空子命题")
-    return out[:MAX_SUBCLAIMS]
-
-
-def _validate_indexed_items(data: Any) -> list[dict[str, Any]]:
-    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
-        raise ValueError('输出需含 "items" 列表')
-    return [it for it in data["items"] if isinstance(it, dict)]
 
 
 def sanitize_grounding(
@@ -626,15 +649,16 @@ async def ground(
     identity = dict(
         user_id=user_id, project_id=project_id, library_id=library_id, voyage_id=voyage_id
     )
-    subclaims = await _complete_json(
+    split = await _complete_json(
         llm,
         GROUND_STAGE,
         system=GROUND_SPLIT_SYSTEM_PROMPT,
         payload={"statement": statement},
-        validate=_validate_subclaims,
+        schema=SubclaimsOut,
         usage=usage,
         **identity,
     )
+    subclaims = list(split.subclaims)[:MAX_SUBCLAIMS]
     retrieved: list[list[dict[str, Any]]] = []
     trace_queries: list[dict[str, Any]] = []
     for subclaim in subclaims:
@@ -650,7 +674,7 @@ async def ground(
         retrieved.append([_chunk_entry(c, titles) for c in chunks])
         # 检索留痕（D6 披露 #655）：接地的查询就是子命题本身
         trace_queries.append({"query": subclaim, "paper_ids": _ordered_paper_ids(chunks)})
-    items = await _complete_json(
+    selected = await _complete_json(
         llm,
         GROUND_STAGE,
         system=GROUND_SELECT_SYSTEM_PROMPT,
@@ -661,10 +685,11 @@ async def ground(
                 for i, sub in enumerate(subclaims)
             ],
         },
-        validate=_validate_indexed_items,
+        schema=GroundOut,
         usage=usage,
         **identity,
     )
+    items = [item.model_dump() for item in selected.items]
     return {
         "grounding": sanitize_grounding(subclaims, retrieved, items),
         "usage": usage,
@@ -677,8 +702,6 @@ async def ground(
 # 换措辞的确定性前缀：目的不是「更好的查询」，而是**换一个角度**再捞一轮——
 # 同一措辞查两遍只会复读接地结果，查新就成了自证
 _NOVELTY_QUERY_PREFIX = "已有研究 prior work on"
-
-_NOVELTY_VERDICTS = ("known", "novel", "uncertain")
 
 
 def novelty_ratio(report: dict[str, Any]) -> float:
@@ -707,8 +730,9 @@ async def novelty(
                     "paper_ids", "judged"}]}
 
     speculation 子命题不送 judge（库里连接地证据都没有，「是否已被覆盖」无从
-    判起），如实记 uncertain / judged=False。judge 输出解析失败也整体降级为
-    uncertain——查新判不动不等于假设不成立，不该炸掉整轮扩展。
+    判起），如实记 uncertain / judged=False。模型给不出判定（结构不对、写不完、
+    拒答）时也整体降级为 uncertain——查新判不动不等于假设不成立，不该炸掉整轮
+    扩展。网络、限流、密钥这类失败照常上抛。
     """
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
     judged_indices = [i for i, e in enumerate(grounding) if e.get("stance") != "speculation"]
@@ -731,7 +755,7 @@ async def novelty(
     verdicts: dict[int, tuple[str, list[str]]] = {}
     if judged_indices:
         try:
-            items = await _complete_json(
+            judged = await _complete_json(
                 llm,
                 NOVELTY_STAGE,
                 system=NOVELTY_SYSTEM_PROMPT,
@@ -746,24 +770,21 @@ async def novelty(
                         for i in judged_indices
                     ],
                 },
-                validate=_validate_indexed_items,
+                schema=NoveltyOut,
                 usage=usage,
                 user_id=user_id,
                 project_id=project_id,
                 library_id=library_id,
                 voyage_id=voyage_id,
             )
-            for item in items:
-                idx = item.get("index")
-                if not isinstance(idx, int) or idx not in evidence_by_index:
+            for item in judged.items:
+                if item.index not in evidence_by_index or item.index in verdicts:
                     continue
-                verdict = str(item.get("verdict") or "")
-                if verdict not in _NOVELTY_VERDICTS:
-                    verdict = "uncertain"
-                allowed = {e["paper_id"] for e in evidence_by_index[idx]}
-                ids = [str(p) for p in (item.get("paper_ids") or []) if str(p) in allowed]
-                verdicts[idx] = (verdict, list(dict.fromkeys(ids)))
-        except ValueError:
+                allowed = {e["paper_id"] for e in evidence_by_index[item.index]}
+                ids = [p for p in item.paper_ids if p in allowed]
+                verdicts[item.index] = (item.verdict, list(dict.fromkeys(ids)))
+        except _NO_JUDGEMENT:
+            logger.warning("novelty judgement unavailable; marking all uncertain", exc_info=True)
             verdicts = {}  # 判不动 → 全部 uncertain（诚实缺省）
     subclaim_reports = []
     for i, entry in enumerate(grounding):
@@ -784,12 +805,6 @@ async def novelty(
 
 
 # ---- 4) 可行性：确定性资源信号 + LLM 只写风险论证 ----
-
-
-def _validate_risk_note(data: Any) -> str:
-    if not isinstance(data, dict) or not str(data.get("risk_note") or "").strip():
-        raise ValueError('feasibility 输出需含非空 "risk_note"')
-    return str(data["risk_note"]).strip()
 
 
 async def feasibility(
@@ -847,19 +862,22 @@ async def feasibility(
     }
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
     try:
-        risk_note = await _complete_json(
-            llm,
-            FEASIBILITY_STAGE,
-            system=FEASIBILITY_SYSTEM_PROMPT,
-            payload={"statement": statement, "signals": signals},
-            validate=_validate_risk_note,
-            usage=usage,
-            user_id=user_id,
-            project_id=project_id,
-            library_id=library_id,
-            voyage_id=voyage_id,
-        )
-    except ValueError:
+        risk_note = (
+            await _complete_json(
+                llm,
+                FEASIBILITY_STAGE,
+                system=FEASIBILITY_SYSTEM_PROMPT,
+                payload={"statement": statement, "signals": signals},
+                schema=RiskNoteOut,
+                usage=usage,
+                user_id=user_id,
+                project_id=project_id,
+                library_id=library_id,
+                voyage_id=voyage_id,
+            )
+        ).risk_note
+    except _NO_JUDGEMENT:
+        logger.warning("feasibility risk note unavailable", exc_info=True)
         # 风险论证写不出来不影响信号本身的价值：信号照常入库，note 如实说不可用
         risk_note = "（风险论证生成失败，仅供确定性信号参考。）"
     return {"feasibility": {"signals": signals, "risk_note": risk_note}, "usage": usage}
