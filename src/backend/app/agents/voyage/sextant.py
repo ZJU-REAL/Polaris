@@ -12,6 +12,7 @@ import json
 from typing import Any
 
 from app.agents.voyage.checks import run_deterministic_checks
+from app.agents.voyage.errorsig import error_text
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
 from app.models.voyage import VoyageRun
@@ -37,6 +38,13 @@ def _parse_verdict(content: str) -> dict[str, Any]:
     if not isinstance(data, dict) or not isinstance(data.get("passed"), bool):
         raise ValueError("verdict must contain boolean 'passed'")
     return {"passed": data["passed"], "reason": str(data.get("reason", ""))}
+
+
+class SextantError(Exception):
+    """判定用的模型调用本身失败了（网络、限流、没配模型……），不是「产出不合格」。
+
+    两者必须分开：调用失败说明不了产出好坏，当成「未通过」会让引擎为一次网络抖动
+    去重规划。原始异常挂在 ``__cause__`` 上，引擎据此归类并把任务停下来。"""
 
 
 class Sextant:
@@ -112,16 +120,19 @@ class Sextant:
         usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
         last_error: Exception | None = None
         for _attempt in range(_MAX_ATTEMPTS):
-            result = await self._llm.complete(
-                "sextant",
-                [
-                    Message(role="system", content=VERIFY_SYSTEM_PROMPT),
-                    Message(role="user", content=user_prompt),
-                ],
-                user_id=run.created_by,
-                project_id=run.project_id,
-                voyage_id=run.id,
-            )
+            try:
+                result = await self._llm.complete(
+                    "sextant",
+                    [
+                        Message(role="system", content=VERIFY_SYSTEM_PROMPT),
+                        Message(role="user", content=user_prompt),
+                    ],
+                    user_id=run.created_by,
+                    project_id=run.project_id,
+                    voyage_id=run.id,
+                )
+            except Exception as e:  # noqa: BLE001 — 任何调用失败都要带着原因交给引擎
+                raise SextantError(error_text(e)) from e
             usage_total["prompt_tokens"] += int(result.usage.get("prompt_tokens", 0))
             usage_total["completion_tokens"] += int(result.usage.get("completion_tokens", 0))
             try:

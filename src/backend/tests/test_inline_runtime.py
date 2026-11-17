@@ -42,7 +42,7 @@ class _Drivers:
         self.peak = 0
 
     def fn(self, name: str):
-        async def driver(ctx, run_id):
+        async def driver(ctx, run_id, **_kwargs):  # 对账的 resume 带 reset_attempts=False
             self.started.append((name, run_id))
             self.active += 1
             self.peak = max(self.peak, self.active)

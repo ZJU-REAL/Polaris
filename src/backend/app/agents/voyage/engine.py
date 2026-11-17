@@ -26,6 +26,8 @@ voyage_steps 行，run.plan 只是派生快照），调度规则 = 按 rank 取�
 - 步骤与 Sextant 的 tokens 累加到 run.usage，超出 budget.max_tokens 则暂停。
 """
 
+import asyncio
+import logging
 import uuid
 from typing import Any
 
@@ -35,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agents.voyage.actions import ActionContext
 from app.agents.voyage.checks import run_deterministic_checks
 from app.agents.voyage.errorsig import error_signature
+from app.agents.voyage.failures import MESSAGES, describe_failure, error_record
 from app.agents.voyage.helm import Helm
 from app.agents.voyage.navigator import Navigator, NavigatorError, done_criteria_for_kind
 from app.agents.voyage.plan_edit import SIGNAL_TABLES, PlanEditError
@@ -45,7 +48,13 @@ from app.core.llm.router import LLMRouter, get_llm_router
 from app.models.base import utcnow
 from app.models.gate import Gate
 from app.models.llm_config import LLMUsage
-from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep, mode_for_kind
+from app.models.voyage import (
+    IN_FLIGHT_STATUSES,
+    TERMINAL_STATUSES,
+    VoyageRun,
+    VoyageStep,
+    mode_for_kind,
+)
 from app.services import interdisciplinary_workflows
 from app.services import voyage_messages as messages_service
 from app.services.ai_evidence_context import (
@@ -53,8 +62,100 @@ from app.services.ai_evidence_context import (
     ensure_voyage_evidence_snapshot,
 )
 
+logger = logging.getLogger(__name__)
+
 MAX_REPLANS = 2
 _RANK_GAP = 100.0
+
+# 出了没人接住的异常时，哪些状态的任务要被停到 paused_error：在途的四个，加上
+# paused_gate（审批通过后续跑的那一刻状态还没改回来）。paused_ask 在等人回答、
+# paused_error 已经停好了、终态已经结束——这些都不动。
+_PARKABLE_STATUSES = IN_FLIGHT_STATUSES | {"paused_gate"}
+# 出错那一刻的状态 → 出错位置（给人看的说明用）
+_SOURCE_BY_STATUS = {"planning": "planner", "replanning": "planner", "verifying": "verifier"}
+_PARK_DB_ATTEMPTS = 3
+
+
+def _park_text(error: dict[str, Any]) -> str:
+    message = str(error.get("message") or MESSAGES["INTERNAL"])
+    detail = str(error.get("detail") or "").strip()
+    return f"{message}，任务已暂停。{detail[:500]}" if detail else f"{message}，任务已暂停。"
+
+
+async def park_run(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    bus: EventBus | None,
+    run_id: uuid.UUID,
+    *,
+    exc: BaseException | None = None,
+    error: dict[str, Any] | None = None,
+) -> bool:
+    """把一条没人驱动得下去的任务停到 ``paused_error``，并存下原因。返回是否真的停了。
+
+    用自己的会话：调用它的时候，驱动任务的那个会话多半已经坏了（异常就是从它里面
+    冒出来的）。状态用条件 UPDATE 改，绝不覆盖用户刚点的取消或已经落定的终态。
+
+    ``exc`` 与 ``error`` 二选一：前者由这里归类成记录，后者是调用方已经组好的记录
+    （对账发现任务反复恢复仍无进展时用）。
+    """
+    async with sessionmaker() as session:
+        run = await session.get(VoyageRun, run_id)
+        if run is None or run.status not in _PARKABLE_STATUSES:
+            return False
+        previous = run.status
+        if error is None:
+            source = _SOURCE_BY_STATUS.get(previous, "driver")
+            error = describe_failure(exc or RuntimeError("unknown failure"), source=source)
+        checkpoint = dict(run.checkpoint or {})
+        checkpoint["last_error"] = error
+        checkpoint.pop("reclaim", None)
+        result = await session.execute(
+            update(VoyageRun)
+            .where(VoyageRun.id == run_id, VoyageRun.status == previous)
+            .values(status="paused_error", checkpoint=checkpoint)
+        )
+        if result.rowcount == 0:
+            await session.rollback()
+            return False
+        # 停在半路的步骤标成失败：否则界面上是「任务已暂停」配一个还在转的步骤。
+        # 续跑时 resume() 会把它复位重做。
+        stmt = select(VoyageStep).where(VoyageStep.run_id == run_id, VoyageStep.status == "running")
+        for row in (await session.execute(stmt)).scalars().all():
+            row.status = "failed"
+            row.finished_at = utcnow()
+            row.verdict = {"passed": False, "reason": str(error.get("message") or "")}
+        await session.commit()
+        await session.refresh(run)
+        created_by, cursor = run.created_by, run.cursor
+        serialized: dict[str, Any] | None = None
+        try:
+            message = await messages_service.append_message(
+                session, run_id, role="agent", kind="info", text=_park_text(error)
+            )
+            serialized = messages_service.serialize_message(message)
+        except Exception:  # noqa: BLE001 — 播报是尽力而为，任务已经停好了
+            logger.warning("could not post the pause message for voyage %s", run_id, exc_info=True)
+    if bus is None:
+        return True
+    try:
+        await bus.publish_voyage_event(
+            run_id,
+            "log",
+            {"message": _park_text(error), "level": "error", "at": utcnow().isoformat()},
+        )
+        if serialized is not None:
+            await bus.publish_voyage_event(run_id, "message", {"message": serialized})
+        await bus.publish_voyage_event(
+            run_id, "status", {"status": "paused_error", "cursor": cursor}
+        )
+        if created_by is not None:
+            await bus.publish_notify(
+                created_by,
+                {"type": "voyage.status", "voyage_id": str(run_id), "status": "paused_error"},
+            )
+    except Exception:  # noqa: BLE001 — 事件只是加速界面刷新，轮询照样能看到新状态
+        logger.warning("could not publish pause events for voyage %s", run_id, exc_info=True)
+    return True
 
 
 def _replan_progress(checkpoint: dict[str, Any], diagnosis: str) -> tuple[int, str, bool]:
@@ -187,28 +288,66 @@ class VoyageEngine:
 
     async def run(self, run_id: uuid.UUID) -> None:
         """首次驱动：无 plan 则先规划，再进入执行循环。"""
-        await self._drive(run_id)
+        try:
+            await self._drive(run_id)
+        except Exception as e:  # noqa: BLE001 — 兜底：任何漏出来的异常都不能让任务悬着
+            await self._park_escaped(run_id, e)
 
-    async def resume(self, run_id: uuid.UUID) -> None:
+    async def resume(self, run_id: uuid.UUID, *, reset_attempts: bool = True) -> None:
         """闸门审批 / paused_error 重试 / worker 重启后从断点续跑。
 
         失败节点复位重试（docs/task-system.md §7（原 voyage-loop.md）：人工修复代码后从断点续跑，
         前功不作废）：attempt 清零（历史已归档进 attempts），状态回 pending。
+
+        ``reset_attempts=False``：对账自动恢复时用——没人看过、没人修过，步骤的尝试次数
+        照旧累计，否则一条反复死掉的任务每次恢复都拿到一份全新的重试额度。
         """
-        async with self._sessionmaker() as session:
-            run = await session.get(VoyageRun, run_id)
-            if run is None or run.status in TERMINAL_STATUSES:
+        try:
+            async with self._sessionmaker() as session:
+                run = await session.get(VoyageRun, run_id)
+                if run is None or run.status in TERMINAL_STATUSES:
+                    return
+                stmt = (
+                    select(VoyageStep)
+                    .where(
+                        VoyageStep.run_id == run_id, VoyageStep.status.in_(("failed", "running"))
+                    )
+                    .order_by(VoyageStep.rank, VoyageStep.seq)
+                )
+                for row in (await session.execute(stmt)).scalars().all():
+                    row.status = "pending"
+                    if reset_attempts:
+                        row.attempt = 0
+                # 上一次停下来的原因到此作废：这次要是再出错，会写一条新的
+                if "last_error" in (run.checkpoint or {}):
+                    checkpoint = dict(run.checkpoint or {})
+                    checkpoint.pop("last_error", None)
+                    run.checkpoint = checkpoint
+                await session.commit()
+            await self._drive(run_id)
+        except Exception as e:  # noqa: BLE001 — 同 run()
+            await self._park_escaped(run_id, e)
+
+    async def _park_escaped(self, run_id: uuid.UUID, exc: Exception) -> None:
+        """没人接住的异常（规划、校验的模型调用，引擎自己的数据库写入……）到这里为止。
+
+        以前它们直接掀翻驱动任务：状态停在 planning / executing / verifying，没有报错、
+        没有提问，界面上是一条永远「在跑」的任务，对账还会每半小时把它重新拉起来再死
+        一次。现在一律停到 paused_error 并写明原因。
+
+        停不下来（比如数据库正被占用，这本身就可能是出错的原因）就隔一会儿再试几次；
+        还不行才把原异常抛回去，交给对账的次数上限兜底。
+        """
+        logger.error("voyage %s driver failed: %r", run_id, exc, exc_info=exc)
+        for attempt in range(_PARK_DB_ATTEMPTS):
+            try:
+                await park_run(self._sessionmaker, self._bus, run_id, exc=exc)
                 return
-            stmt = (
-                select(VoyageStep)
-                .where(VoyageStep.run_id == run_id, VoyageStep.status.in_(("failed", "running")))
-                .order_by(VoyageStep.rank, VoyageStep.seq)
-            )
-            for row in (await session.execute(stmt)).scalars().all():
-                row.status = "pending"
-                row.attempt = 0
-            await session.commit()
-        await self._drive(run_id)
+            except Exception:  # noqa: BLE001
+                logger.warning("could not pause voyage %s after a failure", run_id, exc_info=True)
+                if attempt + 1 < _PARK_DB_ATTEMPTS:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+        raise exc
 
     # ---- 事件发布 ----
 
@@ -312,7 +451,21 @@ class VoyageEngine:
         """
         if run.created_by is None:
             await self._emit_log(run, f"需要人工处理：{question}", level="error")
-            await self._set_status(session, run, fallback_status)
+            if fallback_status == "paused_error":
+                await self._pause_on_error(
+                    session,
+                    run,
+                    error_record(
+                        "NEEDS_USER",
+                        transient=False,
+                        source="driver",
+                        detail=question,
+                        step_id=step.id if step is not None else None,
+                        step_title=step.title if step is not None else None,
+                    ),
+                )
+            else:
+                await self._set_status(session, run, fallback_status)
             return
         step_id = step.id if step is not None else None
         existing = await messages_service.find_open_ask(
@@ -1174,7 +1327,7 @@ class VoyageEngine:
                 text=f"步骤「{node.title}」失败，任务已暂停：{diagnosis[:500]}",
                 step_id=node.id,
             )
-            await self._set_status(session, run, "paused_error")
+            await self._pause_on_error(session, run, self._step_error(node, diagnosis))
             return False
 
         if run.mode == "template":
@@ -1182,6 +1335,41 @@ class VoyageEngine:
             return await self._replan(session, run, node, step_def)
         # loop：失败回灌 Navigator 做计划编辑（阶段 D）
         return await self._navigator_edit(session, run, node, step_def)
+
+    @staticmethod
+    def _step_error(node: VoyageStep, diagnosis: str) -> dict[str, Any]:
+        """失败步骤 → ``last_error`` 记录。
+
+        动作抛了异常：Helm 已经在 observation.failure 里归好类（code / transient）；
+        动作自己返回 error 而没抛异常：归不了类，按需要人处理算；
+        没有执行错误、是验收没过：重试也是同样的结果，同样需要人处理。
+        """
+        observation = node.observation if isinstance(node.observation, dict) else {}
+        failure = observation.get("failure")
+        failure = failure if isinstance(failure, dict) else {}
+        if observation.get("error"):
+            code = str(failure.get("code") or "STEP_FAILED")
+            transient = failure.get("transient") is True
+        else:
+            code, transient = "CHECK_FAILED", False
+        return error_record(
+            code,
+            transient=transient,
+            source="action",
+            detail=diagnosis,
+            step_id=node.id,
+            step_title=node.title,
+        )
+
+    async def _pause_on_error(
+        self, session: AsyncSession, run: VoyageRun, error: dict[str, Any]
+    ) -> None:
+        """停到 paused_error，原因存进 checkpoint["last_error"]（界面与自动重试都读它）。"""
+        checkpoint = dict(run.checkpoint or {})
+        checkpoint["last_error"] = error
+        run.checkpoint = checkpoint
+        await session.commit()
+        await self._set_status(session, run, "paused_error")
 
     # ---- 计划编辑（loop 模式失败回灌 + plan_signal 分支表，docs/task-system.md §7）----
 

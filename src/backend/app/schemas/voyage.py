@@ -76,6 +76,24 @@ class VoyageStepRead(BaseModel):
     finished_at: datetime | None
 
 
+class VoyageErrorRead(BaseModel):
+    """任务为什么停在 paused_error（引擎写进 checkpoint["last_error"]）。"""
+
+    # 稳定的错误码，界面按它出文案：NETWORK / TIMEOUT / RATE_LIMITED /
+    # UPSTREAM_UNAVAILABLE / DB_BUSY / AUTH / BAD_REQUEST / NOT_CONFIGURED / REFUSAL /
+    # INVALID_OUTPUT / MISSING_PREREQUISITE / INTERNAL / STEP_FAILED / CHECK_FAILED /
+    # NEEDS_USER / NO_PROGRESS（类型化的模型错误会带它自己的 code）
+    code: str
+    message: str  # 给人看的一句话（兜底文案）
+    detail: str = ""  # 原始报错，排查用
+    transient: bool = False  # 像不像临时性故障（网络、超时、限流、对方服务故障）
+    # 出错位置：planner | verifier | action | driver | reconcile
+    source: str | None = None
+    at: datetime | None = None
+    step_id: uuid.UUID | None = None
+    step_title: str | None = None
+
+
 class VoyageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -94,6 +112,33 @@ class VoyageRead(BaseModel):
     created_by: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+    # 仅 status == paused_error 时非空：这次为什么停下来
+    last_error: VoyageErrorRead | None = None
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _fill_from_checkpoint(cls, data: Any, handler: Any) -> "VoyageRead":
+        """从 ORM 行构建时，把 checkpoint 里给界面看的那几项摘出来。
+
+        checkpoint 整体不外露（体积大、是引擎内部工作区），所以不做成字段，只在这里取。
+        """
+        obj: VoyageRead = handler(data)
+        if isinstance(data, dict | BaseModel):
+            return obj
+        checkpoint = getattr(data, "checkpoint", None)
+        if isinstance(checkpoint, dict):
+            obj._apply_checkpoint(checkpoint)
+        return obj
+
+    def _apply_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        if self.status != "paused_error":
+            return
+        raw = checkpoint.get("last_error")
+        if isinstance(raw, dict) and raw.get("code") and raw.get("message"):
+            try:
+                self.last_error = VoyageErrorRead.model_validate(raw)
+            except ValueError:  # 存量或手改过的脏数据：宁可不显示，也别让整个接口 500
+                self.last_error = None
 
 
 class VoyagePlanEvent(BaseModel):

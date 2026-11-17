@@ -7,6 +7,7 @@ from typing import Any
 
 from app.agents.voyage.actions import ActionContext, get_action
 from app.agents.voyage.errorsig import error_text
+from app.agents.voyage.failures import classify_failure
 from app.services.managed_commands import failure_from_exception
 
 
@@ -20,4 +21,7 @@ class Helm:
             return await action(ctx, step_def.get("params") or {})
         except Exception as e:  # noqa: BLE001 —— 步骤失败要落 observation 而非炸掉状态机
             report = failure_from_exception(e)
-            return {"error": error_text(e), "failure": report.to_dict()}
+            # code / transient：引擎据此决定停下来之后要不要自己过一会儿再试
+            found = classify_failure(e)
+            failure = report.to_dict() | {"code": found.code, "transient": found.transient}
+            return {"error": error_text(e), "failure": failure}

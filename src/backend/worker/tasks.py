@@ -59,32 +59,127 @@ def _make_engine() -> VoyageEngine:
     return VoyageEngine(event_bus=EventBus(get_redis()))
 
 
+async def _drive_voyage(run_id: str, *, resume: bool, reset_attempts: bool = True) -> None:
+    """驱动一条航程，并保证它不会悬在「在跑」状态却没人驱动。
+
+    引擎自己会接住驱动过程里漏出来的异常并把航程停到 paused_error。这里是它外面的
+    最后一层：引擎都没建起来、或者引擎停航程的那一步也失败了，就在这里再停一次。
+    停机取消（CancelledError）不拦——那条航程留在在途状态，下次启动由对账接手。"""
+    rid = uuid.UUID(run_id)
+    try:
+        engine = _make_engine()
+        if resume:
+            await engine.resume(rid, reset_attempts=reset_attempts)
+        else:
+            await engine.run(rid)
+    except Exception as e:  # noqa: BLE001 — 兜底，见上
+        logger.exception("voyage %s driver failed outside the engine", run_id)
+        from app.agents.voyage.engine import park_run
+
+        try:
+            await park_run(get_sessionmaker(), EventBus(get_redis()), rid, exc=e)
+        except Exception:  # noqa: BLE001 — 真停不下来：留给对账的次数上限
+            logger.exception("could not pause voyage %s after its driver failed", run_id)
+
+
 async def run_voyage(ctx: dict[str, Any], run_id: str) -> None:
     """驱动一次新航程（POST /voyages 入队）。"""
-    await _make_engine().run(uuid.UUID(run_id))
+    await _drive_voyage(run_id, resume=False)
 
 
-async def resume_voyage(ctx: dict[str, Any], run_id: str) -> None:
-    """闸门批准后从断点恢复航程（gates approve 入队）。"""
-    await _make_engine().resume(uuid.UUID(run_id))
+async def resume_voyage(ctx: dict[str, Any], run_id: str, reset_attempts: bool = True) -> None:
+    """从断点恢复航程（闸门批准、回答提问、重试、对账认领都入队到这里）。
+
+    ``reset_attempts=False`` 由对账传：见 VoyageEngine.resume。"""
+    await _drive_voyage(run_id, resume=True, reset_attempts=reset_attempts)
 
 
 RECONCILE_STALE_MINUTES = 30  # 周期回收：终端无动静超过这个时长才算僵死
+# 对账把同一条航程拉起来这么多次、它却一步都没往前走，下一次就不再拉了，直接停下来
+# 等人看。没有这个上限时，一条一拉起来就死的航程会每半小时、每次开机被重跑一遍，
+# 钱照花，界面上什么都看不出来。
+MAX_RECLAIMS_WITHOUT_PROGRESS = 3
 
 
-async def _enqueue_reclaim(ctx: dict[str, Any], vid: object) -> bool:
+async def _note_reclaim(vid: uuid.UUID) -> bool:
+    """记一次认领。返回 False 表示不该再拉起来了（已停到 paused_error，或航程已不在途）。
+
+    进展用 (执行到第几步, 已通过步骤数, 已用 token, 计划调整次数) 衡量，存在
+    checkpoint["reclaim"] 里：和上次认领时一样就累加次数，不一样说明中间往前走过，
+    重新计数。只有对账在写这个键，而且是在确认没有驱动者之后写，不会和引擎抢。"""
+    from sqlalchemy import func as sa_func
+    from sqlalchemy import select
+
+    from app.agents.voyage.engine import park_run
+    from app.agents.voyage.failures import error_record
+    from app.models.base import utcnow
+    from app.models.voyage import IN_FLIGHT_STATUSES, VoyageRun, VoyageStep
+
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, vid)
+        if run is None or run.status not in IN_FLIGHT_STATUSES:
+            return False
+        passed = (
+            await session.execute(
+                select(sa_func.count())
+                .select_from(VoyageStep)
+                .where(VoyageStep.run_id == vid, VoyageStep.status == "passed")
+            )
+        ).scalar_one()
+        marker = [
+            int(run.cursor or 0),
+            int(passed),
+            int((run.usage or {}).get("total_tokens", 0) or 0),
+            int(run.plan_iteration or 0),
+        ]
+        checkpoint = dict(run.checkpoint or {})
+        state = checkpoint.get("reclaim")
+        state = state if isinstance(state, dict) else {}
+        count = int(state.get("count", 0) or 0) if state.get("marker") == marker else 0
+        if count < MAX_RECLAIMS_WITHOUT_PROGRESS:
+            checkpoint["reclaim"] = {
+                "count": count + 1,
+                "marker": marker,
+                "at": utcnow().isoformat(),
+            }
+            run.checkpoint = checkpoint
+            await session.commit()
+            return True
+    logger.warning("voyage %s made no progress across %d reclaims; pausing it", vid, count)
+    await park_run(
+        get_sessionmaker(),
+        EventBus(get_redis()),
+        vid,
+        error=error_record(
+            "NO_PROGRESS",
+            transient=False,
+            source="reconcile",
+            message=f"自动恢复了 {count} 次仍然没有进展",
+            detail="",
+        ),
+    )
+    return False
+
+
+async def _enqueue_reclaim(ctx: dict[str, Any], vid: uuid.UUID) -> bool:
     """把一条无人驱动的在途航程重新排上 resume；已有驱动者在跑（或在排队）就跳过。
 
     任务 id 与 API 入队的是同一个（voyage_job_id）：内联队列的去重因此能认出来，
     ``_if_idle`` 再保证撞上在途驱动者时直接丢弃，而不是排成它收尾后的续跑——
-    以前对账用按时间分桶的 id，跑着的长实验每 15 分钟会被多塞一个驱动者（#850）。"""
+    以前对账用按时间分桶的 id，跑着的长实验每 15 分钟会被多塞一个驱动者（#850）。
+
+    启动对账和周期回收都走这里，所以认领次数上限（_note_reclaim）对两者都生效。"""
     from app.core.queue import voyage_job_id
 
     job_id = voyage_job_id(vid)
     is_running = getattr(ctx["redis"], "is_running", None)
     if is_running is not None and is_running(job_id):
         return False
-    await ctx["redis"].enqueue_job("resume_voyage", str(vid), _job_id=job_id, _if_idle=True)
+    if not await _note_reclaim(vid):
+        return False
+    await ctx["redis"].enqueue_job(
+        "resume_voyage", str(vid), reset_attempts=False, _job_id=job_id, _if_idle=True
+    )
     return True
 
 
