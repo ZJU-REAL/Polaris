@@ -14,9 +14,7 @@ from app.agents.voyage import actions_experiment as ax
 from app.core.db import get_sessionmaker
 from app.core.llm.fake import FakeProvider
 from app.core.llm.router import LLMRouter
-from app.core.security import encrypt_secret
 from app.models.activity import Activity
-from app.models.llm_config import LLMProviderConfig, ModelRoute
 from app.models.voyage import VoyageRun
 from app.services import ssh_exec
 from tests.fake_ssh import FakeSSHConnector, FakeSSHServer
@@ -53,23 +51,6 @@ async def fake_ssh(app):
 @pytest_asyncio.fixture(autouse=True)
 def fast_poll(monkeypatch):
     monkeypatch.setattr(ax, "RUN_POLL_SECONDS", 0)
-
-
-async def _seed_default_route() -> None:
-    """default stage 路由到带 base_url + 加密 key 的 fake provider
-    （kind=fake 保证离线；resolve 出的 route 仍携带解密后的 api_key）。"""
-    async with get_sessionmaker()() as session:
-        provider = LLMProviderConfig(
-            name="eval-provider",
-            kind="fake",
-            base_url=EVAL_BASE_URL,
-            api_key_encrypted=encrypt_secret(EVAL_API_KEY),
-            enabled=True,
-        )
-        session.add(provider)
-        await session.flush()
-        session.add(ModelRoute(stage="default", provider_id=provider.id, model="fake-default"))
-        await session.commit()
 
 
 async def _create_with_params(client, headers, project_id, idea_id, cred_id, params):
@@ -109,17 +90,22 @@ class _RecordingProvider(FakeProvider):
         )
 
 
-async def test_eval_model_injects_llm_config(client, queue_stub, fake_ssh, bus_recorder):
-    """eval_model 非空：default 路由解析出的 base_url + 解密 api_key + eval_model
+async def test_eval_model_injects_llm_config(
+    client, queue_stub, fake_ssh, bus_recorder, claude_settings
+):
+    """eval_model 非空：网关的 OpenAI 兼容地址 + Claude 的 key + eval_model
     写成 workdir/llm_config.json；审计里只有路径与字节数，key 不落任何 Activity。"""
-    await _seed_default_route()
+    # 有 key 才有真实地址可交给实验机；模型调用本身仍用 fake（override）
+    claude_settings(LITELLM_API_KEY=EVAL_API_KEY, LITELLM_API_BASE=EVAL_BASE_URL)
+    router = LLMRouter()
+    router.override_provider(FakeProvider())
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
     exp = await _create_with_params(
         client, headers, project_id, idea_id, cred_id, {"eval_model": EVAL_MODEL}
     )
-    await _run_pipeline(client, headers, project_id, exp["voyage_id"])
+    await _run_pipeline(client, headers, project_id, exp["voyage_id"], router)
 
     config = json.loads(fake_ssh.files[f"polaris_runs/{exp['id']}/llm_config.json"])
     assert config == {"base_url": EVAL_BASE_URL, "api_key": EVAL_API_KEY, "model": EVAL_MODEL}

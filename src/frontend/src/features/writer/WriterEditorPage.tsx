@@ -330,21 +330,14 @@ export function WriterEditorPage() {
   const [assistMode, setAssistMode] = useState<AssistMode | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
 
-  // 当前撰写用的模型名（内联 AI 与 AI 起草都跑在 writing 阶段；
-  // 取模型路由表里 writing 阶段的 model，缺省回落到 default 阶段）。
-  // 路由表是 admin 端点，非管理员会取不到 → retry:false + 优雅回落。
-  const routesQuery = useQuery({
-    queryKey: ['llm', 'routes'],
-    queryFn: () => api.getLlmRoutes(),
+  // 当前撰写用的模型名：全产品固定一个模型，从模型状态里取；取不到就显示通用文案。
+  const llmStatusQuery = useQuery({
+    queryKey: ['llm', 'status'],
+    queryFn: () => api.getLlmStatus(),
     retry: false,
     staleTime: 5 * 60_000,
   });
-  const writingModel = useMemo(() => {
-    const routes = routesQuery.data;
-    if (!routes) return null;
-    const r = routes.find((x) => x.stage === 'writing') ?? routes.find((x) => x.stage === 'default');
-    return r?.model?.trim() || null;
-  }, [routesQuery.data]);
+  const writingModel = llmStatusQuery.data?.model?.trim() || null;
   useEffect(() => {
     setAssistMode(null);
     setHistoryOpen(false);
@@ -1088,7 +1081,7 @@ export function WriterEditorPage() {
                       }}
                     >
                       <Icon name="sparkle" size={11} style={{ flexShrink: 0, color: 'var(--accent)' }} />
-                      {writingModel ?? (routesQuery.isLoading ? tr('加载中…', 'Loading…') : tr('AI 写作', 'AI writing'))}
+                      {writingModel ?? (llmStatusQuery.isLoading ? tr('加载中…', 'Loading…') : tr('AI 写作', 'AI writing'))}
                     </span>
                     <button
                       className="btn btn-ghost sm"

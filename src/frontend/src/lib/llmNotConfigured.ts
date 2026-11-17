@@ -1,9 +1,12 @@
 import { tr } from './i18n';
 
-/* 「没有可用的模型」这一类错误（#840）：接口回的错误码、流里透出的异常名或后端原话，
-   都认成同一件事，统一给一句能照着做的大白话。 */
+/* 「引擎没有拿到 Claude 的 API key」这一类错误：接口回的错误码、流里透出的异常名或
+   后端原话，都认成同一件事，统一给一句能照着做的大白话。
 
-export const MODEL_SETTINGS_HREF = '/settings?tab=llm';
+   模型是固定的，key 由本机引擎启动时从环境变量读取——所以这句话只能教人设环境变量，
+   这是界面上少数几处允许出现环境变量名的地方。 */
+
+export const MODEL_SETTINGS_HREF = '/settings?tab=model';
 
 export function isLlmNotConfigured(detail: string): boolean {
   return (
@@ -15,7 +18,7 @@ export function isLlmNotConfigured(detail: string): boolean {
 
 export function llmNotConfiguredText(): string {
   return tr(
-    '还没有可用的模型，请在「设置 → 模型与智能体」中添加智能体或模型服务。',
-    'No model is available. Add an agent or a model provider in Settings → Models & agents.',
+    'Polaris 还没有拿到 Claude 的 API key。设置环境变量 ANTHROPIC_API_KEY 后重新打开 Polaris。',
+    'Polaris has no Claude API key yet. Set the ANTHROPIC_API_KEY environment variable, then reopen Polaris.',
   );
 }

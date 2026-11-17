@@ -7,32 +7,16 @@ import {
   patchConvTurn,
   pruneConvTurns,
   renameConv,
-  setPermissionAcross,
   turnsOf,
   updateConvTurns,
   type Turn,
   type TurnsByConv,
 } from '../convTurns';
 import { NoticeView, errorBlock, errorText } from '../ErrorNotice';
-import { PermissionCard } from '../PermissionCard';
-import { listboxKey } from '../listboxKeys';
 
 /* ============================================================
-   #850：流里的帧按会话分开写；切会话不把授权卡带过去。
+   #850：流里的帧按会话分开写；切会话不把别的会话的内容带过去。
    ============================================================ */
-
-const request = {
-  request_id: 'r1',
-  tool_id: 't1',
-  title: 'Run npm test',
-  kind: 'execute',
-  input: '{"command":"npm test"}',
-  options: [
-    { id: 'o1', name: 'Allow', kind: 'allow_once' },
-    { id: 'o3', name: 'Reject', kind: 'reject_once' },
-  ],
-  timeout_s: 300,
-};
 
 const ask = (q: string): Turn[] => [
   { role: 'user', blocks: [{ kind: 'text', text: q }] },
@@ -43,52 +27,35 @@ const ask = (q: string): Turn[] => [
 const frame = (m: TurnsByConv, conv: string, event: string, data: unknown) =>
   patchConvTurn(m, conv, (blocks) => applyAssistantEvent(blocks, event, data));
 
-const permissions = (turns: Turn[]) =>
-  turns.flatMap((t) => t.blocks).filter((b): b is Extract<AssistantBlock, { kind: 'permission' }> => b.kind === 'permission');
+const tools = (turns: Turn[]) =>
+  turns.flatMap((t) => t.blocks).filter((b): b is Extract<AssistantBlock, { kind: 'tool' }> => b.kind === 'tool');
 
 describe('turns per conversation', () => {
-  it('a permission request stays in its own conversation after switching away', () => {
-    // A 在跑，等授权；用户切到 B（B 从服务端载入，最后一轮是助手轮）
-    let m: TurnsByConv = updateConvTurns({}, 'A', () => ask('run the tests'));
-    m = frame(m, 'A', 'tool_call', { id: 't1', name: 'agent_execute', args: { title: 'Run npm test' } });
+  it('a frame stays in its own conversation after switching away', () => {
+    // A 在跑；用户切到 B（B 从服务端载入，最后一轮是助手轮）
+    let m: TurnsByConv = updateConvTurns({}, 'A', () => ask('find papers'));
     m = { ...m, B: [...ask('hello'), { role: 'user', blocks: [{ kind: 'text', text: 'again' }] }, { role: 'assistant', blocks: [{ kind: 'text', text: 'hi' }] }] };
     const before = turnsOf(m, 'B');
-    // 切走之后 A 的流才来授权请求
-    m = frame(m, 'A', 'permission_request', request);
+    // 切走之后 A 的流才来工具调用
+    m = frame(m, 'A', 'tool_call', { id: 't1', name: 'search_papers', args: {} });
     expect(turnsOf(m, 'B')).toBe(before);
-    expect(permissions(turnsOf(m, 'B'))).toEqual([]);
-    expect(permissions(turnsOf(m, 'A'))).toHaveLength(1);
+    expect(tools(turnsOf(m, 'B'))).toEqual([]);
+    expect(tools(turnsOf(m, 'A'))).toHaveLength(1);
   });
 
-  it('switching back to a running conversation keeps the in-memory card, which is still actionable', () => {
-    let m: TurnsByConv = updateConvTurns({}, 'A', () => ask('run the tests'));
-    m = frame(m, 'A', 'permission_request', request);
+  it('switching back to a running conversation keeps the in-memory turn', () => {
+    let m: TurnsByConv = updateConvTurns({}, 'A', () => ask('find papers'));
+    m = frame(m, 'A', 'tool_call', { id: 't1', name: 'search_papers', args: {} });
     const running = new Set(['A']);
     // 切到 B：只留在跑的 A 和正在看的 B
-    m = pruneConvTurns({ ...m, B: ask('other') }, new Set([...running, 'B']));
+    m = pruneConvTurns({ ...m, B: ask('other'), C: ask('old') }, new Set([...running, 'B']));
     expect(Object.keys(m).sort()).toEqual(['A', 'B']);
-    // 切回 A：它还在跑，用内存里那份，不从服务端重建（服务端不存授权请求）
+    // 切回 A：它还在跑，用内存里那份，不从服务端重建（这一轮还没落库）
     expect(keepLocalTurns(m, 'A', running)).toBe(true);
-    const card = permissions(turnsOf(m, 'A'))[0]!;
-    expect(card.state).toBe('pending');
-    const html = renderToStaticMarkup(
-      <PermissionCard block={card} conversationId="A" turnLive onStateChange={() => undefined} />,
-    );
-    expect(html.match(/<button/g)?.length).toBe(2);
+    expect(tools(turnsOf(m, 'A'))[0]!.state).toBe('running');
     // 已经跑完的会话照常从服务端拉
     expect(keepLocalTurns(m, 'A', new Set())).toBe(false);
     expect(keepLocalTurns(m, 'C', running)).toBe(false);
-  });
-
-  it('answering a card updates it wherever it lives', () => {
-    let m: TurnsByConv = updateConvTurns({}, 'A', () => ask('x'));
-    m = frame(m, 'A', 'permission_request', request);
-    m = { ...m, B: ask('y') };
-    const b = m.B;
-    m = setPermissionAcross(m, 'r1', 'answering', { from: 'pending' });
-    expect(permissions(turnsOf(m, 'A'))[0]!.state).toBe('answering');
-    expect(m.B).toBe(b);
-    expect(setPermissionAcross(m, 'nope', 'allowed')).toBe(m);
   });
 
   it('a new conversation keeps its turns when it gets its real id', () => {
@@ -101,24 +68,42 @@ describe('turns per conversation', () => {
 
   it('ignores frames when the last turn is not an answer', () => {
     const m: TurnsByConv = { A: [{ role: 'user', blocks: [] }] };
-    expect(frame(m, 'A', 'permission_request', request)).toBe(m);
+    expect(frame(m, 'A', 'delta', { text: 'x' })).toBe(m);
     const empty: TurnsByConv = {};
-    expect(frame(empty, 'A', 'permission_request', request)).toBe(empty);
+    expect(frame(empty, 'A', 'delta', { text: 'x' })).toBe(empty);
+  });
+
+  it('drops the external-agent approval frames that are no longer sent', () => {
+    // 旧引擎还可能发这两帧：认不出就原样返回，不画卡片也不抛
+    const blocks: AssistantBlock[] = [{ kind: 'text', text: 'working' }];
+    const request = { request_id: 'r1', options: [{ id: 'o1', name: 'Allow', kind: 'allow_once' }] };
+    expect(applyAssistantEvent(blocks, 'permission_request', request)).toBe(blocks);
+    expect(applyAssistantEvent(blocks, 'permission_resolved', { request_id: 'r1', outcome: 'allowed' })).toBe(blocks);
   });
 });
 
 describe('error notices', () => {
-  it('the no-model error renders a real in-app link to settings', () => {
+  it('the missing-key error says how to provide it and links to the model status', () => {
     const block = errorBlock('LLM_NOT_CONFIGURED');
     expect(block.action).toBe('model-settings');
+    expect(block.text).toContain('API key');
+    expect(block.text).toContain('ANTHROPIC_API_KEY');
     expect(block.text).not.toContain('](');
+    // 模型不可配置：不再让人去「添加模型」或「添加智能体」
+    expect(block.text).not.toMatch(/智能体|模型服务|添加/);
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <NoticeView block={block} />
       </MemoryRouter>,
     );
-    expect(html).toMatch(/<a [^>]*href="\/settings\?tab=llm"[^>]*>去设置<\/a>/);
-    expect(html).not.toContain('[去设置]');
+    expect(html).toMatch(/<a [^>]*href="\/settings\?tab=model"[^>]*>查看模型状态<\/a>/);
+    expect(html).not.toContain('tab=llm');
+  });
+
+  it('recognises the same error in its other spellings', () => {
+    const text = errorText('LLM_NOT_CONFIGURED');
+    expect(errorText('Error: LLMNotConfiguredError')).toBe(text);
+    expect(errorBlock('No model configured for stage default').action).toBe('model-settings');
   });
 
   it('other errors carry no link and keep the raw detail when asked', () => {
@@ -127,33 +112,12 @@ describe('error notices', () => {
     // 认不出的错误原样就是正文，不再重复一遍
     expect(block.text).toBe('boom');
     expect(block.detail).toBeUndefined();
-    expect(errorBlock('ACP_AGENT_NOT_AVAILABLE', true).detail).toBe('ACP_AGENT_NOT_AVAILABLE');
-    expect(errorBlock('ACP_AGENT_NOT_AVAILABLE').detail).toBeUndefined();
     const html = renderToStaticMarkup(
       <MemoryRouter>
-        <NoticeView block={errorBlock('Error: ACP_AGENT_NOT_AVAILABLE', true)} />
+        <NoticeView block={errorBlock('Error: something broke', true)} />
       </MemoryRouter>,
     );
     expect(html).not.toContain('<a ');
-    expect(html).toContain('ACP_AGENT_NOT_AVAILABLE');
-  });
-
-  it('no longer talks about sharing agents', () => {
-    expect(errorText('ACP_AGENT_NOT_AVAILABLE')).not.toContain('共享');
-    expect(errorText('ACP_AGENT_NOT_AVAILABLE')).toContain('已不可用');
-  });
-});
-
-describe('backend picker keys', () => {
-  it('moves with the arrows, wraps, and closes on Escape', () => {
-    expect(listboxKey('ArrowDown', -1, 3)).toEqual({ focus: 0 });
-    expect(listboxKey('ArrowDown', 2, 3)).toEqual({ focus: 0 });
-    expect(listboxKey('ArrowUp', 0, 3)).toEqual({ focus: 2 });
-    expect(listboxKey('ArrowUp', -1, 3)).toEqual({ focus: 2 });
-    expect(listboxKey('Home', 1, 3)).toEqual({ focus: 0 });
-    expect(listboxKey('End', 0, 3)).toEqual({ focus: 2 });
-    expect(listboxKey('Escape', 1, 3)).toBe('close');
-    expect(listboxKey('a', 1, 3)).toBeNull();
-    expect(listboxKey('ArrowDown', -1, 0)).toBeNull();
+    expect(html).toContain('something broke');
   });
 });

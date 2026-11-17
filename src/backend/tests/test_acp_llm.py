@@ -1,7 +1,6 @@
 """外部 agent 当模型用（#840）：provider、进程池、路由接管、设置接口、助手。"""
 
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
@@ -19,7 +18,6 @@ from app.core.llm.base import (
     ThinkingDelta,
     ToolsUnsupportedError,
 )
-from tests.conftest import register_and_login
 
 FAKE = str(Path(__file__).parent / "fixtures" / "fake_acp_agent.py")
 
@@ -162,92 +160,4 @@ def no_fake_fallback(monkeypatch):
     get_settings.cache_clear()
     yield
     os.environ["POLARIS_LLM_FAKE_FALLBACK"] = "1"
-    get_settings.cache_clear()
-
-
-async def test_an_agent_takes_over_when_no_model_api_is_configured(client, no_fake_fallback):
-    from app.core.llm.router import LLMNotConfiguredError, get_llm_router
-
-    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
-    router = get_llm_router()
-    with pytest.raises(LLMNotConfiguredError):
-        await router.resolve("relevance")
-    onboarding = (await client.get("/api/onboarding", headers=headers)).json()
-    assert next(i for i in onboarding["items"] if i["id"] == "model")["done"] is False
-
-    agent = await _register(client, headers)
-    provider, route = await router.resolve("relevance")
-    assert route.provider_kind == "acp" and route.acp.agent_id == agent["id"]
-    assert isinstance(provider, AcpLLMProvider)
-    # 能力型环节不接管：agent 产不出向量，照旧走降级
-    with pytest.raises(NotImplementedError):
-        await router.resolve("embedding")
-
-    result = await router.complete("relevance", [Message("user", "rate it")])
-    assert result.content == "llm[default]: rate it"
-    onboarding = (await client.get("/api/onboarding", headers=headers)).json()
-    assert next(i for i in onboarding["items"] if i["id"] == "model")["done"] is True
-
-    # 停用后不再接管
-    await client.patch(f"/api/acp-agents/{agent['id']}", json={"enabled": False}, headers=headers)
-    with pytest.raises(LLMNotConfiguredError):
-        await router.resolve("relevance")
-
-
-async def test_routes_can_target_an_agent(client):
-    from app.core.llm.router import get_llm_router
-
-    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
-    agent = await _register(client, headers)
-    bad = [{"stage": "default", "model": "x"}]  # 两个都没给
-    assert (await client.put("/api/admin/llm/routes", json=bad, headers=headers)).status_code == 422
-    resp = await client.put(
-        "/api/admin/llm/routes",
-        json=[{"stage": "relevance", "acp_agent_id": agent["id"], "model": "fast"}],
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()[0]["acp_agent_id"] == agent["id"] and resp.json()[0]["provider_id"] is None
-    result = await get_llm_router().complete("relevance", [Message("user", "hi")])
-    assert result.content == "llm[fast]: hi"
-
-    # 测试连接：真让 agent 答一句
-    test = await client.post(
-        "/api/admin/llm/test-model", json={"acp_agent_id": agent["id"]}, headers=headers
-    )
-    assert test.status_code == 200 and test.json()["ok"] is True, test.text
-
-    # 删掉 agent：指向它的路由跟着删（外键级联），不留一行指向不存在的东西
-    await client.delete(f"/api/acp-agents/{agent['id']}", headers=headers)
-    routes = (await client.get("/api/admin/llm/routes", headers=headers)).json()
-    assert routes == []
-
-
-async def test_polaris_assistant_runs_on_the_agent_when_it_takes_over(
-    client, no_fake_fallback, monkeypatch, tmp_path
-):
-    from app.core.config import get_settings
-
-    monkeypatch.setenv("POLARIS_CHAT_AGENT_ENABLED", "true")
-    monkeypatch.setenv("POLARIS_DATA_DIR", str(tmp_path))
-    get_settings.cache_clear()
-    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
-    await _register(client, headers)
-    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
-    resp = await client.post(
-        f"/api/chat/conversations/{conv_id}/turn",
-        json={"question": "hello there", "backend": "polaris"},
-        headers=headers,
-    )
-    assert resp.status_code == 200
-    frames = []
-    for block in resp.text.strip().split("\n\n"):
-        lines = dict(line.split(": ", 1) for line in block.split("\n") if ": " in line)
-        frames.append((lines.get("event"), json.loads(lines.get("data", "{}"))))
-    assert frames[0][0] == "meta" and frames[0][1]["model"] == "Fake Agent"
-    assert frames[-1][0] == "done"
-    text = "".join(d["text"] for n, d in frames if n == "delta")
-    # 走的是 agent 会话（默认脚本：读 notes、回显问题），不是一次性补全
-    assert text == "echo: hello there"
-    os.environ.pop("POLARIS_CHAT_AGENT_ENABLED", None)
     get_settings.cache_clear()

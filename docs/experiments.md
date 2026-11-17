@@ -67,7 +67,8 @@ flowchart LR
    are validated too (no absolute paths, no `..`). The platform then creates the workdir, writes its
    own `env.sh` (workdir, model/dataset roots, pip mirror, HF endpoint, proxy — see settings below)
    and, if you set an eval model, an `llm_config.json` the code must read instead of hard-coding
-   keys. A **resource preflight** probes GPUs and every locally-referenced model or dataset path; a
+   keys (it carries Polaris's Claude API key and an OpenAI-compatible base URL: `{gateway}/v1`, or
+   `https://api.anthropic.com/v1` with a direct key). A **resource preflight** probes GPUs and every locally-referenced model or dataset path; a
    missing local model asks you for the correct path rather than failing later. Dependency
    installation runs detached on the server and self-heals: install failures go back to the model to
    fix `requirements.txt`/`run.sh`, without a fixed retry cap.

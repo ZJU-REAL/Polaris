@@ -33,6 +33,7 @@ import { join } from 'node:path';
 import {
   createPluginHost,
   enginePortProblem,
+  ensureShellEnv,
   marketPluginsDir as kernelMarketPluginsDir,
   type ConfigEntry,
   type EnginePortProblem,
@@ -184,6 +185,11 @@ async function doStartKernel(): Promise<Kernel> {
   bootstrapTracker = null;
   bootstrapStatus = { phase: 'starting', done: false };
   engineProblem = null;
+  // 从访达/程序坞启动的应用拿不到 ~/.zshrc 里 export 的变量，引擎读的 Claude API
+  // 密钥与地址就落空。这里向登录 shell 要一次（只取那几个名字、已有的不覆盖、
+  // Windows 不做）。现在就发起、与下面的装配并行，到拉起引擎前才等它：shell 再慢
+  // 也有超时兜底，每次应用启动只跑一次（内核重启复用同一个结果）。
+  const shellEnv = ensureShellEnv();
   // 装配顺序（storage → baseUrl → 哈希复核 → 种子 → Loader → SqliteTree）
   // 住在 @polaris/kernel 的 createPluginHost 里（#754）：
   // 装哪些内置插件、树长什么样、三方包的 import 基准在哪，两个形态必须一致，
@@ -218,6 +224,12 @@ async function doStartKernel(): Promise<Kernel> {
       secretsFile: join(userData, 'engine-secrets.json'),
       pidFile: join(userData, 'engine.pid.json'),
     };
+  }
+  if (engine) {
+    // 引擎子进程的环境在 spawn 那一刻从 process.env 取，必须先等 shell 那边落定。
+    // 只记名字，值绝不进日志。
+    const picked = await shellEnv;
+    if (picked.length) console.log(`[kernel] 从登录 shell 取得环境变量：${picked.join(', ')}`);
   }
   if (engine && configTree) {
     // 引擎注入走 entry.update 而不是 tree.update：后者会把 enabled+spec

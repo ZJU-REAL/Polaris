@@ -32,9 +32,9 @@ The full loop — Navigator plans, Helm executes, Sextant verifies — is explai
 user and their own admin. You get encrypted SSH credentials, per-call token and cost accounting
 attributed to project and run, and your own libraries (with optional monthly AI budgets).
 
-**Bring your own agent.** The easiest way to give Polaris a model is an agent you already use:
-Claude Code, Codex, Gemini CLI and other ACP agents answer model calls with no API key, and can also
-drive the assistant. Model APIs are optional. See [Agent backends](agents.md).
+**One model, nothing to tune.** Polaris uses the Claude API with one fixed model. Set your Claude
+API key as an environment variable, restart the app, and every stage works; there is no provider
+list or per-stage model table to maintain. See [Configuration](configuration.md#model).
 
 ## The pipeline, stage by stage
 
@@ -95,11 +95,10 @@ looks like; to do real work, [run your own instance](getting-started.md).
 
 | If you want to… | Read |
 | --- | --- |
-| Install the app and give it a model | [Getting started](getting-started.md) |
+| Install the app and set the Claude API key | [Getting started](getting-started.md) |
 | Understand the mental model (pipeline, Voyages, skills, tools) | [Core concepts](concepts.md) |
 | See how the system is put together | [Architecture](architecture.md) |
-| Configure environment variables and model routing | [Configuration](configuration.md) |
-| Use Claude Code or another agent as the model | [Agent backends](agents.md) |
+| Configure environment variables and the Claude API key | [Configuration](configuration.md) |
 | Understand how the desktop app runs its engine | [Desktop](desktop.md) |
 | Extend the desktop app with plugins | [Plugins](plugins.md) |
 

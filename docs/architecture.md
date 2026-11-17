@@ -58,7 +58,7 @@ flowchart TB
     end
 
     MODELS --> DB[("SQLite")]
-    CORE -- "core/llm abstraction" --> LLM["Agent backends (ACP)\nor model APIs"]
+    CORE -- "core/llm abstraction" --> LLM["Claude API\n(direct or through a gateway)"]
     TASKS -- "asyncssh (whitelisted, audited writes)" --> GPU["GPU servers"]
     TASKS -- "httpx" --> LIT["arXiv, Semantic Scholar, OpenAlex"]
     MCP -- "Streamable HTTP / stdio" --> EXT["Claude Code, Codex, Cursor"]
@@ -104,17 +104,21 @@ overlaps itself, and a failure is logged without stopping its loop.
 Because Voyages persist their state, a run cut off by a crash or by quitting the app resumes from its
 last checkpoint on the next start rather than starting over.
 
-## The LLM abstraction and model routing
+## The LLM layer
 
 All model calls go through a single boundary, `app/core/llm/`, which exposes a uniform
-`complete()` / `stream()` interface over agent backends (Claude Code, Codex and other ACP agents —
-see [Agent backends](agents.md)) and model APIs (OpenAI-compatible endpoints such as DeepSeek or
-Qwen, the OpenAI Responses API, and Anthropic). Business code never imports a provider SDK directly.
+`complete()` / `stream()` interface. Behind it is the Claude API, called with the official
+`anthropic` Python SDK. Business code never imports the SDK directly.
 
-Model choice is not hard-coded. A DB-backed routing table maps each research stage to an agent or a
-provider and model, so cheap models can score literature while strong models handle idea debate and
-paper drafting. The routing table is editable under Settings → Models & agents. Every call is
-metered: tokens and cost are attributed to the project and Voyage.
+There is one fixed model, `claude-opus-5`, for every research stage. The key and endpoint come from
+environment variables read at startup (`ANTHROPIC_API_KEY`, or a LiteLLM gateway's pair), not from
+the database, and nothing about the model is configurable in the app; **Settings → Model** is a
+read-only status page. Stages differ only in internal settings: patience (timeouts and retries) and
+thinking depth (low for short scoring and extraction calls, medium for the assistant and structured
+generation, high for long writing and compiling). Embeddings and rerank come from the gateway's
+OpenAI-compatible endpoints when a gateway address is set; without one, search falls back to
+keywords. See [Configuration](configuration.md#model). Every call is metered: tokens and cost are
+attributed to the project and Voyage.
 
 ## Deterministic vs. judgemental split
 

@@ -99,8 +99,9 @@ The backend follows one strict rule, and reviews enforce it:
 - `api/` routers are thin and hold no business logic.
 - `services/` hold the business logic and never import FastAPI.
 - `models/` hold SQLAlchemy models.
-- **All LLM calls go through `app/core/llm/`.** No direct provider SDK imports in business code; model
-  choice comes from the DB routing table.
+- **All LLM calls go through `app/core/llm/`.** No direct SDK imports in business code; the model
+  is fixed (`claude-opus-5`, see [Configuration](configuration.md#model)) and business code never
+  picks one.
 - **Deterministic vs. judgemental split.** Crawling, parsing, deduplication, and watermark logic are
   ordinary code or background tasks; only judgement calls (scoring, synthesis, generation) reach an LLM.
 - **Long tasks go through the task queue** (`app/core/queue.py`, in-process), never in the request

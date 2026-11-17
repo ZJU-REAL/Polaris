@@ -231,7 +231,7 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
       convId,
       (handlers) =>
         cfg.stream({ question, history: history10, context: payload.context }, handlers),
-      // LLM_NOT_CONFIGURED 是还没配模型的用户最常撞到的错误，裸露代码太生硬，翻译成一句
+      // LLM_NOT_CONFIGURED（引擎没拿到 API key）是新用户最常撞到的错误，裸露代码太生硬，翻译成一句
       // 能行动的大白话（流里也可能只透出异常名或后端原话）；其余错误原样透出，别把排错线索吃掉。
       (detail) =>
         toast(

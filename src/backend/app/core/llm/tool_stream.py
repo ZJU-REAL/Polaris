@@ -53,22 +53,35 @@ class ToolCallAccumulator:
 
     def __init__(self) -> None:
         self._text: list[str] = []
-        self._thinking: list[str] = []
-        self._thinking_signature: str | None = None
+        #: 按出现顺序的片段：("text", [分片]) / ("thinking", [分片], 签名) / ("tool", index)
+        self._segments: list[list[Any]] = []
         self._pending: dict[int, _Pending] = {}
-        self._order: list[int] = []
+
+    def _open(self, kind: str) -> list[Any]:
+        """当前片段是这一种就接着写，否则另起一段。签过名的思考块已经封口。"""
+        last = self._segments[-1] if self._segments else None
+        if last is not None and last[0] == kind and not (kind == "thinking" and last[2]):
+            return last
+        seg: list[Any] = [kind, [], None]
+        self._segments.append(seg)
+        return seg
 
     def feed(self, ev: StreamEvent) -> None:
         if isinstance(ev, TextDelta):
             self._text.append(ev.text)
+            self._open("text")[1].append(ev.text)
         elif isinstance(ev, ThinkingDelta):
-            self._thinking.append(ev.text)
+            # 签名在每个思考块的末尾给一次，而且只对那一块的内容有效：一条消息里有
+            # 几个思考块就得留几个，合并成一块再配最后一个签名，回放时会被拒掉
+            seg = self._open("thinking")
+            if ev.text:
+                seg[1].append(ev.text)
             if ev.signature:
-                self._thinking_signature = ev.signature
+                seg[2] = ev.signature
         elif isinstance(ev, ToolUseStart):
             if ev.index not in self._pending:
                 self._pending[ev.index] = _Pending(ev.id, ev.name)
-                self._order.append(ev.index)
+                self._segments.append(["tool", ev.index, None])
             else:
                 # 有的中转在后续分片里重发 id/name：首次非空即锁定，不覆盖
                 cur = self._pending[ev.index]
@@ -80,7 +93,7 @@ class ToolCallAccumulator:
                 # 没见过 start 就先来了参数：补一个占位，name 留空，finish 时丢弃
                 cur = _Pending("", "")
                 self._pending[ev.index] = cur
-                self._order.append(ev.index)
+                self._segments.append(["tool", ev.index, None])
             cur.args.append(ev.json_fragment)
         # ToolUseStop / StreamDone 不需要动作：参数一律在 finish 时统一解析
 
@@ -93,21 +106,27 @@ class ToolCallAccumulator:
         return any(p.name for p in self._pending.values())
 
     def finish(self) -> tuple[ContentBlock, ...]:
-        """产出块列表：thinking → text → 各个 tool_use（按 index 首次出现的顺序）。"""
+        """产出块列表，顺序与模型给出的一致（思考 / 正文 / 工具调用可以交替出现）。"""
         blocks: list[ContentBlock] = []
-        thinking = "".join(self._thinking)
-        if thinking:
-            blocks.append(ThinkingBlock(thinking, self._thinking_signature))
-        text = self.text
-        if text:
-            blocks.append(TextBlock(text))
-        for index in self._order:
-            pending = self._pending[index]
-            if not pending.name:
-                logger.warning("tool call at index %s has no name; dropped", index)
-                continue
-            call_id = pending.id or f"call_{index}"
-            blocks.append(ToolUseBlock(call_id, pending.name, _parse_args(pending)))
+        for seg in self._segments:
+            kind = seg[0]
+            if kind == "thinking":
+                thinking = "".join(seg[1])
+                # 没有文本但有签名的也要留：思考内容没回传时，签名就是这一块的全部
+                if thinking or seg[2]:
+                    blocks.append(ThinkingBlock(thinking, seg[2]))
+            elif kind == "text":
+                text = "".join(seg[1])
+                if text:
+                    blocks.append(TextBlock(text))
+            else:
+                index = seg[1]
+                pending = self._pending[index]
+                if not pending.name:
+                    logger.warning("tool call at index %s has no name; dropped", index)
+                    continue
+                call_id = pending.id or f"call_{index}"
+                blocks.append(ToolUseBlock(call_id, pending.name, _parse_args(pending)))
         return tuple(blocks)
 
 

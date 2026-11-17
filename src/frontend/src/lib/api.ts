@@ -608,138 +608,31 @@ export interface GateRead {
 // Admin · LLM
 // ============================================================
 
-export type LlmProviderKind = 'openai_compat' | 'openai_responses' | 'anthropic' | 'fake';
-
-/** 与后端 `app/core/llm/router.py` 的 STAGES 保持一致（大白话名字见 lib/stageLabels.ts）。
- *
- * 逐项对齐不是洁癖：这里多一个后端没有的，管理员一配就会让**整张路由表**存不进去
- * （PUT 是整表覆盖，遇到未知 stage 直接 400）；这里少一个后端有的，那个环节在界面上
- * 就不存在，只能改数据库。两边都真实发生过。 */
-export const LLM_STAGES = [
-  'default',
-  'agent',
-  'navigator',
-  'sextant',
-  'relevance',
-  'librarian',
-  'digest',
-  'extract',
-  'translation',
-  'reading',
-  'embedding',
-  'rerank',
-  'forge',
-  'forge_generate',
-  'forge_signal',
-  'goal_explore',
-  'proposal',
-  'proposal_review',
-  'debate',
-  'discovery_plan',
-  'experiment',
-  'writing',
-  'review',
-  'citation_intent',
-  'extract_skeleton',
-  'extract_method',
-  'extract_gaps',
-  'rag_expand',
-  'rag_rerank',
-  'rag_answer',
-  'hyp_generate',
-  'hyp_ground',
-  'hyp_novelty',
-  'hyp_feasibility',
-  'hyp_compare',
-] as const;
-
-/**
- * 插件命名空间环节（#736）：`plugin:<pack>:<stage>` 三段式，段字符集限 [a-z0-9-]。
- * 与后端 `app/core/llm/router.py` 的 PLUGIN_STAGE_RE 对齐（vitest 守卫盯着两边）。
- * 这类环节不进 LLM_STAGES（那是内置清单，与后端 STAGES 逐项对齐）；它们由插件
- * 在运行时注册，路由表里有记录才会出现在界面上。
- */
-export const PLUGIN_STAGE_RE = /^plugin:[a-z0-9-]+:[a-z0-9-]+$/;
-
-/** stage 名是否为插件命名空间串（只看形状，不管对应插件是否加载）。 */
-export function isPluginStage(stage: string): boolean {
-  return PLUGIN_STAGE_RE.test(stage);
-}
-
-export interface LlmProviderRead {
-  id: string;
-  name: string;
-  kind: LlmProviderKind;
-  base_url: string | null;
-  user_agent: string | null;
-  api_key_masked: string | null;
-  enabled: boolean;
-  /** 可用模型 id 列表（null = 未配置） */
-  models: string[] | null;
-  /** rerank 端点路径（#810）；null = 默认 /rerank。仅 openai_compat 使用 */
-  rerank_path: string | null;
-}
-
-export interface LlmProviderInput {
-  name: string;
-  kind: LlmProviderKind;
-  base_url?: string;
-  /** 可选；仅 Anthropic Provider 使用，空字符串恢复客户端默认值 */
-  user_agent?: string;
-  /** 空字符串 = 不变（PATCH 时） */
-  api_key?: string;
-  enabled: boolean;
-  /** 可用模型 id 列表；整体替换（清空传 []） */
-  models?: string[];
-  /** rerank 端点路径，必须以 / 开头；仅 openai_compat 使用 */
-  rerank_path?: string;
-}
-
-/** 推理档位；与后端 app/core/llm/base.py 的 EFFORT_LEVELS 对齐 */
-export type LlmEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-
-export const LLM_EFFORT_LEVELS: LlmEffort[] = [
-  'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
-];
-
-export interface LlmRoute {
-  stage: string;
-  /** 二选一：模型 API（provider_id）或智能体（acp_agent_id，#840） */
-  provider_id: string | null;
-  acp_agent_id?: string | null;
-  /** 模型 API 必填；智能体可空（= 用它自己的默认模型） */
+/** 模型固定为一个（Claude），key 由本机引擎启动时从环境变量读取；这里只读状态。 */
+export interface LlmStatus {
+  /** 引擎是否拿到了 Claude 的 API key */
+  configured: boolean;
   model: string;
-  temperature?: number | null;
-  /** null / 缺省 = 不发送该参数，用模型默认档位 */
-  effort?: LlmEffort | null;
-  /** 模型的上下文窗口（token）；null = 没填，调用方按保守常量走 */
-  context_window?: number | null;
-  /** 输入预算覆盖（键 → 字符数）；缺键 = 用默认值（#811） */
-  input_budgets?: Record<string, number> | null;
+  /** 只有主机名[:端口]，如 api.anthropic.com；永远不含 key */
+  base_host: string;
+  embedding: { model: string; available: boolean };
+  rerank: { model: string; available: boolean };
 }
 
-/** 一个可调的输入预算（后端 core/llm/budgets.py 的登记表）。 */
-export interface LlmInputBudgetSpec {
-  stage: string;
-  key: string;
-  default: number;
-  minimum: number;
-  maximum: number;
-  /** 窗口 token → 预算字符上限的换算系数 */
-  chars_per_window_token: number;
-}
+export type LlmCheckError =
+  | 'not_configured'
+  | 'auth_failed'
+  | 'unreachable'
+  | 'model_not_found'
+  | 'rate_limited'
+  | 'failed';
 
-export type LlmTestCapability = 'chat' | 'embedding' | 'rerank';
-
-/** 连通性测试：测模型 API 的某个模型，或真跑一次智能体（#840，可能要 10–60 秒）。 */
-export type LlmTestModelInput =
-  | { provider_id: string; model: string; capability: LlmTestCapability }
-  | { acp_agent_id: string; model?: string };
-
-export interface LlmTestResult {
+/** 真发一次极小的调用；接口本身总是 200，成败看 ok。 */
+export interface LlmCheckResult {
   ok: boolean;
-  latency_ms: number;
-  error?: string | null;
+  latency_ms: number | null;
+  error: LlmCheckError | null;
+  detail: string | null;
 }
 
 export interface LlmUsageRow {
@@ -891,9 +784,9 @@ export interface EmbeddingSpaceItem {
 
 export interface EmbeddingSpaceStatus {
   active: EmbeddingSpaceItem | null;
-  /** 路由表里现在配的向量模型 */
+  /** 现在固定使用的向量模型 */
   routed_model: string | null;
-  /** 配的模型已经不是建库那个了：新向量一律拒绝写入，需要确认换用 */
+  /** 索引不是用现在这个模型建的：新向量一律拒绝写入，需要确认后重建 */
   mismatched: boolean;
   spaces: EmbeddingSpaceItem[];
 }
@@ -3397,82 +3290,6 @@ export interface DownloadClientIdentity {
   email: string;
 }
 
-// —— 外部 agent 后端（ACP，#836）——
-
-export type AcpPermissionPolicy = 'deny' | 'ask' | 'read_only' | 'auto';
-
-/** 内置模板 + 这台机器上装没装（只查 PATH）。 */
-export interface AcpAgentTemplate {
-  id: string;
-  name: string;
-  description: string;
-  command: string;
-  args: string[];
-  detect: string[];
-  install: string;
-  login: string;
-  homepage: string;
-  installed: boolean;
-  found: Record<string, string | null>;
-}
-
-/** 上一次握手探到的 agent 信息。 */
-export interface AcpProbeInfo {
-  protocol_version: number | null;
-  name: string;
-  title: string;
-  version: string;
-  load_session: boolean;
-  mcp_http: boolean;
-  mcp_sse: boolean;
-  prompt_image: boolean;
-  auth_methods: unknown[];
-}
-
-export interface AcpAgentRead {
-  id: string;
-  slug: string;
-  name: string;
-  template: string;
-  command: string;
-  args: string[] | null;
-  permission_policy: AcpPermissionPolicy;
-  enabled: boolean;
-  last_probe: AcpProbeInfo | null;
-  last_error: string | null;
-  last_probed_at: string | null;
-  /** 只回变量名，值永远读不回来 */
-  env_keys: string[];
-  command_found: boolean;
-}
-
-export interface AcpAgentCreate {
-  slug: string;
-  name?: string;
-  /** 'custom' 或一个模板 id */
-  template: string;
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  permission_policy?: AcpPermissionPolicy;
-  enabled?: boolean;
-}
-
-export interface AcpAgentUpdate {
-  name?: string;
-  command?: string;
-  args?: string[];
-  /** 不传 = 不动；{} = 清空；只能整体替换 */
-  env?: Record<string, string>;
-  permission_policy?: AcpPermissionPolicy;
-  enabled?: boolean;
-}
-
-/** 助手能用的「谁来答」：Polaris 自己，或一个外部 agent。 */
-export type ChatBackend =
-  | { id: 'polaris'; name: string; kind: 'polaris' }
-  | { id: string; name: string; kind: 'acp'; template?: string; permission_policy?: AcpPermissionPolicy };
-
 export const api = {
   /** 健康检查：{status, version}（反馈上下文里带版本号用）。 */
   health(): Promise<HealthInfo> {
@@ -4986,29 +4803,11 @@ export const api = {
   },
 
   // —— Admin · LLM ——
-  listLlmProviders(): Promise<LlmProviderRead[]> {
-    return request<LlmProviderRead[]>('/admin/llm/providers');
+  getLlmStatus(): Promise<LlmStatus> {
+    return request<LlmStatus>('/llm/status');
   },
-  createLlmProvider(input: LlmProviderInput): Promise<LlmProviderRead> {
-    return requestJson<LlmProviderRead>('/admin/llm/providers', 'POST', input);
-  },
-  patchLlmProvider(id: string, input: Partial<LlmProviderInput>): Promise<LlmProviderRead> {
-    return requestJson<LlmProviderRead>(`/admin/llm/providers/${id}`, 'PATCH', input);
-  },
-  deleteLlmProvider(id: string): Promise<void> {
-    return request<void>(`/admin/llm/providers/${id}`, { method: 'DELETE' });
-  },
-  getLlmRoutes(): Promise<LlmRoute[]> {
-    return request<LlmRoute[]>('/admin/llm/routes');
-  },
-  putLlmRoutes(routes: LlmRoute[]): Promise<LlmRoute[]> {
-    return requestJson<LlmRoute[]>('/admin/llm/routes', 'PUT', routes);
-  },
-  getLlmInputBudgets(): Promise<LlmInputBudgetSpec[]> {
-    return request<LlmInputBudgetSpec[]>('/admin/llm/input-budgets');
-  },
-  testLlmModel(input: LlmTestModelInput): Promise<LlmTestResult> {
-    return requestJson<LlmTestResult>('/admin/llm/test-model', 'POST', input);
+  checkLlmStatus(): Promise<LlmCheckResult> {
+    return request<LlmCheckResult>('/llm/status/check', { method: 'POST' });
   },
   getLlmUsage(opts: { projectId?: string; userId?: string; days?: number } = {}): Promise<LlmUsageRow[]> {
     const params = new URLSearchParams();
@@ -5155,7 +4954,7 @@ export const api = {
   getEmbeddingSpace(): Promise<EmbeddingSpaceStatus> {
     return request<EmbeddingSpaceStatus>('/admin/settings/embedding-space');
   },
-  /** 确认换用路由表里当前的向量模型（换模型后必须调一次，admin）。 */
+  /** 确认改用现在固定的向量模型（索引与它不一致时调一次）。 */
   adoptEmbeddingSpace(): Promise<EmbeddingSpaceAdoptResult> {
     return request<EmbeddingSpaceAdoptResult>('/admin/settings/embedding-space/adopt', { method: 'POST' });
   },
@@ -5559,7 +5358,7 @@ export const api = {
     return request(`/chat/buddy/greeting${page ? `?page=${encodeURIComponent(page)}` : ''}`);
   },
   listAssistantConversations(): Promise<
-    { id: string; title: string; last_message_at: string | null; project_id: string | null; backend?: string | null }[]
+    { id: string; title: string; last_message_at: string | null; project_id: string | null }[]
   > {
     return request('/chat/conversations');
   },
@@ -5588,36 +5387,5 @@ export const api = {
     return requestJson<{ items: ResolvedPaperBatchItem[] }>('/papers/resolve-batch', 'POST', {
       arxiv_ids: arxivIds,
     });
-  },
-  // —— 外部 agent 后端（ACP，#836；除 /chat/backends 外仅主人可用）——
-  listAcpTemplates(): Promise<AcpAgentTemplate[]> {
-    return request<AcpAgentTemplate[]>('/acp-agents/templates');
-  },
-  listAcpAgents(): Promise<AcpAgentRead[]> {
-    return request<AcpAgentRead[]>('/acp-agents');
-  },
-  createAcpAgent(input: AcpAgentCreate): Promise<AcpAgentRead> {
-    return requestJson<AcpAgentRead>('/acp-agents', 'POST', input);
-  },
-  updateAcpAgent(id: string, input: AcpAgentUpdate): Promise<AcpAgentRead> {
-    return requestJson<AcpAgentRead>(`/acp-agents/${id}`, 'PATCH', input);
-  },
-  /** 真拉起一次做握手；失败写在返回行的 last_error 里，不抛。 */
-  probeAcpAgent(id: string): Promise<AcpAgentRead> {
-    return request<AcpAgentRead>(`/acp-agents/${id}/probe`, { method: 'POST' });
-  },
-  deleteAcpAgent(id: string): Promise<void> {
-    return request<void>(`/acp-agents/${id}`, { method: 'DELETE' });
-  },
-  /** 回答外部 agent 的一次授权请求（#838）。404 = 已过期/已答过；400 = 选项不认识。 */
-  answerAgentPermission(conversationId: string, requestId: string, optionId: string): Promise<void> {
-    return requestJson<void>(
-      `/chat/conversations/${conversationId}/permissions/${encodeURIComponent(requestId)}`,
-      'POST',
-      { option_id: optionId },
-    );
-  },
-  listChatBackends(): Promise<ChatBackend[]> {
-    return request<ChatBackend[]>('/chat/backends');
   },
 };

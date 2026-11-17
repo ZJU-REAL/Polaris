@@ -83,12 +83,6 @@ async def lifespan(app: FastAPI):
     await asyncio.gather(shutdown_task_queue(), cancel_all_tasks())
     # 转到后台的记账/日志写入：落完盘再关库
     await drain_side_writes()
-    # 外部 agent 子进程（#836）：随服务一起收掉，别留孤儿进程继续烧额度
-    from app.core.llm.acp import shutdown_pools
-    from app.services.acp.pool import shutdown_pool
-
-    await shutdown_pool()
-    await shutdown_pools()
     await stop_crdt_stream_subscriber()
     await reset_crdt_rooms()  # 关停 CRDT 房间服务器（先冲刷不了的防抖任务直接取消）
     await dispose_engine()
@@ -123,7 +117,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(LLMNotConfiguredError)
     async def _llm_not_configured(_request: Request, _exc: LLMNotConfiguredError) -> JSONResponse:
-        # 未配置大模型：统一 503，前端提示到设置页配置，而不是 500 堆栈
+        # 没有 Claude 的 API key：统一 503，前端告诉用户怎么提供 key，而不是 500 堆栈
         return JSONResponse(status_code=503, content={"detail": "LLM_NOT_CONFIGURED"})
 
     # 只读账号（游客）的写入闸门已随治理机制移除（#614）：单机档位登录即主人。

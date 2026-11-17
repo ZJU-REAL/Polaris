@@ -8,7 +8,7 @@ import { errorText as genericErrorText } from '../../lib/errors';
    对话里的出错提示。
 
    以前把「去设置」写成 Markdown 链接塞进正文，可正文渲染只认 http(s) 链接，
-   于是用户看到的是一串 `[去设置](/settings?tab=llm)` 原文。现在出错单独成块，
+   于是用户看到的是一串 `[去设置](/settings?tab=…)` 原文。现在出错单独成块，
    落点用站内路由的真链接，点了不刷新页面、正在跑的别的对话也不断。
    ============================================================ */
 
@@ -23,13 +23,6 @@ export function errorText(detail: string): string {
     );
   }
   if (isLlmNotConfigured(detail)) return llmNotConfiguredText();
-  // 传输层报错带着前缀（"Error: ACP_AGENT_NOT_AVAILABLE"），按包含判断
-  if (detail.includes('ACP_AGENT_NOT_AVAILABLE')) {
-    return tr(
-      '这段对话使用的智能体已不可用，请换一个后重试。',
-      'The agent for this conversation is no longer available. Choose another one and try again.',
-    );
-  }
   return genericErrorText(detail);
 }
 
@@ -63,7 +56,7 @@ export function NoticeView({ block }: { block: NoticeBlock }) {
         <>
           {' '}
           <Link to={MODEL_SETTINGS_HREF} style={{ color: 'var(--accent-text)', fontWeight: 600 }}>
-            {tr('去设置', 'Open settings')}
+            {tr('查看模型状态', 'View model status')}
           </Link>
         </>
       )}

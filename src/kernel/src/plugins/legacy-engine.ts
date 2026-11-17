@@ -30,6 +30,7 @@ import { dirname } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import Schema from '@deepseek-ai/schemastery'
 import type { Context } from '@deepseek-ai/cordis'
+import { ENGINE_LLM_ENV } from '../shell-env.ts'
 
 /** docker 模式的默认容器名：可预测的名字才能在 disposer 与冒烟里精确回收。 */
 export const ENGINE_CONTAINER = 'polaris-desktop-engine'
@@ -376,6 +377,9 @@ export function buildEngineArgv(config: LegacyEngineConfig, port: number): strin
     // 实例标识、会话口令与每份安装的密钥（#850）：同样无值透传，值只在 docker 客户端
     // 的环境里，不进 argv（ps 看得到 argv）
     ...ENGINE_SECRET_ENV.flatMap((name) => ['-e', name]),
+    // Claude API 的密钥/地址/模型覆写：引擎启动时从环境变量读。同样只做无值透传——
+    // 宿主设了才进容器，值不进 argv。command 模式整份继承宿主 env，不需要这一步。
+    ...ENGINE_LLM_ENV.flatMap((name) => ['-e', name]),
     config.image,
     'sh', '-lc',
     // 先迁移后起服务：没有独立 worker 抢跑迁移的问题，串行即可

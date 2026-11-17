@@ -88,8 +88,8 @@ function LegacyTopicRedirect({ sub }: { sub?: string }) {
 /**
  * 旧「管理」页 `/admin` → `/settings`（#755）。
  *
- * 标签名两边一致（llm / literature / processing / experiment / daily / usage），
- * 所以 query 原样带过去即可，`/admin?tab=llm` 落到同一块设置上。
+ * 标签名两边一致（literature / processing / experiment / daily / usage），所以 query
+ * 原样带过去即可；已经撤掉的 `?tab=llm` 由设置页自己换到 `?tab=model`。
  */
 function AdminRedirect() {
   const location = useLocation();

@@ -22,10 +22,10 @@ function render() {
           <SettingsTabs
             groups={[
               { label: 'Personal', items: [{ v: 'personal', label: 'Profile' }, { v: 'prefs', label: 'Interface' }] },
-              { label: 'Workspace', items: [{ v: 'llm', label: 'Models & routing' }] },
+              { label: 'Workspace', items: [{ v: 'model', label: 'Model' }] },
               { label: 'Empty', items: [] },
             ]}
-            value="llm"
+            value="model"
             onChange={() => {}}
           />
         }
@@ -40,7 +40,7 @@ describe('settings navigation', () => {
   it('renders grouped vertical items with the current one marked', () => {
     const html = render();
     expect(html).toContain('settings-nav-heading');
-    expect(html).toMatch(/class="settings-nav-item active"[^>]*>Models &amp; routing</);
+    expect(html).toMatch(/class="settings-nav-item active"[^>]*>Model</);
     expect(html).toContain('aria-current="page"');
     expect(html).not.toContain('>Empty<');
   });
@@ -48,7 +48,7 @@ describe('settings navigation', () => {
   it('offers the same sections as a grouped select for narrow layouts', () => {
     const html = render();
     expect(html).toContain('<optgroup label="Personal">');
-    expect(html).toContain('<option value="llm" selected="">Models &amp; routing</option>');
+    expect(html).toContain('<option value="model" selected="">Model</option>');
   });
 
   it('keeps the page on the two-column layout', () => {

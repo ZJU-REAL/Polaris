@@ -66,7 +66,8 @@ manual paths always recompile.
 
 - **Body.** The extracted full text if `paper.full_text_path` exists on disk, otherwise the
   abstract, otherwise the literal string `（无正文）`. Either way it is truncated to
-  `FULLTEXT_PROMPT_CHARS = 24000` characters (`wiki_compile.py:37`). The prompt states which source
+  the librarian input budget, which is derived from the model's context window — about 160,000
+  characters on `claude-opus-5` (`LIBRARIAN_FULLTEXT` in `app/core/llm/budgets.py`). The prompt states which source
   was used (`正文来源: full_text | abstract`) so the model knows how much detail it can rely on.
 - **Metadata.** Title, author names, year, venue.
 - **Figures.** `important_figures_with_bytes()` (`app/services/figure_annotate.py:180`) reads the
@@ -131,9 +132,8 @@ first mention, inline, and never append a "related concepts" list at the end**.
 `paper_wikis` by `paper_id` and either inserts or overwrites the whole row:
 
 - `content` — the validated markdown.
-- `model` — taken from `CompletionResult.model`, i.e. **what the provider actually answered with**,
-  not what the routing table says it should have used. If an admin edits the routing mid-run, the
-  record still reflects reality.
+- `model` — taken from `CompletionResult.model`, i.e. **what the API actually answered with**,
+  not the configured model name, so the record reflects reality.
 - `compiled_by` — the person, always overwritten. The batch path records `ctx.run.created_by` (the
   human who started the sync — public-library runs bill to the system, but a human still pressed the
   button); the manual paths record the caller.
@@ -267,9 +267,10 @@ each response comfortably inside the window.
 
 The call goes to the **`extract`** stage, not `librarian` (`concepts.py:251`). The two roles were
 split deliberately and the split is documented at `app/core/llm/router.py:41-43`: `librarian` is for
-long-form and multimodal work (wiki compiling, figure selection, slide generation) and wants a
-strong model; `extract` is for short structured JSON (author↔affiliation parsing, concept
-definitions, the library-setup wizard) where a small model is enough. Getting this backwards is an
+long-form and multimodal work (wiki compiling, figure selection, slide generation) and runs with
+high thinking depth and more patience; `extract` is for short structured JSON (author↔affiliation
+parsing, concept definitions, the library-setup wizard) and runs with low thinking depth. Both use
+the same model. Getting this backwards is an
 easy and expensive mistake, so: **compiling is `librarian`, defining is `extract`.**
 
 The prompt (`CONCEPT_DEF_SYSTEM_PROMPT`) asks for a single JSON object
@@ -385,7 +386,7 @@ Three tables, all in `app/models/paper.py`.
 | --- | --- |
 | `paper_id` | FK → `papers.id`, `ON DELETE CASCADE`, **unique** (`uq_paper_wikis_paper`) — the "one per paper" rule is a database constraint, not a convention |
 | `content` | the markdown, `NOT NULL` |
-| `model` | model name as reported by the provider; null for migrated rows |
+| `model` | model name as reported by the API; null for migrated rows |
 | `compiled_by` | FK → `users.id`, `ON DELETE SET NULL`; null for migrated rows and deleted users |
 | `created_at` / `updated_at` | `updated_at` is the "last compiled" timestamp surfaced as `compiled_at` |
 
@@ -542,7 +543,7 @@ Take an arXiv paper that a library sync picks up. Each step names the table it t
    images to the `librarian` stage; 2–6 come back flagged `important` with a `kind` and a Chinese
    caption. On failure, the four largest are flagged instead.
    → `papers.figures`
-5. **Compiled.** `compile_paper()` sends title/authors/full text (≤24k chars) plus up to 6 important
+5. **Compiled.** `compile_paper()` sends title/authors/full text (up to the input budget, about 160k chars) plus up to 6 important
    figure images and their caption list, with the project's `wiki.compile` skills appended to the
    system prompt. The output is scrubbed of invalid `![[fig:N]]` markers and upserted.
    → **`paper_wikis`** (one row: content, model, `compiled_by`), `library_papers.status='compiled'`
@@ -626,8 +627,8 @@ SQLite; older server instances ran on PostgreSQL.
 - Semantic paper search scores stored vectors in Python (`services/vector_search.py`).
   Concept search is keyword-only.
 
-**Truncation is invisible.** The body is cut at 24000 characters with no marker and no warning in the
-response; a long paper is compiled from its first ~24k characters. Similarly, definition batches are
+**Truncation is invisible.** The body is cut at the input budget (about 160,000 characters) with no marker
+and no warning in the response; a very long paper is compiled from its first ~160k characters. Similarly, definition batches are
 capped at 40 names and the automatic backfill at 60 placeholders per run — nothing tells the user
 that the remainder was deferred.
 

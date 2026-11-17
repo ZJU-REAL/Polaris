@@ -17,7 +17,7 @@ For a high-level tour of the product and its feature set, start with the
 | Document | What it covers |
 | --- | --- |
 | [Introduction](index.md) | What Polaris is, what makes it different, and a stage-by-stage overview of the pipeline with links to each guide. The docs-site homepage. |
-| [Getting Started](getting-started.md) | Installing the desktop app, the first launch, giving Polaris a model (an agent backend or a model API), first steps in the app, and common first-run problems. |
+| [Getting Started](getting-started.md) | Installing the desktop app, the first launch, setting the Claude API key, first steps in the app, and common first-run problems. |
 | [Core Concepts](concepts.md) | The six-stage research pipeline, the Voyage long-running agent (Navigator / Helm / Sextant), the skill system, and the MCP read-only tool layer, explained in depth. |
 | [Literature guide](literature.md) | The literature stage in practice: direction libraries and their inclusion config, ingest runs, the daily arXiv feed, wikis, and search. |
 | [Ideas guide](ideas.md) | The idea and idea-review stages: Idea Forge gap analysis, scoring, the research proposal builder, and the Elo review tournament. |
@@ -31,9 +31,9 @@ For a high-level tour of the product and its feature set, start with the
 | [Wikis & Concepts](wiki-and-concepts.md) | How a paper's wiki gets written (the three compile triggers, full text vs. abstract, figures and `![[fig:N]]`, why compiling carries no library context) and how concepts come out of it: names harvested from `[[wikilinks]]` in the prose, definitions batched to an LLM, placeholders and backfill, relink, orphan cleanup, plus the `paper_wikis` / `concepts` / `paper_concepts` model and concept scoping. |
 | [Embedding & Retrieval](embedding-and-retrieval.md) | The two vector representations (paper-level vs full-text chunks), how and when each is built, the `chat_fulltext_index` opt-in, and how semantic search and literature chat retrieve (pgvector where available, graded fallback to keyword). |
 | [MCP](mcp.md) | Connecting Claude Code, Codex, or Cursor to your research workspace: the two transports, topic scoping and permissions, the read-only tool catalog, recipes, limits, and how to check a connection. |
-| [Agent backends](agents.md) | Using Claude Code, Codex, Gemini CLI and other ACP agents in the assistant and as Polaris's model: setup, permissions, and how they answer model calls. |
-| [Architecture](architecture.md) | The public-facing system design: the single-process local engine, layered backend, in-process task queue and scheduler, LLM abstraction with DB model routing, the deterministic-vs-judgemental split, data stores, and real-time channels. |
-| [Configuration](configuration.md) | How the engine gets its environment, the configuration layers, and the environment variables it reads (secrets, SQLite path, data directory, literature APIs, proxies), plus model routing. |
+| [Agent backends](agents.md) | A short notice: agent backends over ACP were removed. Polaris uses Claude directly; connecting external agents to Polaris through MCP is unaffected. |
+| [Architecture](architecture.md) | The public-facing system design: the single-process local engine, layered backend, in-process task queue and scheduler, single LLM layer over the Claude API, the deterministic-vs-judgemental split, data stores, and real-time channels. |
+| [Configuration](configuration.md) | How the engine gets its environment, the configuration layers, and the environment variables it reads (secrets, SQLite path, data directory, literature APIs, proxies), plus the Claude API variables and how the model is set up. |
 | [Development](development.md) | Working from source: repo layout, running the engine and frontend, migrations, tests, linting, the test engine image, the layering convention, and the branch-per-feature Git workflow. |
 | [Desktop](desktop.md) | The Electron desktop app: process model, how it bootstraps the local engine, where the data lives, the `app://` protocol, the IPC contract, packaging, and unsigned-distribution notes. |
 

@@ -6,6 +6,7 @@
 import os
 import tempfile
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
@@ -20,6 +21,18 @@ os.environ.pop("POLARIS_LOCAL_SESSION_SECRET", None)
 os.environ.pop("POLARIS_CORS_ORIGINS", None)
 os.environ["POLARIS_DATA_DIR"] = f"{_TMPDIR}/data"  # PDF/全文落盘目录（M2）
 os.environ["POLARIS_LLM_FAKE_FALLBACK"] = "1"  # 测试套件依赖确定性 fake provider
+# 测试绝不打真实的 Claude：把开发机 shell 里可能带着的 key 全清掉（有 key 时 fake
+# 回退不生效，用例会真的出网）。要测「有 key」的用例自己构造 Settings。
+for _name in (
+    "POLARIS_CLAUDE_API_KEY",
+    "POLARIS_CLAUDE_BASE_URL",
+    "POLARIS_CLAUDE_MODEL",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_BASE_URL",
+    "LITELLM_API_KEY",
+    "LITELLM_API_BASE",
+):
+    os.environ.pop(_name, None)
 # 补全钩子里的 OpenAlex 对齐是真实出网调用，离线测试一律关（专测用例自行开）
 os.environ["POLARIS_OPENALEX_ALIGN_ON_ENRICH"] = "0"
 # 常驻文件投影（#719）默认关：投影是 best-effort 文件旁路，全套件（含 golden 链）
@@ -387,3 +400,26 @@ async def register_and_login(
     resp = await client.post("/api/auth/local-session")
     assert resp.status_code == 200, resp.text
     return resp.json()["access_token"]
+
+
+@pytest.fixture
+def claude_settings(monkeypatch):
+    """让这条用例「有 Claude key」：``claude_settings(LITELLM_API_KEY=..., ...)``。
+
+    传的是环境变量名，走的是和真实启动一样的解析路径。默认整个套件没有 key
+    （fake 回退），需要真实路由的用例用它；记得同时 ``override_provider`` 或 mock
+    掉 HTTP，否则会真的出网。
+    """
+    from app.core.config import get_settings
+
+    def apply(**env: str):
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        get_settings.cache_clear()
+        reset_llm_router()
+        return get_settings()
+
+    yield apply
+    monkeypatch.undo()
+    get_settings.cache_clear()
+    reset_llm_router()

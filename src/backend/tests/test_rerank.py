@@ -10,12 +10,10 @@ import respx
 from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
-from app.core.llm.anthropic import AnthropicProvider
 from app.core.llm.fake import FakeProvider
 from app.core.llm.openai_compat import OpenAICompatProvider
 from app.core.llm.router import LLMRouter
-from app.core.security import encrypt_secret
-from app.models.llm_config import LLMProviderConfig, LLMUsage, ModelRoute
+from app.models.llm_config import LLMUsage
 from app.models.paper import Paper
 from app.services import papers as papers_service
 from tests.conftest import add_paper, register_and_login
@@ -36,13 +34,6 @@ async def test_fake_rerank_word_overlap_deterministic():
 
     top1 = await fake.rerank("agent planning", docs, model="fake-rerank", top_n=1)
     assert top1.results == result.results[:1]
-
-
-async def test_base_rerank_not_implemented():
-    provider = AnthropicProvider(api_key="sk-x")
-    with pytest.raises(NotImplementedError):
-        await provider.rerank("q", ["d"], model="claude")
-    await provider._client.aclose()
 
 
 @respx.mock
@@ -98,40 +89,6 @@ async def test_router_rerank_fallback_fake_records_usage(app):
         assert len(rows) == 1
         assert rows[0].stage == "rerank" and rows[0].model == "fake-default"
         assert rows[0].prompt_tokens > 0
-
-
-@respx.mock
-async def test_router_rerank_db_route_billed_units(app):
-    respx.post("http://lab.test/v1/rerank").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "results": [{"index": 0, "relevance_score": 0.9}],
-                "meta": {"billed_units": {"total_tokens": 42}},
-            },
-        )
-    )
-    async with get_sessionmaker()() as session:
-        provider = LLMProviderConfig(
-            name="lab-litellm",
-            kind="openai_compat",
-            base_url="http://lab.test/v1",
-            api_key_encrypted=encrypt_secret("sk-lab"),
-            enabled=True,
-        )
-        session.add(provider)
-        await session.flush()
-        session.add(ModelRoute(stage="rerank", provider_id=provider.id, model="BGE-Reranker-V2-M3"))
-        await session.commit()
-
-    router = LLMRouter()
-    results = await router.rerank("q", ["only doc"])
-    assert results == [(0, 0.9)]
-    async with get_sessionmaker()() as session:
-        rows = (await session.execute(select(LLMUsage))).scalars().all()
-        assert len(rows) == 1
-        assert rows[0].stage == "rerank" and rows[0].model == "BGE-Reranker-V2-M3"
-        assert rows[0].prompt_tokens == 42  # billed_units.total_tokens 优先于估算
 
 
 # ---- search semantic 重排 / 降级 ----

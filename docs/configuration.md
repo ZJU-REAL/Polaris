@@ -8,7 +8,9 @@ Where the engine gets its environment:
 
 - **Desktop app.** The engine inherits the app's environment. To set a variable, start the app from
   a terminal with that variable set (for example `POLARIS_OUTBOUND_PROXY=http://127.0.0.1:7897`
-  before the app's command).
+  before the app's command). The Claude variables are the exception: on macOS and Linux the app
+  also reads them from your login shell at startup, so an `export` in `~/.zshrc` or `~/.bashrc` is
+  enough — see [Model](#model).
 - **Running from source** (`make backend-dev`). The engine also reads a `.env` file from its working
   directory, `src/backend/`. Copy the repo-root template there and uncomment what you need:
 
@@ -55,20 +57,18 @@ upgrading.
 | --- | --- | --- |
 | `POLARIS_ENV` | Runtime environment. `prod` requires an explicit `POLARIS_ENCRYPTION_KEY`. It no longer affects CORS (see `POLARIS_CORS_ORIGINS`). | `dev` (or `prod`) |
 | `POLARIS_SECRET_KEY` | Signs the local session tokens, signed download links, and browser-extension key digests. The desktop app generates one per install (`userData/engine-secrets.json`). When running from source, generate one with `openssl rand -hex 32`; the default is public. | `dev-only-secret-key-change-me` |
-| `POLARIS_ENCRYPTION_KEY` | Fernet key that encrypts stored secrets (model API keys, SSH and connection credentials, MCP/agent environment variables, literature and MinerU keys). The desktop app generates one per install. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Empty derives a key from the secret key (not allowed with `POLARIS_ENV=prod`). Do not set a placeholder — it is not a valid Fernet key. Values encrypted with the key derived from the old default secret key are still readable and are re-encrypted with this key at startup; values encrypted with any other earlier key are not. | (empty) |
+| `POLARIS_ENCRYPTION_KEY` | Fernet key that encrypts stored secrets (SSH and connection credentials, MCP server environment variables, literature and MinerU keys; the Claude API key is not stored — it is read from the environment). The desktop app generates one per install. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Empty derives a key from the secret key (not allowed with `POLARIS_ENV=prod`). Do not set a placeholder — it is not a valid Fernet key. Values encrypted with the key derived from the old default secret key are still readable and are re-encrypted with this key at startup; values encrypted with any other earlier key are not. | (empty) |
 | `POLARIS_CORS_ORIGINS` | Extra origins (comma-separated, full origins) allowed to call the engine from a browser page. `app://polaris` is always allowed; `*` is never used. The Vite dev server proxies `/api` same-origin and does not need this. Set it when a page on another origin talks to the engine directly, for example `http://localhost:6274` for the MCP Inspector, or `http://localhost:5173` if you point the frontend at the engine without the proxy. Origins listed here may also obtain a local session when `POLARIS_LOCAL_SESSION_SECRET` is unset. | (empty) |
 | `POLARIS_ALLOWED_HOSTS` | Extra `Host` header names (comma-separated, any port) the engine accepts. `127.0.0.1`, `localhost`, and `[::1]` are always accepted; any other host gets `400`, which blocks DNS rebinding. `*` turns the check off — only for debugging setups that know why they need it. | (empty) |
 | `POLARIS_LOCAL_SESSION_SECRET` | Set by the desktop app on every launch. When set, `POST /api/auth/local-session` only answers requests carrying the same value in `X-Polaris-Session-Secret`. When unset (running from source, tests), it answers requests with no `Origin` header or an allowed one. Do not set it by hand. | (set by the desktop app) |
 | `POLARIS_INSTANCE_ID` | Set by the desktop app on every launch and echoed by `/api/health`, so the app can tell its own engine apart from another process on the same port. | (set by the desktop app) |
 | `POLARIS_SESSION_LIFETIME_SECONDS` | Session lifetime in seconds. There is no refresh-token mechanism, so the default is long. | `2592000` (30 days) |
-| `POLARIS_ACP_LLM_CONCURRENCY` | How many model calls one agent backend answers at once (each is a separate agent process). Read from the process environment only, not from `.env`. See [Agent backends](./agents.md). | `4` |
-| `POLARIS_LLM_FAKE_FALLBACK` | Fall back to the built-in fake LLM provider when no route is configured (key-less demos and tests only). Strictly opt-in: off unless explicitly set to `1`, and never set by the product itself. When off, AI features return `LLM_NOT_CONFIGURED` instead of fabricated content. | (unset) |
+| `POLARIS_LLM_FAKE_FALLBACK` | Fall back to the built-in fake LLM provider when there is no Claude API key (key-less demos and tests only). Strictly opt-in: off unless explicitly set to `1`, and never set by the product itself. When off, AI features return `LLM_NOT_CONFIGURED` instead of fabricated content. | (unset) |
 | `POLARIS_CHAT_AGENT_ENABLED` | PolarisBuddy's multi-turn tool loop. Each round re-sends the conversation history and tool definitions, so it uses more than one-shot chat. | on; set `0` to turn off |
 | `POLARIS_GITHUB_REPO` | Upstream `owner/name` repository. Currently unread by the backend (feedback opens a pre-filled GitHub new-issue page straight from the frontend). | `ZJU-REAL/Polaris` |
 | `POLARIS_PUBLIC_BASE_URL` | Engine root used to build stdio MCP download links. HTTP MCP always reuses the origin of its current `/mcp` request and ignores this setting. | (empty), for example, `http://127.0.0.1:8000` |
 | `POLARIS_MCP_DOWNLOAD_LINK_TTL_SECONDS` | Lifetime of signed paper-figure download links, in seconds. Values are limited to 60 seconds through 24 hours. | `900` |
 | `POLARIS_DATABASE_URL` | SQLite database URL (SQLite is the only supported database). The desktop app always sets it to `polaris.db` in its user-data folder; when running from source it defaults to a file in the working directory. | `sqlite+aiosqlite:///./polaris_dev.db` |
-| `POLARIS_OPENAI_COMPAT_BASE_URL` | Fallback base URL for OpenAI-compatible model routes that leave `base_url` empty. Agent backends, providers, and API keys themselves are configured in-app (Settings → Models & agents) and stored in the database. | `https://api.deepseek.com/v1` |
 | `POLARIS_S2_API_KEY` | Semantic Scholar API key. Optional; without it rate limits are stricter. | (empty) |
 | `POLARIS_OPENALEX_MAILTO` | Contact email for the OpenAlex polite pool. | `polaris@example.org` |
 | `POLARIS_DATA_DIR` | Folder for PDFs, exports, experiment logs, and the file projection. The desktop app sets it to `engine/data/` in its user-data folder unless you set it yourself; relative paths are resolved once at startup. | `./data` |
@@ -76,12 +76,31 @@ upgrading.
 | `POLARIS_PIP_INDEX_URL` | Optional pip mirror used on the remote experiment servers. | (empty), e.g. `https://pypi.tuna.tsinghua.edu.cn/simple` |
 
 Speech settings aren't environment variables. Configure the external endpoint,
-model, voice, speed, and per-segment limit under **Manage > LLM admin > Speech
-model**. Polaris stores the configuration in the database.
+model, voice, speed, and per-segment limit under **Settings → Speech**. Polaris
+stores the configuration in the database.
 
 > [!NOTE]
-> Agent backends, model providers, their keys, and the model routing table are all managed in the
-> app under **Settings → Models & agents**, not through environment variables.
+> The model is not configured in the app. Polaris uses the Claude API with one fixed model, and the
+> key and endpoint come from the environment variables in the next section. **Settings → Model**
+> only shows what is in effect.
+
+## Claude API variables
+
+These are read by the engine at startup; a change needs a restart of Polaris. They are also valid
+in `src/backend/.env` when running from source. See [Model](#model) for how they are used.
+
+| Variable | Purpose | Default / example |
+| --- | --- | --- |
+| `POLARIS_CLAUDE_API_KEY` | Claude API key, first in the resolution order. | (empty), e.g. `sk-ant-...` |
+| `POLARIS_CLAUDE_BASE_URL` | Endpoint for Claude calls. When set, it always overrides the endpoint, whichever key is used. | (empty), e.g. `http://your-gateway:4000` |
+| `ANTHROPIC_API_KEY` | Claude API key, second in the resolution order. | (empty) |
+| `ANTHROPIC_BASE_URL` | Endpoint used when `ANTHROPIC_API_KEY` is the key in use. | (empty → `api.anthropic.com`) |
+| `LITELLM_API_KEY` | Key for a LiteLLM gateway that serves Anthropic's native `/v1/messages`; third in the resolution order. | (empty) |
+| `LITELLM_API_BASE` | The gateway's address, used when `LITELLM_API_KEY` is the key in use. | (empty), e.g. `http://your-gateway:4000` |
+| `POLARIS_CLAUDE_MODEL` | The model every call uses. Must be an adaptive-thinking Claude model (Opus 5 / Sonnet 5 / Fable 5 family). There is no UI for it. | `claude-opus-5` |
+| `POLARIS_EMBEDDING_MODEL` | Embedding model requested from the gateway (`{base}/v1/embeddings`). | `BGE-M3` |
+| `POLARIS_RERANK_MODEL` | Rerank model requested from the gateway (`{base}/v1/rerank`). | `BGE-Reranker-V2-M3` |
+| `POLARIS_CLAUDE_REFUSAL_FALLBACK` | Server-side fallback (beta): when Claude's safety classifiers decline a request, it is retried on another Claude model. Set `0` if a proxy rejects the parameter. | on |
 
 ## Engine image build arguments (dev and tests)
 
@@ -105,72 +124,94 @@ table when you need figure tools to return absolute download URLs.
 | --- | --- | --- |
 | `POLARIS_MCP_USER_EMAIL` | Optional. Email of the user the stdio MCP process acts as. Unset, it acts as the local user (`local@polaris.desktop`). | `local@polaris.desktop` |
 
-## Model routing
+## Model
 
-Polaris routes each research stage to an agent backend or a specific provider and model through a
-DB-backed routing table, editable under Settings → Models & agents. This lets cheap models handle
-scoring while strong models handle idea debate and paper drafting. All calls go through the single
-`app/core/llm/` abstraction; see [Architecture](architecture.md#the-llm-abstraction-and-model-routing).
+Polaris uses the **Claude API only**, with **one fixed model**: `claude-opus-5`. There is no
+provider list, no per-stage model table, and no model picker in the app. To use a different Claude
+model, set `POLARIS_CLAUDE_MODEL` (an adaptive-thinking model: Opus 5 / Sonnet 5 / Fable 5 family).
 
-### Provider protocols
+### Key and endpoint
 
-Each provider speaks one protocol, chosen when you add it:
+The engine reads the key and endpoint from environment variables at startup. The first source that
+has a key wins, and the endpoint comes from that same source:
 
-| Protocol | Endpoint | Use it for |
-|---|---|---|
-| OpenAI Chat Completions (`openai_compat`) | `POST {base_url}/chat/completions` | DeepSeek, Qwen, vLLM, LiteLLM and most gateways |
-| OpenAI Responses (`openai_responses`) | `POST {base_url}/responses` | OpenAI models and gateways that only expose the Responses API |
-| Anthropic Messages (`anthropic`) | `POST {base_url}/v1/messages` | Claude via the native API |
+1. `POLARIS_CLAUDE_API_KEY` / `POLARIS_CLAUDE_BASE_URL`
+2. `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL`
+3. `LITELLM_API_KEY` / `LITELLM_API_BASE` — a LiteLLM gateway that serves Anthropic's native
+   `/v1/messages`
 
-The Responses provider supports text, images, tool calls, reasoning effort (`reasoning.effort`) and
-streaming. Embedding and rerank calls on a Responses provider use the same endpoints as the Chat
-Completions provider (`/embeddings`, `/rerank`).
+If the winning source has no base URL, requests go to `api.anthropic.com`. `POLARIS_CLAUDE_BASE_URL`,
+when set, always overrides the endpoint. A base URL may be written with or without a trailing `/v1`.
 
-### Reasoning effort
+The key follows its own endpoint on purpose: a computer often has both an official
+`ANTHROPIC_API_KEY` and a gateway's `LITELLM_*` pair, and mixing them would send one side's key to
+the other.
 
-Each route can also carry a **reasoning effort** — how much the model is allowed to think before
-answering. Leave it unset (the default) and Polaris sends no effort parameter at all, so the model
-uses its own default; existing routes are unaffected. Levels are `none`, `minimal`, `low`, `medium`,
-`high`, `xhigh`, `max`, sent as `reasoning_effort` to OpenAI-compatible endpoints, as
-`reasoning.effort` to the Responses API, and as `output_config.effort` to the native Anthropic API.
+### Setting the variables for the desktop app
 
-Support varies by model, and not every level is valid on every model that accepts the parameter —
-a model may accept `low` but reject `minimal`. Polaris does not keep a per-model whitelist. If the
-server rejects the request because of the effort parameter, the call is retried once without it and
-a warning is logged, so an effort set on a model that cannot use it degrades to the model's default
-instead of breaking the stage. Embedding and rerank routes have no effort setting.
+Apps started from Finder, the Dock, or a Linux launcher do not inherit what your shell exports. So
+on macOS and Linux Polaris reads these variables once at startup from your login shell
+(`$SHELL -ilc env`, with a 4-second timeout). It takes only the names listed above, and never logs
+their values. In practice:
 
-Lower effort on high-volume mechanical stages (relevance scoring, extraction) cuts both cost and
-latency; raise it on stages where correctness matters more than spend (self-verification, review).
+```bash
+# ~/.zshrc or ~/.bashrc
+export ANTHROPIC_API_KEY=sk-ant-...
+# or, for a LiteLLM gateway:
+export LITELLM_API_KEY=sk-...
+export LITELLM_API_BASE=http://your-gateway:4000
+```
 
-### Context window and input budgets
+Then restart Polaris. On Windows, set them as user environment variables. A change always needs a
+restart of Polaris. See [Desktop](desktop.md#claude-variables-from-the-login-shell) for the
+mechanics.
 
-A route can record its model's **context window** (in tokens), and a few stages expose **input
-budgets**: how many characters of material the stage puts into one call. The two are separate on
-purpose. The window is what the model can take; the budget is what the stage chooses to send, a
-trade-off between thoroughness and cost. A model with a 1M-token window does not have to receive
-1M tokens on every paper.
+Without a key, AI features return `LLM_NOT_CONFIGURED` (HTTP 503) and the app tells you to set the
+environment variable and reopen Polaris. `POLARIS_LLM_FAKE_FALLBACK=1` swaps in a fake provider when
+there is no key; it exists for tests and key-less demos only.
 
-| Stage | Budget | Default | Range (characters) |
-|---|---|---|---|
-| Librarian (`librarian`) | Paper full text sent to the wiki compile | 24,000 | 4,000 – 2,000,000 |
-| Idea Forge (`forge`) | Total knowledge-base context | 12,000 | 2,000 – 2,000,000 |
-| Idea Forge (`forge`) | Wiki excerpt per paper | 800 | 200 – 50,000 |
+### Embeddings and rerank
 
-The defaults are the values that were hard-coded before budgets became configurable, so leaving the
-fields empty changes nothing. The number of papers Idea Forge reads is still the `max_context_papers`
-knob on the task.
+Claude has no embedding or rerank model, so these come from the gateway's OpenAI-compatible
+endpoints, `{base}/v1/embeddings` and `{base}/v1/rerank`, with the models `BGE-M3` and
+`BGE-Reranker-V2-M3` (override with `POLARIS_EMBEDDING_MODEL` and `POLARIS_RERANK_MODEL`). They are
+available only when a gateway base URL is set.
 
-Rules:
+With a direct Anthropic key there are no embeddings and no rerank: semantic search falls back to
+keyword search and results are not re-ranked. Features degrade; nothing crashes. See
+[Embedding & Retrieval](embedding-and-retrieval.md).
 
-- A budget belongs to the stage's own route. A stage that follows *Default* uses the default budget;
-  set a model for the stage to change it.
-- When the route has a context window, a budget may be at most `window × 2` characters (about half
-  the window at four characters per token, leaving room for the system prompt and the answer).
-  Larger values are refused on save, and a default larger than that is lowered to fit.
-- Material over the budget is cut from the end: the full text keeps its beginning, and the forge
-  context cuts each excerpt first, then the joined context, so the least relevant papers drop out.
+### Settings → Model
 
-The routing table shows the budget in effect next to each field. Budgets are registered in
-`app/core/llm/budgets.py`; adding one there makes it appear in the settings page and in save
-validation.
+**Settings → Model** (`/settings?tab=model`) is read-only. It shows "Claude · claude-opus-5", the
+host requests go to, a **Check connection** button (it makes one tiny live call), and the state of
+the search-index and rerank models. The old links `/settings?tab=llm` and `/settings?tab=agents`
+redirect there. Usage and the call log are under **Settings → Usage**.
+
+### What differs per research stage
+
+Every stage uses the same model. Two things still differ per stage; both are internal and not
+configurable:
+
+- **Patience**: timeouts and retries.
+- **Thinking depth** (effort): low for short scoring and extraction calls, medium for the assistant
+  and structured generation, high for long writing and compiling.
+
+Input budgets — how much material a stage puts into one call — are derived from the model's context
+window (1M tokens on `claude-opus-5`). For example, the wiki compiler reads up to about 160,000
+characters of a paper's body. Material over a budget is cut from the end.
+
+### How calls are made
+
+All calls go through the single `app/core/llm/` layer (see
+[Architecture](architecture.md#the-llm-layer)) and use the official `anthropic` Python SDK.
+Thinking is adaptive, sampling parameters such as temperature are not sent, and long outputs are
+streamed. Prompt caching is used for stable system prompts and for the assistant's tool loop. If
+Claude's safety classifiers decline a request, the server-side fallback (beta) retries it on another
+Claude model; set `POLARIS_CLAUDE_REFUSAL_FALLBACK=0` if a proxy rejects that parameter.
+
+### Experiments
+
+When an experiment sets `eval_model`, the experiment machine gets an `llm_config.json` with the
+same key and an OpenAI-compatible base URL: `{gateway}/v1`, or `https://api.anthropic.com/v1` with a
+direct key. See the [Experiments guide](experiments.md).

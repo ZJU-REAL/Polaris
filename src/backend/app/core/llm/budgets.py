@@ -1,17 +1,16 @@
-"""按环节配置的输入预算（#811）：一次调用最多往 prompt 里放多少字符的材料。
+"""各环节的输入预算：一次调用最多往 prompt 里放多少字符的材料。
 
 两个概念要分开：
 
-- **上下文窗口**（``ModelRoute.context_window``，token）是模型能收多少——模型的属性；
-- **输入预算**（``ModelRoute.input_budgets``，字符）是这个环节**打算**给多少——
-  质量与成本之间的取舍。窗口有 1M 不等于每次精读都该塞 1M。
+- **上下文窗口**（token）是模型能收多少——模型的属性，见 router.context_window_for；
+- **输入预算**（字符）是这个环节**打算**给多少——质量与成本之间的取舍。窗口有 1M
+  不等于每次精读都该塞 1M。
 
-以前预算是散在各处的常量（``FULLTEXT_PROMPT_CHARS = 24000`` 之类），换了长窗口的
-模型也用不上。现在每个可调的预算在这里登记一条：默认值就是原来的常量，所以不配置
-的人行为完全不变；配置了的按上下限夹住，再被模型窗口封顶。
+预算由模型的窗口推出，不再有按环节的人工配置：窗口够大（Claude Opus 5 是 1M）时
+用 ``large_window`` 那一档，一篇论文的正文可以整篇放进去；窗口小或不知道时用
+``default``（改造前散在各处的常量）。两档都再被窗口封顶。
 
-加一个新的可调预算：在下面登记一条 ``InputBudget``，调用处用 ``resolve_budget``
-取值替换原来的常量即可——设置页的输入框、保存时的校验都跟着这张表走。
+加一个新的预算：在下面登记一条 ``InputBudget``，调用处用 ``resolve_budget`` 取值。
 """
 
 from __future__ import annotations
@@ -26,6 +25,9 @@ from typing import Any
 #: 不是精确换算——它挡的是「窗口 8k 却配了 20 万字」这种一眼就错的配置。
 CHARS_PER_WINDOW_TOKEN = 2
 
+#: 窗口到这个大小就算「大窗口」，各预算改用 large_window 那一档。
+LARGE_WINDOW_TOKENS = 500_000
+
 
 @dataclass(frozen=True, slots=True)
 class InputBudget:
@@ -36,6 +38,15 @@ class InputBudget:
     default: int
     minimum: int
     maximum: int
+
+    #: 窗口不小于 LARGE_WINDOW_TOKENS 时用的值；None = 与 default 相同
+    large_window: int | None = None
+
+    def for_window(self, context_window: int | None) -> int:
+        """按模型窗口取预算：大窗口用 large_window，否则 default；再被窗口封顶。"""
+        large = context_window is not None and context_window >= LARGE_WINDOW_TOKENS
+        value = self.large_window if large and self.large_window is not None else self.default
+        return self.effective(value, context_window)
 
     def effective(self, configured: int | None, context_window: int | None) -> int:
         """实际生效的字符数：配置值（缺省用默认）夹进上下限，再按模型窗口封顶。
@@ -57,13 +68,24 @@ def window_cap(context_window: int | None) -> int | None:
 # ---- 登记表 ----
 
 LIBRARIAN_FULLTEXT = InputBudget(
-    stage="librarian", key="fulltext_chars", default=24_000, minimum=4_000, maximum=2_000_000
+    stage="librarian",
+    key="fulltext_chars",
+    default=24_000,
+    minimum=4_000,
+    maximum=2_000_000,
+    # 约 4 万 token：绝大多数论文的正文可以整篇进去，不再只看开头两万多字
+    large_window=160_000,
 )
 FORGE_CONTEXT = InputBudget(
-    stage="forge", key="context_chars", default=12_000, minimum=2_000, maximum=2_000_000
+    stage="forge",
+    key="context_chars",
+    default=12_000,
+    minimum=2_000,
+    maximum=2_000_000,
+    large_window=48_000,
 )
 FORGE_EXCERPT = InputBudget(
-    stage="forge", key="excerpt_chars", default=800, minimum=200, maximum=50_000
+    stage="forge", key="excerpt_chars", default=800, minimum=200, maximum=50_000, large_window=2_000
 )
 
 INPUT_BUDGETS: tuple[InputBudget, ...] = (LIBRARIAN_FULLTEXT, FORGE_CONTEXT, FORGE_EXCERPT)

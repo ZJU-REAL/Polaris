@@ -1,10 +1,19 @@
-"""按环节（stage）选择 provider/model 的路由器。
+"""按环节（stage）调用模型的路由器。
 
-- 路由表存 DB（ModelRoute + LLMProviderConfig，管理端可改），60s 进程内缓存；
-- 查不到路由时回退 settings 默认（FakeProvider，无 key 也能跑通）；
-- 每次 complete/stream 后写一条 LLMUsage 记账（拿不到 usage 时按 len/4 估算），
-  归属到 user + project + voyage；库侧调用（ingest/打分/编译/概念定义/向量化）
-  另带 library_id 记到方向库账上（P6 库级月度预算的依据）。
+Polaris 只用 Claude：每个对话类环节都解析到同一个 provider、同一个模型
+（``settings.claude_model``），key 与地址来自环境变量（见 core/config.py）。没有
+服务商表、没有按环节选模型——数据库里的 LLMProviderConfig / ModelRoute / AcpAgent
+不再参与任何模型调用。环节之间仍然不同的只有「耐心」和「思考深度」：
+
+- 超时与重试次数：``call_profile``（短 / 中 / 长三档）；
+- 思考深度（effort）与 ``max_tokens``：``stage_effort`` / ``stage_max_tokens``。
+
+向量与重排是 Claude 没有的能力，走网关的 OpenAI 兼容端点（``settings.embedding_model``
+/ ``settings.rerank_model``）；没配网关地址时这两个环节抛 NotImplementedError，由
+调用方退回关键词检索。
+
+每次 complete/stream 后写一条 LLMUsage 记账（拿不到 usage 时按 len/4 估算），
+归属到 user + project + voyage；库侧调用另带 library_id。
 """
 
 import asyncio
@@ -16,13 +25,14 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
-
 from app.core.config import get_settings
-from app.core.db import get_sessionmaker
 from app.core.llm import call_log
-from app.core.llm.acp import AcpLLMProvider, AcpTarget, config_version
-from app.core.llm.anthropic import AnthropicProvider
+from app.core.llm.anthropic import (
+    NONSTREAM_MAX_TOKENS,
+    STREAM_MAX_TOKENS,
+    AnthropicProvider,
+    bare_model,
+)
 from app.core.llm.base import (
     CompletionResult,
     EffortLevel,
@@ -35,17 +45,15 @@ from app.core.llm.base import (
 from app.core.llm.budgets import InputBudget
 from app.core.llm.fake import FakeProvider, estimate_tokens
 from app.core.llm.openai_compat import OpenAICompatProvider
-from app.core.llm.openai_responses import OpenAIResponsesProvider
-from app.core.security import decrypt_secret
 
 logger = logging.getLogger(__name__)
 
 
 class LLMNotConfiguredError(RuntimeError):
-    """没有配置任何可用的 LLM 路由（且未开启 fake 回退）。
+    """没有 Claude 的 API key（且未开启 fake 回退）。
 
-    main.py 的异常处理器把它映射为 503 LLM_NOT_CONFIGURED，
-    前端据此提示「请先在设置里配置大模型」。
+    main.py 的异常处理器把它映射为 503 LLM_NOT_CONFIGURED，前端据此告诉用户
+    怎么提供 key（设置环境变量后重新打开 Polaris）。
     """
 
 
@@ -56,11 +64,9 @@ class LLMNotConfiguredError(RuntimeError):
 # 论文图筛选注释、幻灯片大纲/内容/视觉评审），要强模型；extract = 纯文本短 JSON
 # 结构化抽取（作者↔机构解析、概念定义批量生成、建库向导收录设置），小模型够用。
 #
-# **这个元组必须和前端 ``src/frontend/src/lib/api.ts`` 的 ``LLM_STAGES`` 逐项对齐。**
-# 两边漂了就是双向坏：这里少一个，设置页照样把它画出来，管理员一配，整表覆盖的
-# PUT 被 400 `unknown stage` 顶回来——不是那一行被忽略，是**整张路由表存不进去**；
-# 这里多一个，那个环节在界面上根本不存在，只能改数据库。digest 少了一年多没人发现，
-# 因为它当时偷偷继承 librarian，看起来「能用」（见下面的回退说明）。
+# 环节名会进 llm_usage / llm_call_logs 的 stage 列，前端按它显示用量与调用日志
+# （``src/frontend/src/lib/stageLabels.ts`` 给每个名字配了标签）。所有环节用的是同一个
+# Claude 模型，环节决定的只是耐心（call_profile）和思考深度（stage_effort）。
 STAGES = (
     "default",
     "agent",
@@ -193,78 +199,48 @@ def known_stages() -> frozenset[str]:
     return frozenset(STAGES) | _PLUGIN_STAGES.keys()
 
 
-_ROUTE_CACHE_TTL = 60.0
-
-# 能力型环节：需要专用模型（嵌入/重排），对话模型不具备该能力，
-# 因此不回退 default 路由——未配置时抛 NotImplementedError，由调用方降级
-# （关键词检索/向量分兜底等既有路径）。
+# 能力型环节：需要专用模型（嵌入/重排），Claude 不具备该能力，走网关的 OpenAI 兼容
+# 端点。网关不可用时抛 NotImplementedError，由调用方降级（关键词检索等既有路径）。
 _CAPABILITY_STAGES = frozenset({"embedding", "rerank"})
 
-# 没显式配路由的环节一律回退 default——设置页就是这么写的（「未单独设置的环节自动
-# 跟随默认」），那一行还直接显示着 default 的模型名。
-#
-# 这里曾经有一张兼容表：digest 拆出来时回退 librarian、agent 回退 reading，理由是
-# 「存量部署不配也不该改变行为」。代价是设置页从此在说谎——管理员把默认设成 A、
-# 界面上「每日研究简报」显示跟随默认 A，实际调用打的却是 B。2026-08-10 生产就栽在
-# 这上面：默认配的是 qwen-flash，简报却一直走 librarian 的 gpt-5.6-luna，那天网关
-# 抖动返回截断 JSON，三个库的同步全停了，排查时谁也想不到它没走默认。
-#
-# 「行为不变」保的是没人看的存量默认值，「界面说什么就是什么」保的是每一次人工配置。
-# 后者更值钱：想要原来的模型，显式配一行就是了，而界面骗人是查不出来的。
+#: 各 Claude 模型的上下文窗口（token）。保守的常量表：认不出的模型按 20 万算——
+#: 低估只是少放点材料，高估会让请求被服务端拒掉。
+_CONTEXT_WINDOWS: dict[str, int] = {
+    "claude-opus-5": 1_000_000,
+    "claude-opus-5-5": 1_000_000,
+    "claude-sonnet-5": 1_000_000,
+    "claude-sonnet-5-5": 1_000_000,
+    "claude-fable-5": 1_000_000,
+    "claude-fable-5-1": 1_000_000,
+    "claude-fable-5-2": 1_000_000,
+    "claude-haiku-4-5": 200_000,
+}
+_DEFAULT_CONTEXT_WINDOW = 200_000
+
+
+def context_window_for(model: str) -> int:
+    """模型的上下文窗口（token）。"""
+    return _CONTEXT_WINDOWS.get(bare_model(model), _DEFAULT_CONTEXT_WINDOW)
 
 
 @dataclass(slots=True, frozen=True)
 class ResolvedRoute:
-    provider_kind: str  # openai_compat | openai_responses | anthropic | acp | fake
+    provider_kind: str  # anthropic | openai_compat（仅向量/重排）| fake
     base_url: str | None
     api_key: str
     model: str
-    temperature: float | None
-    provider_name: str = "fake"  # 管理端 provider 名称（调用日志用）
-    user_agent: str | None = None  # Provider 级客户端标识；None = HTTP 客户端默认值
-    effort: EffortLevel | None = None  # 推理档位，None = 不发送该参数（用模型默认）
-    #: 模型的上下文窗口（token）。None = 管理端没填，调用方按保守常量走。
-    #: agent 的历史回放预算靠它——不知道窗口多大，裁剪阈值就只能拍脑袋。
+    #: 一律 None：当前 Claude 模型不接受采样参数。字段留着是因为调用方与测试替身
+    #: 的签名里还有它。
+    temperature: float | None = None
+    provider_name: str = "fake"  # 调用日志里显示的名字
+    effort: EffortLevel | None = None  # 该环节默认的思考深度
+    #: 模型的上下文窗口（token）。助手的历史回放预算、各环节输入预算的封顶都靠它。
     context_window: int | None = None
-    #: rerank 端点路径（#810）。None = provider 用自己的默认值。
+    #: rerank 端点路径（相对 base_url）。None = provider 用自己的默认值。
     rerank_path: str | None = None
-    #: 该环节的输入预算覆盖（键 → 字符数），见 core/llm/budgets.py。元组而不是 dict：
-    #: 这个类是 frozen 的，里面放可变对象等于留了个能被悄悄改掉的口子。
-    input_budgets: tuple[tuple[str, int], ...] = ()
-    #: provider_kind == "acp" 时：交给哪个外部 agent（#840）
-    acp: AcpTarget | None = None
 
 
-def _acp_target(agent: Any) -> AcpTarget:
-    from app.services.mcp_hub.registry import decrypt_env
-
-    args = tuple(str(a) for a in (agent.args or []))
-    env = tuple(sorted(decrypt_env(agent.env_encrypted).items()))
-    return AcpTarget(
-        agent_id=str(agent.id),
-        name=agent.name or agent.slug,
-        command=agent.command,
-        args=args,
-        env=env,
-        # 只看拉起方式：探测写回 last_probe 会改 updated_at，拿它当版本的话每探测
-        # 一次 target 就变一次，两份缓存（路由表 / 接管）各持一个，进程池来回换
-        version=config_version(agent.command, args, env),
-    )
-
-
-def _acp_route(agent: Any, *, model: str = "", temperature: float | None = None) -> ResolvedRoute:
-    return ResolvedRoute(
-        provider_kind="acp",
-        base_url=None,
-        api_key="",
-        model=model,
-        temperature=temperature,
-        provider_name=agent.name or agent.slug,
-        acp=_acp_target(agent),
-    )
-
-
-# 无 DB 路由时的兜底：确定性 fake provider
+# 没有 key 且显式开了 fake 回退时的兜底：确定性 fake provider
 _FALLBACK_ROUTE = ResolvedRoute(
     provider_kind="fake",
     base_url=None,
@@ -390,9 +366,44 @@ def call_profile(stage: str) -> tuple[float, int]:
     return _SHORT_CALL
 
 
-#: provider 客户端缓存的键：(kind, base_url, api_key, user_agent, timeout, attempts)。
+def _tier(stage: str) -> str:
+    """环节所在的档位：short / medium / long（与 call_profile 同一套归类）。"""
+    spec = _PLUGIN_STAGES.get(stage)
+    if spec is not None:
+        return spec.tier
+    if stage in _MEDIUM_CALL_STAGES:
+        return "medium"
+    if stage in _LONG_CALL_STAGES:
+        return "long"
+    return "short"
+
+
+#: 各档位默认的思考深度。短 JSON 环节（打分、判定、抽取）量大且简单，用最低档；
+#: 多轮代理与较长的结构化生成用中档；长文本生成（编译、写作、评审）用高档。
+#: 调用方显式传了 effort 就以它为准。
+_TIER_EFFORT: dict[str, EffortLevel] = {"short": "low", "medium": "medium", "long": "high"}
+
+
+def stage_effort(stage: str) -> EffortLevel:
+    """该环节默认的思考深度。"""
+    return _TIER_EFFORT[_tier(stage)]
+
+
+def stage_max_tokens(stage: str, requested: int | None) -> int:
+    """该环节这次调用的 ``max_tokens``。
+
+    Claude 的 ``max_tokens`` 把思考和正文算在一起，所以调用方为「不思考的模型」定的
+    小数字（比如一段短 JSON 给 300）不能照发，那会把回答截在半路。这里给每档一个
+    下限：长文本环节和助手走流式，给足余量；其余环节非流式。调用方要得比下限多时
+    听调用方的。
+    """
+    streams = _tier(stage) == "long" or stage == "agent"
+    return max(requested or 0, STREAM_MAX_TOKENS if streams else NONSTREAM_MAX_TOKENS)
+
+
+#: provider 客户端缓存的键：(kind, base_url, api_key, timeout, attempts, rerank_path)。
 #: 与 ``_provider_for`` 构造键的地方保持一致。
-_ProviderKey = dict[tuple[str, str | None, str, str | None, float, int], LLMProvider]
+_ProviderKey = dict[tuple[str, str | None, str, float, int, str | None], LLMProvider]
 
 
 class LLMRouter:
@@ -403,182 +414,100 @@ class LLMRouter:
     """
 
     def __init__(self) -> None:
-        # 路由表缓存（一张表：单用户本地应用，没有「谁的配置」之分）
-        self._routes: dict[str, ResolvedRoute] = {}
-        self._routes_loaded_at: float | None = None
-        #: 外部 agent 接管的缓存：(加载时刻, 路由或 None)
-        self._fallback_agent: tuple[float, ResolvedRoute | None] | None = None
         # 键含耐心档位（见 call_profile）：长/短两档各持一个客户端。键是实现细节，
         # 要在测试里替换 provider 请用 override_provider()，别直接往这个字典里塞。
         #
-        # 凡是会改变客户端行为的字段都必须在键里，否则两份配置会共用同一个客户端，
-        # 后配的那份静默用着前一份的连接参数。加 user_agent 时键跟着加了，
-        # 这行标注没跟上——标注是给下一个改键的人看的，写错就等于没有。
+        # 凡是会改变客户端行为的字段都必须在键里，否则两份配置会共用同一个客户端。
         self._providers: _ProviderKey = {}
         self._override: LLMProvider | None = None
         self.event_bus: Any | None = None
 
     def override_provider(self, provider: LLMProvider | None) -> None:
-        """强制所有环节都用这个 provider（测试注入点；传 None 取消）。
-
-        以前测试是直接往 ``_providers`` 里按键塞，于是缓存键的形状变成了事实上的
-        公开接口——给它加个「耐心档位」维度就一次打断 16 个用例。走这个口子，
-        键怎么变都与测试无关。
-        """
+        """强制所有环节都用这个 provider（测试注入点；传 None 取消）。"""
         self._override = provider
 
     def invalidate_cache(self) -> None:
-        """设置页改动 providers/routes/agents 后调用。"""
-        self._routes_loaded_at = None
-        self._fallback_agent = None
+        """丢掉缓存的 provider 客户端（配置来自环境变量，进程内不会变；测试改了
+        settings 之后调用）。"""
+        self._providers = {}
 
-    async def _load_routes(self) -> dict[str, ResolvedRoute]:
-        from app.models.acp_agent import AcpAgent
-        from app.models.llm_config import LLMProviderConfig, ModelRoute
+    def _chat_route(self, stage: str) -> ResolvedRoute | None:
+        """对话环节的路由：有 key 就是 Claude，没有返回 None。"""
+        settings = get_settings()
+        if not settings.claude_configured:
+            return None
+        return ResolvedRoute(
+            provider_kind="anthropic",
+            base_url=settings.claude_base_url or None,
+            api_key=settings.claude_api_key,
+            model=settings.claude_model,
+            provider_name="claude",
+            effort=stage_effort(stage),
+            context_window=context_window_for(settings.claude_model),
+        )
 
-        routes: dict[str, ResolvedRoute] = {}
-        async with get_sessionmaker()() as session:
-            # owner_id 列还在（#801 遗留），迁移 3c7d9e1f5a20 已把行都并成 NULL；
-            # 这里仍只取 NULL 行，万一有漏网的旧行也不会混进来。
-            stmt = (
-                select(ModelRoute, LLMProviderConfig)
-                .join(LLMProviderConfig, ModelRoute.provider_id == LLMProviderConfig.id)
-                .where(LLMProviderConfig.enabled.is_(True), ModelRoute.owner_id.is_(None))
-            )
-            # 指向外部 agent 的路由（#840）
-            agent_stmt = (
-                select(ModelRoute, AcpAgent)
-                .join(AcpAgent, ModelRoute.acp_agent_id == AcpAgent.id)
-                .where(AcpAgent.enabled.is_(True), ModelRoute.owner_id.is_(None))
-            )
-            for route, agent in (await session.execute(agent_stmt)).all():
-                routes[route.stage] = _acp_route(
-                    agent, model=route.model, temperature=route.temperature
-                )
-            for route, provider in (await session.execute(stmt)).all():
-                api_key = (
-                    decrypt_secret(provider.api_key_encrypted) if provider.api_key_encrypted else ""
-                )
-                routes[route.stage] = ResolvedRoute(
-                    provider_kind=provider.kind,
-                    base_url=provider.base_url,
-                    api_key=api_key,
-                    model=route.model,
-                    temperature=route.temperature,
-                    provider_name=provider.name,
-                    user_agent=provider.user_agent,
-                    effort=route.effort,
-                    context_window=route.context_window,
-                    rerank_path=provider.rerank_path,
-                    input_budgets=tuple(sorted((route.input_budgets or {}).items())),
-                )
-        return routes
+    def _capability_route(self, stage: str) -> ResolvedRoute | None:
+        """向量 / 重排的路由：有 key 且配了网关地址才有，否则 None。"""
+        settings = get_settings()
+        base = settings.gateway_openai_base_url
+        if not settings.claude_configured or base is None:
+            return None
+        return ResolvedRoute(
+            provider_kind="openai_compat",
+            base_url=base,
+            api_key=settings.claude_api_key,
+            model=settings.embedding_model if stage == "embedding" else settings.rerank_model,
+            provider_name="gateway",
+            # LiteLLM 的重排开在 /v1/rerank（base 已含 /v1）
+            rerank_path="/rerank",
+        )
 
-    async def _get_routes(self) -> dict[str, ResolvedRoute]:
-        """路由表（缓存 60s，设置页改动时清空）。"""
-        now = time.monotonic()
-        # 也看有没有加载过，不能只看时间戳：monotonic() 的零点是开机，进程恰好在
-        # 开机 60 秒内起来时「now - 0.0 > TTL」为假，于是一条都还没加载就被当成
-        # 缓存有效。
-        if self._routes_loaded_at is None or now - self._routes_loaded_at > _ROUTE_CACHE_TTL:
-            self._routes = await self._load_routes()
-            self._routes_loaded_at = now
-        return self._routes
+    def is_configured(self) -> bool:
+        """有没有 Claude 的 key。
 
-    async def fallback_agent_route(self) -> ResolvedRoute | None:
-        """没配 default 时接管对话环节的外部 agent（#840）；没有可用的返回 None。
-
-        取最早登记、启用中的那个。缓存与路由表同一个节奏（60s，设置页改动时清空）。
+        问的是 key 本身，不看 ``llm_fake_fallback``——那个开关会让 resolve 在没有
+        key 时也返回一个 fake provider，拿它当「配好了」的依据，等于告诉用户一件
+        没发生的事。
         """
-        now = time.monotonic()
-        cached = self._fallback_agent
-        if cached is not None and now - cached[0] <= _ROUTE_CACHE_TTL:
-            return cached[1]
-        from app.models.acp_agent import AcpAgent
-
-        async with get_sessionmaker()() as session:
-            stmt = select(AcpAgent).where(AcpAgent.enabled.is_(True))
-            agent = (
-                await session.execute(stmt.order_by(AcpAgent.created_at, AcpAgent.id).limit(1))
-            ).scalar_one_or_none()
-        route = _acp_route(agent) if agent is not None else None
-        self._fallback_agent = (now, route)
-        return route
+        return get_settings().claude_configured
 
     async def has_chat_model(self) -> bool:
-        """能不能打到一个对话模型：配了 default，或者有外部 agent 可以接管。"""
-        if "default" in await self.configured_stages():
-            return True
-        return await self.fallback_agent_route() is not None
-
-    async def configured_stages(self) -> set[str]:
-        """实际配了路由的环节。
-
-        给「还没配模型」这类判断用：问的是路由表本身，不看
-        ``llm_fake_fallback``——那个开关会让 resolve 在一条路由都没有时也返回
-        一个 fake provider，拿它当「配好了」的依据，等于告诉用户一件没发生的事。
-        """
-        return set(await self._get_routes())
+        """能不能打到一个对话模型（= 有 Claude 的 key）。"""
+        return self.is_configured()
 
     def _provider_for(self, route: ResolvedRoute, stage: str = "") -> LLMProvider:
         if self._override is not None:
             return self._override
-        # 耐心程度进缓存键：同一个 provider 配置在长/短两档下各持一个客户端
+        # 耐心程度进缓存键：同一份配置在长/短两档下各持一个客户端
         timeout, attempts = call_profile(stage)
         key = (
             route.provider_kind,
             route.base_url,
             route.api_key,
-            route.user_agent,
             timeout,
             attempts,
-            # rerank 路径进键：它改的是请求地址。不进键的话，同一个 base_url 上
-            # 两份只有这一项不同的配置会共用同一个客户端，后配的那份静默用着
-            # 前一份的路径——正是这行上面那段注释警告过的事。
+            # rerank 路径进键：它改的是请求地址
             route.rerank_path,
-            # 外部 agent：换了 agent 或改了它的配置就是另一个 provider
-            route.acp,
         )
         if key not in self._providers:
-            if route.provider_kind == "openai_compat":
-                base_url = route.base_url or get_settings().openai_compat_base_url
-                self._providers[key] = OpenAICompatProvider(
-                    base_url=base_url,
-                    api_key=route.api_key,
-                    timeout=timeout,
-                    max_attempts=attempts,
-                    rerank_path=route.rerank_path,
-                )
-            elif route.provider_kind == "openai_responses":
-                # 与 openai_compat 同一族：base_url 缺省回退、鉴权、rerank 路径都一样，
-                # 只是对话走 /responses（#809）
-                self._providers[key] = OpenAIResponsesProvider(
-                    base_url=route.base_url or get_settings().openai_compat_base_url,
-                    api_key=route.api_key,
-                    timeout=timeout,
-                    max_attempts=attempts,
-                    rerank_path=route.rerank_path,
-                )
-            elif route.provider_kind == "anthropic":
+            if route.provider_kind == "anthropic":
                 self._providers[key] = AnthropicProvider(
                     api_key=route.api_key,
                     base_url=route.base_url,
-                    user_agent=route.user_agent,
                     timeout=timeout,
                     max_attempts=attempts,
+                    refusal_fallback=get_settings().claude_refusal_fallback,
                 )
-            elif route.provider_kind == "acp" and route.acp is not None:
-                # 同一个 agent 换了配置：旧配置的 provider 不会再被用到，别让它们一直攒着
-                agent_id = route.acp.agent_id
-                for old in [
-                    k
-                    for k, p in self._providers.items()
-                    if isinstance(p, AcpLLMProvider)
-                    and p.target.agent_id == agent_id
-                    and p.target != route.acp
-                ]:
-                    del self._providers[old]
-                self._providers[key] = AcpLLMProvider(route.acp, timeout=timeout)
+            elif route.provider_kind == "openai_compat":
+                # 只用它的 embed / rerank（网关的 OpenAI 兼容端点）
+                assert route.base_url is not None
+                self._providers[key] = OpenAICompatProvider(
+                    base_url=route.base_url,
+                    api_key=route.api_key,
+                    timeout=timeout,
+                    max_attempts=attempts,
+                    rerank_path=route.rerank_path,
+                )
             elif route.provider_kind == "fake":
                 self._providers[key] = FakeProvider()
             else:
@@ -586,70 +515,49 @@ class LLMRouter:
         return self._providers[key]
 
     async def resolve(self, stage: str) -> tuple[LLMProvider, ResolvedRoute]:
-        """查平台路由表（缓存 60s），无则回退 default 路由。
+        """该环节用哪个 provider、哪个模型。
 
-        没显式配的环节一律回退 ``default``，不存在「继承另一个环节」这回事——设置页
-        就是这么告诉管理员的，界面显示跟随默认哪个模型，实际就得打那个模型。
+        对话环节（含插件命名空间环节）一律是 Claude。没有 key 时抛
+        LLMNotConfiguredError（503）；仅当显式开启 ``settings.llm_fake_fallback``
+        （测试套件 / 无 key 演示）才回退 fake。
 
-        能力型环节（``_CAPABILITY_STAGES``）不回退 default：对话模型没有
-        embedding/rerank 能力，回退只会产生无意义调用；未显式配置时抛
-        NotImplementedError，调用方按既有降级路径处理。
-
-        对话环节连 default 也没有时抛 LLMNotConfiguredError（503），不再
-        静默回退演示用 fake provider；仅当显式开启
-        ``settings.llm_fake_fallback``（测试套件 / 无 key 演示）才回退 fake。
-
-        插件命名空间环节（#736）的回退链是三级：精确路由（DB 里 stage 名 =
-        完整命名空间串）→ 注册时声明的内置 fallback 环节的路由 → default 路由。
-        耐心档不随回退变：始终按注册时声明的 tier（见 call_profile）。
+        能力型环节（``_CAPABILITY_STAGES``）走网关的向量 / 重排模型；网关不可用
+        （没有 key，或没配网关地址）时抛 NotImplementedError，调用方按既有降级
+        路径处理——同样只有显式开了 fake 回退且没有 key 时才给 fake。
         """
-        routes = await self._get_routes()
-        route = routes.get(stage)
-        if route is None:
-            spec = _PLUGIN_STAGES.get(stage)
-            if spec is not None and spec.fallback is not None:
-                route = routes.get(spec.fallback)
-        if route is None:
-            if stage in _CAPABILITY_STAGES:
-                if not routes and get_settings().llm_fake_fallback:
+        if stage in _CAPABILITY_STAGES:
+            route = self._capability_route(stage)
+            if route is None:
+                settings = get_settings()
+                if settings.llm_fake_fallback and not settings.claude_configured:
                     route = _FALLBACK_ROUTE
                 else:
-                    raise NotImplementedError(f"no route configured for stage '{stage}'")
-            else:
-                route = routes.get("default")
-                if route is None:
-                    # 没配 default：有外部 agent 就由它接管（#840）。能力型环节不在此列
-                    # ——agent 产不出向量，那两个环节走上面的降级。
-                    route = await self.fallback_agent_route()
-                if route is None:
-                    if not get_settings().llm_fake_fallback:
-                        raise LLMNotConfiguredError(
-                            "no model configured — add an agent backend or a model API in "
-                            "Settings → Models & agents"
-                        )
-                    route = _FALLBACK_ROUTE
+                    raise NotImplementedError(
+                        f"stage '{stage}' needs a gateway that serves embedding and rerank "
+                        "models; none is configured"
+                    )
+        else:
+            route = self._chat_route(stage)
+            if route is None:
+                if not get_settings().llm_fake_fallback:
+                    raise LLMNotConfiguredError(
+                        "no Claude API key: set ANTHROPIC_API_KEY (or LITELLM_API_KEY and "
+                        "LITELLM_API_BASE for a LiteLLM gateway) and restart Polaris"
+                    )
+                route = _FALLBACK_ROUTE
         return self._provider_for(route, stage), route
 
     async def input_budget(self, spec: InputBudget) -> int:
-        """该环节此刻生效的输入预算（字符），见 core/llm/budgets.py。
-
-        覆盖值只认这个环节**自己**那一行：跟随 default 的环节没有自己的预算，用登记的
-        默认值——default 那行上存的是 default 自己的键，与别的环节无关。
-        窗口封顶则看实际会被调用的那一行（自己的，没有就是 default 的），因为封顶
-        说的是「这次调用的模型能收多少」。
-        """
-        routes = await self._get_routes()
-        own = routes.get(spec.stage)
-        configured = dict(own.input_budgets).get(spec.key) if own is not None else None
-        called = own if own is not None else routes.get("default")
-        return spec.effective(configured, called.context_window if called is not None else None)
+        """该环节此刻生效的输入预算（字符），由 Claude 模型的上下文窗口推出，
+        见 core/llm/budgets.py。没有 key（fake 回退）时用登记的默认值。"""
+        route = self._chat_route(spec.stage)
+        return spec.for_window(route.context_window if route is not None else None)
 
     async def model_name(self, stage: str) -> str | None:
-        """该环节实际会用到的模型名；未配置/不可用时 None（调用方只用于展示）。
+        """该环节实际会用到的模型名；不可用时 None（调用方只用于展示）。
 
         ``embed()`` 只返回向量，模型名留在路由里；要把「这批向量是谁建的」记进库
-        （papers.embedding_model 等）就得单独问一次。resolve 有 60s 路由缓存，
-        额外开销可忽略。
+        （papers.embedding_model 等）就得单独问一次。
         """
         try:
             _, route = await self.resolve(stage)
@@ -758,6 +666,8 @@ class LLMRouter:
         provider, route = await self.resolve(stage)
         temp = route.temperature if temperature is None else temperature
         eff = route.effort if effort is None else effort
+        if route.provider_kind == "anthropic":
+            max_tokens = stage_max_tokens(stage, max_tokens)
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
         try:
@@ -850,8 +760,11 @@ class LLMRouter:
         冒烟/分析步接连因此转向用户提问）。这里整段重来：每次重试重新广播 llm_start
         （前端会另起一个输出块），退避后拉新流，收齐才算成功。
         """
+        import anthropic
         import httpx
 
+        # 流开到一半断线：SDK 只在拿到响应之前自己重试，中途断了要这里整段重来
+        transient = (httpx.TransportError, httpx.TimeoutException, anthropic.APIConnectionError)
         stream_extra: dict[str, Any] = {"effort": effort} if effort is not None else {}
         collected: list[str] = []
         last_exc: Exception | None = None
@@ -887,7 +800,7 @@ class LLMRouter:
                     if buf_len >= _STREAM_FLUSH_CHARS:
                         await flush()
                 await flush()
-            except (httpx.TransportError, httpx.TimeoutException) as e:
+            except transient as e:
                 await self.event_bus.publish_voyage_event(voyage_id, "llm_end", {"stage": stage})
                 last_exc = e
                 if attempt >= _STREAM_RETRY_ATTEMPTS - 1:
@@ -1090,6 +1003,8 @@ class LLMRouter:
         voyage_id: uuid.UUID | None = None,
     ) -> AsyncIterator[str]:
         provider, route = await self.resolve(stage)
+        if route.provider_kind == "anthropic":
+            max_tokens = stage_max_tokens(stage, max_tokens)
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
         collected: list[str] = []
@@ -1174,6 +1089,8 @@ class LLMRouter:
         它的（Anthropic 现在也归一化过键名了），没给才按 len/4 估。
         """
         provider, route = await self.resolve(stage)
+        if route.provider_kind == "anthropic":
+            max_tokens = stage_max_tokens(stage, max_tokens)
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
         collected: list[str] = []

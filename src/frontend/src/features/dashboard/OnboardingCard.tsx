@@ -16,16 +16,6 @@ import { tr } from '../../lib/i18n';
 /** id → 这一项说什么、点了去哪。落点必须是这个用户真能打开的页面。 */
 function copyFor(id: string): { title: string; hint: string; href: string; cta: string } | null {
   switch (id) {
-    case 'model':
-      return {
-        title: tr('添加智能体或模型服务', 'Add an agent or model provider'),
-        hint: tr(
-          'AI 功能需要它。已装好 Claude Code 等智能体的话，直接添加最快。',
-          'AI features need one. If you already use an agent such as Claude Code, adding it is quickest.',
-        ),
-        href: '/settings?tab=llm',
-        cta: tr('添加', 'Add'),
-      };
     case 'library':
       return {
         title: tr('新建文献库', 'Create a library'),

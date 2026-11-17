@@ -23,7 +23,6 @@ from app.core.llm.budgets import (
     resolve_budget,
     validate_budgets,
 )
-from app.core.llm.router import get_llm_router
 from app.models.paper import Paper
 from app.services.wiki_compile import build_compile_prompt
 from tests.conftest import register_and_login
@@ -147,85 +146,3 @@ async def _fake_provider(client, headers) -> str:
         "/api/admin/llm/providers", json={"name": "fake", "kind": "fake"}, headers=headers
     )
     return resp.json()["id"]
-
-
-async def test_context_window_and_budgets_survive_a_save(client):
-    """以前 PUT 不认 context_window，存一次路由表就把它清空。"""
-    headers = await _owner(client)
-    pid = await _fake_provider(client, headers)
-    routes = [
-        {"stage": "default", "provider_id": pid, "model": "m", "context_window": 128_000},
-        {
-            "stage": "librarian",
-            "provider_id": pid,
-            "model": "m-long",
-            "context_window": 200_000,
-            "input_budgets": {"fulltext_chars": 60_000},
-        },
-    ]
-    resp = await client.put("/api/admin/llm/routes", json=routes, headers=headers)
-    assert resp.status_code == 200, resp.text
-    resp = await client.get("/api/admin/llm/routes", headers=headers)
-    got = {r["stage"]: r for r in resp.json()}
-    assert got["default"]["context_window"] == 128_000
-    assert got["default"]["input_budgets"] is None
-    assert got["librarian"]["context_window"] == 200_000
-    assert got["librarian"]["input_budgets"] == {"fulltext_chars": 60_000}
-
-
-async def test_invalid_budgets_are_refused_with_a_reason(client):
-    headers = await _owner(client)
-    pid = await _fake_provider(client, headers)
-    cases = [
-        ({"fulltext_chars": 10}, None, "between"),
-        ({"nope": 5_000}, None, "no input budget named"),
-        ({"fulltext_chars": 100_000}, 16_000, "context window"),
-    ]
-    for budgets, window, reason in cases:
-        resp = await client.put(
-            "/api/admin/llm/routes",
-            json=[
-                {
-                    "stage": "librarian",
-                    "provider_id": pid,
-                    "model": "m",
-                    "context_window": window,
-                    "input_budgets": budgets,
-                }
-            ],
-            headers=headers,
-        )
-        assert resp.status_code == 400, (budgets, resp.text)
-        assert reason in resp.json()["detail"]
-
-
-async def test_the_router_hands_out_what_settings_saved(client):
-    headers = await _owner(client)
-    pid = await _fake_provider(client, headers)
-    routes = [
-        {"stage": "default", "provider_id": pid, "model": "m", "context_window": 8_000},
-        {
-            "stage": "forge",
-            "provider_id": pid,
-            "model": "m",
-            "input_budgets": {"context_chars": 80_000, "excerpt_chars": 2_000},
-        },
-    ]
-    resp = await client.put("/api/admin/llm/routes", json=routes, headers=headers)
-    assert resp.status_code == 200, resp.text
-
-    llm = get_llm_router()
-    assert await llm.input_budget(FORGE_CONTEXT) == 80_000
-    assert await llm.input_budget(FORGE_EXCERPT) == 2_000
-    # librarian 没有自己的行：跟随 default，用默认预算，但被 default 的窗口封顶
-    assert await llm.input_budget(LIBRARIAN_FULLTEXT) == 8_000 * CHARS_PER_WINDOW_TOKEN
-
-
-async def test_input_budget_spec_endpoint_lists_the_registry(client):
-    headers = await _owner(client)
-    resp = await client.get("/api/admin/llm/input-budgets", headers=headers)
-    assert resp.status_code == 200
-    got = {(b["stage"], b["key"]): b for b in resp.json()}
-    assert got[("librarian", "fulltext_chars")]["default"] == 24_000
-    assert got[("forge", "context_chars")]["chars_per_window_token"] == CHARS_PER_WINDOW_TOKEN
-    assert len(got) == len(INPUT_BUDGETS)

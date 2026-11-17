@@ -8,7 +8,6 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -312,41 +311,6 @@ async def test_a_rename_does_not_churn_the_pool():
     assert acp_llm.pool_for(renamed) is pool
 
 
-def test_target_version_ignores_probe_writes():
-    from app.core.llm.router import _acp_target
-
-    row = SimpleNamespace(
-        id=uuid.uuid4(),
-        name="a",
-        slug="a",
-        command="cmd",
-        args=["x"],
-        env_encrypted=None,
-        updated_at="2026-10-01",
-    )
-    first = _acp_target(row)
-    row.updated_at = "2026-10-02"  # 探测写回 last_probe
-    assert _acp_target(row) == first
-    row.args = ["y"]
-    assert _acp_target(row).version != first.version
-
-
-def test_router_drops_providers_of_an_agents_old_config():
-    from app.core.llm.router import LLMRouter, ResolvedRoute
-
-    router = LLMRouter()
-
-    def route(target: AcpTarget) -> ResolvedRoute:
-        return ResolvedRoute(
-            provider_kind="acp", base_url=None, api_key="", model="", temperature=None, acp=target
-        )
-
-    router._provider_for(route(_target()), "relevance")
-    router._provider_for(route(_target(X="1")), "relevance")
-    acps = [p for p in router._providers.values() if isinstance(p, AcpLLMProvider)]
-    assert [p.target.env for p in acps] == [(("X", "1"),)]
-
-
 async def test_an_unknown_model_is_logged_and_the_default_answers(caplog):
     provider = AcpLLMProvider(_target())
     with caplog.at_level("WARNING", logger="polaris.acp"):
@@ -440,63 +404,6 @@ def test_replay_repair_drops_unpaired_tool_blocks():
     assert [b.tool_use_id for b in out[2].content] == ["x"]
 
 
-async def test_a_disconnected_turn_is_stored_as_interrupted(client):
-    from app.agents.chat.events import DeltaEvent, ToolCallEvent
-    from app.api.chat_agent import _stream_turn
-    from app.core.db import get_sessionmaker
-    from app.services import conversations as store
-
-    await register_and_login(client)
-    async with get_sessionmaker()() as session:
-        from sqlalchemy import select
-
-        from app.models.user import User
-        from app.services.local_user import LOCAL_USER_EMAIL
-
-        user = (
-            await session.execute(select(User).where(User.email == LOCAL_USER_EMAIL))
-        ).scalar_one()
-        conv = await store.get_or_create(session, user_id=user.id, scope_kind="global")
-        await store.append_message(session, conversation=conv, role="user", text="q")
-        await session.commit()
-        conv_id, user_id = conv.id, user.id
-
-    async def events():
-        yield DeltaEvent("part")
-        yield ToolCallEvent(id="c1", name="agent_read", args={})
-        await asyncio.sleep(30)
-
-    resp = _stream_turn(
-        events(), conv_id=conv_id, user_id=user_id, first_question="q", agent_turn=True
-    )
-    body = resp.body_iterator
-    await body.__anext__()
-    await body.__anext__()
-    await body.aclose()  # 客户端断了
-
-    from app.models.conversation import ConversationMessage
-
-    async with get_sessionmaker()() as session:
-        rows = (
-            (
-                await session.execute(
-                    select(ConversationMessage)
-                    .where(ConversationMessage.conversation_id == conv_id)
-                    .order_by(ConversationMessage.seq)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert rows[-1].stop_reason == "interrupted" and rows[-1].status == "interrupted"
-        assert [r.kind for r in rows[1:]] == ["normal", "tool_results"]
-        history = await store.replay(session, conversation_id=conv_id)
-    # 回放里不留没结果的调用
-    for msg in history:
-        if isinstance(msg.content, list):
-            assert not any(isinstance(b, ToolUseBlock) for b in msg.content)
-
-
 # ---------------------------------------------------------------- 经助手接口
 
 
@@ -541,59 +448,6 @@ def _said(frames) -> str:
     return "".join(d["text"] for n, d in frames if n == "delta")
 
 
-async def test_nested_agent_tool_calls_replay_cleanly(client, agent_on):
-    from app.core.db import get_sessionmaker
-    from app.services import conversations as store
-
-    headers = await _headers(client)
-    agent = await _register(client, headers)
-    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
-    frames = await _turn(client, headers, conv_id, "nested", backend=agent["id"])
-    assert frames[-1][0] == "done" and _said(frames) == "all done"
-    msgs = (await client.get(f"/api/chat/conversations/{conv_id}/messages", headers=headers)).json()
-    kinds = [(m["role"], m["kind"]) for m in msgs]
-    assert kinds == [
-        ("user", "normal"),
-        ("assistant", "normal"),
-        ("user", "tool_results"),
-        ("assistant", "normal"),
-    ]
-    uses = [b["id"] for b in msgs[1]["blocks"] if b["kind"] == "tool_use"]
-    results = [b["tool_use_id"] for b in msgs[2]["blocks"]]
-    assert uses == ["t1", "t2", "t3"] and sorted(results) == ["t1", "t2", "t3"]
-    async with get_sessionmaker()() as session:
-        history = await store.replay(session, conversation_id=uuid.UUID(conv_id))
-    assert len(history) == 4  # 修补无事可做：本来就配好了对
-
-
-async def test_turns_answered_by_polaris_reach_a_live_agent_session(client, agent_on):
-    """agent 答一轮 → Polaris 答一轮 → 再交给 agent：中间那轮它得看得见，更早的不重复。"""
-    from app.core.db import get_sessionmaker
-    from app.services import conversations as store
-
-    headers = await _headers(client)
-    agent = await _register(client, headers)
-    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
-    await _turn(client, headers, conv_id, "first agent question", backend=agent["id"])
-    async with get_sessionmaker()() as session:
-        conv = await store.get_owned(
-            session, conversation_id=uuid.UUID(conv_id), user_id=(await _user_id(session))
-        )
-        assert isinstance(conv.settings.get("acp_seen_seq"), int)
-        # Polaris 自己答的一轮（原生循环落库的样子）
-        await store.append_message(session, conversation=conv, role="user", text="native question")
-        await store.append_message(
-            session, conversation=conv, role="assistant", text="native answer"
-        )
-        await session.commit()
-    said = _said(await _turn(client, headers, conv_id, "prompt-text", backend=agent["id"]))
-    assert "native question" in said and "native answer" in said
-    assert "first agent question" not in said  # 它自己的会话里本来就有
-    # 再来一轮：没有新的旁路内容，就不再补
-    said = _said(await _turn(client, headers, conv_id, "prompt-text again", backend=agent["id"]))
-    assert "native answer" not in said
-
-
 async def _user_id(session) -> uuid.UUID:
     from sqlalchemy import select
 
@@ -603,61 +457,3 @@ async def _user_id(session) -> uuid.UUID:
     return (
         await session.execute(select(User.id).where(User.email == LOCAL_USER_EMAIL))
     ).scalar_one()
-
-
-async def test_polaris_turns_on_an_agent_carry_mode_memory_and_model(client, agent_on):
-    from app.services.acp import chat as acp_chat
-
-    headers = await _headers(client)
-    agent = await _register(client, headers)
-    resp = await client.put(
-        "/api/admin/llm/routes",
-        json=[{"stage": "agent", "acp_agent_id": agent["id"], "model": "smart"}],
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
-    await client.post("/api/chat/memories", json={"text": "prefers short answers"}, headers=headers)
-    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
-    frames = await _turn(
-        client, headers, conv_id, "prompt-text", backend="polaris", mode="goal", goal="ship #850"
-    )
-    said = _said(frames)
-    assert frames[0][1]["model"] == "Fake Agent"
-    assert "prefers short answers" in said and "ship #850" in said
-    live = acp_chat.live_session(uuid.UUID(conv_id))
-    assert live is not None and live.model == "smart"
-    # 计划模式：给 agent 的是不提 submit_plan 的那份
-    said = _said(
-        await _turn(client, headers, conv_id, "prompt-text", backend="polaris", mode="plan")
-    )
-    assert "计划模式" in said and "submit_plan" not in said
-
-
-async def test_agents_cannot_serve_capability_stages(client):
-    headers = await _headers(client)
-    agent = await _register(client, headers)
-    for stage in ("embedding", "rerank"):
-        resp = await client.put(
-            "/api/admin/llm/routes",
-            json=[{"stage": stage, "acp_agent_id": agent["id"], "model": ""}],
-            headers=headers,
-        )
-        assert resp.status_code == 400, resp.text
-
-
-async def test_testing_an_agent_with_an_unknown_model_says_so(client):
-    headers = await _headers(client)
-    agent = await _register(client, headers)
-    resp = await client.post(
-        "/api/admin/llm/test-model",
-        json={"acp_agent_id": agent["id"], "model": "gpt-9"},
-        headers=headers,
-    )
-    body = resp.json()
-    assert body["ok"] is False and "gpt-9" in body["error"] and "fast, smart" in body["error"]
-    resp = await client.post(
-        "/api/admin/llm/test-model",
-        json={"acp_agent_id": agent["id"], "model": "fast"},
-        headers=headers,
-    )
-    assert resp.json()["ok"] is True

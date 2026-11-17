@@ -1,163 +1,28 @@
-"""LLM 配置路由（模型 API、各环节路由、用量、调用日志）。
+"""模型用量与调用日志。
 
-接口清单见 docs/task-system.md §7（原 api-m1.md §2）。"""
+模型本身不可配置（Polaris 只用 Claude，见 api/llm_status.py），这里只剩两样只读的
+东西：按天汇总的用量，以及可开关的调用日志。
+"""
 
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
-from app.core.llm.budgets import CHARS_PER_WINDOW_TOKEN, INPUT_BUDGETS
-from app.models.llm_config import LLMCallLog, LLMProviderConfig
+from app.models.llm_config import LLMCallLog
 from app.models.user import User
 from app.schemas.llm_admin import (
     CallLogDetail,
     CallLogPage,
     CallLogRow,
     CallLogSettings,
-    InputBudgetSpec,
-    ProviderCreate,
-    ProviderRead,
-    ProviderUpdate,
-    RouteItem,
-    TestModelRequest,
-    TestModelResult,
     UsageRow,
 )
 from app.services import llm_admin as llm_admin_service
 
 router = APIRouter(prefix="/admin/llm", tags=["admin-llm"])
-
-
-def _provider_read(provider: LLMProviderConfig) -> ProviderRead:
-    return ProviderRead(
-        id=provider.id,
-        name=provider.name,
-        kind=provider.kind,
-        base_url=provider.base_url,
-        user_agent=provider.user_agent,
-        api_key_masked=llm_admin_service.masked_key_of(provider),
-        enabled=provider.enabled,
-        models=provider.models,
-    )
-
-
-async def _get_provider_or_404(session: AsyncSession, provider_id: uuid.UUID) -> LLMProviderConfig:
-    provider = await llm_admin_service.get_provider(session, provider_id)
-    if provider is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROVIDER_NOT_FOUND")
-    return provider
-
-
-@router.get("/providers", response_model=list[ProviderRead])
-async def list_providers(
-    session: AsyncSession = Depends(get_session),
-    _user: User = Depends(current_active_user),
-) -> list[ProviderRead]:
-    providers = await llm_admin_service.list_providers(session)
-    return [_provider_read(p) for p in providers]
-
-
-@router.post("/providers", response_model=ProviderRead, status_code=status.HTTP_201_CREATED)
-async def create_provider(
-    data: ProviderCreate,
-    session: AsyncSession = Depends(get_session),
-    _user: User = Depends(current_active_user),
-) -> ProviderRead:
-    try:
-        provider = await llm_admin_service.create_provider(session, data)
-    except IntegrityError as e:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="PROVIDER_NAME_EXISTS") from e
-    return _provider_read(provider)
-
-
-@router.patch("/providers/{provider_id}", response_model=ProviderRead)
-async def update_provider(
-    provider_id: uuid.UUID,
-    data: ProviderUpdate,
-    session: AsyncSession = Depends(get_session),
-    _user: User = Depends(current_active_user),
-) -> ProviderRead:
-    provider = await _get_provider_or_404(session, provider_id)
-    provider = await llm_admin_service.update_provider(session, provider, data)
-    return _provider_read(provider)
-
-
-@router.delete("/providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_provider(
-    provider_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    _user: User = Depends(current_active_user),
-) -> None:
-    provider = await _get_provider_or_404(session, provider_id)
-    await llm_admin_service.delete_provider(session, provider)
-
-
-@router.get("/routes", response_model=list[RouteItem])
-async def list_routes(
-    session: AsyncSession = Depends(get_session),
-    _user: User = Depends(current_active_user),
-) -> list[RouteItem]:
-    routes = await llm_admin_service.list_routes(session)
-    return [RouteItem.model_validate(r, from_attributes=True) for r in routes]
-
-
-@router.put("/routes", response_model=list[RouteItem])
-async def replace_routes(
-    items: list[RouteItem],
-    session: AsyncSession = Depends(get_session),
-    _user: User = Depends(current_active_user),
-) -> list[RouteItem]:
-    try:
-        routes = await llm_admin_service.replace_routes(session, items)
-    except llm_admin_service.InvalidRouteError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-    return [RouteItem.model_validate(r, from_attributes=True) for r in routes]
-
-
-@router.get("/input-budgets", response_model=list[InputBudgetSpec])
-async def list_input_budgets(
-    _user: User = Depends(current_active_user),
-) -> list[InputBudgetSpec]:
-    """可调的输入预算清单（#811）。设置页照这张表画输入框，不在前端另抄一份。"""
-    return [
-        InputBudgetSpec(
-            stage=b.stage,
-            key=b.key,
-            default=b.default,
-            minimum=b.minimum,
-            maximum=b.maximum,
-            chars_per_window_token=CHARS_PER_WINDOW_TOKEN,
-        )
-        for b in INPUT_BUDGETS
-    ]
-
-
-@router.post("/test-model", response_model=TestModelResult)
-async def test_model(
-    data: TestModelRequest,
-    session: AsyncSession = Depends(get_session),
-    _user: User = Depends(current_active_user),
-) -> TestModelResult:
-    """最小化探测 provider+model 连通性（不经过路由表，不记账、不写调用日志）。"""
-    if data.acp_agent_id is not None:
-        # 外部 agent（#840）：真拉起来答一句
-        from app.models.acp_agent import AcpAgent
-
-        agent = await session.get(AcpAgent, data.acp_agent_id)
-        if agent is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ACP_AGENT_NOT_FOUND")
-        ok, latency_ms, error = await llm_admin_service.test_agent(agent, data.model)
-        return TestModelResult(ok=ok, latency_ms=latency_ms, error=error)
-    assert data.provider_id is not None
-    provider = await _get_provider_or_404(session, data.provider_id)
-    ok, latency_ms, error = await llm_admin_service.test_model(
-        provider, data.model, data.capability
-    )
-    return TestModelResult(ok=ok, latency_ms=latency_ms, error=error)
 
 
 @router.get("/usage", response_model=list[UsageRow])

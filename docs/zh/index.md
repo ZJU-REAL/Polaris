@@ -10,10 +10,9 @@ Polaris 是一个面向个人研究者的开源自主科学发现（Deep Researc
 
 | 想做什么 | 去哪里 |
 | --- | --- |
-| 安装桌面应用并配好模型 | [快速上手](getting-started.md)（中文） |
+| 安装桌面应用并设置 Claude 的 API key | [快速上手](getting-started.md)（中文） |
 | 了解平台整体是什么、能做什么 | [Introduction](../../docs/index.md)（英文） |
-| 配置模型、密钥与各项服务 | [Configuration](../../docs/configuration.md)（英文） |
-| 用 Claude Code 等智能体当模型 | [Agent backends](../../docs/agents.md)（英文） |
+| 查看环境变量（Claude 的 API key 等）与各项配置 | [Configuration](../../docs/configuration.md)（英文） |
 
 ## 六个阶段的使用指南（英文）
 

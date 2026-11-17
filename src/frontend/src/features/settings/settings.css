@@ -89,12 +89,6 @@
 .st-group > .table-wrap { border: 0; }
 .st-group .table th:first-child, .st-group .table td:first-child { padding-left: 14px; }
 
-/* 页首一句状态（谁在回答模型调用） */
-.st-status-line {
-  display: flex; align-items: flex-start; gap: 8px;
-  font-size: 13px; line-height: 1.55; color: var(--text-2);
-}
-
 /* 窄屏：控件换到名称下面，避免挤成竖条 */
 @container mainarea (max-width: 640px) {
   .st-row { flex-wrap: wrap; }

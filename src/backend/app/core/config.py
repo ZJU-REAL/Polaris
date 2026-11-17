@@ -4,8 +4,9 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("polaris.config")
@@ -22,6 +23,22 @@ DESKTOP_ORIGIN = "app://polaris"
 #: 引擎只监听回环地址，Host 头只认这几个名字（任何端口）。挡 DNS rebinding：
 #: 恶意域名解析到 127.0.0.1 后，浏览器发来的 Host 仍是那个恶意域名。
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+#: 没配地址时 SDK 直连的主机（只用于显示）。
+ANTHROPIC_DEFAULT_HOST = "api.anthropic.com"
+
+
+def normalize_claude_base_url(raw: str) -> str:
+    """Claude 地址统一成不带 ``/v1`` 的根地址（SDK 自己会拼 ``/v1/messages``）。
+
+    写成根地址、带 ``/v1``、甚至整条 ``/v1/messages`` 的都常见，三种都认。
+    """
+    base = raw.strip().rstrip("/")
+    for suffix in ("/v1/messages", "/messages", "/v1"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)].rstrip("/")
+            break
+    return base
 
 
 class Settings(BaseSettings):
@@ -103,18 +120,46 @@ class Settings(BaseSettings):
     vector_search_row_budget: int = 20000
     vector_search_narrow_papers: int = 200
 
-    # ---- LLM providers ----
-    # 服务商与密钥在管理页配置、存 DB（services/llm_admin.py）；这里只有 openai_compat
-    # 路由未填 base_url 时的兜底地址。密钥类环境变量从未有读取点，已删（#629）。
+    # ---- Claude（唯一的对话模型）----
+    # Polaris 只用 Claude：没有服务商表、没有按环节选模型，界面上也没有配置入口。
+    # key 和地址只从环境变量来，按下面的顺序取第一个有 key 的来源，地址跟着 key 走
+    # （同一个来源的地址；该来源没给地址就用官方 api.anthropic.com）：
+    #   1. POLARIS_CLAUDE_API_KEY / POLARIS_CLAUDE_BASE_URL
+    #   2. ANTHROPIC_API_KEY      / ANTHROPIC_BASE_URL
+    #   3. LITELLM_API_KEY        / LITELLM_API_BASE（LiteLLM 网关，原生 /v1/messages）
+    # POLARIS_CLAUDE_BASE_URL 设了就总是生效（运维显式指定的地址压过来源自带的）。
+    # 地址跟着 key 走而不是各取各的：一台机器上同时有官方 ANTHROPIC_API_KEY 和网关的
+    # LITELLM_* 很常见，各取各的会把官方 key 发给网关，两边都认不出。
+    claude_api_key: str = ""
+    claude_base_url: str = ""
+    # claude-opus-5 是当前网关提供的最新一代 Opus（没有 claude-opus-5-5）。运维可以用
+    # POLARIS_CLAUDE_MODEL 换成别的自适应思考模型（Opus 5 / Sonnet 5 / Fable 5 系列），
+    # 界面上不提供这个选择。
+    claude_model: str = "claude-opus-5"
+    # 安全分类器拒答时让服务端换一个模型重跑同一个请求（server-side fallbacks，beta）。
+    # 网关或代理不认这个参数时设 POLARIS_CLAUDE_REFUSAL_FALLBACK=0 关掉。
+    claude_refusal_fallback: bool = True
+    # 向量与重排模型：Claude 没有这两种能力，走网关的 OpenAI 兼容端点（/v1/embeddings、
+    # /v1/rerank），所以只有配了网关地址时才可用；直连 api.anthropic.com 时语义检索
+    # 退回关键词检索。
+    embedding_model: str = "BGE-M3"
+    rerank_model: str = "BGE-Reranker-V2-M3"
+    # 另外两个来源的原始值（不带 POLARIS_ 前缀的通用环境变量）。业务代码只读上面
+    # 解析后的 claude_api_key / claude_base_url，不要直接读这四个。
+    anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
+    anthropic_base_url: str = Field(default="", validation_alias="ANTHROPIC_BASE_URL")
+    litellm_api_key: str = Field(default="", validation_alias="LITELLM_API_KEY")
+    litellm_api_base: str = Field(default="", validation_alias="LITELLM_API_BASE")
+    #: 解析结果：key 取自哪个环境变量名（只是名字，用于状态页；空 = 没有 key）。
+    #: 由下面的校验器填，不从环境读。
+    claude_key_source: str = Field(default="", exclude=True)
+    # 只剩已下线的服务商配置代码（services/llm_admin.py 的连通性测试）在读，等那批
+    # 代码删除时一起删。
     openai_compat_base_url: str = "https://api.deepseek.com/v1"
-    # 未配置任何 LLM 路由时是否回退内置 fake provider——**严格显式 opt-in**（#717）。
-    # 任何档位、任何 env：不显式设 POLARIS_LLM_FAKE_FALLBACK=1 就绝不回退，
-    # 未配置时 AI 功能返回 LLM_NOT_CONFIGURED，而不是产出演示假内容。
-    # 依据设计报告 §18 的信任设计：AI 输出必须真实可溯源，拿不出真结果就明说
-    # ——把编造内容当真话发给用户是对信任的根本破坏。产品自身（含桌面端
-    # legacy-engine 插件）永远不设这个变量；只有测试套件与无 key 演示会显式开。
-    # 不再按 env 分支强关：曾经的 prod-only 守卫在 desktop 档（与 prod 互斥）
-    # 永不触发，等于形同虚设；与其靠猜环境，不如统一信任「显式设置」这一个来源。
+    # 没有 Claude key 时是否回退内置 fake provider——**严格显式 opt-in**（#717）。
+    # 不显式设 POLARIS_LLM_FAKE_FALLBACK=1 就绝不回退：没有 key 时 AI 功能返回
+    # LLM_NOT_CONFIGURED，而不是产出演示假内容。产品自身（含桌面端 legacy-engine
+    # 插件）永远不设这个变量；只有测试套件与无 key 演示会显式开。
     llm_fake_fallback: bool = False
     #: 全局助手（多轮工具循环）。单机单用户应用里它是核心功能，默认开；
     #: 设 POLARIS_CHAT_AGENT_ENABLED=0 可关掉（每轮重发历史与工具定义，比一次性对话贵）。
@@ -293,6 +338,25 @@ class Settings(BaseSettings):
             return ""
         return v
 
+    @model_validator(mode="after")
+    def _resolve_claude_credentials(self) -> "Settings":
+        """按来源顺序定出 Claude 的 key 和地址（规则见字段上方的注释）。"""
+        explicit_base = self.claude_base_url.strip()
+        sources = (
+            ("POLARIS_CLAUDE_API_KEY", self.claude_api_key, explicit_base),
+            ("ANTHROPIC_API_KEY", self.anthropic_api_key, self.anthropic_base_url),
+            ("LITELLM_API_KEY", self.litellm_api_key, self.litellm_api_base),
+        )
+        key, base, source = "", "", ""
+        for name, candidate, candidate_base in sources:
+            if candidate.strip():
+                key, base, source = candidate.strip(), candidate_base.strip(), name
+                break
+        self.claude_api_key = key
+        self.claude_base_url = normalize_claude_base_url(explicit_base or base)
+        self.claude_key_source = source
+        return self
+
     @field_validator("data_dir", mode="after")
     @classmethod
     def _resolve_data_dir(cls, v: str) -> str:
@@ -308,6 +372,23 @@ class Settings(BaseSettings):
             logger.info("data_dir 是相对路径 %r，已按当前工作目录解析为 %s", v, resolved)
             return resolved
         return v
+
+    @property
+    def claude_configured(self) -> bool:
+        return bool(self.claude_api_key)
+
+    @property
+    def claude_base_host(self) -> str:
+        """请求实际发往的主机（host[:port]，不含路径与任何凭据），给状态页显示。"""
+        if not self.claude_base_url:
+            return ANTHROPIC_DEFAULT_HOST
+        parsed = urlsplit(self.claude_base_url)
+        return parsed.netloc.rsplit("@", 1)[-1] or ANTHROPIC_DEFAULT_HOST
+
+    @property
+    def gateway_openai_base_url(self) -> str | None:
+        """网关的 OpenAI 兼容根地址（.../v1），向量与重排用；没配网关地址时 None。"""
+        return f"{self.claude_base_url}/v1" if self.claude_base_url else None
 
     @property
     def is_sqlite(self) -> bool:

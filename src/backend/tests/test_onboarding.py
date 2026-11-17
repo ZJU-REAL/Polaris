@@ -37,7 +37,7 @@ async def test_anonymous_gets_no_checklist(client):
 async def test_a_brand_new_user_has_everything_left_to_do(client):
     headers = await _auth(client)
     data = await _checklist(client, headers)
-    assert [i["id"] for i in data["items"]] == ["model", "library", "discipline", "experiment"]
+    assert [i["id"] for i in data["items"]] == ["library", "discipline", "experiment"]
     assert all(not i["done"] for i in data["items"])
     assert data["done"] is False
     assert data["dismissed"] is False
@@ -79,33 +79,6 @@ async def test_the_discipline_item_needs_a_discipline_not_just_a_library(client)
         headers=headers,
     )
     assert _item(await _checklist(client, headers), "discipline")["done"] is True
-
-
-async def test_the_model_item_reads_the_route_table_not_the_fake_fallback(client):
-    """没有任何路由 = 未配置。
-
-    测试套件开着 llm_fake_fallback，resolve 在空表时也会返回一个 fake provider。
-    拿 resolve 成功当「配好了」，这一项在全新部署上会直接显示已完成，而用户一点
-    AI 功能就是 LLM_NOT_CONFIGURED。
-    """
-    headers = await _auth(client)
-    assert _item(await _checklist(client, headers), "model")["done"] is False
-
-
-async def test_the_deployment_model_counts_for_everyone(client):
-    """自部署的形状：主人配好部署级路由，其他人不必再配一份。"""
-    owner = await _auth(client, "owner@example.com")
-    member = await _auth(client, "member@example.com")
-    resp = await client.post(
-        "/api/admin/llm/providers", json={"name": "platform", "kind": "fake"}, headers=owner
-    )
-    provider_id = resp.json()["id"]
-    await client.put(
-        "/api/admin/llm/routes",
-        json=[{"stage": "default", "provider_id": provider_id, "model": "fake-default"}],
-        headers=owner,
-    )
-    assert _item(await _checklist(client, member), "model")["done"] is True
 
 
 async def test_dismissing_hides_the_prompt_but_not_the_facts(client):

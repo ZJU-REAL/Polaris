@@ -55,18 +55,20 @@ filters on it. Vectors of different spaces cannot meet in one comparison, struct
 - **The dimension is never hardcoded.** The first successful embed defines the active space from the
   model's *actual* returned dimension, and `paper_vectors.embedding` is a dimension-less pgvector
   column. Moving to a 4096-dim model needs no migration and no code change (issue #191).
-- **The embedding model is global.** There is one routing table (#842 folded the per-user rows
-  of #801 into it), so every embed call resolves the same route — one embedding space for the
-  whole paper pool.
+- **The embedding model is global.** There is one embedding model for the whole engine — `BGE-M3`
+  by default, served by the gateway's `{base}/v1/embeddings` endpoint and overridable with
+  `POLARIS_EMBEDDING_MODEL` (see [Configuration](configuration.md#embeddings-and-rerank)) — so
+  there is one embedding space for the whole paper pool. Claude has no embedding model: with a
+  direct Anthropic key and no gateway address, nothing is embedded and search stays keyword-only.
 - **Writes go through one gate.** `services/embedding.py::embed_documents` resolves the space,
   validates every returned vector's dimension, and raises `EmbeddingSpaceMismatchError` rather than
   storing anything questionable — on SQLite the JSON column would otherwise swallow it silently.
-- **Changing the model is an explicit act.** Once the routed model differs from the active space,
+- **Changing the model is an explicit act.** Once the configured model differs from the active space,
   embedding calls refuse to run. An admin confirms via
   `POST /admin/settings/embedding-space/adopt`, which probes the model for its real dimension and
   switches the active space. Old vectors are left in place: they stop being searchable, and adopting
   the previous model again is a complete rollback. `GET /admin/settings/embedding-space` reports the
-  active space, the routed model, `mismatched`, and the row counts of every space in the database.
+  active space, the configured model, `mismatched`, and the row counts of every space in the database.
 - **Rebuilding is the existing machinery.** Every "rebuild index" entry point (per paper, per
   library, per topic, personal library, daily backfill) treats "no vector in the active space" as
   missing, so they refill the new space incrementally. A paper that has vectors only in an old space
@@ -137,7 +139,7 @@ own pgvector query over the right candidate set. Two exist:
   honoring the date / category / announce filters, then reranks. It returns `mode_used` plus
   `vector_ready` / `vector_total` so the UI can state honestly how much of the pool is embedded.
 
-Every semantic path falls back to keyword when the provider cannot embed, reporting `mode_used="keyword"` rather than failing.
+Every semantic path falls back to keyword when embeddings are unavailable (no gateway address, or the embed call fails), reporting `mode_used="keyword"` rather than failing. Reranking is likewise skipped when the gateway's rerank endpoint is not available.
 
 **Citation export** follows the same per-collection scoping: `papers_for_export` (project),
 `papers_for_library_export`, `papers_for_personal_export` (caller's saved papers), and

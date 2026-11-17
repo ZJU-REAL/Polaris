@@ -176,5 +176,5 @@ Enable it in **Settings → PolarisBuddy → Memory**. Once on:
 - **The "Papers looked at" list is retrieval, not citation.** If a claim matters, click through and
   check — the verification note will warn you about the most obvious mismatches, but it is a
   heuristic, not a guarantee.
-- If your model provider does not support function calling, Buddy degrades to answering from
-  context alone and says so, rather than failing the turn.
+- Buddy always runs Polaris's own tool loop on Claude. There is no backend to choose, and it needs
+  the Claude API key to be set (see [Configuration](configuration.md#model)).

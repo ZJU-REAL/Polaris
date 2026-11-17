@@ -122,44 +122,6 @@ def _router_with(routes: dict[str, ResolvedRoute]) -> LLMRouter:
     return router
 
 
-async def test_resolve_prefers_the_exact_namespaced_route(clean_registry):
-    name = register_plugin_stage("pico-pack", "extract-pico", fallback="extract_skeleton")
-    clean_registry.append(name)
-    router = _router_with(
-        {
-            "default": _route("m-default"),
-            "extract_skeleton": _route("m-skeleton"),
-            name: _route("m-exact"),
-        }
-    )
-    _, route = await router.resolve(name)
-    assert route.model == "m-exact"
-
-
-async def test_resolve_falls_back_to_the_declared_builtin_stage(clean_registry):
-    name = register_plugin_stage("pico-pack", "extract-pico", fallback="extract_skeleton")
-    clean_registry.append(name)
-    router = _router_with(
-        {"default": _route("m-default"), "extract_skeleton": _route("m-skeleton")}
-    )
-    _, route = await router.resolve(name)
-    assert route.model == "m-skeleton"
-
-
-async def test_resolve_falls_back_to_default_last(clean_registry):
-    name = register_plugin_stage("pico-pack", "extract-pico", fallback="extract_skeleton")
-    clean_registry.append(name)
-    router = _router_with({"default": _route("m-default")})
-    _, route = await router.resolve(name)
-    assert route.model == "m-default"
-
-    # 没声明 fallback 的插件环节：跳过第二级，直接 default
-    bare = register_plugin_stage("pico-pack", "no-fallback")
-    clean_registry.append(bare)
-    _, route = await router.resolve(bare)
-    assert route.model == "m-default"
-
-
 async def test_resolve_empty_table_uses_the_fake_fallback(clean_registry):
     """连 default 都没有：与内置环节同规则（测试套件开着 llm_fake_fallback）。"""
     name = register_plugin_stage("pico-pack", "extract-pico", fallback="extract_skeleton")
@@ -170,41 +132,6 @@ async def test_resolve_empty_table_uses_the_fake_fallback(clean_registry):
 
 
 # ---- 4. 路由表 PUT：命名空间串放行 ----
-
-
-async def test_routes_put_accepts_namespaced_stages(client, clean_registry):
-    from tests.test_admin_llm import _admin_and_member
-
-    admin, _ = await _admin_and_member(client)
-    resp = await client.post(
-        "/api/admin/llm/providers", json={"name": "fake", "kind": "fake"}, headers=admin
-    )
-    provider_id = resp.json()["id"]
-
-    registered = register_plugin_stage("pico-pack", "extract-pico", fallback="extract_skeleton")
-    clean_registry.append(registered)
-    routes = [
-        {"stage": "default", "provider_id": provider_id, "model": "fake-cheap"},
-        {"stage": registered, "provider_id": provider_id, "model": "fake-pico"},
-        # 未注册但形状合法的串也放行：插件卸载后的存量路由行不能把整表变成存不进去
-        {"stage": "plugin:gone-pack:old-stage", "provider_id": provider_id, "model": "fake-old"},
-    ]
-    resp = await client.put("/api/admin/llm/routes", json=routes, headers=admin)
-    assert resp.status_code == 200, resp.text
-    assert {r["stage"] for r in resp.json()} == {
-        "default",
-        registered,
-        "plugin:gone-pack:old-stage",
-    }
-
-    # 形状不合法的串照旧 400（整表拒绝）
-    for bad in ("plugin:PICO:extract", "plugin:pico", "nope"):
-        resp = await client.put(
-            "/api/admin/llm/routes",
-            json=[{"stage": bad, "provider_id": provider_id, "model": "m"}],
-            headers=admin,
-        )
-        assert resp.status_code == 400, bad
 
 
 # ---- 5. 抽取 schema：命名空间 stage 自动注册 + 全链走通 ----

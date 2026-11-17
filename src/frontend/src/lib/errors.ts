@@ -54,7 +54,7 @@ function knownCode(code: string): string | null {
     case 'PDF_UPLOAD_INVALID':
       return tr('文件不是有效的 PDF', 'The file isn’t a valid PDF.');
     case 'EMBEDDING_NOT_AVAILABLE':
-      return tr('没有可用的嵌入模型，请在设置中配置', 'No embedding model is available. Set one up in Settings.');
+      return tr('语义搜索不可用，请在「设置 → 模型」中查看状态', 'Semantic search isn’t available. See Settings → Model.');
     case 'INDEX_REBUILD_FAILED':
       return tr('索引没有建立成功，请稍后重试', 'Couldn’t build the index. Try again later.');
     case 'COMPILE_REQUIRED':

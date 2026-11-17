@@ -19,7 +19,7 @@ describe('one settings entrance', () => {
   });
 
   it('does not send any settings tab back to /admin', () => {
-    // 反向重定向还在的话，/settings?tab=llm → /admin?tab=llm → /settings?tab=llm … 死循环
+    // 反向重定向还在的话，/settings?tab=model → /admin?tab=model → /settings?tab=model … 死循环
     const settings = read('features/settings/SettingsPage.tsx');
     expect(settings).not.toContain('/admin?tab=');
     expect(settings).not.toContain('to="/admin"');
@@ -32,7 +32,7 @@ describe('one settings entrance', () => {
 
   it('renders the former admin tabs inside the settings page', () => {
     const settings = read('features/settings/SettingsPage.tsx');
-    for (const tab of ['llm', 'literature', 'processing', 'experiment', 'daily']) {
+    for (const tab of ['model', 'literature', 'processing', 'experiment', 'daily']) {
       expect(settings).toContain(`effectiveTab === '${tab}'`);
     }
   });

@@ -87,7 +87,7 @@ kinds of output worth keeping are also written here (`app/services/voyage_logs.p
 | `run_id` | Owning run, `ON DELETE CASCADE`. |
 | `event` | `log` (a structured progress line) or `llm` (one complete model output). |
 | `level` | For `log` rows: `info` / `step` / `success` / `error` / `plan` / `budget` / `gate` — the frontend colours by this. |
-| `stage` | For `llm` rows: which routing stage produced it (`navigator`, `librarian`, …). |
+| `stage` | For `llm` rows: which stage produced it (`navigator`, `librarian`, …). |
 | `message` | The log line, or the full model output. Truncated at 50 000 chars. |
 | `at` | Timestamp. |
 

@@ -64,6 +64,19 @@ export {
   type LegacyEngineService,
 } from './plugins/legacy-engine.ts'
 export {
+  ENGINE_LLM_ENV,
+  SHELL_ENV_TIMEOUT_MS,
+  applyShellEnv,
+  ensureShellEnv,
+  parseShellEnv,
+  resolveShellEnv,
+  runShell,
+  type ShellEnvMarkers,
+  type ShellEnvOptions,
+  type ShellRunOptions,
+  type ShellRunner,
+} from './shell-env.ts'
+export {
   MIGRATIONS,
   SNAPSHOT_KEEP,
   migrate,

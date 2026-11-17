@@ -146,11 +146,11 @@ flowchart LR
 - **处处实时。** SSE 用于智能体流式输出和 Voyage 进度；WebSocket 用于评审讨论、审批通知、实验
   日志跟踪和协同编辑。
 - **成本核算。** 按调用记录 token 和成本，可归因到课题和 voyage，看得清每个任务花了多少。
-- **智能体后端与模型路由。** 给 Polaris 配模型最省事的办法是用你已经在用的智能体——Claude Code、
-  Codex、Gemini CLI 等 [ACP](docs/agents.md) 智能体不需要 API key 就能回答模型调用。模型 API
-  （OpenAI 兼容、OpenAI Responses、Anthropic）是可选的。所有模型调用都走同一层；一张存在数据库里
-  的路由表把每个科研阶段映射到某个智能体或模型，以及推理强度档位（打分用便宜模型，辩论和起草用
-  强模型）。内置的 fake provider 必须显式开启，产品自身从不打开它。
+- **只用一个模型：Claude。** Polaris 只用 Claude 的 API，模型是固定的（`claude-opus-5`）。Claude 的
+  API key 从环境变量读取（`ANTHROPIC_API_KEY`，或 LiteLLM 网关的 key 和地址），没有提供商列表，
+  也不用给每个阶段挑模型。所有模型调用都走同一层，各阶段的差别只在等待多久、让模型想多深。
+  内置的 fake provider 必须显式开启，产品自身从不打开它。详见
+  [Configuration](docs/configuration.md#model)。
 
 ## 技术栈
 
@@ -162,7 +162,7 @@ flowchart LR
 | 数据 | SQLite，外加一个存 PDF、导出文件和实验日志的数据目录——都在应用的用户数据目录里 |
 | 远程执行 | 用 asyncssh 连接 GPU 服务器；SSH 密钥用 Fernet 静态加密 |
 | LaTeX | tectonic，或经 latexmk 调用 TeX Live——用你电脑上装了的那个 |
-| 模型 | 经 ACP 接入的智能体后端（Claude Code、Codex、Gemini CLI……），或模型 API（OpenAI 兼容、OpenAI Responses、Anthropic），配数据库模型路由表 |
+| 模型 | Claude 的 API（`claude-opus-5`），用官方 `anthropic` Python SDK 调用，可直连也可走 LiteLLM 网关；向量嵌入和重排（`BGE-M3`、`BGE-Reranker-V2-M3`）来自网关 |
 
 ## 安装
 
@@ -180,10 +180,11 @@ SmartScreen 上选「更多信息 → 仍要运行」；Linux 的 AppImage 需�
 不需要 Docker、不用登录、不填服务器地址）。首次启动要下载 Python 工具链和依赖，可能需要几分钟；
 之后启动不再等待。
 
-装好后，到 **设置 → 模型与智能体** 给 Polaris 配一个模型。最省事的是用你已经在用的智能体：在同一台
-电脑上装好并登录 Claude Code、Codex 或 Gemini CLI，在 **智能体后端** 里添加，它就能回答所有模型
-调用，不需要 API key——见 [Agent backends](docs/agents.md)。模型 API 是可选的；想要向量嵌入和重排
-时再加一个。
+装好后，给 Polaris 设置 Claude 的 API key：在 `~/.zshrc` 或 `~/.bashrc` 里加一行
+`export ANTHROPIC_API_KEY=sk-ant-...`（Windows 上设成用户环境变量），重新打开 Polaris，再到
+**设置 → 模型** 里确认。用 LiteLLM 网关的话，改为设置 `LITELLM_API_KEY` 和 `LITELLM_API_BASE`；
+按语义搜索和结果重排需要网关，没有时退回关键词搜索。详见
+[Configuration](docs/configuration.md#model)。
 
 > [!NOTE]
 > **v0.3.x 及更早的版本**只是连接远程服务器的外壳，首次启动一定会要求填服务器地址，也没法自己
@@ -226,12 +227,11 @@ make help                   # 列出所有目标
 
 完整文档在 [docs/](docs/)（英文）：
 
-- [Getting started](docs/getting-started.md)：安装应用、配好模型、建第一个文献库（[中文版](docs/zh/getting-started.md)）
-- [Agent backends](docs/agents.md)：把 Claude Code、Codex 等 ACP 智能体当作 Polaris 的模型
+- [Getting started](docs/getting-started.md)：安装应用、设置 Claude 的 API key、建第一个文献库（[中文版](docs/zh/getting-started.md)）
 - [Architecture](docs/architecture.md)：系统设计与 Voyage 智能体内核
 - [Concepts](docs/concepts.md)：科研流水线、Voyage、技能与 MCP 工具
 - [Desktop](docs/desktop.md)：Electron 外壳——进程模型、本地引擎、IPC 约定与打包
-- [Configuration](docs/configuration.md)：环境变量与各项设置
+- [Configuration](docs/configuration.md)：环境变量与各项设置，包括 Claude 的 API key 和请求地址
 - [Development](docs/development.md)：本地开发流程与约定
 
 ## 仓库结构
@@ -258,7 +258,7 @@ docs/            英文项目文档
 - **严格分层。** 轻薄的路由调用 service;service 承载业务逻辑，且从不导入 Web 框架；模型层在最底下。
 - **确定性与判断性分离。** 确定性的活（抓取、解析、去重）交给普通代码或后台任务；只有需要
   判断的地方才走大模型。
-- **单一 LLM 边界。** 所有模型调用都经过同一个抽象层，模型的选择来自数据库里的路由表，而不是硬编码。
+- **单一 LLM 边界。** 所有模型调用都经过同一个抽象层，背后是 Claude 的 API；业务代码不挑模型，也不直接引入 SDK。
 
 完整设计见 [docs/architecture.md](docs/architecture.md)。
 

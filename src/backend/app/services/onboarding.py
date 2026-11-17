@@ -23,17 +23,6 @@ from app.models.user import User
 DISMISSED_KEY = "onboarding.dismissed"
 
 
-async def _has_model(user: User) -> bool:
-    """这个用户能不能真的打到一个对话模型。
-
-    问路由表而不是「有没有 provider」：配了 provider 没配路由也打不到模型。
-    """
-    from app.core.llm.router import get_llm_router
-
-    # 没配 default 也行：有外部 agent 时它会接管所有对话环节（#840）
-    return await get_llm_router().has_chat_model()
-
-
 async def _library_counts(session: AsyncSession, user: User) -> tuple[int, int]:
     """(文献库数量, 其中声明了学科的数量)。"""
 
@@ -56,7 +45,6 @@ async def checklist(session: AsyncSession, user: User) -> dict[str, Any]:
     """
     libraries, with_discipline = await _library_counts(session, user)
     items = [
-        {"id": "model", "done": await _has_model(user)},
         {"id": "library", "done": libraries > 0},
         # 「通用」是一个正当答案，所以这一项可能永远不被完成；文案里要说清
         # 这点，别让它看起来像一个没做完的任务

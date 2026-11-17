@@ -405,19 +405,6 @@ async def test_a_force_stream_gateway_is_aggregated():
 # ---------------------------------------------------------------- 接线
 
 
-def test_the_router_builds_a_responses_provider():
-    from app.core.llm.router import LLMRouter, ResolvedRoute
-
-    route = ResolvedRoute(
-        provider_kind="openai_responses",
-        base_url=BASE,
-        api_key="k",
-        model="gpt-x",
-        temperature=None,
-    )
-    assert isinstance(LLMRouter()._provider_for(route, "default"), OpenAIResponsesProvider)
-
-
 def test_the_connection_test_uses_the_real_protocol():
     """「测试连接」以前对没认出来的类型回退 FakeProvider：探一个假的、报告成功，
     真实服务一次都没碰过。"""
@@ -443,30 +430,3 @@ def test_embeddings_and_rerank_are_inherited():
 
     assert OpenAIResponsesProvider.embed is OpenAICompatProvider.embed
     assert OpenAIResponsesProvider.rerank is OpenAICompatProvider.rerank
-
-
-def test_rerank_path_reaches_responses_providers():
-    """rerank 继承自 compat provider（#810 的路径配置）：路由器和「测试连接」都得把它带上。"""
-    from app.core.llm.router import LLMRouter, ResolvedRoute
-    from app.models.llm_config import LLMProviderConfig
-    from app.services.llm_admin import _build_provider
-
-    route = ResolvedRoute(
-        provider_kind="openai_responses",
-        base_url="https://gw.example/v1",
-        api_key="k",
-        model="m",
-        temperature=None,
-        rerank_path="/reranks",
-    )
-    assert LLMRouter()._provider_for(route, "rerank")._rerank_path == "/reranks"
-
-    built = _build_provider(
-        LLMProviderConfig(
-            name="gw",
-            kind="openai_responses",
-            base_url="https://gw.example/v1",
-            rerank_path="/reranks",
-        )
-    )
-    assert built._rerank_path == "/reranks"

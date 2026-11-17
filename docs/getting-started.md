@@ -43,20 +43,25 @@ the SQLite database, PDFs, exports, experiment logs — lives in the app's user-
 
 The app checks for updates (Settings → About) and applies them without a reinstall where it can.
 
-## 3. Give Polaris a model
+## 3. Give Polaris a Claude API key
 
-Go to **Settings → Models & agents** (`/settings?tab=llm`). Until a model is available, AI features
-return `LLM_NOT_CONFIGURED`.
+Polaris uses the Claude API with one fixed model (`claude-opus-5`). The key comes from an
+environment variable; there is nothing to fill in inside the app. Until a key is available, AI
+features return `LLM_NOT_CONFIGURED`.
 
-- **Easiest: an agent backend.** If you already use Claude Code, Codex, or Gemini CLI, install it
-  and sign in on the same computer, then add it under **Agent backends** and click
-  **Check connection**. With no model API configured, the first enabled agent answers every model
-  call — no API key needed. See [Agent backends](agents.md).
-- **Optional: a model API.** Add a provider (OpenAI-compatible, OpenAI Responses, or Anthropic) with
-  its key and map research stages to it in the routing table. Embeddings and reranking can only come
-  from a model API; without one, search falls back to keyword matching.
+1. **Set the environment variable.** On macOS or Linux, add `export ANTHROPIC_API_KEY=sk-ant-...`
+   to `~/.zshrc` or `~/.bashrc`. If you use a LiteLLM gateway instead, export `LITELLM_API_KEY` and
+   `LITELLM_API_BASE` (for example `http://your-gateway:4000`). On Windows, set them as user
+   environment variables.
+2. **Restart Polaris.** The variables are read once at startup.
+3. **Check under Settings → Model** (`/settings?tab=model`). The page shows the model and the host
+   requests go to; click **Check connection** to make one small live call.
 
-<!-- screenshot: Settings → Models & agents, the model routing table -->
+Search by meaning and re-ranking need a gateway address: with a key for `api.anthropic.com` alone,
+search falls back to keyword matching and everything else works. The full list of variables is in
+[Configuration](configuration.md#model).
+
+<!-- screenshot: Settings → Model, the read-only status page -->
 
 ## 4. Next steps in the app
 
@@ -77,8 +82,8 @@ Work through these in order; each unlocks the next.
 4. **Optional: configure the daily feed** — **Settings → Daily papers** sets the subscribed
    categories and the daily fetch time. The engine checks every few minutes whether the fetch is
    due, so the feed only updates while the app is running.
-5. **Assistant** — PolarisBuddy, the in-app assistant, works as soon as a model or an agent is
-   set up. Its multi-turn tool loop re-sends history and tool definitions every round, so it uses
+5. **Assistant** — PolarisBuddy, the in-app assistant, works as soon as the Claude API key is
+   set. Its multi-turn tool loop re-sends history and tool definitions every round, so it uses
    more than one-shot chat; to turn it off, start the app with `POLARIS_CHAT_AGENT_ENABLED=0`.
 
 > [!WARNING]
@@ -93,8 +98,7 @@ Work through these in order; each unlocks the next.
 | --- | --- |
 | The progress page stops at `python` or `install` | The first launch downloads a Python toolchain and packages. Check the network (or proxy) and restart the app; the setup starts over cleanly. |
 | macOS says the app is "damaged" or cannot be opened | Quarantine flag on an unsigned build. Run `xattr -dr com.apple.quarantine /Applications/Polaris.app`. |
-| AI features return `LLM_NOT_CONFIGURED` (HTTP 503) | No agent backend is enabled and no model API route is usable. Add an agent or a model API in **Settings → Models & agents**. |
-| An agent backend fails **Check connection** | The agent is not installed or not signed in on this computer. The error message names the install or sign-in command to run. |
+| AI features return `LLM_NOT_CONFIGURED` (HTTP 503) | Polaris found no Claude API key. Set `ANTHROPIC_API_KEY` (or the `LITELLM_API_KEY` / `LITELLM_API_BASE` pair) as an environment variable and reopen Polaris; see [step 3](#3-give-polaris-a-claude-api-key). If you just added it to `~/.zshrc`, quit Polaris fully and open it again. |
 | Literature ingest finds nothing / arXiv, Semantic Scholar, or OpenAlex time out | Direct access to the literature APIs is blocked or flaky on your network. Set an outbound proxy for literature APIs (see [Configuration](configuration.md)). |
 | LaTeX compile says the compiler is not installed | Manuscripts compile with `tectonic` (or TeX Live through `latexmk`) installed on your computer. Install one and make sure it is on your `PATH`. |
 
@@ -102,7 +106,7 @@ Work through these in order; each unlocks the next.
 
 - [Introduction](index.md): what each pipeline stage does, with links to the per-stage guides.
 - [Core concepts](concepts.md): the pipeline, Voyages, skills, and the MCP tools.
-- [Agent backends](agents.md): using Claude Code and other agents as Polaris's model.
+- [Configuration](configuration.md#model): the Claude API variables and what Settings → Model shows.
 - [Desktop app](desktop.md): how the app starts its engine, and where your data lives.
 - [Development](development.md): running Polaris from source, migrations, tests, and the Git
   conventions.

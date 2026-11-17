@@ -161,12 +161,12 @@ plan-execute-verify loop) activates only for open-ended kinds such as experiment
   discussions, approval notifications, experiment log tracking, and collaborative editing.
 - **Cost accounting.** Per-call token/cost accounting attributed to project and voyage, so you can see
   what each task spent.
-- **Agent backends and model routing.** The easiest way to give Polaris a model is an agent you already
-  use — Claude Code, Codex, Gemini CLI and other [ACP](docs/agents.md) agents answer model calls with no
-  API key. Model APIs (OpenAI-compatible, OpenAI Responses, Anthropic) are optional. All model calls go
-  through one layer; a DB-backed routing table maps each research stage to an agent or a model and a
-  reasoning-effort level (cheap models for scoring, strong models for debate and drafting). The built-in
-  fake provider is strictly opt-in and never turned on by the product.
+- **One model: Claude.** Polaris uses the Claude API with one fixed model (`claude-opus-5`). The key
+  comes from an environment variable (`ANTHROPIC_API_KEY`, or a LiteLLM gateway's key and address);
+  there is no provider list or per-stage model table to set up. All model calls go through one layer,
+  and stages differ only in how long they wait and how deeply the model thinks. The built-in fake
+  provider is strictly opt-in and never turned on by the product. See
+  [Configuration](docs/configuration.md#model).
 
 ## Tech stack
 
@@ -178,7 +178,7 @@ plan-execute-verify loop) activates only for open-ended kinds such as experiment
 | Data | SQLite, plus a data folder for PDFs, exports and experiment logs — all inside the app's user-data directory |
 | Remote execution | asyncssh to GPU servers; SSH keys encrypted at rest with Fernet |
 | LaTeX | tectonic, or TeX Live through latexmk — whichever is installed on your computer |
-| Models | Agent backends over ACP (Claude Code, Codex, Gemini CLI, …) or model APIs (OpenAI-compatible, OpenAI Responses, Anthropic), with a DB model-routing table |
+| Models | The Claude API (`claude-opus-5`) through the official `anthropic` Python SDK, direct or through a LiteLLM gateway; embeddings and rerank (`BGE-M3`, `BGE-Reranker-V2-M3`) from the gateway |
 
 ## Install
 
@@ -196,11 +196,11 @@ The app runs everything on your computer: it ships its own Python engine and set
 launch (SQLite, no Docker, no login, no server address). The first launch downloads a Python
 toolchain and dependencies, which can take a few minutes; later launches start immediately.
 
-Then give Polaris a model in **Settings → Models & agents**. The easiest way is an agent you already
-use: install and sign in to Claude Code, Codex, or Gemini CLI on the same computer, add it under
-**Agent backends**, and it answers every model call with no API key — see
-[Agent backends](docs/agents.md). Model APIs are optional; add one if you also want embeddings and
-reranking.
+Then give Polaris a Claude API key. Add `export ANTHROPIC_API_KEY=sk-ant-...` to `~/.zshrc` or
+`~/.bashrc` (on Windows, set it as a user environment variable), restart Polaris, and check under
+**Settings → Model**. With a LiteLLM gateway, set `LITELLM_API_KEY` and `LITELLM_API_BASE` instead;
+search by meaning and re-ranking need the gateway, and fall back to keyword search without it. See
+[Configuration](docs/configuration.md#model).
 
 > [!NOTE]
 > **v0.3.x and earlier** are remote-only shells that ask for a server address on first run. They
@@ -243,12 +243,11 @@ See [docs/development.md](docs/development.md) and [docs/desktop.md](docs/deskto
 
 Full documentation lives in [docs/](docs/):
 
-- [Getting started](docs/getting-started.md): install the app, give it a model, and start a first library
-- [Agent backends](docs/agents.md): use Claude Code, Codex, and other ACP agents as Polaris's model
+- [Getting started](docs/getting-started.md): install the app, set the Claude API key, and start a first library
 - [Architecture](docs/architecture.md): system design and the Voyage agent core
 - [Concepts](docs/concepts.md): the research pipeline, Voyage, skills, and MCP tools
 - [Desktop](docs/desktop.md): the Electron shell — process model, local engine, IPC contract, and packaging
-- [Configuration](docs/configuration.md): environment variables and settings
+- [Configuration](docs/configuration.md): environment variables and settings, including the Claude API key and endpoint
 - [Development](docs/development.md): local workflow and conventions
 
 ## Repository layout
@@ -276,8 +275,8 @@ docs/            English project documentation
   web framework; models sit underneath.
 - **Deterministic vs. judgemental split.** Deterministic work (crawling, parsing, dedup) is plain code or
   background tasks; only judgement calls reach an LLM.
-- **One LLM boundary.** All model calls go through a single abstraction layer, and model choice comes from
-  a database routing table rather than being hard-coded.
+- **One LLM boundary.** All model calls go through a single abstraction layer over the Claude API;
+  business code never picks a model or imports the SDK.
 
 See [docs/architecture.md](docs/architecture.md) for the full design.
 

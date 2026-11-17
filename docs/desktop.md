@@ -67,6 +67,24 @@ computed fresh on every launch and injected in memory only — the tree stores t
 3. **Neither** (development, no env) — the entry stays disabled and no engine starts; the app
    shows the "local engine is not running" page.
 
+## Claude variables from the login shell
+
+The engine reads its Claude API key and endpoint from environment variables (see
+[Configuration](configuration.md#model)). An app started from Finder, the Dock, or a Linux desktop
+launcher does not inherit what the user exports in `~/.zshrc` or `~/.bashrc`, so on macOS and Linux
+the shell fills that gap once per launch, before the engine is started: it runs the user's login
+shell (`$SHELL -ilc env`, 4-second timeout) and copies over only the Claude-related names —
+`POLARIS_CLAUDE_API_KEY`, `POLARIS_CLAUDE_BASE_URL`, `POLARIS_CLAUDE_MODEL`,
+`POLARIS_EMBEDDING_MODEL`, `POLARIS_RERANK_MODEL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`,
+`LITELLM_API_KEY`, `LITELLM_API_BASE`. A variable the app's own environment already has wins over
+the shell's. Values are never logged, and a slow or failing shell just means nothing is picked up.
+On Windows this step does nothing: GUI apps already see user environment variables. Because it runs
+once at startup, a changed variable needs a restart of Polaris.
+
+The module is `src/kernel/src/shell-env.ts`, wired in `src/desktop/src/main/kernel.ts`. The
+`legacy-engine` plugin then passes the variables through to the engine: `command:` mode inherits
+the whole environment, and `docker:` mode forwards them by name.
+
 ## First launch: bootstrap and the progress page
 
 The installer carries two extra resources (`electron-builder` extraResources, staged by
@@ -112,7 +130,7 @@ Everything is under Electron's `userData` directory; uninstalling the app and de
 | `userData/engine/data/` | User files: PDFs, exports, experiment logs (`POLARIS_DATA_DIR`) |
 | `userData/engine/data/workspace/` | The **file projection**: a continuously refreshed, read-only copy of your papers (`papers/`), notes (`notes/`), and library wikis (`wiki/`, an Obsidian vault). The database is the source of truth — edits here are not written back and are overwritten on the next change. |
 | `userData/plugins/` | Market-installed plugin bundles |
-| `userData/engine-secrets.json` | The engine's per-install signing and encryption keys (file mode `0600`); see [Securing the local engine](#securing-the-local-engine). Back it up together with `engine/polaris.db` — without it the saved API keys and SSH credentials in a restored database cannot be decrypted. |
+| `userData/engine-secrets.json` | The engine's per-install signing and encryption keys (file mode `0600`); see [Securing the local engine](#securing-the-local-engine). Back it up together with `engine/polaris.db` — without it the saved SSH credentials and service keys in a restored database cannot be decrypted. |
 | `userData/engine.pid.json` | Process id and launch id of the engine the shell started, used to stop an orphaned engine on the next launch |
 
 ## Why Electron rather than Tauri
@@ -277,7 +295,7 @@ The engine listens on `127.0.0.1:18080`, but "only this machine can reach it" is
 "only this user's Polaris window can use it": any web page open in a browser can send requests to
 a local port, a malicious domain can be re-pointed at `127.0.0.1` (DNS rebinding), and other
 accounts on the same computer can connect too. A session on the engine is enough to register an MCP
-server or agent backend with an arbitrary command, so the engine guards its door (#850):
+server with an arbitrary command, so the engine guards its door (#850):
 
 - **No wildcard CORS.** Cross-origin access is allowed only for `app://polaris` and the origins in
   `POLARIS_CORS_ORIGINS`, whatever `POLARIS_ENV` is. Other pages cannot read any response.
@@ -292,8 +310,8 @@ server or agent backend with an arbitrary command, so the engine guards its door
   an allowed one, so a browser page on another site still gets `403`.
 - **Per-install keys.** On first launch the plugin writes `userData/engine-secrets.json` (mode
   `0600`) with a random `POLARIS_SECRET_KEY` (session tokens, signed download links, browser
-  extension key digests) and a Fernet `POLARIS_ENCRYPTION_KEY` (stored API keys, SSH credentials,
-  MCP/agent environment variables). Earlier versions used the public default secret key and
+  extension key digests) and a Fernet `POLARIS_ENCRYPTION_KEY` (stored literature and service keys, SSH
+  credentials, MCP server environment variables; the Claude API key is not stored). Earlier versions used the public default secret key and
   derived the encryption key from it. The engine still decrypts values written that way, and at
   startup it re-encrypts every one of them with the new key (`rotate_encrypted_secrets` in
   `app/core/security.py`): idempotent, committed table by table, and safe to interrupt, because

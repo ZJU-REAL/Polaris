@@ -96,7 +96,7 @@ export default withMermaid(
                 text: 'Integrations',
                 items: [
                   { text: 'MCP', link: '/docs/mcp' },
-                  { text: 'Agent backends (ACP)', link: '/docs/agents' },
+                  { text: 'Agent backends (removed)', link: '/docs/agents' },
                 ],
               },
             ],

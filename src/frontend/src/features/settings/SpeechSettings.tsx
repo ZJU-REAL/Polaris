@@ -61,7 +61,7 @@ export function PersonalSpeechSettings() {
       <SettingsSection title={tr('朗读', 'Read aloud')}>
         {!settings.available && settings.enabled && (
           <p className="st-section-desc" style={{ color: 'var(--warn-tx)' }}>
-            {tr('语音服务还没开启，请在「模型与智能体」中设置语音模型。', 'Speech isn’t set up yet. Set a speech model under Models & agents.')}
+            {tr('语音服务还没开启，请在下方的「语音服务」中开启。', 'Speech isn’t set up yet. Turn it on under Speech service below.')}
           </p>
         )}
         <SettingsGroup>
@@ -191,7 +191,7 @@ export function AdminSpeechSettings() {
   const voiceOptions = Array.from(new Set([draft.default_voice, ...discoveredVoices]));
 
   return (
-    <SettingsSection title={tr('语音服务', 'Speech')} desc={tr('用于朗读，需兼容 OpenAI 语音接口。', 'Used for read aloud. Needs an OpenAI-compatible speech API.')}>
+    <SettingsSection title={tr('语音服务', 'Speech service')} desc={tr('用于朗读，需兼容 OpenAI 语音接口。', 'Used for read aloud. Needs an OpenAI-compatible speech API.')}>
       <SettingsGroup>
         <SettingsRow labelId="speech-service-enabled" label={tr('开启语音服务', 'Turn on speech')}>
           <Switch checked={draft.enabled} onChange={(enabled) => patch('enabled', enabled)} aria-labelledby="speech-service-enabled" />

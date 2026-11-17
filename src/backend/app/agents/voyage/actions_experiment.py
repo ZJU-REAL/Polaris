@@ -691,23 +691,23 @@ def _platform_env_files(
 
 
 async def _eval_model_config_file(ctx: ActionContext) -> dict[str, str]:
-    """eval_model 非空时：从 LLM 路由 default stage 解析 provider（api_key 已解密），
-    生成 llm_config.json 内容。审计侧安全：write_files 的审计只记路径与字节数，
-    api_key 不会出现在任何日志/Activity。"""
+    """eval_model 非空时生成 llm_config.json：Claude 的 key + 一个 OpenAI 兼容的地址。
+
+    实验代码按 OpenAI 兼容的 /chat/completions 调模型（见 EVAL_MODEL_PROMPT_SECTION），
+    所以给的是网关的 ``/v1``；直连官方时用 Anthropic 自己的 OpenAI 兼容层。
+    审计侧安全：write_files 的审计只记路径与字节数，api_key 不会出现在任何日志/Activity。"""
     eval_model = str(_params(ctx).get("eval_model") or "").strip()
     if not eval_model:
         return {}
     _provider, route = await ctx.llm.resolve("default")
-    if route.provider_kind == "acp":
-        # 外部 agent（#840）没有可以交给实验机的地址和 key：实验代码要自己调模型，
-        # 只能靠一个模型 API。空着发过去只会让实验跑到一半才因为连不上而失败。
-        raise RuntimeError(
-            "eval_model needs a model API: the default model is an agent backend, which "
-            "experiment code on another machine cannot call. Configure a model API for the "
-            "default stage, or leave eval_model empty."
-        )
+    if route.provider_kind != "anthropic":
+        base_url = ""  # fake 回退（测试 / 演示）：没有真实地址可给
+    elif route.base_url:
+        base_url = f"{route.base_url}/v1"
+    else:
+        base_url = "https://api.anthropic.com/v1"
     config = {
-        "base_url": route.base_url or "",
+        "base_url": base_url,
         "api_key": route.api_key,
         "model": eval_model,
     }

@@ -3,7 +3,6 @@
 from fastapi import APIRouter
 
 from app.api import (
-    acp_agents,
     admin_llm,
     admin_settings,
     auth,
@@ -29,6 +28,7 @@ from app.api import (
     library,
     literature_discovery,
     literature_sources,
+    llm_status,
     manuscripts,
     mcp_meta,
     mcp_servers,
@@ -61,6 +61,7 @@ api_router.include_router(gates.router)
 api_router.include_router(voyages.router)
 api_router.include_router(hypotheses.router)
 api_router.include_router(admin_llm.router)
+api_router.include_router(llm_status.router)
 api_router.include_router(admin_settings.router)
 api_router.include_router(papers.router)
 api_router.include_router(library.router)
@@ -93,7 +94,6 @@ api_router.include_router(experiments.router)
 api_router.include_router(manuscripts.router)
 api_router.include_router(export.router)
 api_router.include_router(mcp_servers.router)
-api_router.include_router(acp_agents.router)
 api_router.include_router(experiment_backends.router)
 api_router.include_router(disciplines.router)
 api_router.include_router(literature_sources.router)

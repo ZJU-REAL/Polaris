@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   ENGINE_CONTAINER,
+  ENGINE_LLM_ENV,
   ENGINE_SECRET_ENV,
   buildEngineArgv,
   createKernel,
@@ -148,6 +149,16 @@ describe('legacy-engine buildEngineArgv (docker mode)', () => {
     // （E2E、引导流程）显式设了才改道——插件不替任何人决定库放在哪
     expect(argv).toContain('POLARIS_DATABASE_URL')
     expect(argv.join(' ')).not.toContain('POLARIS_DATABASE_URL=')
+  })
+
+  it('forwards the Claude API settings to the container by name only', () => {
+    const argv = buildEngineArgv(base, 18080)
+    for (const name of ENGINE_LLM_ENV) {
+      const at = argv.indexOf(name)
+      expect(at, name).toBeGreaterThan(0)
+      expect(argv[at - 1]).toBe('-e')
+    }
+    expect(argv.join(' ')).not.toMatch(/(API_KEY|BASE_URL|API_BASE|_MODEL)=/)
   })
 
   it('honors a custom containerName so parallel instances do not collide', () => {

@@ -12,15 +12,15 @@ import { Icon } from './Icon';
  * 红绿点鼠标悬浮显示构建时间与所用模型（存量数据没记过这两项，就只说建过了）。
  * 「构建 / 重新构建」按钮的文案随有没有索引切换——已有就是重建（覆盖旧向量）。
  *
- * 「待重建」（黄点）是换过向量模型之后的状态：向量还在，但出自旧模型，检索用不上
- * 它了。与「从没建过」分开显示，否则换完模型满屏红点，看着像数据丢了。
+ * 「待重建」（黄点）是索引出自另一个向量模型时的状态：向量还在，但检索用不上
+ * 它了。与「从没建过」分开显示，否则满屏红点，看着像数据丢了。
  */
 
 function dotTitle(label: string, s: VectorStatus | undefined, note?: string): string {
   const head = (() => {
     const when = s?.built_at ? fmtFullTime(s.built_at) : null;
     if (s?.stale) {
-      return tr(`${label}：需要重建（嵌入模型已更换）`, `${label}: needs rebuild (embedding model changed)`);
+      return tr(`${label}：需要重建`, `${label}: needs rebuilding`);
     }
     if (!s?.built) return tr(`${label}：未建立`, `${label}: not built`);
     if (s.model && when) {
@@ -102,7 +102,7 @@ export function PaperIndexStatusRow({
     onError: (e) => {
       const msg =
         e instanceof ApiError && e.status === 403
-          ? tr('没有可用的嵌入模型，请在设置中配置', 'No embedding model available. Set one up in Settings.')
+          ? tr('语义搜索不可用，请在「设置 → 模型」中查看状态', 'Semantic search isn’t available. See Settings → Model.')
           : errorText(e);
       toast(`${tr('无法建立索引：', 'Couldn’t build the index: ')}${msg}`, 'error');
     },

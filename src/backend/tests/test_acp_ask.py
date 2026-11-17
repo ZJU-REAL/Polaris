@@ -1,17 +1,14 @@
 """ask 策略：权限请求摆给用户，用户答了才放行（#838）。"""
 
 import asyncio
-import json
 import os
 import sys
-import uuid
 from pathlib import Path
 
 import pytest
 
 from app.services.acp import client as acp_client
 from app.services.acp.client import AcpClient, AgentSpec
-from tests.conftest import register_and_login
 
 FAKE = str(Path(__file__).parent / "fixtures" / "fake_acp_agent.py")
 
@@ -206,63 +203,3 @@ async def _clean_pool():
     await shutdown_pool()
     # 助手起标题等模型调用现在也会落到登记的 agent 上（#840），那组进程一并收掉
     await shutdown_pools()
-
-
-async def test_the_panel_answers_a_request_over_the_api(client, agent_on):
-    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
-    resp = await client.post(
-        "/api/acp-agents",
-        json={"slug": "fake", "command": sys.executable, "args": [FAKE]},
-        headers=headers,
-    )
-    agent = resp.json()
-    assert agent["permission_policy"] == "ask"  # 新登记默认 ask
-    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
-
-    # 测试用的 ASGI 传输会把流式响应攒到结束才交出来，所以不能边读边答：
-    # 这一轮放到后台跑，从活会话上找到正在等的请求号，经接口回答。
-    async def run_turn() -> str:
-        resp = await client.post(
-            f"/api/chat/conversations/{conv_id}/turn",
-            json={"question": "write", "backend": agent["id"]},
-            headers=headers,
-        )
-        return resp.text
-
-    turn = asyncio.create_task(run_turn())
-    from app.services.acp import chat as acp_chat
-
-    rid = None
-    for _ in range(200):
-        live = acp_chat.live_session(uuid.UUID(conv_id))
-        pending = live.client.pending_asks(live.session_id) if live else []
-        if pending:
-            rid = pending[0]
-            break
-        await asyncio.sleep(0.02)
-    assert rid, "the agent never asked"
-    url = f"/api/chat/conversations/{conv_id}/permissions/{rid}"
-    r = await client.post(url, json={"option_id": "nope"}, headers=headers)
-    assert r.status_code == 400, r.text
-    r = await client.post(url, json={"option_id": "yes"}, headers=headers)
-    assert r.status_code == 204, r.text
-    # 答过就不再等
-    r = await client.post(url, json={"option_id": "yes"}, headers=headers)
-    assert r.status_code == 404
-
-    body = await asyncio.wait_for(turn, timeout=30)
-    frames: list[tuple[str, dict]] = []
-    for block in body.strip().split("\n\n"):
-        lines = dict(line.split(": ", 1) for line in block.split("\n") if ": " in line)
-        frames.append((lines.get("event"), json.loads(lines.get("data", "{}"))))
-    names = [n for n, _ in frames]
-    assert "permission_request" in names and names[-1] == "done"
-    req = next(d for n, d in frames if n == "permission_request")
-    assert req["request_id"] == rid and req["title"] == "Write out.txt"
-    resolved = next(d for n, d in frames if n == "permission_resolved")
-    assert resolved["outcome"] == "allowed"
-    text = "".join(d["text"] for n, d in frames if n == "delta")
-    assert text == "wrote it"
-    # 时间线不落库那张一次性的请求卡
-    msgs = (await client.get(f"/api/chat/conversations/{conv_id}/messages", headers=headers)).json()
-    assert "permission_request" not in json.dumps(msgs)
