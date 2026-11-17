@@ -24,6 +24,7 @@ from typing import Any
 
 import anthropic
 from anthropic import AsyncAnthropic
+from pydantic import BaseModel
 
 from app.core.llm.base import (
     CompletionResult,
@@ -45,6 +46,7 @@ from app.core.llm.base import (
     ToolUseStop,
     normalize_finish_reason,
 )
+from app.core.llm.errors import LLMRefusalError
 
 logger = logging.getLogger("polaris.llm")
 
@@ -88,20 +90,6 @@ _NO_FORCED_TOOL_CHOICE = frozenset(
         "claude-mythos-5-2",
     }
 )
-
-
-class LLMRefusalError(RuntimeError):
-    """Claude 拒绝了这次请求（``stop_reason == "refusal"``）。
-
-    不是网络或配置问题，重试同一个请求没有用。``category`` 是分类器给的类别
-    （可能为空）。
-    """
-
-    def __init__(self, category: str | None = None, explanation: str | None = None) -> None:
-        self.category = category
-        self.explanation = explanation
-        detail = f" ({category})" if category else ""
-        super().__init__(f"Claude declined this request{detail}.")
 
 
 def bare_model(model: str) -> str:
@@ -241,6 +229,8 @@ class AnthropicProvider(LLMProvider):
         tools: Sequence[dict[str, Any]] | None,
         tool_choice: str | None,
         show_thinking: bool,
+        output_schema: type[BaseModel] | None = None,
+        cache_prefix: str | None = None,
     ) -> dict[str, Any]:
         """拼 ``messages.create`` / ``messages.stream`` 的关键字参数。"""
         # system 提示是顶层参数，不在 messages 里。每条单独成块，顺序不变
@@ -271,6 +261,25 @@ class AnthropicProvider(LLMProvider):
             parts.extend(_image_payload(image, "image/png") for image in images)
             target["content"] = parts
 
+        if cache_prefix:
+            # 共享前缀放在第一条 user 消息最前面并打缓存断点：同一前缀、不同提问的
+            # 多次调用只有第一次按原价读这段材料。断点之后才是每次都变的内容。
+            prefix_block = {
+                "type": "text",
+                "text": cache_prefix,
+                "cache_control": {"type": "ephemeral"},
+            }
+            first_user = next((m for m in payload_messages if m["role"] == "user"), None)
+            if first_user is None:
+                payload_messages.insert(0, {"role": "user", "content": [prefix_block]})
+            else:
+                rest = (
+                    first_user["content"]
+                    if isinstance(first_user["content"], list)
+                    else [{"type": "text", "text": first_user["content"]}]
+                )
+                first_user["content"] = [prefix_block, *rest]
+
         request: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
@@ -290,6 +299,14 @@ class AnthropicProvider(LLMProvider):
             request["system"] = system_blocks
         if effort is not None:
             request["output_config"] = {"effort": _EFFORT_MAP.get(effort, "high")}
+        if output_schema is not None:
+            # 结构化输出：服务端按 schema 约束解码，回来的第一段文本一定是合法 JSON。
+            # transform_schema 去掉接口不支持的约束（长度、数值范围等）并补上
+            # additionalProperties: false；被去掉的约束由调用方拿 Pydantic 再校验一遍
+            request.setdefault("output_config", {})["format"] = {
+                "type": "json_schema",
+                "schema": anthropic.transform_schema(output_schema),
+            }
         if tools:
             request["tools"] = [
                 {
@@ -361,6 +378,44 @@ class AnthropicProvider(LLMProvider):
         api, extra = self._api(model)
         if limit > NONSTREAM_MAX_TOKENS:
             # 长输出：流式收齐再返回，连接上一直有数据，不会被空等超时掐断
+            async with api.stream(**request, **extra) as stream:
+                message = await stream.get_final_message()
+        else:
+            message = await api.create(**request, **extra)
+        return self._result(message, model)
+
+    async def complete_structured(
+        self,
+        messages: Sequence[Message],
+        *,
+        model: str,
+        schema: type[BaseModel],
+        max_tokens: int | None = None,
+        effort: EffortLevel | None = None,
+        cache_prefix: str | None = None,
+    ) -> CompletionResult:
+        """结构化输出（``output_config.format``）：返回 JSON 原文与结束原因。
+
+        与 ``complete`` 不同，这里**照发**调用方给的 ``max_tokens``，不抬到下限：
+        路由器（``complete_json``）自己定默认值，并在被截断时放宽重问。拒答抛
+        :class:`LLMRefusalError`；被截断（``finish_reason == "max_tokens"``）时照常
+        返回，由路由器决定怎么办——那段 JSON 是半截的，不能解析。
+        """
+        limit = min(max(max_tokens or NONSTREAM_MAX_TOKENS, 1), _MAX_OUTPUT_TOKENS)
+        request = self._request(
+            messages,
+            model=model,
+            max_tokens=limit,
+            images=None,
+            effort=effort,
+            tools=None,
+            tool_choice=None,
+            show_thinking=False,
+            output_schema=schema,
+            cache_prefix=cache_prefix,
+        )
+        api, extra = self._api(model)
+        if limit > NONSTREAM_MAX_TOKENS:
             async with api.stream(**request, **extra) as stream:
                 message = await stream.get_final_message()
         else:

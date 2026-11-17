@@ -12,6 +12,8 @@ import re
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
+from pydantic import BaseModel, ValidationError
+
 from app.core.llm.base import (
     CompletionResult,
     EffortLevel,
@@ -25,6 +27,7 @@ from app.core.llm.base import (
     ToolUseStart,
     ToolUseStop,
 )
+from app.core.llm.errors import LLMError, LLMSchemaError
 
 # 与 navigator.py / sextant.py / actions_wiki.py / actions_ideas.py /
 # services/projects.py 的 prompt 对齐的识别标记
@@ -144,6 +147,63 @@ def fake_embedding(text: str, dim: int = EMBEDDING_DIM) -> list[float]:
 _TOOL_MARKER = "POLARIS_FAKE_TOOL:"
 
 
+def _extract_object(text: str) -> str | None:
+    """回答里的 JSON 对象原文（首个 ``{`` 到最后一个 ``}``）；没有返回 None。"""
+    start, end = text.find("{"), text.rfind("}")
+    return text[start : end + 1] if start != -1 and end > start else None
+
+
+def _minimal_value(node: dict[str, Any], defs: dict[str, Any], depth: int = 0) -> Any:
+    """按 JSON Schema 造一个最小的合法值：枚举取第一个、列表放一个元素、字符串给短文本。"""
+    if depth > 12:  # 递归 schema 的保险：再深就不展开了
+        return None
+    if "$ref" in node:
+        return _minimal_value(defs.get(node["$ref"].rsplit("/", 1)[-1], {}), defs, depth + 1)
+    if "const" in node:
+        return node["const"]
+    if node.get("enum"):
+        return node["enum"][0]
+    for key in ("anyOf", "oneOf"):
+        if node.get(key):
+            options = [o for o in node[key] if o.get("type") != "null"] or node[key]
+            return _minimal_value(options[0], defs, depth + 1)
+    if node.get("allOf"):
+        return _minimal_value(node["allOf"][0], defs, depth + 1)
+    kind = node.get("type")
+    if kind == "object" or "properties" in node:
+        return {
+            name: _minimal_value(sub, defs, depth + 1)
+            for name, sub in (node.get("properties") or {}).items()
+        }
+    if kind == "array":
+        count = max(1, int(node.get("minItems") or 0))
+        return [_minimal_value(node.get("items") or {}, defs, depth + 1) for _ in range(count)]
+    if kind == "string":
+        text = "fake"
+        return text.ljust(int(node.get("minLength") or 0), "x")
+    if kind in ("integer", "number"):
+        low = node.get("minimum", node.get("exclusiveMinimum"))
+        value = 0 if low is None else low + (1 if "exclusiveMinimum" in node else 0)
+        return int(value) if kind == "integer" else float(value)
+    if kind == "boolean":
+        return False
+    return None
+
+
+def minimal_instance(schema: type[BaseModel]) -> BaseModel:
+    """没有专门的替身回答时，按 schema 造一个最小的合法实例。
+
+    新增的结构化调用点因此不用先在这里手写一段回答就能跑通全链；要断言具体内容的
+    测试再补专门的回答。造出来的值过不了 schema 自己的校验器时抛
+    :class:`LLMSchemaError`——那说明这个 schema 需要一段手写的回答。
+    """
+    spec = schema.model_json_schema()
+    try:
+        return schema.model_validate(_minimal_value(spec, spec.get("$defs") or {}))
+    except ValidationError as e:
+        raise LLMSchemaError(f"fake provider cannot synthesize a {schema.__name__}: {e}") from e
+
+
 def _slice_oddly(raw: str, size: int = 7) -> list[str]:
     """把字符串切成不对齐的小段。段长取质数，保证切口落在键名/值/转义序列中间。"""
     return [raw[i : i + size] for i in range(0, len(raw), size)] or [""]
@@ -156,6 +216,14 @@ class FakeProvider(LLMProvider):
     def __init__(self) -> None:
         self._script: list[list[tuple[str, dict[str, Any]]] | str] = []
         self._turn = 0
+        self._failures: list[tuple[type[BaseModel] | None, LLMError]] = []
+
+    def fail_next(self, error: LLMError, *, schema: type[BaseModel] | None = None) -> None:
+        """让下一次结构化调用抛 ``error``（给了 ``schema`` 就只对要这个 schema 的调用生效）。
+
+        重试与错误分类的测试用：限流、过载、拒答这些情况替身自己不会产生。
+        """
+        self._failures.append((schema, error))
 
     def script(self, steps: list[list[tuple[str, dict[str, Any]]] | str]) -> None:
         """排一段剧本驱动工具循环。
@@ -246,6 +314,47 @@ class FakeProvider(LLMProvider):
             finish_reason="stop",
             usage={
                 "prompt_tokens": prompt_len,
+                "completion_tokens": estimate_tokens(content),
+            },
+        )
+
+    async def complete_structured(
+        self,
+        messages: Sequence[Message],
+        *,
+        model: str,
+        schema: type[BaseModel],
+        max_tokens: int | None = None,
+        effort: EffortLevel | None = None,
+        cache_prefix: str | None = None,  # noqa: ARG002 — 替身不做缓存
+    ) -> CompletionResult:
+        """结构化输出的替身：沿用按标记路由的既有回答，并拿 schema 校验它。
+
+        - 有专门的回答：必须符合 schema，不符合直接抛 :class:`LLMSchemaError`——
+          替身的回答和真实 schema 对不上时，测试应该红，而不是悄悄走修复重问；
+        - 没有专门的回答（落到通用回显）：按 schema 造一个最小的合法实例。
+        """
+        for index, (wanted, error) in enumerate(self._failures):
+            if wanted is None or wanted is schema:
+                del self._failures[index]
+                raise error
+        result = await self.complete(messages, model=model, max_tokens=max_tokens, effort=effort)
+        if result.content.startswith(f"[fake:{model}] "):
+            content = minimal_instance(schema).model_dump_json()
+        else:
+            content = _extract_object(result.content) or result.content
+            try:
+                schema.model_validate_json(content)
+            except ValidationError as e:
+                raise LLMSchemaError(
+                    f"fake provider's canned reply does not match {schema.__name__}: {e}"
+                ) from e
+        return CompletionResult(
+            content=content,
+            model=model,
+            finish_reason="stop",
+            usage={
+                "prompt_tokens": result.usage.get("prompt_tokens", 0),
                 "completion_tokens": estimate_tokens(content),
             },
         )

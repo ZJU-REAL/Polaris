@@ -25,6 +25,8 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel, ValidationError
+
 from app.core.config import get_settings
 from app.core.llm import call_log
 from app.core.llm.anthropic import (
@@ -36,6 +38,7 @@ from app.core.llm.anthropic import (
 from app.core.llm.base import (
     CompletionResult,
     EffortLevel,
+    JsonResult,
     LLMProvider,
     Message,
     StreamDone,
@@ -43,19 +46,22 @@ from app.core.llm.base import (
     TextDelta,
 )
 from app.core.llm.budgets import InputBudget
+from app.core.llm.errors import (
+    LLMNotConfiguredError,
+    LLMSchemaError,
+    LLMTruncatedError,
+    classify,
+)
 from app.core.llm.fake import FakeProvider, estimate_tokens
 from app.core.llm.openai_compat import OpenAICompatProvider
 
 logger = logging.getLogger(__name__)
 
 
-class LLMNotConfiguredError(RuntimeError):
-    """没有 Claude 的 API key（且未开启 fake 回退）。
-
-    main.py 的异常处理器把它映射为 503 LLM_NOT_CONFIGURED，前端据此告诉用户
-    怎么提供 key（设置环境变量后重新打开 Polaris）。
-    """
-
+#: ``complete_json`` 修复重问时最多把 ``max_tokens`` 放宽到多少（超过非流式上限走流式）。
+JSON_REPAIR_MAX_TOKENS = STREAM_MAX_TOKENS
+#: 校验失败重问时，回灌给模型的校验错误最多带多少字符。
+_VALIDATION_FEEDBACK_CHARS = 2_000
 
 # 科研环节枚举（docs/task-system.md §7；M2 新增 embedding，见 docs/task-system.md §7；
 # 文献管理增强新增 reading（AI 伴读），见 docs/task-system.md §7（原 api-lit.md §3））
@@ -273,9 +279,13 @@ _STREAM_RETRY_BASE_SECONDS = 2.0
 # 短 JSON 环节（打分 / 判定 / 结构化抽取）中位数都在十几秒，没有理由等 300 秒，
 # 更没理由等四次；卡住的短请求重试也极少能救回来。长文本环节（编译 / 写作 /
 # 评审）本来就要跑几分钟，保持宽松。
-_SHORT_CALL = (60.0, 2)  # (timeout 秒, 最多尝试次数) → 最坏 60+3+60 = 123s
-_MEDIUM_CALL = (180.0, 2)
-_LONG_CALL = (300.0, 4)
+#
+# 换到 Claude 之后三档各放宽一倍：思考默认开着，十万 token 级的输入（整库摘要、
+# 整篇正文）光是读完再想清楚就可能超过一分钟，60 秒的短档会把正常的调用掐掉重来。
+# 短档仍然只试两次：卡死的请求不该被耐心地等上四轮。
+_SHORT_CALL = (120.0, 2)  # (timeout 秒, 最多尝试次数) → 最坏 120+3+120 = 243s
+_MEDIUM_CALL = (300.0, 2)
+_LONG_CALL = (600.0, 4)
 
 # 插件环节按注册时声明的 tier 取档（内置环节仍走下面三个集合的显式归类）
 _TIER_PROFILES = {"short": _SHORT_CALL, "medium": _MEDIUM_CALL, "long": _LONG_CALL}
@@ -309,12 +319,12 @@ _SHORT_CALL_STAGES = frozenset(
 _LONG_CALL_STAGES = STREAM_STAGES | frozenset({"digest", "forge_generate"})
 
 # 中档用于多轮代理和较长的结构化生成。一次调用比短 JSON 长得多，但**不能**
-# 直接塞进长档：那是 300s × 4 尝试，最坏 20 分钟攥着一个 HTTP 连接不放，而对话是同步的，
-# 用户早走了。180s × 2 是"够想完一轮、又不至于把连接耗死"的折中。
-# rag_answer 是同步问答里的长生成（证据集大、要逐句挂引用），60s 短档会掐死它，
-# 但它又是用户干等着的请求，不能给长档 20 分钟的耐心——与 agent 同档。
+# 直接塞进长档：那是 600s × 4 尝试，最坏 40 分钟攥着一个 HTTP 连接不放，而对话是同步的，
+# 用户早走了。300s × 2 是"够想完一轮、又不至于把连接耗死"的折中。
+# rag_answer 是同步问答里的长生成（证据集大、要逐句挂引用），短档会掐死它，
+# 但它又是用户干等着的请求，不能给长档的耐心——与 agent 同档。
 # hyp_generate / hyp_ground 同理：一次要组合多路灵感 / 拆解并逐条选证据，
-# 输出比短 JSON 长得多，但 discovery 是逐候选串行调用，长档 20 分钟的耐心
+# 输出比短 JSON 长得多，但 discovery 是逐候选串行调用，长档的耐心
 # 会让一轮扩展的最坏时长完全失控。
 _MEDIUM_CALL_STAGES = frozenset(
     {
@@ -326,7 +336,7 @@ _MEDIUM_CALL_STAGES = frozenset(
         "hyp_generate",
         "hyp_ground",
         # 骨架抽取（#661）：一次吃约 2.4 万字正文、产四字段 JSON——比短 JSON 环节
-        # 重得多（extract 短档喂的是单页级片段），但也没有长档 20 分钟的理由：
+        # 重得多（extract 短档喂的是单页级片段），但也没有长档的理由：
         # enrich 链逐篇串行，卡死一篇就堵住整条补全队列
         "extract_skeleton",
         "extract_method",  # 方法卡抽取（#663）：与骨架同一负载形态，同档
@@ -343,7 +353,7 @@ def call_profile(stage: str) -> tuple[float, int]:
     三个集合都真的参与判定。曾经只判中/长两档、``else`` 一律短档，于是
     ``_SHORT_CALL_STAGES`` 成了只有测试在读的摆设——它和真实行为可以静默漂移，
     而测试还一直是绿的。现在漏归类的环节走 ``_SHORT_CALL`` 之前先喊一声：
-    短档 60s 对一个长生成环节是致命的（#386 就是这么把想法生成掐死的），
+    短档对一个长生成环节是致命的（#386 就是这么把想法生成掐死的），
     而这种事从日志里看只是「provider 失败」。
     """
     spec = _PLUGIN_STAGES.get(stage)
@@ -358,7 +368,7 @@ def call_profile(stage: str) -> tuple[float, int]:
     if stage not in _SHORT_CALL_STAGES:
         logger.warning(
             "stage %r has no call profile; defaulting to the short budget %s. "
-            "Classify it in router.py, a long stage silently capped at 60s looks "
+            "Classify it in router.py, a long stage silently capped at that timeout looks "
             "like a provider outage.",
             stage,
             _SHORT_CALL,
@@ -734,6 +744,197 @@ class LLMRouter:
                 project_id=project_id,
                 voyage_id=voyage_id,
                 library_id=library_id,
+            )
+        return result
+
+    # ---- 结构化输出 ----
+
+    @staticmethod
+    def _parse_json[SchemaT: BaseModel](schema: type[SchemaT], text: str) -> SchemaT:
+        """把模型的回答校验成 schema 实例；不符合抛 ``ValidationError``。
+
+        原生结构化输出回来的整段文本就是 JSON。没有原生支持的 provider（测试替身等）
+        可能在 JSON 前后带说明文字，所以整段解析不了时再取最外层的花括号试一次。
+        """
+        try:
+            return schema.model_validate_json(text)
+        except ValidationError:
+            start, end = text.find("{"), text.rfind("}")
+            if start == -1 or end <= start or (start == 0 and end == len(text) - 1):
+                raise
+            return schema.model_validate_json(text[start : end + 1])
+
+    async def complete_json[SchemaT: BaseModel](
+        self,
+        stage: str,
+        messages: Sequence[Message],
+        *,
+        schema: type[SchemaT],
+        max_tokens: int | None = None,
+        effort: EffortLevel | None = None,
+        cache_prefix: str | None = None,
+        user_id: uuid.UUID | None = None,
+        project_id: uuid.UUID | None = None,
+        library_id: uuid.UUID | None = None,
+        voyage_id: uuid.UUID | None = None,
+    ) -> JsonResult[SchemaT]:
+        """要一个符合 ``schema``（Pydantic 模型）的回答，返回校验过的实例。
+
+        建在 Claude 的结构化输出上（``output_config.format``）：服务端按 schema 约束
+        解码，所以「回了一段不是 JSON 的文字」这类失败在结构上不会发生。schema 里
+        接口不支持的约束（长度、数值范围）和自定义校验器，在这里用 Pydantic 再过一遍。
+
+        一次逻辑调用**最多打两次模型**：
+
+        - 输出被 ``max_tokens`` 截断：放宽上限重问一次（至少到默认值，封顶
+          :data:`JSON_REPAIR_MAX_TOKENS`）；
+        - 校验不通过：把校验错误附在后面重问一次；
+        - 第二次还不行就抛 :class:`LLMTruncatedError` / :class:`LLMSchemaError`。
+          拒答不重试。
+
+        网络错误、429、5xx 的重试交给 SDK，这里不再套一层循环；SDK 重试用完仍然失败
+        的，归类成 ``core/llm/errors.py`` 里带 ``transient`` 的错误再抛。
+
+        ``max_tokens`` 是思考与正文合计的上限，默认 16,000。``cache_prefix`` 是多次
+        调用共享的大段材料：放在第一条 user 消息之前并打缓存断点。记账与调用日志
+        和 ``complete`` 同口径，每次模型调用各记一条。
+
+        schema 只用封闭的对象：不要 ``dict[str, Any]``，不要递归；可选字段写
+        ``X | None``。
+        """
+        provider, route = await self.resolve(stage)
+        eff = route.effort if effort is None else effort
+        limit = max_tokens or NONSTREAM_MAX_TOKENS
+        convo: list[Message] = list(messages)
+        total: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
+        model = route.model
+        failure: LLMSchemaError | LLMTruncatedError | None = None
+        for call in (1, 2):
+            result = await self._structured_call(
+                stage,
+                provider,
+                route,
+                convo,
+                schema=schema,
+                max_tokens=limit,
+                effort=eff,
+                cache_prefix=cache_prefix,
+                user_id=user_id,
+                project_id=project_id,
+                library_id=library_id,
+                voyage_id=voyage_id,
+            )
+            model = result.model or model
+            for key, value in result.usage.items():
+                total[key] = total.get(key, 0) + int(value)
+            if result.finish_reason == "max_tokens":
+                # 先看结束原因再碰正文：被截断的 JSON 是半截的，解析它没有意义
+                failure = LLMTruncatedError(
+                    f"{stage}: output hit max_tokens={limit} and was cut off"
+                )
+                wider = min(max(limit * 2, NONSTREAM_MAX_TOKENS), JSON_REPAIR_MAX_TOKENS)
+                if wider <= limit:
+                    break  # 已经在上限，再问一次也是同样的结果
+                limit = wider
+                continue
+            try:
+                data = self._parse_json(schema, result.content)
+            except ValidationError as e:
+                failure = LLMSchemaError(f"{stage}: output does not match {schema.__name__}: {e}")
+                convo = list(messages)
+                if result.content.strip():
+                    convo.append(Message(role="assistant", content=result.content))
+                convo.append(
+                    Message(
+                        role="user",
+                        content=(
+                            "Your previous reply did not pass validation:\n"
+                            f"{str(e)[:_VALIDATION_FEEDBACK_CHARS]}\n"
+                            "Reply again with a corrected JSON object that fixes these "
+                            "problems. Keep everything that was already valid."
+                        ),
+                    )
+                )
+                continue
+            return JsonResult(data=data, usage=total, model=model, calls=call)
+        assert failure is not None
+        raise failure
+
+    async def _structured_call(
+        self,
+        stage: str,
+        provider: LLMProvider,
+        route: ResolvedRoute,
+        messages: Sequence[Message],
+        *,
+        schema: type[BaseModel],
+        max_tokens: int,
+        effort: EffortLevel | None,
+        cache_prefix: str | None,
+        user_id: uuid.UUID | None,
+        project_id: uuid.UUID | None,
+        library_id: uuid.UUID | None,
+        voyage_id: uuid.UUID | None,
+    ) -> CompletionResult:
+        """一次结构化模型调用：记账、写调用日志、把 SDK 异常归类成 ``LLMError``。"""
+        log_enabled = await call_log.logging_enabled()
+        started_at = time.monotonic()
+        identity: dict[str, Any] = {
+            "user_id": user_id,
+            "project_id": project_id,
+            "voyage_id": voyage_id,
+            "library_id": library_id,
+        }
+        logged: Sequence[Message] = (
+            [Message(role="user", content=cache_prefix), *messages] if cache_prefix else messages
+        )
+        # 不是 LLMProvider 子类的测试替身没有这个方法：借基类的默认做法（走它的 complete）
+        structured = getattr(provider, "complete_structured", None)
+        kwargs: dict[str, Any] = {
+            "model": route.model,
+            "schema": schema,
+            "max_tokens": max_tokens,
+            "effort": effort,
+            "cache_prefix": cache_prefix,
+        }
+        try:
+            if structured is not None:
+                result = await structured(messages, **kwargs)
+            else:
+                result = await LLMProvider.complete_structured(provider, messages, **kwargs)
+        except Exception as e:
+            if log_enabled:
+                await self._log_call(
+                    stage=stage,
+                    route=route,
+                    model=route.model,
+                    started_at=started_at,
+                    status="error",
+                    error=f"{type(e).__name__}: {e}",
+                    request=call_log.sanitize_request(logged),
+                    response=None,
+                    usage={},
+                    **identity,
+                )
+            typed = classify(e)
+            if typed is None or typed is e:
+                raise
+            raise typed from e
+        truncated = result.finish_reason == "max_tokens"
+        result.usage = self._ensure_usage(logged, result.content, result.usage)
+        await self._record_usage(stage=stage, model=result.model, usage=result.usage, **identity)
+        if log_enabled:
+            await self._log_call(
+                stage=stage,
+                route=route,
+                model=result.model or route.model,
+                started_at=started_at,
+                status="error" if truncated else "ok",
+                error="output hit max_tokens and was cut off" if truncated else None,
+                request=call_log.sanitize_request(logged),
+                response=result.content,
+                usage=result.usage,
+                **identity,
             )
         return result
 

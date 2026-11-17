@@ -67,7 +67,10 @@ def test_mask_api_key():
 
 
 def test_short_json_stages_get_a_tight_call_budget():
-    """打分/判定/抽取这类短 JSON 环节，最坏耗时要压在两分钟级以内。
+    """打分/判定/抽取这类短 JSON 环节，最坏耗时要压在几分钟以内，且只试两次。
+
+    Claude 默认带思考，大输入的短调用一分钟想不完，所以单次超时是 120 秒；
+    要守住的是「不会熬过四轮五分钟超时」这件事。
 
     生产实测 relevance 中位 13.3s、p95 却有 1215s——4 次尝试 × 300s 超时 + 退避
     3+6+12 正好 1221s，也就是重试循环熬过四次五分钟超时。而打分协程全程占着一个
@@ -78,7 +81,7 @@ def test_short_json_stages_get_a_tight_call_budget():
     for stage in ("relevance", "sextant", "extract", "concepts"):
         timeout, attempts = call_profile(stage)
         worst = timeout * attempts + 3 * (attempts - 1)  # 含指数退避
-        assert worst <= 180, f"{stage} 最坏 {worst}s，太能等了"
+        assert attempts <= 2 and worst <= 250, f"{stage} 最坏 {worst}s，太能等了"
 
 
 def test_long_form_stages_stay_patient():
@@ -138,4 +141,4 @@ def test_forge_generate_gets_the_long_call_budget_without_streaming():
     assert timeout >= 300
     assert attempts >= 3
     assert "forge_generate" not in STREAM_STAGES
-    assert call_profile("forge") == (60.0, 2), "分析和逐条评分仍应保持短调用预算"
+    assert call_profile("forge") == (120.0, 2), "分析和逐条评分仍应保持短调用预算"

@@ -30,12 +30,12 @@ def test_agent_stage_exists():
 def test_medium_stages_get_more_patience_without_the_long_profile():
     """代理、目标构建和方案评审使用中档，既不是短档也不是长档。
 
-    短档（60s×2）不够想完一轮；长档（300s×4）最坏 20 分钟攥着一个 HTTP 连接不放，
+    短档（120s×2）不够想完一轮；长档（600s×4）最坏 40 分钟攥着一个 HTTP 连接不放，
     而对话是同步的——用户早走了。
     """
     for stage in ("agent", "goal_explore", "proposal_review"):
         profile = call_profile(stage)
-        assert profile == (180.0, 2)
+        assert profile == (300.0, 2)
         assert profile != call_profile("relevance"), "不能是短档"
         assert profile != call_profile("librarian"), "也不能是长档"
     # reading（现有对话）必须保持短档不变

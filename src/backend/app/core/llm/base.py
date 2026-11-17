@@ -23,6 +23,8 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
+from pydantic import BaseModel
+
 Role = str  # "system" | "user" | "assistant"
 
 # 推理档位（思考深度）。取值取 OpenAI 与 Anthropic 两家的并集，具体模型支持哪些子集
@@ -135,6 +137,37 @@ class CompletionResult:
         if not self.blocks:
             return Message(role="assistant", content=self.content)
         return Message(role="assistant", content=list(self.blocks))
+
+
+@dataclass(slots=True)
+class JsonResult[SchemaT: BaseModel]:
+    """``LLMRouter.complete_json`` 的结果：``data`` 是校验过的 schema 实例。
+
+    ``usage`` 是这次逻辑调用的总账（修复重问的那一次也算在内）；``calls`` 是实际
+    打了几次模型（1 或 2）。
+    """
+
+    data: SchemaT
+    usage: dict[str, int] = field(default_factory=dict)
+    model: str = ""
+    calls: int = 1
+
+
+def wire_schema(schema: type[BaseModel]) -> dict[str, Any]:
+    """Pydantic 模型 → 可以发给模型的 JSON Schema（没有原生结构化输出的 provider 用）。"""
+    return schema.model_json_schema()
+
+
+def with_cache_prefix(messages: Sequence["Message"], cache_prefix: str | None) -> list["Message"]:
+    """把共享前缀并进第一条 user 消息的开头（不支持缓存断点的 provider 的退路）。"""
+    out = list(messages)
+    if not cache_prefix:
+        return out
+    for i, m in enumerate(out):
+        if m.role == "user":
+            out[i] = Message(role="user", content=f"{cache_prefix}\n\n{m.text}")
+            return out
+    return [*out, Message(role="user", content=cache_prefix)]
 
 
 # ---- 流式事件 ----
@@ -300,6 +333,39 @@ class LLMProvider(ABC):
         ):
             yield TextDelta(chunk)
         yield StreamDone(finish_reason="stop")
+
+    async def complete_structured(
+        self,
+        messages: Sequence[Message],
+        *,
+        model: str,
+        schema: type[BaseModel],
+        max_tokens: int | None = None,
+        effort: EffortLevel | None = None,
+        cache_prefix: str | None = None,
+    ) -> CompletionResult:
+        """要一段符合 ``schema`` 的 JSON，返回**原始文本**（``content``）与结束原因。
+
+        校验、截断与修复重问都在路由器里（``LLMRouter.complete_json``），provider 只管
+        把 schema 交给模型。这里是没有原生结构化输出的 provider 的默认做法：把 JSON
+        Schema 写进一条 system 消息，再走普通的 ``complete``——测试替身因此不用改。
+
+        ``cache_prefix``：多次调用共享的一大段材料（如整库摘要），放在第一条 user
+        消息之前；支持提示缓存的 provider 在它后面打断点。
+        """
+        hint = Message(
+            role="system",
+            content=(
+                "Reply with exactly one JSON object that matches this JSON Schema, "
+                "and nothing else:\n" + json.dumps(wire_schema(schema), ensure_ascii=False)
+            ),
+        )
+        prepared = with_cache_prefix(messages, cache_prefix)
+        # 提示排在已有 system 之后、对话之前：各环节 system 首行的标记位置不变
+        split = next((i for i, m in enumerate(prepared) if m.role != "system"), len(prepared))
+        prepared.insert(split, hint)
+        extra: dict[str, Any] = {"effort": effort} if effort is not None else {}
+        return await self.complete(prepared, model=model, max_tokens=max_tokens, **extra)
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
         """文本嵌入（语义检索用）。不支持的 provider（如 anthropic）抛 NotImplementedError。"""
