@@ -2,10 +2,26 @@
 
 import { tr } from './i18n';
 
+/** 有日期有时间、但没写时区的 ISO 字符串（"2026-10-10T02:53:51.123456"）。 */
+const OFFSETLESS_DATETIME = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/;
+
+/**
+ * 引擎给的时间字符串 → Date。**界面上解析引擎时间一律走这里，不要直接 new Date(iso)。**
+ *
+ * 引擎的时间都是 UTC。不带偏移的日期时间交给 `new Date()` 会被当成本地时间——东八区
+ * 就整整差 8 小时（#872）——所以这里把它按 UTC 读。带 `Z` / `+08:00` 的照原样；
+ * 只有日期（"2026-10-10"）的仍然是那一天。无效或空输入返回 Invalid Date。
+ */
+export function parseApiDate(iso: string | null | undefined): Date {
+  if (!iso) return new Date(Number.NaN);
+  const m = OFFSETLESS_DATETIME.exec(iso.trim());
+  return new Date(m ? `${m[1]}T${m[2]}Z` : iso);
+}
+
 /** ISO 时间 → "MM-DD HH:mm"（本地时区）。无效输入返回 '—'。 */
 export function fmtTime(iso: string | null | undefined): string {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = parseApiDate(iso);
   if (Number.isNaN(d.getTime())) return '—';
   const p = (n: number) => String(n).padStart(2, '0');
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
@@ -14,7 +30,7 @@ export function fmtTime(iso: string | null | undefined): string {
 /** ISO 时间 → "YYYY-MM-DD HH:mm:ss"（本地时区），用于 hover 完整时间提示。 */
 export function fmtFullTime(iso: string | null | undefined): string {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = parseApiDate(iso);
   if (Number.isNaN(d.getTime())) return '—';
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
@@ -27,7 +43,7 @@ export function fmtFullTime(iso: string | null | undefined): string {
  */
 export function fmtRelative(iso: string | null | undefined): string {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = parseApiDate(iso);
   if (Number.isNaN(d.getTime())) return '—';
   const now = new Date();
   const diff = now.getTime() - d.getTime();
@@ -50,8 +66,8 @@ export function fmtRelative(iso: string | null | undefined): string {
 /** 两个 ISO 时间之间的时长 → "42s" / "3m 12s" / "1h 04m"。 */
 export function fmtDuration(startIso: string | null | undefined, endIso?: string | null): string {
   if (!startIso) return '—';
-  const start = new Date(startIso).getTime();
-  const end = endIso ? new Date(endIso).getTime() : Date.now();
+  const start = parseApiDate(startIso).getTime();
+  const end = endIso ? parseApiDate(endIso).getTime() : Date.now();
   if (Number.isNaN(start) || Number.isNaN(end) || end < start) return '—';
   const s = Math.round((end - start) / 1000);
   if (s < 60) return `${s}s`;

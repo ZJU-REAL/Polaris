@@ -29,10 +29,10 @@ from app.services.affiliations import (
 )
 from app.services.ai_evidence_context import (
     AIEvidenceBundle,
-    append_evidence_manifest,
     build_paper_evidence_context,
     citation_refs,
     evidence_guidance,
+    evidence_locators,
 )
 from app.services.concepts import link_paper_concepts
 from app.services.figure_annotate import (
@@ -173,6 +173,9 @@ class CompiledWiki:
     content: str
     model: str
     author_affiliations: list[dict[str, Any]] | None = None
+    # 正文里 [文N·句M] 引用对应的定位信息（没有全文证据时为 None）。单独落
+    # paper_wikis.evidence，不进正文（#873）
+    evidence: dict[str, Any] | None = None
 
 
 async def compile_paper(
@@ -251,14 +254,20 @@ async def compile_paper(
         # 有配图但一张都没插 → 带强指令重写一次；仍失败则接受纯文字稿（图库里还能看图）
         if not images or FIGURE_MARKER_RE.search(content):
             break
+    evidence: dict[str, Any] | None = None
     if evidence_bundle is not None and evidence_bundle.manifest:
         valid_refs = {
             (int(item["article_no"]), int(item["sentence_no"])) for item in evidence_bundle.manifest
         }
         if any(ref not in valid_refs for ref in citation_refs(content)):
             raise ValueError("LIBRARIAN_EVIDENCE_CITATIONS_INVALID")
-        content = append_evidence_manifest(content, evidence_bundle)
-    return CompiledWiki(content=content, model=model, author_affiliations=author_affiliations)
+        evidence = evidence_locators(evidence_bundle)
+    return CompiledWiki(
+        content=content,
+        model=model,
+        author_affiliations=author_affiliations,
+        evidence=evidence,
+    )
 
 
 async def recompile_paper(
@@ -310,6 +319,7 @@ async def recompile_paper(
         session,
         paper=paper,
         content=compiled.content,
+        evidence=compiled.evidence,
         model=compiled.model or None,
         compiled_by=user_id,
     )

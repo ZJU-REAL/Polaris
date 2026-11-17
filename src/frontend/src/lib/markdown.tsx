@@ -17,8 +17,24 @@ import 'katex/dist/katex.min.css';
      → 调用 renderFigure(N) 渲染嵌入图；未提供 renderFigure 或
      返回 null 时该行静默跳过。行内出现的同标记也剥除不显示；
      代码块 / 行内代码内不解析。
+   - HTML 注释（`<!-- … -->`，可跨行）不显示：注释不是给人看的，
+     按纯文本渲染出来就是一段「乱码」（#873）。代码块 / 行内代码
+     里的照留；没有闭合的 `<!--` 当普通文字。
    样式见 global.css 的 .md / .wikilink。
    ============================================================ */
+
+// 依次匹配：``` 代码块（没闭合就到文末，与 parseBlocks 一致）| 行内代码 | HTML 注释。
+// 前两种原样留下，只有落在代码之外的注释被删掉。
+const COMMENT_OR_CODE_RE =
+  /(^[ \t]*```[\s\S]*?(?:^[ \t]*```|(?![\s\S])))|(`[^`\n]*`)|<!--[\s\S]*?-->/gm;
+
+/** 删掉正文里的 HTML 注释（代码里的除外）。 */
+export function stripHtmlComments(src: string): string {
+  if (!src.includes('<!--')) return src;
+  return src.replace(COMMENT_OR_CODE_RE, (match, fence?: string, code?: string) =>
+    fence !== undefined || code !== undefined ? match : '',
+  );
+}
 
 /** KaTeX 渲染（错误容忍：非法 TeX 原样显示为红色文本而不抛错）。 */
 function MathSpan({ tex, display }: { tex: string; display: boolean }) {
@@ -246,7 +262,7 @@ function parseBlocks(
   renderLibraryFigure?: LibraryFigureRenderer,
   renderImage?: ImageRenderer,
 ): ReactNode[] {
-  const lines = src.replace(/\r\n/g, '\n').split('\n');
+  const lines = stripHtmlComments(src.replace(/\r\n/g, '\n')).split('\n');
   const out: ReactNode[] = [];
   let i = 0;
   let key = 0;

@@ -3,11 +3,11 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 
 class ChatBotConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -26,4 +26,4 @@ class ChatBotConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # Webhook 中的 access_token / hook id 与签名密钥都能直接授权发群消息，均加密落库。
     robot_id_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     secret_encrypted: Mapped[str | None] = mapped_column(Text)
-    last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_delivered_at: Mapped[datetime | None] = mapped_column(UTCDateTime())

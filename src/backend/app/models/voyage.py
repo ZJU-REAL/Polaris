@@ -11,7 +11,6 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
-    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -23,7 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin, utcnow
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin, utcnow
 
 # 状态机：planning → executing → verifying → (next|replanning|paused_gate|paused_error|paused_ask)
 #         → done / failed / cancelled
@@ -157,8 +156,8 @@ class VoyageStep(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # 溯源 {plan_iteration, reason?, on_failure?}：哪次计划迭代创建了它
     provenance: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     tokens: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     run: Mapped[VoyageRun] = relationship(back_populates="steps")
 
@@ -216,7 +215,7 @@ class VoyageMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("voyage_steps.id", ondelete="SET NULL")
     )
     # 仅 kind=chat：被 agent 消费的时间与位置（审计 + resume 重放幂等锚点）
-    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     consumed_step_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("voyage_steps.id"))
 
 
@@ -240,4 +239,4 @@ class VoyageTerminalLog(Base):
     level: Mapped[str | None] = mapped_column(String(16))  # log 上色 level
     stage: Mapped[str | None] = mapped_column(String(32))  # llm 环节
     message: Mapped[str] = mapped_column(Text, nullable=False)  # 日志文本 / 大模型输出全文
-    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)

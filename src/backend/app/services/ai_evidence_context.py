@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 import uuid
 from collections.abc import Mapping, Sequence
@@ -23,7 +22,6 @@ _CITATION_RE = re.compile(
 _TARGET_KINDS = frozenset(
     {"idea_forge", "idea_review", "experiment", "paper_writing", "paper_review", "presentation"}
 )
-_MANIFEST_RE = re.compile(r"\n?<!-- polaris-ai-evidence:(\{.*?\}) -->\s*$", re.DOTALL)
 _SECTION_ORDER = ("methods", "experiments", "results", "discussion", "background", "other")
 _SECTION_TERMS: dict[str, tuple[str, ...]] = {
     "methods": ("method", "methodology", "approach", "model", "方法", "模型"),
@@ -73,26 +71,22 @@ def citation_refs(value: str) -> list[tuple[int, int]]:
     return list(dict.fromkeys(refs))
 
 
-def append_evidence_manifest(value: str, bundle: AIEvidenceBundle) -> str:
-    """Append non-text locators without copying authorized full text into a global artifact."""
+def evidence_locators(bundle: AIEvidenceBundle) -> dict[str, Any]:
+    """Non-text locators for a shared artifact; never copies authorized full text.
 
-    body = _MANIFEST_RE.sub("", value).rstrip()
+    Stored next to the artifact (``paper_wikis.evidence``), not inside its text (#873).
+    """
+
     refs = [
         {key: item[key] for key in _ARTIFACT_REF_FIELDS if item.get(key) is not None}
         for item in bundle.manifest
     ]
-    payload = json.dumps(
-        {
-            "version": 1,
-            "mode": bundle.mode,
-            "paper_count": bundle.paper_count,
-            "refs": refs,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    payload = payload.replace("-->", "\\u002d\\u002d\\u003e")
-    return f"{body}\n\n<!-- polaris-ai-evidence:{payload} -->\n"
+    return {
+        "version": 1,
+        "mode": bundle.mode,
+        "paper_count": bundle.paper_count,
+        "refs": refs,
+    }
 
 
 def attach_observation_evidence(

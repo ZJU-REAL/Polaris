@@ -8,11 +8,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 SEARCH_RUN_STATUSES = ("queued", "running", "completed", "partial", "failed", "cancelled")
 SEARCH_HIT_STATUSES = ("candidate", "promoted", "dismissed")
@@ -55,11 +55,11 @@ class LiteratureSearchRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(16), default="manual", server_default="manual", nullable=False
     )
     schedule_version: Mapped[int | None]
-    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scheduled_for: Mapped[datetime | None] = mapped_column(UTCDateTime())
     progress: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     error_summary: Mapped[str | None] = mapped_column(Text)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class LiteratureDiscoverySchedule(TimestampMixin, Base):
@@ -91,11 +91,11 @@ class LiteratureDiscoverySchedule(TimestampMixin, Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
-    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_run_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     last_run_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("literature_search_runs.id", ondelete="SET NULL"), index=True
     )
-    last_enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_enqueued_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     last_error_code: Mapped[str | None] = mapped_column(String(64))
 
 
@@ -138,7 +138,7 @@ class LiteratureSearchHit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     scores: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     venue_metric_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     metadata_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
-    promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    promoted_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class LiteratureHitTranslation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -171,8 +171,8 @@ class LiteratureHitTranslation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     translated_fields: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     error_code: Mapped[str | None] = mapped_column(String(64))
     attempt_count: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class LiteratureSourceAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -202,8 +202,8 @@ class LiteratureSourceAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     error_code: Mapped[str | None] = mapped_column(String(64))
     error_detail: Mapped[str | None] = mapped_column(Text)
     metadata_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class LiteratureVenueMetricCache(TimestampMixin, Base):
@@ -217,10 +217,8 @@ class LiteratureVenueMetricCache(TimestampMixin, Base):
     venue_name: Mapped[str | None] = mapped_column(String(512))
     issn_l: Mapped[str | None] = mapped_column(String(16))
     metrics: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
-    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
+    fetched_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, index=True)
 
 
 class LiteratureOaCache(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -254,7 +252,7 @@ class LiteratureOaCache(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     error_code: Mapped[str | None] = mapped_column(String(64))
     error_detail: Mapped[str | None] = mapped_column(Text)
     attempt_count: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
-    downloaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    downloaded_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class LiteratureOaAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):

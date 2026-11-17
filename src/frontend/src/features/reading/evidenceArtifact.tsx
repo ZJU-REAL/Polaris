@@ -2,8 +2,6 @@ import type { CitationRenderer } from '../../lib/markdown';
 import { tr } from '../../lib/i18n';
 import './evidence.css';
 
-const EVIDENCE_MANIFEST_RE = /\n?<!-- polaris-ai-evidence:(\{.*?\}) -->\s*$/s;
-
 export interface AIEvidenceReference {
   article_no: number;
   sentence_no: number;
@@ -13,27 +11,26 @@ export interface AIEvidenceReference {
   source?: string | null;
 }
 
-export interface ParsedEvidenceArtifact {
-  body: string;
-  refs: AIEvidenceReference[];
+/**
+ * 解读正文里 [文N·句M] 引用的定位信息（论文详情的 wiki_evidence）。
+ * 引擎把它和正文分开给：正文只放给人看的内容（#873）。
+ */
+export interface WikiEvidence {
+  version?: number;
+  mode?: string;
+  paper_count?: number;
+  refs?: unknown;
 }
 
-export function parseEvidenceArtifact(source: string): ParsedEvidenceArtifact {
-  const match = EVIDENCE_MANIFEST_RE.exec(source);
-  if (!match) return { body: source, refs: [] };
-  try {
-    const payload = JSON.parse(match[1]!) as { refs?: unknown };
-    const refs = Array.isArray(payload.refs)
-      ? payload.refs.filter((item): item is AIEvidenceReference => {
-          if (!item || typeof item !== 'object') return false;
-          const ref = item as Partial<AIEvidenceReference>;
-          return Number.isInteger(ref.article_no) && Number.isInteger(ref.sentence_no);
-        })
-      : [];
-    return { body: source.slice(0, match.index).trimEnd(), refs };
-  } catch {
-    return { body: source.slice(0, match.index).trimEnd(), refs: [] };
-  }
+/** 从 wiki_evidence 里取出可用的引用定位；没有或形状不对的一律当作没有。 */
+export function evidenceRefs(evidence: WikiEvidence | null | undefined): AIEvidenceReference[] {
+  const refs = evidence?.refs;
+  if (!Array.isArray(refs)) return [];
+  return refs.filter((item): item is AIEvidenceReference => {
+    if (!item || typeof item !== 'object') return false;
+    const ref = item as Partial<AIEvidenceReference>;
+    return Number.isInteger(ref.article_no) && Number.isInteger(ref.sentence_no);
+  });
 }
 
 function matchingReference(

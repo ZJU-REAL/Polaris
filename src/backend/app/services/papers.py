@@ -153,6 +153,10 @@ class PaperView:
         return self.paper.wiki_content
 
     @property
+    def wiki_evidence(self) -> dict[str, Any] | None:
+        return self.paper.wiki_evidence
+
+    @property
     def has_wiki(self) -> bool:
         return self.paper.wiki is not None
 

@@ -10,11 +10,11 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 
 class AcpAgent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -39,7 +39,7 @@ class AcpAgent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: 上次探测（握手）拿到的 agent 自述；失败时为 None、原因在 last_error
     last_probe: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     last_error: Mapped[str | None] = mapped_column(Text)
-    last_probed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_probed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     def __repr__(self) -> str:  # pragma: no cover - 诊断用
         return f"<AcpAgent {self.slug} {self.command}>"

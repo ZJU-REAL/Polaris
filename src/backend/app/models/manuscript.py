@@ -4,11 +4,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, String, Text
+from sqlalchemy import Boolean, ForeignKey, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 # 状态流转（docs/task-system.md §7（原 api-m5-b.md §1/§5/§7））：
 #   draft →(写作 voyage) writing →(编译 ok) compiled →(submit) under_review
@@ -56,9 +56,9 @@ class Manuscript(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Boolean, default=False, server_default="false", nullable=False
     )
     # 软删除（回收站）：非空即在回收站，列表默认过滤掉；清空回收站才真正删除
-    trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trashed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     # 置顶：非空即置顶，列表按 pinned_at 优先排在前面
-    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pinned_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     # 防幻觉事实源（docs/task-system.md §7）：{idea, hypotheses, metrics, figures,
     # citations, generated_at}；M5-C 评审不通过时追加 revision_notes（修订说明）；
     # citations 条目附内部 paper_id / source 供编译生成 bib

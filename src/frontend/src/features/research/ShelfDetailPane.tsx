@@ -12,6 +12,7 @@ import {
 import { ScoreRing } from '../../components/ui/ScoreRing';
 import { Markdown } from '../../lib/markdown';
 import { api, type ReadingStatus, type ShelfItemRead } from '../../lib/api';
+import { parseApiDate } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { libraryPath, useLibraries } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
@@ -40,7 +41,7 @@ import {
 
 /** 完整日期 → 「2026 年 7 月 22 日」 / "Jul 22, 2026"。 */
 function fmtDay(iso: string): string {
-  const d = new Date(iso);
+  const d = parseApiDate(iso);
   if (Number.isNaN(d.getTime())) return '—';
   return tr(
     `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日`,

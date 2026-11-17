@@ -939,6 +939,8 @@ export interface PaperDetail extends PaperRead {
   abstract: string | null;
   /** markdown，双链为 [[概念名]] */
   wiki_content: string | null;
+  /** 正文里 [文N·句M] 引用的定位信息（和正文分开给）；没有全文证据为 null */
+  wiki_evidence?: { version?: number; mode?: string; paper_count?: number; refs?: unknown } | null;
   /** 最后一次编译解读的人；存量数据/用户已删为 null（重新编译前的覆盖提示用） */
   compiled_by_name?: string | null;
   pdf_available: boolean;

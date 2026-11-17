@@ -21,11 +21,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin, utcnow
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin, utcnow
 
 RESOURCE_KINDS = ("host", "queue", "license_pool", "instrument")
 
@@ -59,9 +59,7 @@ class ResourceLease(UUIDPrimaryKeyMixin, Base):
     run_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("voyage_runs.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    acquired_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, nullable=False
-    )
+    acquired_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
     # 空 = 活租约。释放三条路：prepare/cleanup 显式释放、run 终态兜底、cancel 兜底
-    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    released_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     note: Mapped[str] = mapped_column(String(255), default="", nullable=False)

@@ -7,11 +7,13 @@
 
 import uuid
 from collections.abc import Iterable
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
+from app.core.wiki_evidence import split_evidence_manifest
 from app.models.base import utcnow
 from app.models.paper import Paper, PaperWiki
 from app.models.user import User
@@ -22,22 +24,34 @@ async def upsert_wiki(
     *,
     paper: Paper,
     content: str,
+    evidence: dict[str, Any] | None = None,
     model: str | None = None,
     compiled_by: uuid.UUID | None = None,
 ) -> PaperWiki:
     """写这篇论文的解读：已有则整行覆盖（以最新一次编译为准），没有则新建。
 
-    调用方负责 commit。``compiled_by`` 每次覆盖成最新编译的人。
+    调用方负责 commit。``compiled_by`` 每次覆盖成最新编译的人。``evidence`` 是正文里
+    引用标记对应的定位信息，和正文一起整体替换（这次编译没有就清空，不留上一版的）。
     """
+    # 旧格式把定位信息以注释形式嵌在正文末尾（#873）：拆开，正文只留给人看的部分
+    content, embedded = split_evidence_manifest(content)
+    evidence = evidence or embedded
     # 显式查行，不依赖 paper.wiki 是否已加载（刚 refresh 过的对象上读关系会隐式发 SQL）
     wiki = (
         await session.execute(select(PaperWiki).where(PaperWiki.paper_id == paper.id))
     ).scalar_one_or_none()
     if wiki is None:
-        wiki = PaperWiki(paper_id=paper.id, content=content, model=model, compiled_by=compiled_by)
+        wiki = PaperWiki(
+            paper_id=paper.id,
+            content=content,
+            evidence=evidence,
+            model=model,
+            compiled_by=compiled_by,
+        )
         session.add(wiki)
     else:
         wiki.content = content
+        wiki.evidence = evidence
         wiki.model = model
         wiki.compiled_by = compiled_by
         wiki.updated_at = utcnow()  # 内容不变时也算一次新编译

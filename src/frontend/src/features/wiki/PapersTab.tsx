@@ -14,14 +14,14 @@ import { CompileBadge } from '../../components/ui/CompileBadge';
 import { citationExportItems, ExportDropdown } from '../../components/ui/ExportDropdown';
 import { PaperReader } from './PaperReader';
 import { readerFrom } from '../reading/shared';
-import { evidenceCitationRenderer, parseEvidenceArtifact } from '../reading/evidenceArtifact';
+import { evidenceCitationRenderer, evidenceRefs } from '../reading/evidenceArtifact';
 import { PdfUploadButton } from '../shared/PdfUploadButton';
 import { PaperAssetPanel } from '../shared/PaperAssetPanel';
 import { toast } from '../../components/ui/Toast';
 import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { canSendToExtension, sendLibraryPapersToExtension } from '../../lib/extension-download-batches';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
-import { fmtTime } from '../../lib/format';
+import { fmtTime, parseApiDate } from '../../lib/format';
 import {
   api,
   ApiError,
@@ -915,18 +915,15 @@ function PaperDetailPane({
     },
     [figures, paperId],
   );
-  const evidenceArtifact = useMemo(
-    () => parseEvidenceArtifact(paper?.wiki_content ?? ''),
-    [paper?.wiki_content],
-  );
+  const refs = useMemo(() => evidenceRefs(paper?.wiki_evidence), [paper?.wiki_evidence]);
   const renderEvidenceCitation = useMemo(
     () => evidenceCitationRenderer({
       libraryId,
       fallbackPaperId: paperId,
       title: paper?.title ?? '',
-      refs: evidenceArtifact.refs,
+      refs,
     }),
-    [evidenceArtifact.refs, libraryId, paper?.title, paperId],
+    [refs, libraryId, paper?.title, paperId],
   );
 
   if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
@@ -1259,7 +1256,7 @@ function PaperDetailPane({
               </div>
             </div>
             <Markdown
-              source={evidenceArtifact.body}
+              source={paper.wiki_content}
               onWikiLink={onWikiLink}
               renderFigure={renderFigure}
               renderCitation={renderEvidenceCitation}
@@ -1514,7 +1511,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
   const todayRange = useMemo(() => {
     if (view !== 'today' || papers.length === 0) return null;
     const times = papers
-      .map((p) => (p.created_at ? new Date(p.created_at).getTime() : 0))
+      .map((p) => (p.created_at ? parseApiDate(p.created_at).getTime() : 0))
       .filter((t) => t > 0)
       .sort((a, b) => a - b);
     if (times.length === 0) return null;

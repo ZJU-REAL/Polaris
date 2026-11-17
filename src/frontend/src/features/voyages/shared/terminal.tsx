@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon } from '../../../components/ui/Icon';
+import { parseApiDate } from '../../../lib/format';
 import { tr } from '../../../lib/i18n';
 
 /* ============================================================
@@ -79,7 +80,7 @@ export function stageInfo(stage: string) {
 }
 
 export function hhmmss(iso: string): string {
-  const d = new Date(iso);
+  const d = parseApiDate(iso);
   if (Number.isNaN(d.getTime())) return '';
   const p = (n: number) => String(n).padStart(2, '0');
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;

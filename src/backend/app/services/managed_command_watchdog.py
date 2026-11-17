@@ -116,7 +116,7 @@ def _due_for_check(
     now: datetime,
     timeout_minutes: int,
 ) -> bool:
-    if now - _aware(ask.created_at) < timedelta(minutes=timeout_minutes):
+    if now - ask.created_at < timedelta(minutes=timeout_minutes):
         return False
     payload = ask.payload if isinstance(ask.payload, dict) else {}
     _, watchdog = _watchdog_context(payload)

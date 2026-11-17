@@ -362,9 +362,7 @@ class VenueMetricService:
             .all()
         )
         cached = {
-            (row.provider, row.identity_key): row
-            for row in cache_rows
-            if _aware(row.expires_at) > now
+            (row.provider, row.identity_key): row for row in cache_rows if row.expires_at > now
         }
         semaphore = asyncio.Semaphore(self.concurrency)
 
@@ -381,8 +379,8 @@ class VenueMetricService:
                     identity,
                     result,
                     None,
-                    _aware(row.fetched_at),
-                    _aware(row.expires_at),
+                    row.fetched_at,
+                    row.expires_at,
                 )
             async with semaphore:
                 try:
@@ -453,10 +451,6 @@ class VenueMetricService:
             if impact_score is not None:
                 candidate["impact_score"] = impact_score
         return output
-
-
-def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 async def _upsert_cache(

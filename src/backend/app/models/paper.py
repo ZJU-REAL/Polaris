@@ -11,7 +11,6 @@ from typing import Any
 from sqlalchemy import (
     Boolean,
     Column,
-    DateTime,
     ForeignKey,
     Index,
     String,
@@ -19,11 +18,12 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.core.wiki_evidence import split_evidence_manifest
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 # 向量不在这张表上：论文级向量存 paper_vectors、分段向量存 paper_chunk_vectors，
 # 各自带「向量空间」标识（app/models/vectors.py、app/core/embedding_space.py）。
@@ -71,7 +71,7 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     year: Mapped[int | None]
     venue: Mapped[str | None] = mapped_column(String(255))
     url: Mapped[str | None] = mapped_column(String(1024))
-    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     pdf_path: Mapped[str | None] = mapped_column(String(1024))
     full_text_path: Mapped[str | None] = mapped_column(String(1024))
     tldr: Mapped[str | None] = mapped_column(Text)
@@ -105,6 +105,11 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         """解读正文（没有解读为 None）——全平台唯一一份，见 :class:`PaperWiki`。"""
         return self.wiki.content if self.wiki is not None else None
 
+    @property
+    def wiki_evidence(self) -> dict[str, Any] | None:
+        """解读正文里引用标记的定位信息（没有解读 / 没有全文证据为 None）。"""
+        return self.wiki.evidence if self.wiki is not None else None
+
 
 class PaperWiki(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """论文解读：每篇论文一份，全平台共享。
@@ -122,6 +127,10 @@ class PaperWiki(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=False
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)  # 图文解读 markdown
+    # 正文里 [文N·句M] 引用对应的定位信息：{version, mode, paper_count, refs:[…]}。
+    # 只放定位符，不放原文句子。单独一列——曾经作为注释嵌在正文末尾，结果被当成
+    # 正文显示、导出、喂给模型（#873）
+    evidence: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     model: Mapped[str | None] = mapped_column(String(128))  # 编译实际所用模型名
     # 最后一次编译的人（存量迁移数据无从得知，留空）
     compiled_by: Mapped[uuid.UUID | None] = mapped_column(
@@ -129,6 +138,16 @@ class PaperWiki(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     paper: Mapped[Paper] = relationship(back_populates="wiki")
+
+    @validates("content")
+    def _content_without_evidence_comment(self, _key: str, value: str) -> str:
+        """正文不含内嵌的证据注释：不论哪条写路径送进来旧格式，都在这里拆开。"""
+        if value is None:
+            return value
+        body, embedded = split_evidence_manifest(value)
+        if embedded is not None:
+            self.evidence = embedded
+        return body
 
 
 def new_paper(**fields: Any) -> Paper:
@@ -321,7 +340,7 @@ class Concept(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     # 最近一次由模型判定「确实是个学术概念」的时间。为空 = 还没判过：门槛改造之前
     # 存量转正的那批就是空的，下一次概念同步会连同定义一起复核一遍（判完不再复判）。
-    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    validated_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     # 概念的关联论文（概念详情 / 导出）：这里不按状态过滤——能拿到这个概念说明它已经
     # 可见了，它的论文清单就是全部关联。写关联同样不经这个关系，故 viewonly。

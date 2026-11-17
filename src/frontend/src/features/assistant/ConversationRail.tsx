@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Icon } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
+import { parseApiDate } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 
 /* ============================================================
@@ -31,7 +32,7 @@ export function groupByRecency(
   const week: ConversationRow[] = [];
   const older: ConversationRow[] = [];
   for (const row of rows) {
-    const at = row.last_message_at ? new Date(row.last_message_at).getTime() : 0;
+    const at = row.last_message_at ? parseApiDate(row.last_message_at).getTime() : 0;
     // 没有时间戳的（刚建、还没说过话）归到今天：它就在眼前，扔进「更早」很怪
     if (!at || at >= startOfToday) today.push(row);
     else if (at >= startOfToday - day) yesterday.push(row);

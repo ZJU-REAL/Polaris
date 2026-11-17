@@ -445,8 +445,6 @@ def _require_active_lease(item: DownloadBatchItem, token: str | None, *, now: da
     expected = (item.result or {}).get("_lease_token_hash")
     actual = hashlib.sha256(token.encode()).hexdigest() if token else ""
     lease_until = item.lease_until
-    if lease_until is not None and lease_until.tzinfo is None:
-        lease_until = lease_until.replace(tzinfo=UTC)
     if (
         item.status not in {"claimed", "downloading", "cached", "uploading"}
         or lease_until is None

@@ -106,6 +106,9 @@ class PaperFiguresResponse(BaseModel):
 class PaperDetail(PaperRead):
     abstract: str | None
     wiki_content: str | None
+    # 解读正文里 [文N·句M] 引用的定位信息（{mode, paper_count, refs}）；没有全文证据
+    # 为 null。和正文分开给：正文只放给人看的内容（#873）
+    wiki_evidence: dict[str, Any] | None = None
     # 最后一次编译解读的人（显示名）；存量数据 / 用户已删为 null。重新编译前提示用
     compiled_by_name: str | None = None
     pdf_available: bool = False

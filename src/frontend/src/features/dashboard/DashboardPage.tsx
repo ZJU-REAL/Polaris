@@ -14,7 +14,7 @@ import { Delta } from '../../components/ui/Delta';
 import { gateTitle, gateDesc, gateKindLabel } from '../../components/ui/GateCard';
 import { useShell } from '../../app/AppShell';
 import { topicPath, useProject } from '../../app/project';
-import { fmtTime } from '../../lib/format';
+import { fmtTime, parseApiDate } from '../../lib/format';
 import { api, type ActivityRead, type DirectionLibrarySummary, type GateRead, type StatsRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { EmptyState, ErrorState } from '../../components/ui/EmptyState';
@@ -315,7 +315,7 @@ function activityIcon(kind: string): IconName {
 
 /** 今天 → HH:mm，否则 MM-DD（活动流左栏窄）。 */
 function fmtClock(iso: string): string {
-  const d = new Date(iso);
+  const d = parseApiDate(iso);
   if (Number.isNaN(d.getTime())) return '—';
   const p = (n: number) => String(n).padStart(2, '0');
   const now = new Date();

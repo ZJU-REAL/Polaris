@@ -1432,6 +1432,7 @@ async def compile_entry_wiki(
         session,
         paper=paper,
         content=compiled.content,
+        evidence=compiled.evidence,
         model=compiled.model or None,
         compiled_by=user_id,
     )

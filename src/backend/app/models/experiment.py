@@ -4,11 +4,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 # 状态与 voyage 流水线联动（docs/task-system.md §7（原 api-m4.md §2））：
 #   planning →(计划写入) awaiting_gate →(闸门批准) setup → running → reporting → done
@@ -48,7 +48,7 @@ class Experiment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     plan: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     status: Mapped[str] = mapped_column(String(32), default="planning", nullable=False)
     # 软删除（回收站）：非空即在回收站，列表默认过滤
-    trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trashed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     workdir: Mapped[str | None] = mapped_column(String(1024))  # ~/polaris_runs/<exp_id>
     server_host: Mapped[str | None] = mapped_column(String(255))
     budget: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)  # {max_hours, max_runs}
@@ -87,7 +87,7 @@ class ExperimentRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     reflection: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     # 主指标值（plan.primary_metric，平台从 metrics 解析）
     primary_value: Mapped[float | None] = mapped_column(Float)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     experiment: Mapped[Experiment] = relationship(back_populates="runs")

@@ -1639,6 +1639,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                 session,
                 paper=paper,
                 content=compiled.content,
+                evidence=compiled.evidence,
                 model=compiled.model or None,
                 compiled_by=ctx.run.created_by,
             )

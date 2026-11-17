@@ -10,11 +10,11 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 from app.models.paper import Paper
 
 
@@ -45,7 +45,7 @@ class TopicPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # 回收站：移出书架 = 软删（trashed_at 置位），可召回 / 彻底删除 / 清空。
     # 唯一键 uq_topic_papers_topic_paper 覆盖软删行，故同一篇再次入架走「复活」
     # （services/topic_shelf.py::add_to_shelf），不插新行。
-    trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    trashed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     trashed_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )

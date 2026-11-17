@@ -4,11 +4,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 
 class DownloadApiKey(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -21,9 +21,9 @@ class DownloadApiKey(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     scopes: Mapped[list[Any]] = mapped_column(JSONVariant, default=list, nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
-    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class DownloadBatch(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -33,7 +33,7 @@ class DownloadBatch(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False, index=True)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class DownloadBatchItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -61,9 +61,9 @@ class DownloadBatchItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     article_url: Mapped[str | None] = mapped_column(Text)
     pdf_candidates: Mapped[list[Any] | None] = mapped_column(JSONVariant)
     status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False, index=True)
-    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    lease_until: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     attempt_count: Mapped[int] = mapped_column(default=0, nullable=False)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     error: Mapped[str | None] = mapped_column(Text)

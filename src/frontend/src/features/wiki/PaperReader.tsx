@@ -4,7 +4,7 @@ import { Icon } from '../../components/ui/Icon';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import type { PaperDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { evidenceCitationRenderer, parseEvidenceArtifact } from '../reading/evidenceArtifact';
+import { evidenceCitationRenderer, evidenceRefs } from '../reading/evidenceArtifact';
 
 /* ============================================================
    论文 wiki 阅览模式：把 AI 编译的图文介绍铺成一页干净、居中、
@@ -34,19 +34,16 @@ export function PaperReader({
   /** 正文覆写：正文不在 paper 上（如书架条目自带解读）时传进来阅览 */
   wikiContent?: string | null;
 }) {
-  const rawWikiContent = wikiContent ?? paper.wiki_content ?? '';
-  const evidenceArtifact = useMemo(
-    () => parseEvidenceArtifact(rawWikiContent),
-    [rawWikiContent],
-  );
+  const wikiSource = wikiContent ?? paper.wiki_content ?? '';
+  const refs = useMemo(() => evidenceRefs(paper.wiki_evidence), [paper.wiki_evidence]);
   const renderCitation = useMemo(
     () => evidenceCitationRenderer({
       libraryId,
       fallbackPaperId: paper.id,
       title: paper.title,
-      refs: evidenceArtifact.refs,
+      refs,
     }),
-    [evidenceArtifact.refs, libraryId, paper.id, paper.title],
+    [refs, libraryId, paper.id, paper.title],
   );
   // 打开即打印：等一帧让正文（含图）渲染完再唤起打印
   useEffect(() => {
@@ -140,10 +137,10 @@ export function PaperReader({
             </div>
           )}
 
-          {rawWikiContent ? (
+          {wikiSource ? (
             <div className="paper-reader-body">
               <Markdown
-                source={evidenceArtifact.body}
+                source={wikiSource}
                 onWikiLink={onWikiLink}
                 renderFigure={renderFigure}
                 renderCitation={renderCitation}

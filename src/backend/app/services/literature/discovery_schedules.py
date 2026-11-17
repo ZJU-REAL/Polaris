@@ -242,7 +242,7 @@ async def claim_due_schedules(
     schedules = list((await session.execute(statement)).scalars().all())
     run_ids: list[uuid.UUID] = []
     for schedule in schedules:
-        scheduled_for = _aware(schedule.next_run_at or current)
+        scheduled_for = schedule.next_run_at or current
         schedule.next_run_at = next_occurrence(
             timezone=schedule.timezone,
             hour=schedule.hour,

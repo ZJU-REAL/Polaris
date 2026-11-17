@@ -5,7 +5,7 @@ import secrets
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,10 +29,6 @@ class AuthenticatedIntegrationToken:
 
 def _digest(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-
-
-def _as_utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 async def create_token(
@@ -93,14 +89,14 @@ async def authenticate_token(
         select(IntegrationToken).where(IntegrationToken.token_hash == _digest(raw_token))
     )
     now = utcnow()
-    if token is None or token.revoked_at is not None or _as_utc(token.expires_at) <= now:
+    if token is None or token.revoked_at is not None or token.expires_at <= now:
         return None
     user = await session.get(User, token.user_id)
     if user is None or not user.is_active:
         return None
 
     if touch and (
-        token.last_used_at is None or now - _as_utc(token.last_used_at) >= LAST_USED_WRITE_INTERVAL
+        token.last_used_at is None or now - token.last_used_at >= LAST_USED_WRITE_INTERVAL
     ):
         token.last_used_at = now
         await session.commit()

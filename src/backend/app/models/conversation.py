@@ -16,11 +16,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 #: 对话的作用域类型。与前端 chatStorage 的 surfaceKey 一一对应，所以本地历史
 #: 迁移到服务端时是直接映射，不用猜。
@@ -68,7 +68,7 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     usage: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False, default=dict)
     #: 有值 = 有一轮正在跑（重连与"别并发发第二轮"都看它）
     active_stream_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
-    last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_message_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class ConversationMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):

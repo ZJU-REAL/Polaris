@@ -4,11 +4,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 
 class UserLibraryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -38,13 +38,13 @@ class UserLibraryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     url: Mapped[str | None] = mapped_column(String(1024))
     tldr: Mapped[str | None] = mapped_column(Text)
     saved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    saved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     # 回收站：取消收藏 / 删除条目 = 软删（trashed_at 置位），可召回、可彻底删除、可清空。
     # 软删条目不出现在任何 tab（含浏览记录），也不算「论文仍被引用」。
-    trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    trashed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     note: Mapped[str | None] = mapped_column(Text)
     visit_count: Mapped[int] = mapped_column(default=0, nullable=False)
-    last_visited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_visited_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     last_paper_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("papers.id", ondelete="SET NULL")
     )

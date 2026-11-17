@@ -13,6 +13,7 @@ import {
   type LiteratureSearchRunDetail,
   type LiteratureTranslation,
 } from '../../lib/api';
+import { parseApiDate } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import {
   dispatchablePolarisExtensionPapers,
@@ -590,7 +591,7 @@ export function LiteratureDiscoveryPanel({
           {runs.map((run) => (
             <div className={`literature-history-row${selectedRunId === run.id ? ' is-active' : ''}`} key={run.id}>
               <button onClick={() => { setActiveRunId(run.id); setHistoryOpen(false); }}>
-                <span><strong>{run.topic}</strong><small>{new Date(run.created_at).toLocaleString()} · {run.trigger === 'scheduled' ? tr('每日自动', 'Daily') : tr('手动', 'Manual')} · {tr(`${run.requested_count} 篇`, `${run.requested_count} papers`)} · {run.start_year ?? '—'}–{run.end_year ?? '—'}</small></span>
+                <span><strong>{run.topic}</strong><small>{parseApiDate(run.created_at).toLocaleString()} · {run.trigger === 'scheduled' ? tr('每日自动', 'Daily') : tr('手动', 'Manual')} · {tr(`${run.requested_count} 篇`, `${run.requested_count} papers`)} · {run.start_year ?? '—'}–{run.end_year ?? '—'}</small></span>
                 <b>{tr(...(STATUS_LABELS[run.status] ?? [run.status, run.status]))}</b>
               </button>
               {TERMINAL.has(run.status) && <button className="icon-btn danger" title={tr('删除', 'Delete')} onClick={() => confirmDelete(run)}><Icon name="trash" size={14} /></button>}

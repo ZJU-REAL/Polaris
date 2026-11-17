@@ -9,8 +9,9 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "9a4c2e7b1d58"  # SQLite：voyage_terminal_logs.id 改成 INTEGER 主键
-TERMINAL_LOG_PK_REVISION = HEAD_REVISION
+HEAD_REVISION = "b2f6d1c93e47"  # 解读的证据定位信息单独一列，不再嵌在正文里 (#873)
+WIKI_EVIDENCE_REVISION = HEAD_REVISION
+TERMINAL_LOG_PK_REVISION = "9a4c2e7b1d58"  # SQLite：voyage_terminal_logs.id 改成 INTEGER 主键
 USER_ROWS_MERGE_REVISION = "7d2e4f9a1b63"  # 单用户：别的用户行的数据并到本地用户 (#850)
 SINGLE_USER_REVISION = "3c7d9e1f5a20"  # 单用户：LLM 配置并成一张表、agent 去掉共享列 (#842)
 NO_ACCOUNTS_REVISION = "88a5bdc0aa15"  # 删掉邮箱验证码表：去掉账号层 (#842)
@@ -659,7 +660,22 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 账号层已删（#842）：邮箱验证码表不在 head 上
     assert "email_verification_codes" not in columns["_tables"]
 
-    # 先退掉终端日志主键重建：空操作。
+    # 解读的证据定位信息单独一列（#873）
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            wiki_columns = {c["name"] for c in inspect(conn).get_columns("paper_wikis")}
+    finally:
+        engine.dispose()
+    assert "evidence" in wiki_columns
+
+    # 先退掉证据列：定位信息回到正文末尾，列删掉。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == TERMINAL_LOG_PK_REVISION
+    assert "evidence" not in columns["paper_wikis"]
+
+    # 再退掉终端日志主键重建：空操作。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == USER_ROWS_MERGE_REVISION
@@ -2182,3 +2198,78 @@ def test_terminal_log_pk_rebuild_keeps_rows_index_and_foreign_key(tmp_path):
     # 退回去是空操作，再升上来也不出错
     command.downgrade(cfg, "-1")
     command.upgrade(cfg, "head")
+
+
+def test_wiki_evidence_moves_out_of_the_summary_text(tmp_path):
+    """存量解读末尾的 ``<!-- polaris-ai-evidence:… -->`` 搬进 evidence 列，正文里删掉（#873）。
+
+    没有注释的解读一个字符都不动；注释里的 JSON 坏了也照删。退回去时定位信息回到
+    正文末尾（旧代码靠它渲染可点的引用）。
+    """
+    import json
+
+    db_path = tmp_path / "evidence.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, TERMINAL_LOG_PK_REVISION)
+
+    evidence = {
+        "version": 1,
+        "mode": "fulltext",
+        "paper_count": 1,
+        "refs": [{"article_no": 1, "sentence_no": 31, "anchor_id": "a-1", "parser": "pymupdf"}],
+    }
+    payload = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+    body = "## 结果\n\n有依据的结论 [文1·句31]。"
+    plain = "## 没有证据的解读\n\n<!-- 普通注释留着 -->\n"
+    rows = {
+        "a" * 32: f"{body}\n\n<!-- polaris-ai-evidence:{payload} -->\n",
+        "b" * 32: plain,
+        "c" * 32: "正文\n\n<!-- polaris-ai-evidence:{broken} -->\n",
+    }
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            for wiki_id, content in rows.items():
+                conn.execute(
+                    text(
+                        "INSERT INTO paper_wikis (id, paper_id, content, created_at, updated_at) "
+                        "VALUES (:id, :paper_id, :content, '2026-10-09 00:00:00', "
+                        "'2026-10-09 00:00:00')"
+                    ),
+                    {"id": wiki_id, "paper_id": wiki_id, "content": content},
+                )
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, WIKI_EVIDENCE_REVISION)
+
+    def stored() -> dict[str, tuple[str, object]]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.connect() as conn:
+                return {
+                    row[0]: (row[1], json.loads(row[2]) if row[2] is not None else None)
+                    for row in conn.execute(text("SELECT id, content, evidence FROM paper_wikis"))
+                }
+        finally:
+            engine.dispose()
+
+    assert stored() == {
+        "a" * 32: (body, evidence),
+        "b" * 32: (plain, None),
+        "c" * 32: ("正文", None),
+    }
+
+    command.downgrade(cfg, TERMINAL_LOG_PK_REVISION)
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            assert "evidence" not in {c["name"] for c in inspect(conn).get_columns("paper_wikis")}
+            back = dict(conn.execute(text("SELECT id, content FROM paper_wikis")).all())
+    finally:
+        engine.dispose()
+    assert back["a" * 32] == rows["a" * 32]
+    assert back["b" * 32] == plain
+
+    command.upgrade(cfg, "head")
+    assert stored()["a" * 32] == (body, evidence)

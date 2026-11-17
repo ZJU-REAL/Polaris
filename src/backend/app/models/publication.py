@@ -4,11 +4,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 PUBLICATION_STATUSES = ("pending", "confirmed", "rejected")
 PUBLICATION_SOURCES = ("openalex", "manual", "library")
@@ -31,7 +31,7 @@ class UserAuthorProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     s2_author_id: Mapped[str | None] = mapped_column(String(64))
     orcid: Mapped[str | None] = mapped_column(String(32))
     auto_sync: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class UserPublication(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -63,4 +63,4 @@ class UserPublication(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(  # pending | confirmed | rejected
         String(16), default="pending", nullable=False, index=True
     )
-    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())

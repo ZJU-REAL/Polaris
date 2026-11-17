@@ -8,7 +8,7 @@ import { Switch } from '../../components/ui/Switch';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
-import { fmtTime } from '../../lib/format';
+import { fmtTime, parseApiDate } from '../../lib/format';
 import {
   api,
   ApiError,
@@ -443,7 +443,7 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
 
   const counts = state?.paper_counts;
   const fmtShort = (iso: string) =>
-    new Date(iso).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    parseApiDate(iso).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   return (
     <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>

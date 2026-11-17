@@ -17,11 +17,11 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, SmallInteger, String
+from sqlalchemy import JSON, ForeignKey, Index, SmallInteger, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import utcnow
+from app.models.base import UTCDateTime, utcnow
 
 # postgres 用不带维度的 pgvector 列；sqlite 等回退 JSON（只存不查，与主表旧列同款）
 VectorVariant = JSON().with_variant(Vector(), "postgresql")
@@ -43,9 +43,7 @@ class _VectorColumns:
     text_version: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, default=1, server_default="1"
     )
-    built_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, nullable=False
-    )
+    built_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
 
 
 class PaperVector(_VectorColumns, Base):

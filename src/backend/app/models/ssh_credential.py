@@ -27,11 +27,11 @@ app/core/security.py；所有敏感字段绝不明文出库/出 API）：
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 # 合法凭据类型（Runner v2 manifest.credential_kinds 的运行时对应物）
 CREDENTIAL_KINDS = ("ssh", "grpc", "visa", "http", "ws")
@@ -55,7 +55,7 @@ class ConnectionCredential(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     passphrase_encrypted: Mapped[str | None] = mapped_column(Text)
     # 非 ssh 的加密载荷：Fernet(json.dumps(payload))，字段约定见模块 docstring
     payload_encrypted: Mapped[str | None] = mapped_column(Text)
-    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     # 服务器出外网需要的 HTTP 代理（如 http://10.205.70.120:7899），可空=直连；
     # 注入实验环境 http(s)_proxy，并对内网 LLM 地址设 no_proxy
     proxy_url: Mapped[str | None] = mapped_column(String(255))

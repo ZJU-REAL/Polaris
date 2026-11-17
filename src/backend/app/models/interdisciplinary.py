@@ -3,11 +3,11 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 
 class InterdisciplinaryResearchProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -33,7 +33,7 @@ class InterdisciplinaryResearchProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base
     confirmed_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
-    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class InterdisciplinaryResearchProfileVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -67,4 +67,4 @@ class InterdisciplinaryResearchProfileVersion(UUIDPrimaryKeyMixin, TimestampMixi
     confirmed_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
-    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())

@@ -4,11 +4,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UTCDateTime, UUIDPrimaryKeyMixin
 
 # 状态流转：candidate →(锦标赛) under_review →(闸门批准) promoted；人工可置 rejected
 IDEA_STATUSES = ("candidate", "under_review", "promoted", "rejected")
@@ -39,7 +39,7 @@ class Idea(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # candidate | under_review | promoted | rejected
     status: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False)
     # 软删除（回收站）：非空即在回收站，列表默认过滤
-    trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trashed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     parent_paper_ids: Mapped[list[Any] | None] = mapped_column(JSONVariant)
     # 语义去重用的向量存 idea_vectors（每个空间一行），不在这张表上
     # ---- Idea 2.0（docs/task-system.md §7（原 api-idea2.md §7）） ----
