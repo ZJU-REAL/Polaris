@@ -33,6 +33,7 @@ from app.schemas.voyage import (
 )
 from app.services import ai_disclosure as ai_disclosure_service
 from app.services import experiments as experiments_service
+from app.services import ideas as ideas_service
 from app.services import libraries as libraries_service
 from app.services import projects as projects_service
 from app.services import voyage_messages as messages_service
@@ -52,6 +53,16 @@ async def _get_owned_voyage(
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="VOYAGE_NOT_FOUND")
     return run
+
+
+async def _ensure_idea_voyage_can_resume(session: AsyncSession, run: VoyageRun) -> None:
+    """停着的 idea 类任务不再挡住同课题的新任务，所以恢复它之前要再查一次互斥：
+    这期间可能已经有另一条在跑了。撞上就 409，任务原样停着，等那条跑完再恢复。"""
+    try:
+        await ideas_service.ensure_no_other_idea_voyage(session, run)
+    except ideas_service.IdeaVoyageConflictError as e:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEA_VOYAGE_ALREADY_RUNNING") from e
 
 
 @router.post("", response_model=VoyageRead, status_code=status.HTTP_201_CREATED)
@@ -221,6 +232,9 @@ async def answer_voyage_ask(
     text = data.text.strip()
     if not text and not data.choice:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ANSWER_EMPTY")
+    # 回答会把任务重新拉起来；放弃不会，所以放弃永远放行
+    if data.choice != "abort" and run.status == "paused_ask":
+        await _ensure_idea_voyage_can_resume(session, run)
     claimed_stop = False
     stop_status: str | None = None
     if data.choice == "stop_remote":
@@ -405,6 +419,7 @@ async def resume_voyage(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="VOYAGE_WAITING_ANSWER")
     if run.status != "paused_error":
         raise HTTPException(status.HTTP_409_CONFLICT, detail="VOYAGE_NOT_PAUSED_ERROR")
+    await _ensure_idea_voyage_can_resume(session, run)
     run.status = "executing"
     await session.commit()
     await queue.enqueue("resume_voyage", str(run.id))

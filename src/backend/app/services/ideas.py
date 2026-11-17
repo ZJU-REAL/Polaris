@@ -15,7 +15,7 @@ from app.models.library_direction import LibraryPaper
 from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project
 from app.models.user import User
-from app.models.voyage import TERMINAL_STATUSES, VoyageRun
+from app.models.voyage import IN_FLIGHT_STATUSES, TERMINAL_STATUSES, VoyageRun
 from app.schemas.idea import DeepIdeaRequest, ForgeKnobs
 from app.schemas.review import TournamentRequest
 from app.services.concepts import library_concept_ids
@@ -63,24 +63,49 @@ class TournamentRetryUnavailableError(Exception):
 
 
 async def find_running_idea_voyage(
-    session: AsyncSession, project_id: uuid.UUID
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    exclude_id: uuid.UUID | None = None,
 ) -> VoyageRun | None:
+    """同课题里正在跑（或刚入队等着跑）的 idea 类任务。
+
+    只算在途状态。停下来等人的（paused_error / paused_ask / paused_gate）不算：
+    以前按「非终态」算，一条出错停住的任务会把整个课题的生成、评审、深耕全部挡住，
+    直到用户想起来去取消它。停着的任务被恢复时由 :func:`ensure_no_other_idea_voyage`
+    再查一次，所以同一时刻仍然只有一条在跑。
+    """
     stmt = (
         select(VoyageRun)
         .where(
             VoyageRun.project_id == project_id,
             VoyageRun.kind.in_(IDEA_VOYAGE_KINDS),
-            VoyageRun.status.not_in(tuple(TERMINAL_STATUSES)),
+            VoyageRun.status.in_(tuple(IN_FLIGHT_STATUSES)),
         )
         .order_by(VoyageRun.created_at.desc())
         .limit(1)
     )
+    if exclude_id is not None:
+        stmt = stmt.where(VoyageRun.id != exclude_id)
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def _lock_project_idea_creation(session: AsyncSession, project_id: uuid.UUID) -> None:
     """Serialize idea voyage creation so retry requests cannot create duplicate runs."""
     await session.execute(select(Project.id).where(Project.id == project_id).with_for_update())
+
+
+async def ensure_no_other_idea_voyage(session: AsyncSession, run: VoyageRun) -> None:
+    """恢复一条停着的 idea 类任务之前调用：同课题已有别的在跑就抛 IdeaVoyageConflictError。
+
+    非 idea 类任务、不挂课题的任务直接放行。与创建走同一把课题锁，创建和恢复不会
+    同时各自查到「没有在跑的」。
+    """
+    if run.kind not in IDEA_VOYAGE_KINDS or run.project_id is None:
+        return
+    await _lock_project_idea_creation(session, run.project_id)
+    if await find_running_idea_voyage(session, run.project_id, exclude_id=run.id) is not None:
+        raise IdeaVoyageConflictError(str(run.project_id))
 
 
 async def create_forge_voyage(
