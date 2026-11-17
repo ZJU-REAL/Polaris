@@ -137,7 +137,11 @@ async def test_zotero_import_dedup_attachments_and_summary(
 
     launched: list[uuid.UUID] = []
 
-    async def _fake_launch(*, redis, paper_id, user_id, library_id=None, project_id=None):
+    async def _fake_launch(
+        *, redis, paper_id, user_id, library_id=None, project_id=None, summarize=True
+    ):
+        # 这份导出只有 8 条（≤ SUMMARIZE_BATCH_MAX）：每篇补全末尾都生成解读
+        assert summarize is True
         launched.append(paper_id)
         return None  # 不起真实补全：测试只关心导入与去重本身
 

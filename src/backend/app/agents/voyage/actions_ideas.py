@@ -35,7 +35,7 @@ from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.idea import Idea
 from app.models.library_direction import LibraryPaper
-from app.models.paper import Concept, Paper, PaperWiki, paper_concepts
+from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project
 from app.models.review import ReviewMessage, ReviewSession
 from app.schemas.idea import FORGE_SIGNALS
@@ -192,6 +192,26 @@ def _idea_markdown(item: dict[str, Any]) -> str:
 
 # ---- forge 1. 读取知识库上下文 ----
 
+# 关联库里一篇可用的论文都没有时 forge.read_context 的失败码（前置条件，不是故障）
+IDEA_CONTEXT_EMPTY = "IDEA_CONTEXT_EMPTY"
+# 没有解读的论文在上下文里的标注
+NO_SUMMARY_LABEL = "（这篇还没有解读，以下是原文摘要）"
+
+
+def _context_body(paper: Paper) -> tuple[bool, str] | None:
+    """一篇论文进上下文的正文：(有没有解读, 正文)；None = 这篇不可用。
+
+    有解读用解读；没有就退到原文摘要；连摘要也没有但有 TL;DR 的，正文留空、靠
+    TL;DR 那一行。三样都没有的论文只剩标题，给不了模型任何依据，不进上下文。
+    """
+    summary = (paper.wiki_content or "").strip()
+    if summary:
+        return True, summary
+    abstract = (paper.abstract or "").strip()
+    if abstract or (paper.tldr or "").strip():
+        return False, abstract
+    return None
+
 
 @register("forge.read_context")
 async def forge_read_context(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
@@ -204,9 +224,11 @@ async def forge_read_context(ctx: ActionContext, params: dict[str, Any]) -> dict
             dedupe_member_rows(
                 (
                     await session.execute(
-                        member_papers_stmt(library_ids)
-                        .join(PaperWiki, PaperWiki.paper_id == Paper.id)
-                        .where(LibraryPaper.status.in_(("compiled", "included")))
+                        # 不再 inner join 解读：手动添加 / Zotero / 浏览器插件进来的论文
+                        # 是 included 但可能还没有解读，以前在这里整篇被丢掉（见下方兜底）
+                        member_papers_stmt(library_ids).where(
+                            LibraryPaper.status.in_(("compiled", "included"))
+                        )
                     )
                 ).all()
             )
@@ -219,9 +241,17 @@ async def forge_read_context(ctx: ActionContext, params: dict[str, Any]) -> dict
                 pm[1].created_at,
             )
         )
+        # 可用 = 有解读，或至少有摘要 / TL;DR（只有标题的论文给不了模型任何依据）
+        rows = [pm for pm in rows if _context_body(pm[0]) is not None]
         rows = rows[: int(knobs["max_context_papers"])]
         papers = [p for p, _ in rows]
-        wiki_of = {p.id: p.wiki_content for p, _ in rows}
+        if not papers:
+            # 以前这里会把上下文写成「（知识库为空）」然后照常往下跑，模型只凭课题名
+            # 编空白和想法，结果看起来和正常的一样。没有依据就不生成。
+            raise ValueError(
+                f"{IDEA_CONTEXT_EMPTY}: 关联的文献库里没有可用的论文，"
+                "请先添加论文（至少要有摘要或解读）再生成想法"
+            )
         concept_names = (
             (
                 (
@@ -246,17 +276,27 @@ async def forge_read_context(ctx: ActionContext, params: dict[str, Any]) -> dict
     excerpt_chars = await resolve_budget(ctx.llm, FORGE_EXCERPT)
     context_chars = await resolve_budget(ctx.llm, FORGE_CONTEXT)
     parts = []
+    without_summary = 0
     for paper in papers:
-        excerpt = (wiki_of.get(paper.id) or "")[:excerpt_chars]
-        parts.append(f"### {paper.title}\nTL;DR：{paper.tldr or '（无）'}\n{excerpt}")
-    context_text = "\n\n".join(parts)[:context_chars] or "（知识库为空）"
+        has_summary, body = _context_body(paper) or (False, "")
+        without_summary += not has_summary
+        # 没有解读的论文用原文摘要顶上，并明说这不是解读——模型别把它当成读过全文
+        label = "" if has_summary else f"{NO_SUMMARY_LABEL}\n"
+        parts.append(
+            f"### {paper.title}\nTL;DR：{paper.tldr or '（无）'}\n{label}{body[:excerpt_chars]}"
+        )
+    context_text = "\n\n".join(parts)[:context_chars]
 
     ctx.checkpoint["forge_context"] = {
         "paper_ids": [str(p.id) for p in papers],
         "concepts": list(concept_names),
         "text": context_text,
     }
-    return {"papers": len(papers), "concepts": len(concept_names)}
+    return {
+        "papers": len(papers),
+        "papers_without_summary": without_summary,
+        "concepts": len(concept_names),
+    }
 
 
 def _context(ctx: ActionContext) -> dict[str, Any]:

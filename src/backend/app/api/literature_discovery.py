@@ -571,7 +571,7 @@ async def promote_hits(
     from app.services.dedup import pool_dedup_key
     from app.services.libraries import ensure_membership, find_pool_paper
     from app.services.paper_assets import create_or_reuse_asset, storage_path_for_blob
-    from app.services.paper_enrich import launch_paper_enrichment
+    from app.services.paper_enrich import SUMMARIZE_BATCH_MAX, launch_paper_enrichment
 
     hits = list(
         (
@@ -676,6 +676,7 @@ async def promote_hits(
                 user_id=user.id,
                 library_id=library.id,
                 project_id=library.project_id,
+                summarize=len(task_inputs) <= SUMMARIZE_BATCH_MAX,
             )
         except Exception:  # noqa: BLE001 - promotion remains durable if worker is unavailable
             logger.exception("failed to launch enrichment for promoted paper %s", paper_id)

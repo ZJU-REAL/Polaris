@@ -434,6 +434,7 @@ async def run_zotero_import(
                                     user_id=user_id,
                                     library_id=library_id,
                                     project_id=project_id,
+                                    summarize=len(entries) <= paper_enrich.SUMMARIZE_BATCH_MAX,
                                 )
                             if child_task_id:
                                 enrichment_tasks.append((i, child_task_id))

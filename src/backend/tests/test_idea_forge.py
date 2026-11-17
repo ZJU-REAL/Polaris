@@ -11,12 +11,17 @@ import pytest
 from sqlalchemy import select
 
 from app.agents.voyage import VoyageEngine
-from app.agents.voyage.actions_ideas import _interleave_by_signal
+from app.agents.voyage.actions_ideas import (
+    IDEA_CONTEXT_EMPTY,
+    NO_SUMMARY_LABEL,
+    _interleave_by_signal,
+)
 from app.core.db import get_sessionmaker
 from app.core.llm.fake import EMBEDDING_DIM, FakeProvider
 from app.core.llm.router import LLMRouter
 from app.models.activity import Activity
 from app.models.idea import Idea
+from app.models.voyage import VoyageRun
 from tests.conftest import RecordingBus, add_concept, add_paper, register_and_login
 from tests.vector_helpers import get_idea_vector
 
@@ -472,3 +477,104 @@ def test_gap_interleave_tolerates_empty_and_missing_signals():
     assert _interleave_by_signal({"trends": []}) == []
     only_one = {"survey_gap": [{"title": "s0", "signal": "survey_gap"}], "trends": []}
     assert [g["title"] for g in _interleave_by_signal(only_one)] == ["s0"]
+
+
+# ---- 手动添加的论文（没有解读）也进上下文；一篇可用的都没有就不生成 ----
+
+
+async def _seed_manual_paper(project_id: str, title: str, **fields) -> str:
+    """手动添加 / Zotero / 浏览器插件进来的论文：成员状态 included，没有解读。"""
+    async with get_sessionmaker()() as session:
+        paper = await add_paper(
+            session,
+            project_id=uuid.UUID(project_id),
+            source="manual",
+            title=title,
+            status="included",
+            **fields,
+        )
+        await session.commit()
+        return str(paper.id)
+
+
+async def test_forge_context_includes_papers_without_a_summary(client, queue_stub):
+    """没有解读的论文用摘要 / TL;DR 进上下文，并标明不是解读；只有标题的不进。"""
+    project_id, headers = await _setup_project(client)
+    (compiled_id,) = await _seed_compiled_papers(project_id, n=1)
+    abstract_id = await _seed_manual_paper(
+        project_id, "Hand-added paper", abstract="UNIQUE-ABSTRACT about tool-use failures."
+    )
+    tldr_id = await _seed_manual_paper(project_id, "Extension paper", tldr="UNIQUE-TLDR 一句话")
+    title_only_id = await _seed_manual_paper(project_id, "Title-only paper")
+
+    resp = await client.post(
+        f"/api/projects/{project_id}/forge", json={"knobs": KNOBS}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    run_id = resp.json()["id"]
+    engine, _bus = _make_engine()
+    await engine.run(uuid.UUID(run_id))
+
+    detail = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()
+    assert detail["status"] == "done", detail
+    observation = detail["steps"][0]["observation"]
+    assert observation["papers"] == 3 and observation["papers_without_summary"] == 2
+
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, uuid.UUID(run_id))
+        context = run.checkpoint["forge_context"]
+    assert set(context["paper_ids"]) == {compiled_id, abstract_id, tldr_id}
+    assert title_only_id not in context["paper_ids"]
+    text = context["text"]
+    assert "UNIQUE-ABSTRACT about tool-use failures." in text
+    assert "UNIQUE-TLDR 一句话" in text
+    assert "Title-only paper" not in text
+    # 标注只出现在没有解读的两篇上，有解读的那篇照旧给解读正文
+    assert text.count(NO_SUMMARY_LABEL) == 2
+    compiled_block = text.split("### Compiled paper 0")[1].split("###")[0]
+    assert NO_SUMMARY_LABEL not in compiled_block and "的 wiki 页" in compiled_block
+
+
+@pytest.mark.parametrize("title_only", [False, True])
+async def test_forge_fails_on_an_empty_corpus_instead_of_inventing(client, queue_stub, title_only):
+    """关联库里没有可用的论文：第一步就以 IDEA_CONTEXT_EMPTY 失败，不调模型、不产出想法。
+
+    以前上下文会变成「（知识库为空）」然后照常跑完，模型只凭课题名编出一批想法。
+    """
+    project_id, headers = await _setup_project(client)
+    if title_only:
+        await _seed_manual_paper(project_id, "Title-only paper")
+
+    resp = await client.post(
+        f"/api/projects/{project_id}/forge", json={"knobs": KNOBS}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    run_id = resp.json()["id"]
+
+    class CountingFake(FakeProvider):
+        calls = 0
+
+        async def complete(self, *args, **kwargs):
+            CountingFake.calls += 1
+            return await super().complete(*args, **kwargs)
+
+    router = LLMRouter()
+    router.override_provider(CountingFake())
+    engine = VoyageEngine(event_bus=RecordingBus(), llm_router=router)
+    await engine.run(uuid.UUID(run_id))
+
+    detail = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()
+    assert detail["status"] == "paused_error", detail
+    first = detail["steps"][0]
+    assert first["action"] == "forge.read_context" and first["status"] == "failed"
+    assert IDEA_CONTEXT_EMPTY in (first["observation"] or {}).get("error", "")
+    assert all(s["status"] != "passed" for s in detail["steps"])
+    assert CountingFake.calls == 0  # 没有任何模型调用
+
+    async with get_sessionmaker()() as session:
+        ideas = (
+            (await session.execute(select(Idea).where(Idea.project_id == uuid.UUID(project_id))))
+            .scalars()
+            .all()
+        )
+    assert ideas == []

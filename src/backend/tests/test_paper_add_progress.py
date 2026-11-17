@@ -21,6 +21,7 @@ from tests.conftest import (
     make_project_with_library,
     membership_of,
     register_and_login,
+    wiki_of,
 )
 
 ARXIV_FEED = """<?xml version="1.0" encoding="UTF-8"?>
@@ -330,3 +331,193 @@ async def test_paper_task_events_replays_history_for_late_subscriber(client, fak
     assert "event: stage" in body
     assert "event: done" in body
     assert "download" in body
+
+
+# ---- 4. summarize 阶段：手动添加的论文也有解读 ----
+
+BIBTEX_WITH_ABSTRACT = (
+    "@article{sum,\n title={Hand Added Study},\n author={Doe, J},\n year={2024},\n"
+    " abstract={We study tool-use failures of language agents.},\n}"
+)
+
+
+async def test_single_add_gets_a_summary(client, fake_redis):
+    """单篇手动添加：补全末尾生成解读（没有全文就按摘要写），阶段事件里有 summarize ok。
+
+    以前手动添加 / Zotero / 浏览器插件进来的论文停在「有分块、没解读」。
+    """
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, _ = await make_project_with_library(client, headers, name="sum-proj")
+    resp = await client.post(
+        f"/api/projects/{project_id}/papers", json={"bibtex": BIBTEX_WITH_ABSTRACT}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert not body.get("wiki_content")  # 同步响应里还没有解读
+    await paper_enrich.await_task(body["task_id"])
+
+    async with get_sessionmaker()() as session:
+        wiki = await wiki_of(session, paper_id=body["id"])
+        membership = await membership_of(session, project_id=project_id, paper_id=body["id"])
+    assert wiki is not None and wiki.content.strip()
+    assert membership.status == "included"  # 人工纳入的状态不因生成解读而变
+
+    resp = await client.get(f"/api/paper-tasks/{body['task_id']}/events", headers=headers)
+    stages = [
+        json.loads(line[len("data: ") :])
+        for line in resp.text.splitlines()
+        if line.startswith("data: ") and '"stage"' in line
+    ]
+    summarize = [s["status"] for s in stages if s.get("stage") == "summarize"]
+    assert summarize == ["running", "ok"]
+    # summarize 是最后一个阶段
+    assert [s["stage"] for s in stages][-1] == "summarize"
+    assert paper_enrich.STAGES[-1] == "summarize"
+
+
+async def _enrich_events(redis, *, paper_id, library_id, project_id, **kwargs):
+    events = await _collect_run_events(
+        redis,
+        task_id=uuid.uuid4().hex,
+        paper_id=paper_id,
+        library_id=library_id,
+        user_id=None,
+        project_id=project_id,
+        **kwargs,
+    )
+    stage_events = [e["data"] for e in events if e["event"] == "stage"]
+    return events, [
+        (s["status"], s.get("detail")) for s in stage_events if s["stage"] == "summarize"
+    ]
+
+
+async def test_summarize_is_skipped_when_it_should_not_run(client, fake_redis, monkeypatch):
+    """不该生成的三种情况都跳过且不调编译：大批量导入、已有解读、没有正文可写。"""
+    from app.services import wiki_compile
+
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, library_id = await make_project_with_library(client, headers, name="skip-proj")
+    pid = uuid.UUID(project_id)
+    async with get_sessionmaker()() as session:
+        plain = await add_paper(session, project_id=pid, title="Plain", abstract="Some abstract.")
+        done = await add_paper(
+            session, project_id=pid, title="Done", abstract="A.", wiki_content="## 已有解读"
+        )
+        bare = await add_paper(session, project_id=pid, title="Bare")
+        await session.commit()
+        plain_id, done_id, bare_id = plain.id, done.id, bare.id
+
+    calls: list[uuid.UUID] = []
+
+    async def spy(session, view, **kwargs):
+        calls.append(view.paper.id)
+        raise AssertionError("summary must not be generated here")
+
+    monkeypatch.setattr(wiki_compile, "recompile_paper", spy)
+    monkeypatch.setattr(wiki_compile, "compile_paper", spy)
+
+    cases = [
+        (dict(paper_id=plain_id, library_id=library_id, summarize=False), "batch too large"),
+        (dict(paper_id=done_id, library_id=library_id), "already summarized"),
+        (dict(paper_id=bare_id, library_id=library_id), "no full text or abstract"),
+    ]
+    for kwargs, reason in cases:
+        events, summarize = await _enrich_events(fake_redis, project_id=pid, **kwargs)
+        assert summarize == [("running", None), ("skipped", reason)], reason
+        assert events[-1]["event"] == "done"
+    assert calls == []
+
+
+async def test_summarize_failure_does_not_fail_enrichment(client, fake_redis, monkeypatch):
+    """生成解读失败：发 summarize/error，任务照常 done，前面阶段的成果（打分）留着。"""
+    from app.services import wiki_compile
+
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, library_id = await make_project_with_library(client, headers, name="fail-proj")
+    pid = uuid.UUID(project_id)
+    async with get_sessionmaker()() as session:
+        paper = await add_paper(session, project_id=pid, title="Unlucky", abstract="Some abstract.")
+        await session.commit()
+        paper_id = paper.id
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(wiki_compile, "recompile_paper", boom)
+    events, summarize = await _enrich_events(
+        fake_redis, paper_id=paper_id, library_id=library_id, project_id=pid
+    )
+    assert [status for status, _ in summarize] == ["running", "error"]
+    assert "model unavailable" in summarize[-1][1]
+    assert events[-1]["event"] == "done"
+    async with get_sessionmaker()() as session:
+        assert await wiki_of(session, paper_id=paper_id) is None
+        membership = await membership_of(session, project_id=project_id, paper_id=paper_id)
+    assert membership.relevance_score is not None
+
+
+async def test_batch_import_summarizes_only_small_batches(client, fake_redis, monkeypatch):
+    """批量导入：不超过 SUMMARIZE_BATCH_MAX 篇才给每篇生成解读。"""
+    seen: list[bool] = []
+
+    async def fake_launch(**kwargs):
+        seen.append(kwargs["summarize"])
+        return None
+
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    _, library_id = await make_project_with_library(client, headers, name="batch-proj")
+    monkeypatch.setattr(paper_enrich, "launch_paper_enrichment", fake_launch)
+
+    def items(n: int, tag: str) -> list[dict]:
+        return [
+            {
+                "bibtex": (
+                    f"@article{{{tag}{i},\n title={{Batch {tag} {i}}},\n doi={{10.7/{tag}{i}}},\n}}"
+                )
+            }
+            for i in range(n)
+        ]
+
+    for n, tag, expected in (
+        (paper_enrich.SUMMARIZE_BATCH_MAX, "small", True),
+        (paper_enrich.SUMMARIZE_BATCH_MAX + 1, "large", False),
+    ):
+        seen.clear()
+        await paper_enrich._run_batch_import(
+            task_id=uuid.uuid4().hex,
+            items=items(n, tag),
+            library_id=library_id,
+            user_id=uuid.uuid4(),
+            project_id=None,
+            redis=fake_redis,
+        )
+        assert seen == [expected] * n, tag
+
+
+async def test_personal_library_add_gets_a_summary_without_a_target_library(client, fake_redis):
+    """加进「我的文献库」的论文没有目标库：不打分，但照样生成解读（解读与库无关）。"""
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = await client.post(
+        "/api/me/library/import", json={"bibtex": BIBTEX_WITH_ABSTRACT}, headers=headers
+    )
+    assert resp.status_code in (200, 201), resp.text
+    body = resp.json()
+    await paper_enrich.await_task(body["task_id"])
+
+    async with get_sessionmaker()() as session:
+        wiki = await wiki_of(session, paper_id=body["last_paper_id"])
+    assert wiki is not None and wiki.content.strip()
+
+    resp = await client.get(f"/api/paper-tasks/{body['task_id']}/events", headers=headers)
+    stages = [
+        json.loads(line[len("data: ") :])
+        for line in resp.text.splitlines()
+        if line.startswith("data: ") and '"stage"' in line
+    ]
+    by_stage = {s["stage"]: s["status"] for s in stages}
+    assert by_stage["score"] == "skipped" and by_stage["summarize"] == "ok"

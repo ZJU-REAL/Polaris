@@ -10,10 +10,11 @@ import { tr } from '../../lib/i18n';
    - event=stage → 更新对应阶段状态（best-effort：单阶段 error 不代表整体失败）
    - event=done  → 收尾并短暂延迟后自动关闭 + 回调 onDone（刷新列表）
    - event=error → 顶层致命错误，保留弹窗与关闭按钮，不自动关
-   阶段固定顺序：download → extract → embed → score（解析元数据在同步请求已完成，不单列）。
+   阶段固定顺序：download → extract → embed → score → summarize（解析元数据在同步请求
+   已完成，不单列）。summarize = 给加进文献库的论文生成解读。
    ============================================================ */
 
-type StageId = 'download' | 'extract' | 'embed' | 'score';
+type StageId = 'download' | 'extract' | 'embed' | 'score' | 'summarize';
 type StageStatus = 'pending' | 'running' | 'ok' | 'skipped' | 'error';
 
 // 模块级常量保留 zh/en，渲染处再 tr（import 时求值不随语言切换更新）
@@ -22,7 +23,28 @@ const STAGES: { id: StageId; zh: string; en: string }[] = [
   { id: 'extract', zh: '提取正文', en: 'Extracting text' },
   { id: 'embed', zh: '建立索引', en: 'Indexing' },
   { id: 'score', zh: '评估相关度', en: 'Scoring relevance' },
+  { id: 'summarize', zh: '生成解读', en: 'Generating summary' },
 ];
+
+/** 「生成解读」这一步的说明：引擎发来的是内部短语，换成一句用户能看懂的话。
+    返回 null = 不显示说明（「已跳过」三个字已经够了）。 */
+export function summarizeDetail(status: StageStatus, detail: string | undefined): string | null {
+  if (status === 'running') return tr('需要一两分钟', 'This takes a minute or two');
+  if (status === 'error') {
+    return tr('没有生成成功，可以稍后在论文页重新生成', 'Couldn’t generate it. Try again from the paper page.');
+  }
+  if (status !== 'skipped') return null;
+  switch (detail) {
+    case 'already summarized':
+      return tr('这篇论文已有解读', 'This paper already has a summary');
+    case 'batch too large':
+      return tr('一次添加超过 20 篇时不自动生成，可以在论文页生成', 'Not generated for more than 20 papers at once. Generate it from the paper page.');
+    case 'no full text or abstract':
+      return tr('没有全文和摘要，无法生成', 'No full text or abstract to summarise');
+    default:
+      return null;
+  }
+}
 
 interface StageState {
   status: StageStatus;
@@ -185,6 +207,14 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
         {STAGES.map((s) => {
           const st = stages[s.id];
           const dim = st.status === 'pending' || st.status === 'skipped';
+          // 跳过的原因是引擎的内部短语（"no target library" 之类），「已跳过」已经够了；
+          // 出错时保留引擎给的原因。生成解读这一步有自己的说明。
+          const detail =
+            s.id === 'summarize'
+              ? summarizeDetail(st.status, st.detail)
+              : st.status === 'skipped'
+                ? null
+                : st.detail;
           return (
             <div key={s.id} className="row gap10" style={{ padding: '7px 2px', alignItems: 'flex-start' }}>
               <span
@@ -205,7 +235,7 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
                     </span>
                   )}
                 </div>
-                {st.detail && (
+                {detail && (
                   <div
                     style={{
                       fontSize: 11,
@@ -214,7 +244,7 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
                       color: st.status === 'error' ? 'var(--warn-tx)' : 'var(--text-3)',
                     }}
                   >
-                    {st.detail}
+                    {detail}
                   </div>
                 )}
               </div>

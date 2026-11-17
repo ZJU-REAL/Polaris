@@ -1,10 +1,15 @@
-"""手动添加文献后的分阶段后台补全（下载→抽取→向量化→打分）。
+"""手动添加文献后的分阶段后台补全（下载→抽取→向量化→打分→生成解读）。
 
 同步请求只建元数据行（paper_import.create_pool_paper_stub）；重活在这里以后台
 asyncio 任务跑，自开新 AsyncSession，按阶段向 redis 频道发进度事件供前端订阅。
 
-阶段固定集合（前端按此渲染）：download → extract → embed → score。
+阶段固定集合（前端按此渲染）：download → extract → embed → score → summarize。
 （解析元数据在同步请求阶段已完成，不作为进度阶段单列。）
+summarize 给新加的论文生成解读（与「生成解读」按钮同一条路径）：手动添加 /
+Zotero / 浏览器插件进来的论文以前停在「有分块、没解读」，想法生成读不到它们。
+解读每篇论文一份、与库无关，所以加进「我的文献库」「相关研究」（没有目标库）的也生成。
+只对单篇添加和不超过 SUMMARIZE_BATCH_MAX 篇的批量做——大批量导入一篇一次模型调用
+太贵，留给用户在库里按需生成。
 每阶段 best-effort：失败发 status="error" 但继续后续步骤；已就绪则 status="skipped"。
 """
 
@@ -26,7 +31,10 @@ from app.models.paper import Paper
 logger = logging.getLogger(__name__)
 
 # 前端按此固定顺序渲染进度条；事件 data.stage 取值于此
-STAGES = ["download", "extract", "embed", "score"]
+STAGES = ["download", "extract", "embed", "score", "summarize"]
+
+# 一次导入不超过这么多篇才顺带生成解读（每篇一次长模型调用）
+SUMMARIZE_BATCH_MAX = 20
 
 # 论文级向量的文本上限（字符）
 EMBED_TEXT_MAX_CHARS = 2000
@@ -153,11 +161,13 @@ async def enrich_paper(
     target: DirectionLibrary | None = None,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
+    summarize: bool = True,
     emit: Emit,
 ) -> None:
-    """分阶段补全一篇论文（下载→抽取→(补机构)→向量化→打分）。
+    """分阶段补全一篇论文（下载→抽取→(补机构)→向量化→打分→生成解读）。
 
     - target 提供时按其 definition 打分（课题/库工作台），个人书架 import 无 target 跳过。
+    - 末尾生成解读（有没有 target 都生成）；summarize=False（大批量导入）时不生成。
     - 每步 best-effort：抛错发 error 事件但继续；已就绪发 skipped。
     """
     from app.services.literature import sources as literature_sources
@@ -240,7 +250,7 @@ async def enrich_paper(
 
     # 分块（文献问答底座）：有全文按全文切，没全文也建一个「标题 + 摘要」兜底块，
     # 保证这篇论文对文献对话可检索。已有全文块则不重切（避免丢已补的块向量）。
-    # 不单列可见进度阶段（STAGES 保持 download/extract/embed/score 不变）；块向量按用户开关
+    # 不单列可见进度阶段（不进 STAGES）；块向量按用户开关
     # 在下面 embed 阶段之后补。best-effort：失败记日志、回滚重取，不阻断后续阶段。
     from app.services.chunks import ensure_paper_chunks
 
@@ -451,6 +461,100 @@ async def enrich_paper(
                 logger.warning("enrich score failed for paper %s", paper_id, exc_info=True)
                 await emit("score", "error", f"{type(e).__name__}: {e}")
 
+    # ---- summarize ----
+    await emit("summarize", "running")
+    if not summarize:
+        await emit("summarize", "skipped", "batch too large")
+    else:
+        try:
+            status, detail = await _summarize_added_paper(
+                session, paper_id, library_id=target_id, user_id=user_id, project_id=project_id
+            )
+            await emit("summarize", status, detail)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 — 解读生成失败不算补全失败，库里还能手动再生成
+            logger.warning("enrich summarize failed for paper %s", paper_id, exc_info=True)
+            await session.rollback()
+            await emit("summarize", "error", f"{type(e).__name__}: {e}")
+
+
+async def _summarize_added_paper(
+    session: AsyncSession,
+    paper_id: uuid.UUID,
+    *,
+    library_id: uuid.UUID | None,
+    user_id: uuid.UUID | None,
+    project_id: uuid.UUID | None,
+) -> tuple[str, str | None]:
+    """给刚加进来的论文生成解读，返回 (阶段状态, 说明)。
+
+    加进某个库的：与 POST /papers/{id}/recompile 走同一个
+    ``wiki_compile.recompile_paper``。没有目标库的（我的文献库 / 相关研究）：同样的
+    步骤但不记库的账，对齐每日论文的单篇解读（daily_feed）。两条路径都是：有 PDF 先筛图
+    注释，正文优先全文、没有全文用摘要，落库后概念上链。已有解读不重写（解读全平台
+    一份，别处加过这篇就已经有了）。
+    """
+    from pathlib import Path as _Path
+
+    from app.core.llm.router import get_llm_router
+    from app.services import wiki_compile
+    from app.services.libraries import get_membership
+    from app.services.papers import PaperView
+
+    # 重新取一次：前面的阶段可能回滚过；populate_existing 让 wiki 关系按库里的现状重载
+    paper = await session.get(Paper, paper_id, populate_existing=True)
+    if paper is None:
+        return "skipped", "paper not found"
+    if (paper.wiki_content or "").strip():
+        return "skipped", "already summarized"
+    if not paper.full_text_path and not (paper.abstract or "").strip():
+        return "skipped", "no full text or abstract"
+    membership = (
+        await get_membership(session, library_id=library_id, paper_id=paper_id)
+        if library_id is not None
+        else None
+    )
+    if membership is not None:
+        await wiki_compile.recompile_paper(
+            session, PaperView(paper, membership, project_id), user_id=user_id
+        )
+        return "ok", None
+
+    from app.services.concepts import link_paper_concepts
+    from app.services.figure_annotate import annotate_figures
+    from app.services.file_projection import refresh_wiki_vaults_for_paper
+    from app.services.literature.pdf_extract import extract_figures
+    from app.services.paper_wiki import upsert_wiki
+
+    llm = get_llm_router()
+    if paper.pdf_path and _Path(paper.pdf_path).exists():
+        if paper.figures is None or not any(f.get("important") for f in paper.figures):
+            candidates = await extract_figures(str(paper.id), _Path(paper.pdf_path))
+            paper.figures = [
+                c | {"caption": None, "kind": None, "important": False} for c in candidates
+            ]
+        if paper.figures:
+            await annotate_figures(
+                paper, paper.figures, llm=llm, user_id=user_id, project_id=project_id
+            )
+        await session.commit()
+    compiled = await wiki_compile.compile_paper(
+        paper, session=session, llm=llm, user_id=user_id, project_id=project_id
+    )
+    await upsert_wiki(
+        session,
+        paper=paper,
+        content=compiled.content,
+        evidence=compiled.evidence,
+        model=compiled.model or None,
+        compiled_by=user_id,
+    )
+    await session.commit()
+    await link_paper_concepts(session, paper, llm=llm, user_id=user_id, project_id=project_id)
+    await refresh_wiki_vaults_for_paper(session, paper.id)
+    return "ok", None
+
 
 async def _run_enrichment_unbounded(
     *,
@@ -460,6 +564,7 @@ async def _run_enrichment_unbounded(
     user_id: uuid.UUID | None,
     project_id: uuid.UUID | None,
     redis: Redis,
+    summarize: bool = True,
 ) -> None:
     """后台任务体：自开新 session 跑 enrich_paper，收尾发 done / 出错发 error。"""
     from app.core.db import get_sessionmaker
@@ -487,6 +592,7 @@ async def _run_enrichment_unbounded(
                 target=target,
                 user_id=user_id,
                 project_id=project_id,
+                summarize=summarize,
                 emit=emit,
             )
         await publish_paper_task_event(bus, task_id, "done", {})
@@ -510,6 +616,7 @@ async def _run_enrichment(
     user_id: uuid.UUID | None,
     project_id: uuid.UUID | None,
     redis: Redis,
+    summarize: bool = True,
 ) -> None:
     """限制单进程内补全并发，避免一次批量导入同时压满上游服务。"""
     async with _enrich_semaphore():
@@ -520,6 +627,7 @@ async def _run_enrichment(
             user_id=user_id,
             project_id=project_id,
             redis=redis,
+            summarize=summarize,
         )
 
 
@@ -548,6 +656,7 @@ async def _run_batch_import(
 
     bus = EventBus(redis)
     totals = {"created": 0, "existing": 0, "invalid": 0, "failed": 0}
+    summarize = len(items) <= SUMMARIZE_BATCH_MAX
     enrichment_tasks: list[tuple[int, str]] = []
 
     try:
@@ -601,6 +710,7 @@ async def _run_batch_import(
                                 user_id=user_id,
                                 library_id=library_id,
                                 project_id=project_id,
+                                summarize=summarize,
                             )
                         if child_task_id:
                             enrichment_tasks.append((index, child_task_id))
@@ -660,8 +770,13 @@ async def launch_paper_enrichment(
     user_id: uuid.UUID,
     library_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
+    summarize: bool = True,
 ) -> str | None:
-    """登记归属 + 起后台任务，返回 task_id；redis 不可用时降级返回 None（不阻塞添加）。"""
+    """登记归属 + 起后台任务，返回 task_id；redis 不可用时降级返回 None（不阻塞添加）。
+
+    ``summarize``：补全末尾要不要生成解读。单篇添加用默认值；一次导入很多篇的调用方
+    按 :data:`SUMMARIZE_BATCH_MAX` 自己判断后传进来。
+    """
     task_id = uuid.uuid4().hex
     try:
         await redis.setex(paper_task_owner_key(task_id), _OWNER_TTL_SECONDS, str(user_id))
@@ -677,6 +792,7 @@ async def launch_paper_enrichment(
             user_id=user_id,
             project_id=project_id,
             redis=redis,
+            summarize=summarize,
         )
     )
     _TASKS[task_id] = task
