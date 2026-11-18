@@ -589,12 +589,22 @@ async def test_concurrent_write_succeeds_during_a_long_scan(tmp_path, monkeypatc
 
 
 async def test_scoring_does_not_block_the_event_loop(tmp_path, monkeypatch):
-    """打分在线程里跑：扫描期间另一个协程照常每 10ms 醒一次。"""
+    """打分在线程里跑：扫描期间另一个协程照常每 10ms 醒一次。
+
+    判据是相对的，不是「最长一次停顿 < 150ms」那种绝对阈值：机器吃紧时（全量套件
+    并行着别的重活），一次调度抖动就能超过它，而事件循环其实没被卡。打分若真跑在
+    事件循环上，现象是确定的——整个扫描期间心跳只醒得来 3 次（每批之后一次），且
+    每次都隔了一整批的时长。所以看的是「醒了多少次」「多数间隔有多长」「有几次停顿
+    长到够算完一批」，三条在负载下都不会因为单次抖动翻车。
+    """
     import asyncio
+    import statistics
     import time
 
+    batch_seconds = 0.2
+    batches = 3
     engine, _matrix, query = await _scan_engine(tmp_path, 3000, 16)
-    _slow_scoring(monkeypatch, 0.2)  # 3 批，每批在线程里「算」0.2 秒
+    _slow_scoring(monkeypatch, batch_seconds)  # 3 批，每批在线程里「算」0.2 秒
     gaps: list[float] = []
     try:
 
@@ -611,8 +621,14 @@ async def test_scoring_does_not_block_the_event_loop(tmp_path, monkeypatch):
             hits = await vector_search.search_statement(session, _scan_stmt(), query, 5)
         tick.cancel()
         assert len(hits) == 5
-        assert len(gaps) > 20
-        assert max(gaps) < 0.15, f"事件循环被卡住 {max(gaps):.3f}s"
+        # 扫描至少 0.6 秒：没被卡的话心跳该醒几十次，被卡的话只有 3 次
+        assert len(gaps) > 20, f"扫描期间心跳只醒了 {len(gaps)} 次"
+        assert statistics.median(gaps) < batch_seconds / 2, (
+            f"心跳间隔中位数 {statistics.median(gaps):.3f}s，事件循环在等打分"
+        )
+        # 每批都卡住循环的话，恰好有 batches 次停顿不短于一批的时长
+        stalls = [gap for gap in gaps if gap >= batch_seconds]
+        assert len(stalls) < batches, f"事件循环被卡住 {len(stalls)} 次：{stalls}"
     finally:
         await engine.dispose()
 

@@ -315,7 +315,8 @@ async def test_tournament_multi_round_keeps_pipeline_prior(client, queue_stub):
                 await session.execute(
                     select(HypothesisNode)
                     .where(HypothesisNode.run_id == run_id)
-                    .order_by(HypothesisNode.created_at, HypothesisNode.id)
+                    # seq 而不是 created_at：墙钟不单调（#784），回拨一次兄弟节点就换了位置
+                    .order_by(HypothesisNode.seq, HypothesisNode.id)
                 )
             )
             .scalars()
