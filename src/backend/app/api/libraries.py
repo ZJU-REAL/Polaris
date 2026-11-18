@@ -32,7 +32,12 @@ from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.graph import GraphResponse, UnconnectedConceptPair
-from app.schemas.ingest import DigestGenerateRead, IngestRequest, IngestStateRead
+from app.schemas.ingest import (
+    DigestGenerateRead,
+    IngestRequest,
+    IngestStateRead,
+    SummaryRetryRead,
+)
 from app.schemas.libraries import (
     ComparisonRequest,
     ComparisonTableRead,
@@ -411,6 +416,33 @@ async def start_library_ingest(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="INGEST_ALREADY_RUNNING") from e
     await queue.enqueue("run_voyage", str(run.id))
     return VoyageRead.model_validate(run)
+
+
+@router.post("/libraries/{library_id}/summaries/retry-failed", response_model=SummaryRetryRead)
+async def retry_failed_summaries(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+    queue: TaskQueue = Depends(get_task_queue),
+) -> SummaryRetryRead:
+    """把没写成的解读补上：给全文已取、解读没写成的论文再写一次（只跑写解读和
+    概念/索引两步，不重新检索）。
+
+    没有要补的：200，``voyage_id`` 为空，什么都不启动。库里有收集任务（或上一次
+    补写）还在跑：409 INGEST_ALREADY_RUNNING。
+    """
+    library = await _get_library(session, library_id)
+    try:
+        run = await ingest_service.create_summary_retry_voyage(
+            session, library=library, created_by=user.id
+        )
+    except ingest_service.IngestConflictError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="INGEST_ALREADY_RUNNING") from e
+    if run is None:
+        return SummaryRetryRead(voyage_id=None, pending=0)
+    await queue.enqueue("run_voyage", str(run.id))
+    pending = len(run.checkpoint["params"]["paper_ids"])
+    return SummaryRetryRead(voyage_id=run.id, pending=pending)
 
 
 @router.get("/libraries/{library_id}/papers", response_model=PaperListPage)

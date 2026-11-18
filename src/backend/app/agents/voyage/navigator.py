@@ -186,6 +186,25 @@ def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
             for title, action, acceptance in steps
         ]
 
+    if params.get("compile_only") is True:
+        # 补写解读：只给点名的那几篇（checkpoint.params.paper_ids）写解读，再补概念和
+        # 索引。不检索、不打分、不动同步进度
+        steps = [
+            ("补写没写成的解读", "wiki.compile", "点名的论文已生成解读"),
+            ("概念上链 + embedding", "wiki.link_concepts", "双链概念已 upsert 并关联论文"),
+        ]
+        return [
+            {
+                "title": title,
+                "action": action,
+                "params": {},
+                "acceptance": acceptance,
+                "checks": [{"kind": "no_error"}],
+                "requires_gate": None,
+            }
+            for title, action, acceptance in steps
+        ]
+
     mode = params.get("mode") or ("incremental" if run.kind == "wiki_ingest" else "search")
     if mode == "bootstrap":  # 存量任务的旧名
         mode = "search"

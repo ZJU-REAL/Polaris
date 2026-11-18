@@ -2538,6 +2538,89 @@ async def test_a_summary_that_cannot_be_written_is_recorded_not_dropped(
         assert await research_service._summarise_failed(session, library_id, voyage) == 0
 
 
+async def test_failed_summaries_can_be_written_later_in_one_go(
+    client, queue_stub, wiki_mocks, monkeypatch
+):
+    """解读没写成的论文可以一键补写：只跑写解读和概念/索引两步，写的就是那几篇；
+    没有要补的时候什么都不启动，库里有任务在跑时不抢。"""
+    from app.agents.voyage import actions_wiki
+    from app.core.llm.errors import LLMTransportError
+    from app.models.paper import PaperWiki
+
+    real = actions_wiki.compile_paper
+
+    async def broken_for_one(paper, **kwargs):
+        if "Benchmark" in paper.title:
+            raise LLMTransportError("model stream ended before the final message")
+        return await real(paper, **kwargs)
+
+    monkeypatch.setattr(actions_wiki, "compile_paper", broken_for_one)
+    project_id, headers, run_id = await _bootstrap_run(client)
+    engine, _bus = _make_engine()
+    await engine.run(run_id)
+
+    async with get_sessionmaker()() as session:
+        first = await session.get(VoyageRun, run_id)
+        failed_id = first.checkpoint["compile_failed"][0]
+        rows = await project_paper_rows(session, project_id=project_id)
+        library_id = rows[0][1].library_id
+        watermark = (await session.get(DirectionLibrary, library_id)).ingest_state
+    state_url = f"/api/libraries/{library_id}/ingest/state"
+    retry_url = f"/api/libraries/{library_id}/summaries/retry-failed"
+    assert (await client.get(state_url, headers=headers)).json()["summaries_failed"] == 1
+    project_state = await client.get(f"/api/projects/{project_id}/ingest/state", headers=headers)
+    assert project_state.json()["summaries_failed"] == 1
+
+    # 模型恢复了：补写
+    monkeypatch.setattr(actions_wiki, "compile_paper", real)
+    queue_stub.jobs.clear()
+    resp = await client.post(retry_url, headers=headers)
+    assert resp.status_code == 200, resp.text
+    retry_id = uuid.UUID(resp.json()["voyage_id"])
+    assert resp.json()["pending"] == 1
+    assert queue_stub.jobs == [("run_voyage", (str(retry_id),), {})]
+    # 补写任务在跑：不再起第二个，也不让收集任务插进来；计数这时不报「没写成」
+    assert (await client.post(retry_url, headers=headers)).status_code == 409
+    state = (await client.get(state_url, headers=headers)).json()
+    assert state["running_voyage_id"] == str(retry_id) and state["summaries_failed"] == 0
+    clash = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "search", "knobs": KNOBS},
+        headers=headers,
+    )
+    assert clash.status_code == 409
+
+    await engine.run(retry_id)
+    detail = (await client.get(f"/api/voyages/{retry_id}", headers=headers)).json()
+    assert detail["status"] == "done"
+    assert [s["action"] for s in detail["steps"]] == ["wiki.compile", "wiki.link_concepts"]
+    compile_obs = detail["steps"][0]["observation"]
+    assert compile_obs["processed"] == 1 and compile_obs["succeeded"] == 1
+    assert compile_obs["compiled_papers"][0]["id"] == failed_id
+    async with get_sessionmaker()() as session:
+        rows = await project_paper_rows(session, project_id=project_id)
+        assert {m.status for _p, m in rows} == {"compiled"}
+        wiki = (
+            await session.execute(
+                select(PaperWiki).where(PaperWiki.paper_id == uuid.UUID(failed_id))
+            )
+        ).scalar_one()
+        assert wiki.content
+        # 原来那次任务上记的「没写成」随之清零；同步进度没被补写任务动过
+        from app.services import research_runs as research_service
+
+        first = await session.get(VoyageRun, run_id)
+        assert await research_service._summarise_failed(session, library_id, first) == 0
+        assert (await session.get(DirectionLibrary, library_id)).ingest_state == watermark
+
+    # 没有要补的了：200、不建任务
+    queue_stub.jobs.clear()
+    resp = await client.post(retry_url, headers=headers)
+    assert resp.status_code == 200 and resp.json() == {"voyage_id": None, "pending": 0}
+    assert queue_stub.jobs == []
+    assert (await client.get(state_url, headers=headers)).json()["summaries_failed"] == 0
+
+
 async def test_citation_expansion_failure_does_not_stop_the_survey(
     client, queue_stub, wiki_mocks, monkeypatch
 ):

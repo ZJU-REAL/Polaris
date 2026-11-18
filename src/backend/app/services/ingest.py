@@ -162,6 +162,70 @@ async def create_ingest_voyage(
     return run
 
 
+async def summary_backlog_ids(session: AsyncSession, library_id: uuid.UUID) -> list[uuid.UUID]:
+    """全文已取、解读没写成的论文（status='fetched'），按相关度从高到低。
+
+    写解读那一步失败的论文就停在这个状态；任务中途被取消、没轮到写的也是。
+    """
+    return list(
+        (
+            await session.execute(
+                select(LibraryPaper.paper_id)
+                .where(LibraryPaper.library_id == library_id, LibraryPaper.status == "fetched")
+                .order_by(LibraryPaper.relevance_score.desc().nulls_last(), LibraryPaper.paper_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def create_summary_retry_voyage(
+    session: AsyncSession, *, library: DirectionLibrary, created_by: uuid.UUID | None
+) -> VoyageRun | None:
+    """建一个「补写解读」任务：只给没写成解读的那几篇再写一次，再补概念和索引。
+
+    没有要补的返回 None（不建任务）。与收集任务共用同一把「一个库同时只跑一个」
+    的锁：收集任务在跑时这些论文只是还没轮到，不能抢着写。由调用方入队 run_voyage。
+    """
+    if await find_running_ingest_for_library(session, library.id) is not None:
+        raise IngestConflictError(str(library.id))
+    paper_ids = await summary_backlog_ids(session, library.id)
+    if not paper_ids:
+        return None
+    knobs = IngestKnobs()
+    run = VoyageRun(
+        kind="wiki_bootstrap",
+        goal=f"补写解读：{library.name}",
+        status="planning",
+        cursor=0,
+        checkpoint={
+            "params": {
+                "mode": "search",
+                "knobs": knobs.model_dump(),
+                "compile_only": True,
+                "paper_ids": [str(paper_id) for paper_id in paper_ids],
+            }
+        },
+        budget=derive_budget(knobs),
+        library_id=library.id,
+        created_by=created_by,
+    )
+    session.add(run)
+    session.add(
+        Activity(
+            library_id=library.id,
+            actor=f"user:{created_by}" if created_by else "system",
+            kind="ingest.started",
+            message=f"补写解读已启动（{len(paper_ids)} 篇）",
+            payload={"compile_only": True, "paper_count": len(paper_ids)},
+        )
+    )
+    await session.commit()
+    await session.refresh(run)
+    return run
+
+
 async def create_digest_voyage(
     session: AsyncSession,
     *,
@@ -398,10 +462,12 @@ async def ingest_state(session: AsyncSession, project: Project, *, user: User) -
     state = (library.ingest_state if library else None) or {}
     # 互斥以库为准：库任务不写 project_id，按课题查已经查不到在跑的任务
     running = await find_running_ingest_for_library(session, library.id) if library else None
+    counts = await paper_counts(session, project.id)
     return {
         "watermark": state.get("watermark"),
         "last_run": await _resolve_last_run(session, state, user),
-        "paper_counts": await paper_counts(session, project.id),
+        "paper_counts": counts,
+        "summaries_failed": 0 if running else counts["fetched"],
         "running_voyage_id": running.id if running else None,
         "can_open_running_voyage": await _can_open(session, running, user),
         "next_sync_at": (
@@ -429,10 +495,12 @@ async def library_ingest_state(
     """
     state = library.ingest_state or {}
     running = await find_running_ingest_for_library(session, library.id)
+    counts = await library_paper_counts(session, library.id)
     return {
         "watermark": state.get("watermark"),
         "last_run": await _resolve_last_run(session, state, user),
-        "paper_counts": await library_paper_counts(session, library.id),
+        "paper_counts": counts,
+        "summaries_failed": 0 if running else counts["fetched"],
         "running_voyage_id": running.id if running else None,
         "can_open_running_voyage": await _can_open(session, running, user),
         "next_sync_at": (

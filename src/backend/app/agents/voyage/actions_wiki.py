@@ -287,6 +287,24 @@ def _scored_in_this_run(ctx: ActionContext):
     return LibraryPaper.scored_run_id == ctx.run.id
 
 
+def _compile_only_ids(ctx: ActionContext) -> list[uuid.UUID] | None:
+    """补写解读任务点名要写的论文 id；普通收集任务返回 None。
+
+    ``_scored_in_this_run`` 只认本次打分的那批，上一次没写成的解读永远轮不到；补写
+    任务（params.compile_only）没有打分这一步，改按建任务时记下的论文 id 认。
+    """
+    params = _params(ctx)
+    if params.get("compile_only") is not True:
+        return None
+    ids: list[uuid.UUID] = []
+    for item in params.get("paper_ids") or []:
+        try:
+            ids.append(uuid.UUID(str(item)))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
 async def _insert_pooled_with_retry(
     session: AsyncSession, **kwargs: Any
 ) -> tuple[Paper | None, str | None]:
@@ -2081,10 +2099,15 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             select(LibraryPaper.id, LibraryPaper.paper_id)
             .where(LibraryPaper.library_id == library.id, LibraryPaper.status == "fetched")
             .order_by(LibraryPaper.relevance_score.desc().nulls_last())
-            .limit(top_n)
         )
-        # 同 fetch_extract：只编译本次收下的那批，不捞历史积压
-        rows = (await session.execute(stmt.where(_scored_in_this_run(ctx)))).all()
+        only = _compile_only_ids(ctx)
+        if only is not None:
+            # 补写解读：就写点名的那几篇（都是之前轮到过、没写成的），不再按 top-N 截
+            stmt = stmt.where(LibraryPaper.paper_id.in_(only))
+        else:
+            # 同 fetch_extract：只编译本次收下的那批，不捞历史积压
+            stmt = stmt.where(_scored_in_this_run(ctx)).limit(top_n)
+        rows = (await session.execute(stmt)).all()
         membership_ids = [mid for mid, _ in rows]
         paper_ids = [pid for _, pid in rows]
 

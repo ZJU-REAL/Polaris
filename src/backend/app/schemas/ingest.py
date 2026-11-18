@@ -93,6 +93,18 @@ class IngestStateRead(BaseModel):
     can_open_running_voyage: bool = False
     # 下一次自动同步时间（cadence=daily 且已完成初始建库才有）
     next_sync_at: str | None = None
+    # 全文已取、解读没写成的篇数（可用 POST /libraries/{id}/summaries/retry-failed 补写）。
+    # 有收集任务在跑时为 0：那时这些论文只是还没轮到
+    summaries_failed: int = 0
+
+
+class SummaryRetryRead(BaseModel):
+    """补写没写成的解读的启动结果。"""
+
+    # 新建的任务；没有要补写的论文时为空（什么都没启动）
+    voyage_id: uuid.UUID | None
+    # 这次任务要补写的篇数
+    pending: int
 
 
 class ActivityBrief(BaseModel):
