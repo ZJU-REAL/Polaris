@@ -14,6 +14,7 @@ import uuid
 from typing import Any
 
 from app.core.db import get_sessionmaker
+from app.core.lang import tr
 from app.models.voyage import IN_FLIGHT_STATUSES, TERMINAL_STATUSES, VoyageRun
 from app.services import gates as gates_service
 from app.services import stats as stats_service
@@ -96,7 +97,10 @@ async def _get_task(session: Any, ctx: ToolContext, raw_id: Any) -> VoyageRun:
     "get_project_status",
     description="取本课题总览，含论文、想法、实验与稿件计数，待审闸门数量，关联文献库，进行中的任务与最近动态",
     input_schema={"type": "object", "properties": {}},
-    summarize=lambda a, r: f"课题总览（{r.get('papers_total', 0)} 篇论文）",
+    summarize=lambda a, r: tr(
+        f"课题总览（{r.get('papers_total', 0)} 篇论文）",
+        f"Topic overview ({r.get('papers_total', 0)} papers)",
+    ),
 )
 async def get_project_status(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
@@ -130,7 +134,9 @@ async def get_project_status(ctx: ToolContext, args: dict[str, Any]) -> dict[str
             "limit": {"type": "integer", "minimum": 1, "maximum": _MAX_TASKS, "default": 20},
         },
     },
-    summarize=lambda a, r: f"任务清单（{len(r.get('tasks') or [])} 条）",
+    summarize=lambda a, r: tr(
+        f"任务清单（{len(r.get('tasks') or [])} 条）", f"Tasks ({len(r.get('tasks') or [])})"
+    ),
 )
 async def list_tasks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     want = str(args.get("status") or "all")
@@ -185,7 +191,10 @@ def _last_error(run: VoyageRun) -> str | None:
         },
         "required": ["task_id"],
     },
-    summarize=lambda a, r: f"任务详情：{r.get('kind', '')} / {r.get('status', '')}",
+    summarize=lambda a, r: tr(
+        f"任务详情：{r.get('kind', '')} / {r.get('status', '')}",
+        f"Task: {r.get('kind', '')} / {r.get('status', '')}",
+    ),
 )
 async def get_task(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     include_steps = args.get("include_steps", True) is not False
@@ -240,7 +249,10 @@ async def get_task(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
         },
         "required": ["task_id"],
     },
-    summarize=lambda a, r: f"任务日志（{len(r.get('logs') or [])} 条）",
+    summarize=lambda a, r: tr(
+        f"任务日志（{len(r.get('logs') or [])} 条）",
+        f"Task log ({len(r.get('logs') or [])} entries)",
+    ),
 )
 async def read_task_logs(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     limit = min(_MAX_LOG_LINES, max(1, int(args.get("limit") or 100)))
@@ -283,7 +295,9 @@ async def read_task_logs(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
             "limit": {"type": "integer", "minimum": 1, "maximum": _MAX_GATES, "default": 20},
         },
     },
-    summarize=lambda a, r: f"闸门清单（{len(r.get('gates') or [])} 个）",
+    summarize=lambda a, r: tr(
+        f"闸门清单（{len(r.get('gates') or [])} 个）", f"Approvals ({len(r.get('gates') or [])})"
+    ),
 )
 async def list_gates(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     status = str(args.get("status") or "pending")

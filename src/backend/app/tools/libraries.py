@@ -14,6 +14,7 @@ import uuid
 from typing import Any
 
 from app.core.db import get_sessionmaker
+from app.core.lang import tr
 from app.services import daily_feed as daily_service
 from app.services import libraries as libraries_service
 from app.tools.context import ToolContext
@@ -50,7 +51,10 @@ def _library_brief(row: dict[str, Any], *, linked: bool) -> dict[str, Any]:
             "limit": {"type": "integer", "minimum": 1, "maximum": _MAX_LIBRARIES, "default": 50},
         },
     },
-    summarize=lambda a, r: f"文献库清单（{len(r.get('libraries') or [])} 个）",
+    summarize=lambda a, r: tr(
+        f"文献库清单（{len(r.get('libraries') or [])} 个）",
+        f"Libraries ({len(r.get('libraries') or [])})",
+    ),
 )
 async def list_libraries(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     linked_only = args.get("linked_only", False) is True
@@ -72,7 +76,7 @@ async def list_libraries(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
         "properties": {"library_id": {"type": "string", "description": "文献库 uuid"}},
         "required": ["library_id"],
     },
-    summarize=lambda a, r: f"文献库详情：{r.get('name', '')}",
+    summarize=lambda a, r: tr(f"文献库详情：{r.get('name', '')}", f"Library: {r.get('name', '')}"),
 )
 async def get_library(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     try:
@@ -110,7 +114,10 @@ async def get_library(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
             "limit": {"type": "integer", "minimum": 1, "maximum": _MAX_DAILY, "default": 20},
         },
     },
-    summarize=lambda a, r: f"每日池检索 → {len(r.get('papers') or [])} 篇",
+    summarize=lambda a, r: tr(
+        f"每日池检索 → {len(r.get('papers') or [])} 篇",
+        f"Daily papers search → {len(r.get('papers') or [])} papers",
+    ),
 )
 async def search_daily_pool(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     limit = min(_MAX_DAILY, max(1, int(args.get("limit") or 20)))

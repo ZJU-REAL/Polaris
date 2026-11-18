@@ -19,6 +19,7 @@ import uuid
 from typing import Any
 
 from app.core.db import get_sessionmaker
+from app.core.lang import tr
 from app.services import chunks as chunks_service
 from app.services import papers as papers_service
 from app.services.embedding import embed_query
@@ -157,7 +158,10 @@ _PRECISE_FILTERS = frozenset(
             },
         },
     },
-    summarize=lambda a, r: f"宽扫 {a.get('query') or '文献库'} → {len(r.get('results') or [])} 篇",
+    summarize=lambda a, r: tr(
+        f"宽扫 {a.get('query') or '文献库'} → {len(r.get('results') or [])} 篇",
+        f"Broad scan of {a.get('query') or 'the library'} → {len(r.get('results') or [])} papers",
+    ),
 )
 async def scan_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     query = str(args.get("query") or "").strip()
@@ -391,7 +395,10 @@ def _scan_brief(paper: Any) -> dict[str, Any]:
         },
         "required": ["pattern"],
     },
-    summarize=lambda a, r: f"grep {a.get('pattern')} → {r.get('count', 0)} 处",
+    summarize=lambda a, r: tr(
+        f"grep {a.get('pattern')} → {r.get('count', 0)} 处",
+        f"grep {a.get('pattern')} → {r.get('count', 0)} matches",
+    ),
 )
 async def grep_fulltext(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     pattern = str(args.get("pattern") or "").strip()

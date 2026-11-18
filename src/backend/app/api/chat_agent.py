@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +36,7 @@ from app.agents.chat.prompt import default_tool_names, mode_instructions, tools_
 from app.api.auth import current_active_user
 from app.core.config import get_settings
 from app.core.db import get_session
+from app.core.lang import iterate_in_lang, resolve_lang
 from app.core.llm.base import TextBlock, ThinkingBlock, ToolResultBlock, ToolUseBlock
 from app.core.llm.router import get_llm_router
 from app.models.conversation import Conversation
@@ -296,6 +297,8 @@ async def capabilities(
 @router.get("/buddy/greeting")
 async def buddy_greeting(
     page: str | None = None,
+    lang: str | None = None,
+    accept_language: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, object]:
@@ -307,17 +310,22 @@ async def buddy_greeting(
 
     ``page`` 是前端告诉我们「用户此刻在看什么」（kind，见 buddy._CONTEXT_LABELS）。
     这是最强的信号——他人就在那一页上——所以开场问句优先按它来挑。
+
+    ``lang``（``zh`` / ``en``）是界面语言；没给时看 ``Accept-Language``，再没有就是
+    中文。问候语、问句、卡片和主动提示都按它写。
     """
     _require_enabled()
+    ui_lang = resolve_lang(lang, accept_language)
     stats = await buddy.collect_stats(session, user_id=user.id)
-    question, cards = buddy.compose_opening(stats, page_kind=page)
+    question, cards = buddy.compose_opening(stats, page_kind=page, lang=ui_lang)
     return {
-        "greeting": buddy.compose_greeting(stats, name=user.display_name or None),
+        "lang": ui_lang,
+        "greeting": buddy.compose_greeting(stats, name=user.display_name or None, lang=ui_lang),
         # 开场：一句主动问话 + 三张卡片（卡面是摘要，点开进输入框的是完整问题）
         "question": question,
         "cards": cards,
         # 主动提示：没有真事就是 null，前端据此决定要不要冒气泡
-        "nudge": buddy.compose_nudge(stats),
+        "nudge": buddy.compose_nudge(stats, lang=ui_lang),
         "stats": stats.as_dict(),
     }
 
@@ -326,10 +334,16 @@ async def buddy_greeting(
 async def run_turn(
     conversation_id: uuid.UUID,
     payload: ConversationTurnRequest,
+    lang: str | None = None,
+    accept_language: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> StreamingResponse:
-    """跑一轮：模型可以反复调工具，最后给出回答。"""
+    """跑一轮：模型可以反复调工具，最后给出回答。
+
+    ``lang``（``zh`` / ``en``，没给时看 ``Accept-Language``）决定工具调用那一行摘要
+    用哪种语言写；回答本身的语言跟着用户的提问走，不受它影响。
+    """
     _require_enabled()
     conv = await store.get_or_create(
         session, user_id=user.id, scope_kind="global", conversation_id=conversation_id
@@ -410,7 +424,10 @@ async def run_turn(
         page_context=buddy.render_page_context(payload.page_kind, payload.page_id),
     )
     return _stream_turn(
-        loop.run(req), conv_id=conv.id, user_id=user.id, first_question=payload.question
+        iterate_in_lang(loop.run(req), resolve_lang(lang, accept_language)),
+        conv_id=conv.id,
+        user_id=user.id,
+        first_question=payload.question,
     )
 
 

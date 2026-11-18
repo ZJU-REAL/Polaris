@@ -14,6 +14,7 @@
 import logging
 from typing import Any
 
+from app.core.lang import tr
 from app.tools.context import ToolContext
 from app.tools.registry import tool
 
@@ -69,9 +70,11 @@ _SYSTEM = """\
         },
         "required": ["task"],
     },
-    summarize=lambda a, r: (
+    summarize=lambda a, r: tr(
         f"子任务：{str(a.get('task') or '')[:40]}…"
-        f"（{r.get('rounds', 0)} 轮、{r.get('tool_calls', 0)} 次工具）"
+        f"（{r.get('rounds', 0)} 轮、{r.get('tool_calls', 0)} 次工具）",
+        f"Sub-task: {str(a.get('task') or '')[:40]}… "
+        f"({r.get('rounds', 0)} rounds, {r.get('tool_calls', 0)} tool calls)",
     ),
 )
 async def run_subagent(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:

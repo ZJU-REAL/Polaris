@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.db import get_sessionmaker
+from app.core.lang import tr
 from app.services import projects as projects_service
 from app.tools.context import ToolContext
 from app.tools.registry import tool
@@ -61,7 +62,10 @@ def _page_arg(args: dict[str, Any], name: str, *, default: int, minimum: int, ma
         },
     },
     scope="user",
-    summarize=lambda a, r: f"可访问课题（{len(r.get('projects') or [])} 个）",
+    summarize=lambda a, r: tr(
+        f"可访问课题（{len(r.get('projects') or [])} 个）",
+        f"Topics ({len(r.get('projects') or [])})",
+    ),
 )
 async def list_accessible_projects(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     """返回当前用户可访问的课题，供后续项目级工具选择 project_id。"""

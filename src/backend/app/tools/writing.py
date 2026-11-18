@@ -13,6 +13,7 @@ import uuid
 from typing import Any
 
 from app.core.db import get_sessionmaker
+from app.core.lang import tr
 from app.models.manuscript import Manuscript
 from app.services import manuscripts as manuscripts_service
 from app.tools.context import ToolContext
@@ -70,7 +71,10 @@ async def _get_manuscript(
             "limit": {"type": "integer", "minimum": 1, "maximum": _MAX_MANUSCRIPTS, "default": 20},
         },
     },
-    summarize=lambda a, r: f"稿件清单（{len(r.get('manuscripts') or [])} 篇）",
+    summarize=lambda a, r: tr(
+        f"稿件清单（{len(r.get('manuscripts') or [])} 篇）",
+        f"Manuscripts ({len(r.get('manuscripts') or [])})",
+    ),
 )
 async def list_manuscripts(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     limit = min(_MAX_MANUSCRIPTS, max(1, int(args.get("limit") or 20)))
@@ -92,7 +96,9 @@ async def list_manuscripts(ctx: ToolContext, args: dict[str, Any]) -> dict[str, 
         "properties": {"manuscript_id": {"type": "string", "description": "稿件 uuid"}},
         "required": ["manuscript_id"],
     },
-    summarize=lambda a, r: f"稿件详情：{r.get('title', '')}",
+    summarize=lambda a, r: tr(
+        f"稿件详情：{r.get('title', '')}", f"Manuscript: {r.get('title', '')}"
+    ),
 )
 async def get_manuscript(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
@@ -128,7 +134,9 @@ async def get_manuscript(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
         },
         "required": ["manuscript_id", "path"],
     },
-    summarize=lambda a, r: f"读稿件文件：{a.get('path', '')}",
+    summarize=lambda a, r: tr(
+        f"读稿件文件：{a.get('path', '')}", f"Read manuscript file: {a.get('path', '')}"
+    ),
 )
 async def read_manuscript_file(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     path = str(args.get("path") or "").strip()

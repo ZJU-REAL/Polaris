@@ -15,6 +15,7 @@
 from typing import Any
 
 from app.core.db import get_sessionmaker
+from app.core.lang import tr
 from app.tools.context import ToolContext
 from app.tools.registry import tool
 
@@ -41,7 +42,10 @@ _KINDS = ("fact", "note")
     },
     read_only=False,
     scope="user",
-    summarize=lambda a, r: f"记住（{a.get('kind', 'fact')}）：{str(a.get('text', ''))[:40]}",
+    summarize=lambda a, r: tr(
+        f"记住（{a.get('kind', 'fact')}）：{str(a.get('text', ''))[:40]}",
+        f"Remembered ({a.get('kind', 'fact')}): {str(a.get('text', ''))[:40]}",
+    ),
 )
 async def remember(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     from app.services import buddy
@@ -73,7 +77,10 @@ async def remember(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
         },
     },
     scope="user",
-    summarize=lambda a, r: f"回忆「{a.get('query', '')}」→ {len(r.get('items') or [])} 条",
+    summarize=lambda a, r: tr(
+        f"回忆「{a.get('query', '')}」→ {len(r.get('items') or [])} 条",
+        f"Recalled “{a.get('query', '')}” → {len(r.get('items') or [])} items",
+    ),
 )
 async def recall(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     from app.services import buddy

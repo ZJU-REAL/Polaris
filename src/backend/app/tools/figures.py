@@ -11,6 +11,7 @@ from collections import Counter
 from typing import Any
 
 from app.core.db import get_sessionmaker
+from app.core.lang import tr
 from app.models.paper import Paper
 from app.services import citations as citations_service
 from app.services import concepts as concepts_service
@@ -90,7 +91,9 @@ def _download_fields_if_available(
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
         "required": ["paper_id"],
     },
-    summarize=lambda a, r: f"图清单：{len(r.get('figures') or [])} 张",
+    summarize=lambda a, r: tr(
+        f"图清单：{len(r.get('figures') or [])} 张", f"Figures: {len(r.get('figures') or [])}"
+    ),
 )
 async def list_paper_figures(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
@@ -124,7 +127,10 @@ async def list_paper_figures(ctx: ToolContext, args: dict[str, Any]) -> dict[str
         },
         "required": ["paper_id", "index"],
     },
-    summarize=lambda a, r: f"取图 #{a.get('index')}：{r.get('caption') or r.get('title', '')}",
+    summarize=lambda a, r: tr(
+        f"取图 #{a.get('index')}：{r.get('caption') or r.get('title', '')}",
+        f"Figure #{a.get('index')}: {r.get('caption') or r.get('title', '')}",
+    ),
 )
 async def get_paper_figure(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     index = int(args.get("index")) if str(args.get("index", "")).lstrip("-").isdigit() else None
@@ -167,7 +173,10 @@ async def get_paper_figure(ctx: ToolContext, args: dict[str, Any]) -> ToolResult
         },
         "required": ["paper_id"],
     },
-    summarize=lambda a, r: f"批量取图：{len(r.get('figures') or [])} 张",
+    summarize=lambda a, r: tr(
+        f"批量取图：{len(r.get('figures') or [])} 张",
+        f"Fetched {len(r.get('figures') or [])} figures",
+    ),
 )
 async def get_paper_figures(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     kind = str(args.get("kind") or "").strip() or None
@@ -226,7 +235,10 @@ async def get_paper_figures(ctx: ToolContext, args: dict[str, Any]) -> ToolResul
         },
         "required": ["query"],
     },
-    summarize=lambda a, r: f"找图「{a.get('query', '')}」→ {len(r.get('figures') or [])} 张",
+    summarize=lambda a, r: tr(
+        f"找图「{a.get('query', '')}」→ {len(r.get('figures') or [])} 张",
+        f"Figure search “{a.get('query', '')}” → {len(r.get('figures') or [])} figures",
+    ),
 )
 async def find_figures(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     query = str(args.get("query") or "").strip()
@@ -276,7 +288,9 @@ async def find_figures(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]
         },
         "required": ["paper_id"],
     },
-    summarize=lambda a, r: f"引用条目（{r.get('format', 'bibtex')}）",
+    summarize=lambda a, r: tr(
+        f"引用条目（{r.get('format', 'bibtex')}）", f"Citation ({r.get('format', 'bibtex')})"
+    ),
 )
 async def get_paper_citation(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     fmt = str(args.get("format") or "bibtex").strip()
@@ -298,7 +312,9 @@ async def get_paper_citation(ctx: ToolContext, args: dict[str, Any]) -> dict[str
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
         "required": ["paper_id"],
     },
-    summarize=lambda a, r: f"笔记：{len(r.get('notes') or [])} 条",
+    summarize=lambda a, r: tr(
+        f"笔记：{len(r.get('notes') or [])} 条", f"Notes: {len(r.get('notes') or [])}"
+    ),
 )
 async def get_paper_notes(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
@@ -323,7 +339,10 @@ async def get_paper_notes(ctx: ToolContext, args: dict[str, Any]) -> dict[str, A
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
         "required": ["paper_id"],
     },
-    summarize=lambda a, r: f"划线：{len(r.get('highlights') or [])} 处",
+    summarize=lambda a, r: tr(
+        f"划线：{len(r.get('highlights') or [])} 处",
+        f"Highlights: {len(r.get('highlights') or [])}",
+    ),
 )
 async def get_paper_highlights(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
@@ -360,7 +379,10 @@ async def get_paper_highlights(ctx: ToolContext, args: dict[str, Any]) -> dict[s
         },
         "required": ["paper_id"],
     },
-    summarize=lambda a, r: f"相关论文：{len(r.get('related') or [])} 篇",
+    summarize=lambda a, r: tr(
+        f"相关论文：{len(r.get('related') or [])} 篇",
+        f"Related papers: {len(r.get('related') or [])}",
+    ),
 )
 async def related_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     k = max(1, min(20, int(args.get("k") or 8)))

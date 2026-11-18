@@ -11,6 +11,7 @@
 
 from typing import Any
 
+from app.core.lang import tr
 from app.tools.context import ToolContext
 from app.tools.registry import tool
 
@@ -85,9 +86,11 @@ def normalize(steps: Any) -> list[dict[str, str]]:
         "一步就能答完的问题不要调用它。"
     ),
     input_schema=_SCHEMA,
-    summarize=lambda args, result: (
+    summarize=lambda args, result: tr(
         f"计划 {len(result.get('steps', []))} 步"
-        f"（{sum(1 for s in result.get('steps', []) if s['status'] == 'done')} 步已完成）"
+        f"（{sum(1 for s in result.get('steps', []) if s['status'] == 'done')} 步已完成）",
+        f"Plan: {len(result.get('steps', []))} steps "
+        f"({sum(1 for s in result.get('steps', []) if s['status'] == 'done')} done)",
     ),
 )
 async def update_plan(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
@@ -123,7 +126,10 @@ _SUBMIT_SCHEMA: dict[str, Any] = {
         "用户批准后你会在下一轮拿到这份计划，那时才动手。"
     ),
     input_schema=_SUBMIT_SCHEMA,
-    summarize=lambda args, result: f"待审批的计划（{len(result.get('steps', []))} 步）",
+    summarize=lambda args, result: tr(
+        f"待审批的计划（{len(result.get('steps', []))} 步）",
+        f"Plan awaiting approval ({len(result.get('steps', []))} steps)",
+    ),
 )
 async def submit_plan(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     steps = normalize(args.get("steps"))

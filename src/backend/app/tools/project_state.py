@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.db import get_sessionmaker
+from app.core.lang import tr
 from app.models.experiment import Experiment
 from app.models.idea import Idea
 from app.models.manuscript import Manuscript
@@ -47,7 +48,9 @@ def _idea_brief(idea: Idea) -> dict[str, Any]:
             "research_type": {"type": "string"},
         },
     },
-    summarize=lambda a, r: f"想法清单（{len(r.get('ideas') or [])} 条）",
+    summarize=lambda a, r: tr(
+        f"想法清单（{len(r.get('ideas') or [])} 条）", f"Ideas ({len(r.get('ideas') or [])})"
+    ),
 )
 async def list_ideas(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
@@ -69,7 +72,10 @@ async def list_ideas(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
         "properties": {"idea_id": {"type": "string", "description": "想法 uuid"}},
         "required": ["idea_id"],
     },
-    summarize=lambda a, r: f"想法详情：{r.get('title', a.get('idea_id', ''))}",
+    summarize=lambda a, r: tr(
+        f"想法详情：{r.get('title', a.get('idea_id', ''))}",
+        f"Idea: {r.get('title', a.get('idea_id', ''))}",
+    ),
 )
 async def get_idea(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     try:
@@ -91,7 +97,10 @@ async def get_idea(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     "list_experiments",
     description="列出本课题的实验，含状态与关联想法标题",
     input_schema={"type": "object", "properties": {}},
-    summarize=lambda a, r: f"实验清单（{len(r.get('experiments') or [])} 条）",
+    summarize=lambda a, r: tr(
+        f"实验清单（{len(r.get('experiments') or [])} 条）",
+        f"Experiments ({len(r.get('experiments') or [])})",
+    ),
 )
 async def list_experiments(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
@@ -118,7 +127,10 @@ async def list_experiments(ctx: ToolContext, args: dict[str, Any]) -> dict[str, 
         "properties": {"experiment_id": {"type": "string", "description": "实验 uuid"}},
         "required": ["experiment_id"],
     },
-    summarize=lambda a, r: f"实验详情：{r.get('status', a.get('experiment_id', ''))}",
+    summarize=lambda a, r: tr(
+        f"实验详情：{r.get('status', a.get('experiment_id', ''))}",
+        f"Experiment: {r.get('status', a.get('experiment_id', ''))}",
+    ),
 )
 async def get_experiment(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     try:
@@ -154,7 +166,10 @@ async def get_experiment(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
         },
         "required": ["experiment_id"],
     },
-    summarize=lambda a, r: f"实验日志（{len(r.get('lines') or [])} 行）",
+    summarize=lambda a, r: tr(
+        f"实验日志（{len(r.get('lines') or [])} 行）",
+        f"Experiment log ({len(r.get('lines') or [])} lines)",
+    ),
 )
 async def read_experiment_logs(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     try:
@@ -214,7 +229,7 @@ async def read_experiment_logs(ctx: ToolContext, args: dict[str, Any]) -> dict[s
         "properties": {"manuscript_id": {"type": "string", "description": "稿件 uuid"}},
         "required": ["manuscript_id"],
     },
-    summarize=lambda a, r: "取事实包（fact_pack）",
+    summarize=lambda a, r: tr("取事实包（fact_pack）", "Fetched the fact pack"),
 )
 async def get_fact_pack(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     try:

@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
+from app.core.lang import tr
 from app.models.paper import Paper, PaperChunk
 from app.services import chunks as chunks_service
 from app.services import graph as graph_service
@@ -40,7 +41,10 @@ _MAX_K = 12
         },
         "required": ["query"],
     },
-    summarize=lambda a, r: f"段落检索「{a.get('query', '')}」→ {len(r.get('chunks') or [])} 段",
+    summarize=lambda a, r: tr(
+        f"段落检索「{a.get('query', '')}」→ {len(r.get('chunks') or [])} 段",
+        f"Passage search “{a.get('query', '')}” → {len(r.get('chunks') or [])} passages",
+    ),
 )
 async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     query = str(args.get("query") or "").strip()
@@ -168,7 +172,10 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
         "required": ["paper_id"],
     },
-    summarize=lambda a, r: f"论文详情：{r.get('title', a.get('paper_id', ''))}",
+    summarize=lambda a, r: tr(
+        f"论文详情：{r.get('title', a.get('paper_id', ''))}",
+        f"Paper: {r.get('title', a.get('paper_id', ''))}",
+    ),
 )
 async def get_paper(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
@@ -200,7 +207,10 @@ async def get_paper(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     "knowledge_graph",
     description="取本课题的知识图谱，含论文、概念、作者节点及其关联边",
     input_schema={"type": "object", "properties": {}},
-    summarize=lambda a, r: f"知识图谱（{len(r.get('nodes') or [])} 节点）",
+    summarize=lambda a, r: tr(
+        f"知识图谱（{len(r.get('nodes') or [])} 节点）",
+        f"Knowledge graph ({len(r.get('nodes') or [])} nodes)",
+    ),
 )
 async def knowledge_graph(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     if ctx.project_id is None:
@@ -217,7 +227,10 @@ async def knowledge_graph(ctx: ToolContext, args: dict[str, Any]) -> dict[str, A
         "properties": {"q": {"type": "string", "description": "检索关键词"}},
         "required": ["q"],
     },
-    summarize=lambda a, r: f"全局检索「{a.get('q', '')}」→ {len(r.get('hits') or [])} 条",
+    summarize=lambda a, r: tr(
+        f"全局检索「{a.get('q', '')}」→ {len(r.get('hits') or [])} 条",
+        f"Global search “{a.get('q', '')}” → {len(r.get('hits') or [])} hits",
+    ),
 )
 async def global_search(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     q = str(args.get("q") or "").strip()

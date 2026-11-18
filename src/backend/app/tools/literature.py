@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
+from app.core.lang import tr
 from app.models.paper import Concept, Paper
 from app.services import concepts as concepts_service
 from app.services import papers as papers_service
@@ -70,7 +71,10 @@ async def _get_project_paper(session: Any, ctx: ToolContext, raw_id: Any) -> Pap
         },
         "required": ["query"],
     },
-    summarize=lambda a, r: f"检索「{a.get('query', '')}」→ {len(r.get('results') or [])} 篇",
+    summarize=lambda a, r: tr(
+        f"检索「{a.get('query', '')}」→ {len(r.get('results') or [])} 篇",
+        f"Searched “{a.get('query', '')}” → {len(r.get('results') or [])} papers",
+    ),
 )
 async def search_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     query = str(args.get("query") or "").strip()
@@ -125,7 +129,10 @@ async def search_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
         "required": ["paper_id"],
     },
-    summarize=lambda a, r: f"阅读 wiki：{r.get('title', a.get('paper_id', ''))}",
+    summarize=lambda a, r: tr(
+        f"阅读 wiki：{r.get('title', a.get('paper_id', ''))}",
+        f"Read wiki: {r.get('title', a.get('paper_id', ''))}",
+    ),
 )
 async def read_wiki(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
@@ -149,7 +156,10 @@ async def read_wiki(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 
 def _read_fulltext_summary(a: dict[str, Any], r: dict[str, Any]) -> str:
     target = r.get("title", a.get("paper_id", ""))
-    return f"查阅全文：{target}" + (f"（定位「{a['query']}」）" if a.get("query") else "")
+    return tr(
+        f"查阅全文：{target}" + (f"（定位「{a['query']}」）" if a.get("query") else ""),
+        f"Read full text: {target}" + (f" (looking for “{a['query']}”)" if a.get("query") else ""),
+    )
 
 
 @tool(
@@ -233,7 +243,9 @@ async def read_fulltext(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
         "properties": {"name": {"type": "string", "description": "概念名"}},
         "required": ["name"],
     },
-    summarize=lambda a, r: f"查看概念「{a.get('name', '')}」",
+    summarize=lambda a, r: tr(
+        f"查看概念「{a.get('name', '')}」", f"Looked up concept “{a.get('name', '')}”"
+    ),
 )
 async def get_concept(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     name = str(args.get("name") or "").strip()
@@ -278,7 +290,10 @@ async def get_concept(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
             "category": {"type": "string", "enum": _CONCEPT_CATEGORIES, "description": "可选"},
         },
     },
-    summarize=lambda a, r: f"浏览概念清单（{len(r.get('concepts') or [])} 个）",
+    summarize=lambda a, r: tr(
+        f"浏览概念清单（{len(r.get('concepts') or [])} 个）",
+        f"Concepts ({len(r.get('concepts') or [])})",
+    ),
 )
 async def list_concepts(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     category = str(args.get("category") or "").strip() or None

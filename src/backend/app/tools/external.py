@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.db import get_sessionmaker
+from app.core.lang import tr
 from app.services.literature.sources import require_source
 from app.tools.context import ToolContext
 from app.tools.registry import tool
@@ -45,7 +46,10 @@ def _s2_brief(row: dict[str, Any]) -> dict[str, Any]:
         "required": ["query"],
     },
     network=True,
-    summarize=lambda a, r: f"库外检索「{a.get('query', '')}」→ {len(r.get('results') or [])} 篇",
+    summarize=lambda a, r: tr(
+        f"库外检索「{a.get('query', '')}」→ {len(r.get('results') or [])} 篇",
+        f"External search “{a.get('query', '')}” → {len(r.get('results') or [])} papers",
+    ),
 )
 async def external_search(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     query = str(args.get("query") or "").strip()
@@ -105,7 +109,10 @@ _REF_SCHEMA = {
     description="列出某篇论文引用的参考文献",
     input_schema=_REF_SCHEMA,
     network=True,
-    summarize=lambda a, r: f"参考文献 → {len(r.get('references') or [])} 篇",
+    summarize=lambda a, r: tr(
+        f"参考文献 → {len(r.get('references') or [])} 篇",
+        f"References → {len(r.get('references') or [])} papers",
+    ),
 )
 async def get_references(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     ref = await _resolve_ref(ctx, args)
@@ -118,7 +125,10 @@ async def get_references(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
     description="列出引用了某篇论文的后续工作",
     input_schema=_REF_SCHEMA,
     network=True,
-    summarize=lambda a, r: f"施引文献 → {len(r.get('citations') or [])} 篇",
+    summarize=lambda a, r: tr(
+        f"施引文献 → {len(r.get('citations') or [])} 篇",
+        f"Citing papers → {len(r.get('citations') or [])} papers",
+    ),
 )
 async def get_citations(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     ref = await _resolve_ref(ctx, args)
@@ -135,7 +145,10 @@ async def get_citations(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
         "required": ["doi"],
     },
     network=True,
-    summarize=lambda a, r: f"查元数据：{r.get('title') or a.get('doi', '')}",
+    summarize=lambda a, r: tr(
+        f"查元数据：{r.get('title') or a.get('doi', '')}",
+        f"Metadata: {r.get('title') or a.get('doi', '')}",
+    ),
 )
 async def lookup_paper(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     doi = str(args.get("doi") or "").strip()
