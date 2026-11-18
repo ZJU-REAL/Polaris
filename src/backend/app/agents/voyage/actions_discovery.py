@@ -710,10 +710,14 @@ POLARIS_HYP_WRITEUP
    目标，不能写成已有结论，也不要替它们找依据。
 3. evidence 里立场为 refute 的内容必须写进 risks。
 4. experiments 写怎样检验这条假设（重点是 unsupported 的部分），不要编造结果。
-5. scores 四项都是 0–10 的整数。novelty 只能依据 novelty 与 signals 判断，并在
-   rationale.novelty 里说明新颖性只对照了用户的文献库；feasibility 参考 signals
-   与 risk_note。
+5. scores 四项都是 0–10 的整数。novelty 只能依据 novelty 与 signals 判断；
+   feasibility 参考 signals 与 risk_note。
 6. title 不超过 80 个字符，不要以「想法：」之类的前缀开头。
+7. rationale 的四段直接写给研究者看：不要出现输入里的字段名（support_ratio、
+   novel_ratio、grounded_paper_count、risk_note、signals、unsupported 之类），不要写
+   「signals 显示」「根据 risk_note」这类说法；要用数字就说成自然的话（如「6 条子命题
+   里有 4 条找到了文献支持」）。界面上已经注明新颖性只对照了用户的文献库，rationale
+   里不要再写这一句。
 """
 
 
@@ -742,10 +746,34 @@ class IdeaWriteup(BaseModel):
 
 
 _CJK_RE = re.compile(r"[一-鿿]")
-_NOVELTY_SCOPE_NOTE = {
-    "zh": "新颖性只对照你的文献库判断。",
-    "en": "Novelty is judged against your library only.",
-}
+#: 「新颖性只对照你的文献库」这句说明：界面凡是显示新颖性分数的地方都按
+#: ``origin.novelty_scope`` 加了，理由里再写一遍就是重复。提示里已经让模型别写，
+#: 写了也在这里删掉：括号里的整个括号删，自成一句的整句删。
+_PAREN_RE = re.compile(r"[（(][^（）()]*[）)]")
+#: 按句切开（每个字符都落在某一块里，拼回去与原文一致）
+_SENTENCE_PIECE_RE = re.compile(r"[^。！？.!?\n]*[。！？.!?]+|[^。！？.!?\n]+|\n")
+
+
+def _is_scope_caveat(text: str) -> bool:
+    lowered = text.lower()
+    if "文献库" in text:
+        return any(w in text for w in ("只", "仅")) and any(
+            w in text for w in ("对照", "对比", "比对", "基于", "针对", "检索", "查")
+        )
+    if "library" in lowered:
+        return any(w in lowered for w in ("only", "solely")) and any(
+            w in lowered for w in ("your", "user")
+        )
+    return False
+
+
+def strip_scope_caveat(text: str) -> str:
+    """去掉理由里重复界面说明「新颖性只对照你的文献库」的那句话或那个括号。"""
+    text = _PAREN_RE.sub(lambda m: "" if _is_scope_caveat(m.group(0)) else m.group(0), text)
+    pieces = [p for p in _SENTENCE_PIECE_RE.findall(text) if not _is_scope_caveat(p)]
+    return re.sub(r"[ \t]{2,}", " ", "".join(pieces)).strip()
+
+
 _UNSUPPORTED_HEADING = {
     "zh": ("尚无文献依据的部分", "（每条子命题都在文献库里找到了依据。）"),
     "en": (
@@ -991,8 +1019,8 @@ async def discovery_write_ideas(ctx: ActionContext, params: dict[str, Any]) -> d
     想法的概述，接地时选中的每条（子命题, 论文）连同立场和原文片段进 ``evidence``。
 
     不夸大（设计 Q6）：写作调用只拿到有文献依据的证据；没有依据的子命题只以
-    「尚待验证」的名义给它，并由代码在正文末尾逐字单列一节。新颖性分数的理由里
-    固定带一句「只对照你的文献库」，``origin.novelty_scope`` 也记着 ``library``。
+    「尚待验证」的名义给它，并由代码在正文末尾逐字单列一节。新颖性只对照了文献库：
+    ``origin.novelty_scope`` 记着 ``library``，界面据此在分数旁说明（理由里不再重复）。
 
     可重放：每写完一个就提交。再跑这一步时，已经为某个节点写过想法（按
     ``source_voyage_id`` + ``origin.node_id`` 查）就跳过，不再调模型；上次判成重复的
@@ -1085,10 +1113,9 @@ async def discovery_write_ideas(ctx: ActionContext, params: dict[str, Any]) -> d
         rationale: dict[str, str] | None = None
         if writeup is not None:
             scores = {k: _clamp_int_score(v) for k, v in writeup.scores.model_dump().items()}
-            rationale = {k: str(v).strip() for k, v in writeup.rationale.model_dump().items()}
-            note = _NOVELTY_SCOPE_NOTE[language]
-            if note not in rationale["novelty"]:
-                rationale["novelty"] = f"{rationale['novelty']} {note}".strip()
+            rationale = {
+                k: strip_scope_caveat(str(v)) for k, v in writeup.rationale.model_dump().items()
+            }
         content = _idea_content(writeup.model_dump() if writeup else {}, unsupported, language)
         support_ratio, novel_ratio = _ratios(node)
         parent_paper_ids = list(dict.fromkeys(item["paper_id"] for item in evidence))

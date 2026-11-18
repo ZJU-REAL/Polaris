@@ -547,7 +547,7 @@
     "score_rationale": {
       "feasibility": "（fake）有文献托底",
       "impact": "（fake）中等",
-      "novelty": "（fake）库内未见相同提法 Novelty is judged against your library only.",
+      "novelty": "（fake）库内未见相同提法",
       "operability": "（fake）步骤明确"
     },
     "scores": {
@@ -1014,13 +1014,13 @@
               "selected": 2,
               "usage": {
                 "completion_tokens": 245,
-                "prompt_tokens": 871
+                "prompt_tokens": 973
               }
             },
             "started_at": "<ts>",
             "tokens": {
               "completion_tokens": 245,
-              "prompt_tokens": 871
+              "prompt_tokens": 973
             },
             "verdict": {
               "passed": true,
@@ -1041,7 +1041,7 @@
           "selected": 2,
           "usage": {
             "completion_tokens": 245,
-            "prompt_tokens": 871
+            "prompt_tokens": 973
           }
         },
         "params": {},
@@ -1057,7 +1057,7 @@
         "title": "把假设写成想法",
         "tokens": {
           "completion_tokens": 245,
-          "prompt_tokens": 871
+          "prompt_tokens": 973
         },
         "verdict": {
           "passed": true,
@@ -1068,8 +1068,8 @@
     "updated_at": "<ts>",
     "usage": {
       "completion_tokens": 581,
-      "prompt_tokens": 2490,
-      "total_tokens": 3071
+      "prompt_tokens": 2592,
+      "total_tokens": 3173
     }
   }
 }

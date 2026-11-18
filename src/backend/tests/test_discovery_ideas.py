@@ -3,7 +3,8 @@
 - 选哪些假设：优先叶子、被剪的不写、根不写、凑不够三个时用父假设补；
 - 字段映射：假设陈述原样做概述，证据带立场和原文片段，来路记在 origin；
 - 不夸大：写作调用只拿到有依据的证据，没有依据的子命题在正文末尾逐字单列；
-- 新颖性只对照文献库：理由里固定带一句、origin.novelty_scope = "library"；
+- 新颖性只对照文献库：origin.novelty_scope = "library"，界面据此说明，理由里不重复；
+  写给人看的提示不让模型提字段名；
 - 与课题里已有的想法去重；重放这一步不重复写；
 - 库里可检索的论文少于 5 篇时不建任务（409 LIBRARY_TOO_SMALL）。
 """
@@ -44,6 +45,32 @@ def _node(seq, *, parent=None, status="open", score=0.2, support=True, kind="hyp
         score=score,
         grounding=[{"subclaim": "s", "stance": stance, "paper_ids": ["p"] if support else []}],
     )
+
+
+def test_rationale_does_not_repeat_the_library_caveat():
+    """真实模型照着旧提示写过的样子：说明自成一句或在括号里，都删掉，别的话原样留着。"""
+    strip = actions_discovery.strip_scope_caveat
+    assert strip("库内未见相同提法，6 条里 3 条新颖。新颖性只对照了你的文献库判断。") == (
+        "库内未见相同提法，6 条里 3 条新颖。"
+    )
+    assert strip("查新显示 3/6 新颖（仅对照用户文献库），提升 0.5 个点。") == (
+        "查新显示 3/6 新颖，提升 0.5 个点。"
+    )
+    assert strip("Three of six parts look new. Novelty is judged against your library only.") == (
+        "Three of six parts look new."
+    )
+    assert strip("Solid support from 4 papers.") == "Solid support from 4 papers."
+
+
+def test_writeup_and_risk_prompts_forbid_field_names_and_the_caveat():
+    """写给人看的那几段：提示明确不许提字段名、不许写「signals 显示」，也不再要求写
+    「只对照文献库」那句。"""
+    prompt = actions_discovery.WRITEUP_SYSTEM_PROMPT
+    assert "说明新颖性只对照了用户的文献库" not in prompt
+    for name in ("support_ratio", "novel_ratio", "risk_note", "signals 显示"):
+        assert name in prompt.split("7. rationale", 1)[1]
+    for system in (pipeline.FEASIBILITY_SYSTEM_PROMPT, pipeline.JUDGE_SYSTEM_PROMPT):
+        assert "字段名" in system
 
 
 def test_selection_prefers_leaves_and_skips_root_pruned_and_unsupported():
@@ -166,9 +193,9 @@ async def test_discovery_writes_surviving_hypotheses_as_ideas(client, queue_stub
         chunk = await session.get(PaperChunk, uuid.UUID(entry["chunk_id"]))
     assert chunk.text[entry["match_start"] : entry["match_end"]] == entry["snippet"]
     assert [str(p) for p in idea.parent_paper_ids] == supported["paper_ids"]
-    # 新颖性只对照文献库：理由里固定带这一句
+    # 新颖性只对照文献库：界面按 origin.novelty_scope 说明，理由里不重复这一句
     assert idea.scores == {"novelty": 6, "feasibility": 7, "operability": 6, "impact": 5}
-    assert idea.score_rationale["novelty"].endswith("新颖性只对照你的文献库判断。")
+    assert idea.score_rationale["novelty"] == "（fake）库内未见相同提法"
     # 正文：四段 + 末尾逐字单列没有依据的子命题
     assert [line for line in idea.content.splitlines() if line.startswith("## ")] == [
         "## 动机",
