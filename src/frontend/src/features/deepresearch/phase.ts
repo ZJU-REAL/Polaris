@@ -211,7 +211,7 @@ export function runReason(run: ResearchRunRead): string {
   return run.status === 'needs_attention' ? attentionText(run.attention) : '';
 }
 
-/** 每一段右上角的状态词；pending 不写字（留白比「未开始」安静）。 */
+/** 每一段标题旁的状态词；pending 不写字（留白比「未开始」安静），done 也不写（轨道上已经打了勾）。 */
 export function sectionStateLabel(state: SectionState): { tone: Tone; label: string } | null {
   switch (state) {
     case 'running':
@@ -222,8 +222,6 @@ export function sectionStateLabel(state: SectionState): { tone: Tone; label: str
       return { tone: 'warn', label: tr('等你处理', 'Waiting for you') };
     case 'attention':
       return { tone: 'warn', label: tr('需要处理', 'Needs attention') };
-    case 'done':
-      return { tone: 'ok', label: tr('已完成', 'Done') };
     case 'stopped':
       return { tone: 'idle', label: tr('已停止', 'Stopped') };
     default:

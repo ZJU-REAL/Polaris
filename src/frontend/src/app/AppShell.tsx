@@ -17,6 +17,7 @@ import { PAPER_DND_MIME } from '../features/assistant/paperDrag';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
 import { api, getToken, isLabScopedTask, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
+import { researchApi } from '../lib/researchApi';
 import { tr, useLang } from '../lib/i18n';
 import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
@@ -43,6 +44,9 @@ const NAV_GROUPS = {
   topic: { zh: '课题研究', en: 'Topic' },
   personal: { zh: '个人', en: 'Personal' },
 } as const;
+
+// 研究：一句方向开始的整条流程（范围 → 文献 → 想法），放在侧栏最上面，是打开应用后的第一站
+const NAV_RESEARCH: NavEntry = { to: '/research', icon: 'compass', zh: '研究', en: 'Research' };
 
 // 文献区导航：跨课题的公共资产。/lab 的数据面板（索引统计/用量/跨库图谱）
 // 随 #626 移除，该路由只剩课题外的任务列表，条目名跟着改
@@ -98,12 +102,19 @@ function crumbsFor(
   pid: string | null,
   libName?: string | null,
   labTask?: boolean,
+  researchName?: string | null,
 ): Crumb[] {
+  // —— 研究：/research 与 /research/:id。要先于下面的课题作用域匹配——
+  // 去掉 /t/<id> 前缀后的「相关研究」也叫 /research，两者只差有没有前缀。
+  const research: Crumb = { label: tr(NAV_RESEARCH.zh, NAV_RESEARCH.en), to: '/research' };
+  if (pathname === '/research') return [{ label: research.label }];
+  if (pathname.startsWith('/research/')) return [research, { label: researchName || tr('研究进展', 'Progress') }];
+
   // 文献组的落地页是文献库列表：/lab 只剩任务列表（#626），不再是这组的门面
   const literature: Crumb = { label: tr(NAV_GROUPS.literature.zh, NAV_GROUPS.literature.en), to: '/libraries' };
   const topic: Crumb = {
     label: tr(NAV_GROUPS.topic.zh, NAV_GROUPS.topic.en),
-    to: pid ? topicPath(pid) : '/start',
+    to: pid ? topicPath(pid) : '/research',
   };
   const personal: Crumb = { label: tr(NAV_GROUPS.personal.zh, NAV_GROUPS.personal.en), to: '/library' };
   const e = (key: string) => navCrumb(key, pid);
@@ -369,7 +380,9 @@ function NavItem({ n }: { n: NavEntry }) {
     <NavLink
       to={to}
       end={end}
-      className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
+      // 没有当前课题时，课题作用域条目退回的旧路径可能撞上别的页面（/research 现在是「研究」首页），
+      // 这时不该跟着高亮
+      className={({ isActive }) => 'nav-item' + (isActive && (n.to != null || !!currentProjectId) ? ' active' : '')}
       title={tr(n.zh, n.en)}
     >
       <span className="nav-ic">
@@ -717,11 +730,21 @@ export function AppShell() {
     retry: false,
     staleTime: 60_000,
   });
+  // 研究时间线：面包屑最后一段是课题名，与页面用同一份缓存
+  const crumbResearchId = /^\/research\/([^/]+)$/.exec(location.pathname)?.[1] ?? null;
+  const { data: crumbResearch } = useQuery({
+    queryKey: ['research', crumbResearchId],
+    queryFn: () => researchApi.getRun(crumbResearchId ?? ''),
+    enabled: !!crumbResearchId,
+    retry: false,
+    staleTime: 60_000,
+  });
   const crumbs = crumbsFor(
     location.pathname,
     currentProjectId,
     crumbLibrary?.name,
     crumbVoyage ? isLabScopedTask(crumbVoyage) : false,
+    crumbResearch?.name,
   );
 
   // —— 刷新：让所有查询失效并重取（保留页面状态，不整页重载） ——
@@ -758,6 +781,9 @@ export function AppShell() {
         {/* —— 文献 + 课题研究两组（平面分组，只靠 eyebrow + 间距区分，不加分隔线）。
             放在滚动区之外：课题切换器的下拉菜单要能向右溢出到主列上 —— */}
         <div className="sb-nav-static">
+          <div style={{ paddingTop: 10 }}>
+            <NavItem n={NAV_RESEARCH} />
+          </div>
           <div className="sb-section">{tr(NAV_GROUPS.literature.zh, NAV_GROUPS.literature.en)}</div>
           {NAV_LITERATURE.map((n) => (
             <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />

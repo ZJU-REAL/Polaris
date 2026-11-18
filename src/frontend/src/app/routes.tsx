@@ -32,7 +32,7 @@ function PageFallback() {
 }
 
 /**
- * 课题作用域路由守卫：确认没有任何课题时统一重定向到 /start，
+ * 课题作用域路由守卫：确认没有任何课题时统一重定向到 /research，
  * 替代各页面重复的「还没有课题」空态。加载中渲染骨架（不闪跳）；
  * 加载失败（后端不可用）放行，由页面自身优雅降级。
  * 透传 AppShell 的 Outlet context，子页面 useShell() 不受影响。
@@ -41,7 +41,7 @@ function RequireTopic() {
   const { projects, isLoading, isError } = useProject();
   const ctx = useOutletContext();
   if (isLoading) return <PageFallback />;
-  if (!isError && projects.length === 0) return <Navigate to="/start" replace />;
+  if (!isError && projects.length === 0) return <Navigate to="/research" replace />;
   return <Outlet context={ctx} />;
 }
 
@@ -49,7 +49,7 @@ function RequireTopic() {
  * /t/:topicId 布局路由：URL 是课题作用域的事实源。
  * - URL 中的课题在列表里 → 同步给 ProjectProvider（含写 localStorage），子页面照常用
  *   useProject().currentProjectId 拉数据；
- * - 列表加载完但 URL 课题不存在 → 重定向 /start；
+ * - 列表加载完但 URL 课题不存在 → 重定向 /research；
  * - 列表加载中 / context 尚未同步 → 渲染骨架（不闪现上一个课题的数据）；
  * - 列表加载失败（后端不可用）→ 信任 URL 放行，页面自身降级。
  */
@@ -64,14 +64,14 @@ function TopicScope() {
   }, [topicId, known, isError, currentProjectId, setCurrentProjectId]);
 
   if (isLoading) return <PageFallback />;
-  if (!known && !isError) return <Navigate to="/start" replace />;
+  if (!known && !isError) return <Navigate to="/research" replace />;
   if (topicId !== currentProjectId) return <PageFallback />;
   return <Outlet context={ctx} />;
 }
 
 /**
  * 旧课题域路径（/、/wiki、/forge…）重定向：收藏夹 / 刷新兼容。
- * localStorage 记住的课题（仍在列表中）优先，否则列表第一个；都没有 → /start。
+ * localStorage 记住的课题（仍在列表中）优先，否则列表第一个；都没有 → /research。
  * 列表加载失败时信任 localStorage 里的 id（页面自身降级）。
  */
 function LegacyTopicRedirect({ sub }: { sub?: string }) {
@@ -80,7 +80,7 @@ function LegacyTopicRedirect({ sub }: { sub?: string }) {
   if (isLoading) return <PageFallback />;
   const remembered = currentProjectId && projects.some((p) => p.id === currentProjectId) ? currentProjectId : null;
   const id = remembered ?? projects[0]?.id ?? (isError ? currentProjectId : null);
-  if (!id) return <Navigate to="/start" replace />;
+  if (!id) return <Navigate to="/research" replace />;
   // 保留查询串与锚点（如 /wiki?paper=xxx）
   return <Navigate to={topicPath(id, sub) + location.search + location.hash} replace />;
 }
@@ -113,7 +113,7 @@ export const router = createBrowserRouter([
       </RequireAuth>
     ),
     children: [
-      // —— 课题作用域路由：没有任何课题时统一重定向到 /start ——
+      // —— 课题作用域路由：没有任何课题时统一重定向到 /research ——
       {
         element: <RequireTopic />,
         children: [
@@ -141,9 +141,8 @@ export const router = createBrowserRouter([
           { path: 'experiment/:id', element: page(() => import('../features/experiment/ExperimentDetailPage'), 'ExperimentDetailPage') },
           { path: 'writer/:id', element: page(() => import('../features/writer/WriterEditorPage'), 'WriterEditorPage') },
           // 旧路径重定向：跳到当前课题下的同名子页面
-          { index: true, element: <LegacyTopicRedirect /> },
           { path: 'wiki', element: <LegacyTopicRedirect sub="wiki" /> },
-          { path: 'research', element: <LegacyTopicRedirect sub="research" /> },
+          // 旧的 /research（相关研究）不再重定向：这个路径现在是「研究」首页
           { path: 'forge', element: <LegacyTopicRedirect sub="forge" /> },
           { path: 'review', element: <LegacyTopicRedirect sub="review" /> },
           { path: 'experiment', element: <LegacyTopicRedirect sub="experiment" /> },
@@ -153,13 +152,16 @@ export const router = createBrowserRouter([
         ],
       },
       // —— 非课题作用域 ——
+      // 研究：打开应用的第一站。一句方向开始，时间线上看进展；`/` 与旧的 `/start` 都到这里
+      { index: true, element: <Navigate to="/research" replace /> },
+      { path: 'research', element: page(() => import('../features/deepresearch/ResearchHomePage'), 'ResearchHomePage') },
       // 阅读页按论文 id 取数，文献库 / 每日新论文的论文都可读，与课题无关：
       // 放在守卫外，否则没有任何课题的用户点「阅读原文」会被重定向去建课题。
       { path: 'papers/:id/read', element: page(() => import('../features/reading/ReadingPage'), 'ReadingPage') },
       // 概念页同理按 id 取数：概念是论文级的平台实体，不属于任何课题；
       // `?library=` 可选，带上就只列该库里关联的论文（从库的上下文点进来时带）。
       { path: 'concepts/:id', element: page(() => import('../features/wiki/ConceptPage'), 'ConceptPage') },
-      { path: 'start', element: page(() => import('../features/start/StartPage'), 'StartPage') },
+      { path: 'start', element: <Navigate to="/research" replace /> },
       { path: 'projects/new', element: page(() => import('../features/projects/ProjectWizardPage'), 'ProjectWizardPage') },
       // 课题设置已并入工作台「课题设置」标签：/projects/:id → /t/:id?tab=settings
       { path: 'projects/:id', element: <ProjectSettingsRedirect /> },
