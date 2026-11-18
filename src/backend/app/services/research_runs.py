@@ -27,7 +27,7 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -92,6 +92,9 @@ Enqueue = Callable[..., Awaitable[Any]]
 BRIEF_STAGE = "research_brief"
 # 确定范围最多试这么多次（每分钟的定时任务各试一次），之后停下来等用户点重试
 MAX_PLAN_ATTEMPTS = 3
+# 临时故障（模型服务忙、连不上）时等多久再试：与任务的自动重试同一节奏（1/5/20 分钟）。
+# 共享的模型网关常会整段没有空闲账号，三次连着试只覆盖一两分钟，等于没试
+PLAN_RETRY_DELAYS = (timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=20))
 # 寻找假设默认探索几轮（每轮最多 4 个新假设）
 DISCOVERY_ROUNDS = 4
 # 没带幂等键时：同一个人 60 秒内提交同样的方向，算同一次（双击、重发）
@@ -161,6 +164,7 @@ class ChildFacts:
 class Facts:
     plan_attempts: int = 0
     plan_error: dict[str, Any] | None = None
+    plan_retry_due: bool = True  # 临时故障后的等待时间已到（没有等待时恒为真）
     child: ChildFacts | None = None
     papers_found: int = 0  # 文献库里的全部条目（含候选和被排除的）
     papers_kept: int = 0  # 留在库里的
@@ -273,9 +277,18 @@ def decide(phase: str, status: str, facts: Facts) -> Decision:
         return Decision("none", phase, "cancelled")
 
     if phase == "plan":
-        fatal = bool((facts.plan_error or {}).get("fatal"))
-        if fatal or facts.plan_attempts >= MAX_PLAN_ATTEMPTS:
-            return _needs("plan", _plan_attention(facts.plan_error))
+        error = facts.plan_error or {}
+        if error.get("fatal"):
+            return _needs("plan", _plan_attention(error))
+        if error.get("transient"):
+            # 临时故障：按 1/5/20 分钟再试，三次重试都失败才停下来
+            if facts.plan_attempts > len(PLAN_RETRY_DELAYS):
+                return _needs("plan", _plan_attention(error))
+            if not facts.plan_retry_due:
+                return Decision("none", "plan", "running")
+            return Decision("plan", "plan", "running")
+        if facts.plan_attempts >= MAX_PLAN_ATTEMPTS:
+            return _needs("plan", _plan_attention(error))
         return Decision("plan", "plan", "running")
 
     if phase in ("survey", "hypotheses"):
@@ -389,6 +402,19 @@ async def _idea_counts(session: AsyncSession, project_id: uuid.UUID) -> tuple[in
     return total, picked
 
 
+def plan_retry_at(attempts: int, error: dict[str, Any] | None) -> datetime | None:
+    """确定范围因临时故障失败后，下一次该在什么时候试；不用等（或不再试）时为 None。"""
+    if not error or not error.get("transient") or attempts < 1 or attempts > len(PLAN_RETRY_DELAYS):
+        return None
+    try:
+        failed_at = datetime.fromisoformat(str(error.get("at")))
+    except ValueError:
+        return None
+    if failed_at.tzinfo is None:
+        failed_at = failed_at.replace(tzinfo=UTC)
+    return failed_at + PLAN_RETRY_DELAYS[attempts - 1]
+
+
 async def gather_facts(session: AsyncSession, run: ResearchRun) -> Facts:
     plan = _phase_state(run, "plan")
     child = None
@@ -401,9 +427,13 @@ async def gather_facts(session: AsyncSession, run: ResearchRun) -> Facts:
         unscreened = counts["candidate"]
         indexed = await voyages_service.indexed_library_paper_count(session, run.library_id)
     ideas, picked = await _idea_counts(session, run.project_id)
+    plan_error = plan.get("last_error") if isinstance(plan.get("last_error"), dict) else None
+    plan_attempts = int(plan.get("attempts", 0) or 0)
+    due_at = plan_retry_at(plan_attempts, plan_error)
     return Facts(
-        plan_attempts=int(plan.get("attempts", 0) or 0),
-        plan_error=plan.get("last_error") if isinstance(plan.get("last_error"), dict) else None,
+        plan_attempts=plan_attempts,
+        plan_error=plan_error,
+        plan_retry_due=due_at is None or utcnow() >= due_at,
         child=child,
         papers_found=found,
         papers_kept=kept,
@@ -1673,6 +1703,10 @@ async def to_detail(
             )
     elif run.phase == "plan" and isinstance(_phase_state(run, "plan").get("last_error"), dict):
         raw = _phase_state(run, "plan")["last_error"]
+        attempts = int(_phase_state(run, "plan").get("attempts", 0) or 0)
+        if run.status == "running":
+            next_retry_at = plan_retry_at(attempts, raw)
+            retry_attempt = attempts if next_retry_at is not None else 0
         last_error = LastErrorRead(
             code=str(raw.get("code") or "PLAN_FAILED"),
             message=str(raw.get("message") or ""),

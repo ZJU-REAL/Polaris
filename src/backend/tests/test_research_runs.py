@@ -9,7 +9,9 @@
 - 手动节奏的库不进每日自动同步。
 """
 
+import copy
 import uuid
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import fakeredis.aioredis
@@ -70,11 +72,33 @@ DECIDE_TABLE = [
         ("plan", "plan", "running", None),
     ),
     (
-        "plan：试了三次都不行 → 需要处理（连不上模型）",
+        "plan：临时故障，三次间隔重试都不行 → 需要处理（连不上模型）",
         "plan",
         "running",
-        Facts(plan_attempts=3, plan_error={"code": "NETWORK", "transient": True}),
+        Facts(plan_attempts=4, plan_error={"code": "NETWORK", "transient": True}),
         ("none", "plan", "needs_attention", "LLM_UNREACHABLE"),
+    ),
+    (
+        "plan：临时故障，还没到下一次的时间 → 等着，仍算在跑",
+        "plan",
+        "running",
+        Facts(
+            plan_attempts=3,
+            plan_error={"code": "UPSTREAM_UNAVAILABLE", "transient": True},
+            plan_retry_due=False,
+        ),
+        ("none", "plan", "running", None),
+    ),
+    (
+        "plan：临时故障，到时间了 → 再去确定范围",
+        "plan",
+        "running",
+        Facts(
+            plan_attempts=1,
+            plan_error={"code": "UPSTREAM_UNAVAILABLE", "transient": True},
+            plan_retry_due=True,
+        ),
+        ("plan", "plan", "running", None),
     ),
     (
         "plan：密钥不对 → 不等三次，直接需要处理",
@@ -795,25 +819,50 @@ def failing_llm():
     reset_llm_router()
 
 
-async def test_planning_retries_three_times_then_needs_attention(client, queue_stub, failing_llm):
+async def _backdate_plan_failure(run_id: str, minutes: int) -> None:
+    """把上一次确定范围失败的时间往前拨，模拟等待时间已过。"""
+    async with get_sessionmaker()() as session:
+        run = await session.get(ResearchRun, uuid.UUID(run_id))
+        phases = copy.deepcopy(run.phases)
+        at = datetime.fromisoformat(phases["plan"]["last_error"]["at"])
+        phases["plan"]["last_error"]["at"] = (at - timedelta(minutes=minutes)).isoformat()
+        run.phases = phases
+        await session.commit()
+
+
+async def test_planning_backs_off_on_a_busy_model_then_needs_attention(
+    client, queue_stub, failing_llm
+):
+    """模型服务忙（共享网关没有空闲账号）：按 1/5/20 分钟再试，等待期间不重复调用，
+    三次重试都失败才停下来；用户点重试后清零重来。"""
     headers = await _login(client)
     run_id = (
         await client.post("/api/research", json={"direction": DIRECTION}, headers=headers)
     ).json()["id"]
     provider = failing_llm
-    for attempt in (1, 2):
-        provider.fail_next(LLMOverloadedError("overloaded"))
-        run = await _advance(run_id, queue_stub)
-        assert (run.phase, run.status) == ("plan", "running")  # 等下一次对账再试
-        assert run.phases["plan"]["attempts"] == attempt
-        assert run.phases["plan"]["last_error"]["transient"] is True
     provider.fail_next(LLMOverloadedError("overloaded"))
     run = await _advance(run_id, queue_stub)
+    assert (run.phase, run.status) == ("plan", "running")
+    assert run.phases["plan"]["attempts"] == 1
+    assert run.phases["plan"]["last_error"]["transient"] is True
+
+    # 还没到下一次的时间：对账不去调模型，次数不涨；详情里能看到何时再试
+    run = await _advance(run_id, queue_stub)
+    assert run.phases["plan"]["attempts"] == 1 and run.status == "running"
+    detail = (await client.get(f"/api/research/{run_id}", headers=headers)).json()
+    assert detail["next_retry_at"] is not None and detail["retry_attempt"] == 1
+
+    for attempt, wait in ((2, 1), (3, 5), (4, 20)):
+        await _backdate_plan_failure(run_id, wait)
+        provider.fail_next(LLMOverloadedError("overloaded"))
+        run = await _advance(run_id, queue_stub)
+        assert run.phases["plan"]["attempts"] == attempt
     assert run.status == "needs_attention"
     assert run.attention["code"] == "LLM_UNREACHABLE" and run.attention["action"] == "retry"
     # 需要处理之后对账不再自己去试
+    await _backdate_plan_failure(run_id, 60)
     run = await _advance(run_id, queue_stub)
-    assert run.phases["plan"]["attempts"] == 3 and run.status == "needs_attention"
+    assert run.phases["plan"]["attempts"] == 4 and run.status == "needs_attention"
     async with get_sessionmaker()() as session:
         assert (await session.execute(select(VoyageRun))).scalars().all() == []
 
@@ -1381,3 +1430,19 @@ async def test_survey_does_not_finish_when_no_paper_could_be_screened(
     monkeypatch.setattr(FakeProvider, "_respond_relevance", staticmethod(real))
     await worker_tasks.resume_voyage(_ctx(queue_stub), survey_id)
     assert (await _run_row(run_id)).phase == "hypotheses"
+
+
+def test_plan_retry_waits_one_five_twenty_minutes_after_a_transient_failure():
+    """共享网关常整段没有空闲账号：确定范围失败后按 1/5/20 分钟再试，而不是一分钟内连试三次。"""
+    from datetime import UTC, datetime, timedelta
+
+    from app.services.research_runs import plan_retry_at
+
+    at = datetime(2026, 11, 19, 3, 0, tzinfo=UTC)
+    err = {"code": "UPSTREAM_UNAVAILABLE", "transient": True, "at": at.isoformat()}
+    assert plan_retry_at(1, err) == at + timedelta(minutes=1)
+    assert plan_retry_at(2, err) == at + timedelta(minutes=5)
+    assert plan_retry_at(3, err) == at + timedelta(minutes=20)
+    assert plan_retry_at(4, err) is None  # 重试用完：停下来等用户
+    assert plan_retry_at(1, {**err, "transient": False}) is None
+    assert plan_retry_at(1, {**err, "at": "not a time"}) is None
