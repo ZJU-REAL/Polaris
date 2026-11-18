@@ -174,9 +174,20 @@ async def test_forge_full_pipeline(client, queue_stub):
         "created_at",
         "source_voyage_id",
         "origin",
+        "evidence_counts",
     }
-    # 想法生成写的想法没有「来自哪次探索」
-    assert all(i["source_voyage_id"] is None and i["origin"] is None for i in items)
+    # 想法生成写的想法也记着是哪次任务写的（来路不用猜）；origin 是假设探索专有的说明
+    assert all(i["source_voyage_id"] == run_id and i["origin"] is None for i in items)
+    # 依据计数和研究详情同一个算法：按论文去重；想法生成的依据没有立场，都算支持
+    for item in items:
+        full = (await client.get(f"/api/ideas/{item['id']}", headers=headers)).json()
+        cited = {e["paper_id"] for e in full["evidence"] or [] if e.get("paper_id")}
+        assert item["evidence_counts"] == {
+            "support": len(cited),
+            "refute": 0,
+            "unsupported": 0,
+        }
+        assert full["evidence_counts"] == item["evidence_counts"]
     assert all(i["depth"] == "sketch" for i in items)
     for sort in ("elo", "-created_at", "score"):
         resp = await client.get(f"/api/projects/{project_id}/ideas?sort={sort}", headers=headers)
@@ -203,6 +214,41 @@ async def test_forge_full_pipeline(client, queue_stub):
     assert state["last_run"]["finished_at"]
     counts = state["idea_counts"]
     assert counts["candidate"] == 2 and counts["total"] == 2
+
+
+async def test_idea_list_carries_evidence_counts(client):
+    """想法列表每条带依据计数——和研究详情同一个算法：按论文去重，没写立场算支持，
+    没有 paper_id 的依据（库外线索）不算论文，无依据子命题数取自 origin。"""
+    project_id, headers = await _setup_project(client)
+    p1, p2, p3 = (str(uuid.uuid4()) for _ in range(3))
+    async with get_sessionmaker()() as session:
+        session.add(
+            Idea(
+                project_id=uuid.UUID(project_id),
+                title="带依据的想法",
+                status="candidate",
+                evidence=[
+                    {"paper_id": p1, "title": "A", "stance": "support"},
+                    {"paper_id": p1, "title": "A again", "stance": "support"},
+                    {"paper_id": p2, "title": "B"},
+                    {"paper_id": p3, "title": "C", "stance": "refute"},
+                    {"paper_id": None, "title": "库外线索"},
+                ],
+                origin={"kind": "discovery", "unsupported_subclaims": ["s1", "s2"]},
+            )
+        )
+        session.add(Idea(project_id=uuid.UUID(project_id), title="没依据的想法"))
+        await session.commit()
+
+    items = (await client.get(f"/api/projects/{project_id}/ideas", headers=headers)).json()
+    counts = {i["title"]: i["evidence_counts"] for i in items}
+    assert counts["带依据的想法"] == {"support": 2, "refute": 1, "unsupported": 2}
+    assert counts["没依据的想法"] == {"support": 0, "refute": 0, "unsupported": 0}
+    # 排行榜和详情用的是同一个读模型，数也得一样
+    board = (
+        await client.get(f"/api/projects/{project_id}/review/leaderboard", headers=headers)
+    ).json()
+    assert {i["title"]: i["evidence_counts"] for i in board} == counts
 
 
 async def test_forge_dedup_drops_duplicates(client, queue_stub):

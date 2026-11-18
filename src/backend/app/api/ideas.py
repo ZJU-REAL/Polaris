@@ -168,7 +168,7 @@ async def list_ideas(
         sort=sort,
         trashed=trashed,
     )
-    return [IdeaRead.model_validate(i) for i in ideas]
+    return [ideas_service.to_read(i) for i in ideas]
 
 
 @router.delete("/ideas/{idea_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -198,7 +198,7 @@ async def restore_idea(
     await _member_project(session, idea.project_id, user)
     await ideas_service.restore_ideas(session, project_id=idea.project_id, ids=[idea.id])
     await session.refresh(idea)
-    return IdeaRead.model_validate(idea)
+    return ideas_service.to_read(idea)
 
 
 @router.post("/projects/{project_id}/ideas/batch", response_model=BatchResult)
@@ -239,7 +239,7 @@ async def get_idea(
     parents = await ideas_service.parent_papers_brief(session, idea)
     seed_idea = await ideas_service.seed_idea_brief(session, idea)
     return IdeaDetail(
-        **IdeaRead.model_validate(idea).model_dump(),
+        **ideas_service.to_read(idea).model_dump(),
         content=idea.content,
         parent_paper_ids=ideas_service.parse_parent_ids(idea),
         parent_papers=parents,
@@ -265,7 +265,7 @@ async def update_idea(
         user.id,
         {"type": "idea.status", "idea_id": str(idea.id), "status": idea.status},
     )
-    return IdeaRead.model_validate(idea)
+    return ideas_service.to_read(idea)
 
 
 @router.post("/ideas/{idea_id}/promote", response_model=IdeaRead)
@@ -282,7 +282,7 @@ async def promote_idea(
         user.id,
         {"type": "idea.status", "idea_id": str(idea.id), "status": idea.status},
     )
-    return IdeaRead.model_validate(idea)
+    return ideas_service.to_read(idea)
 
 
 # ---- 评审锦标赛 ----
@@ -323,7 +323,7 @@ async def get_leaderboard(
 ) -> list[IdeaLeaderboardEntry]:
     await _member_project(session, project_id, user)
     ideas = await ideas_service.list_ideas(session, project_ids=[project_id], sort="elo")
-    return [IdeaLeaderboardEntry.model_validate(i) for i in ideas]
+    return [ideas_service.to_read(i, IdeaLeaderboardEntry) for i in ideas]
 
 
 @router.get("/projects/{project_id}/review/tournament/latest")

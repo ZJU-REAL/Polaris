@@ -491,6 +491,11 @@
         "why": "机制假设（fake A）：structured agent planning；父假设：围绕「stru 的机制子命题（fake s1）"
       }
     ],
+    "evidence_counts": {
+      "refute": 0,
+      "support": 1,
+      "unsupported": 1
+    },
     "goal": null,
     "id": "<uuid-14>",
     "origin": {
@@ -541,6 +546,11 @@
       "created_at": "<ts>",
       "depth": "sketch",
       "elo_rating": 1200.0,
+      "evidence_counts": {
+        "refute": 0,
+        "support": 1,
+        "unsupported": 1
+      },
       "id": "<uuid-15>",
       "origin": {
         "kind": "discovery",
@@ -573,6 +583,11 @@
       "created_at": "<ts>",
       "depth": "sketch",
       "elo_rating": 1200.0,
+      "evidence_counts": {
+        "refute": 0,
+        "support": 1,
+        "unsupported": 1
+      },
       "id": "<uuid-14>",
       "origin": {
         "kind": "discovery",

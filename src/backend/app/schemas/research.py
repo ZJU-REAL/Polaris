@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.idea import EvidenceCounts
 from app.schemas.voyage import VoyageMessageRead
 
 # ---- 检索简报 ----
@@ -228,12 +229,6 @@ class HypothesesRead(BaseModel):
     max_rounds: int = 0
     node_count: int = 0  # 树上的假设数
     usage: UsageRead = Field(default_factory=UsageRead)
-
-
-class EvidenceCounts(BaseModel):
-    support: int = 0  # 支持它的论文数
-    refute: int = 0  # 反对它的论文数
-    unsupported: int = 0  # 没有文献依据的子命题数
 
 
 class ResearchIdea(BaseModel):

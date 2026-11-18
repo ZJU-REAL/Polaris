@@ -15,11 +15,39 @@ from app.models.library_direction import LibraryPaper
 from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project
 from app.models.voyage import IN_FLIGHT_STATUSES, TERMINAL_STATUSES, VoyageRun
-from app.schemas.idea import DeepIdeaRequest, ForgeKnobs
+from app.schemas.idea import DeepIdeaRequest, EvidenceCounts, ForgeKnobs, IdeaRead
 from app.schemas.review import TournamentRequest
 from app.services.concepts import library_concept_ids
 from app.services.libraries import get_source_library_ids
 from app.services.projects import in_my_projects
+
+
+def evidence_counts(idea: Idea) -> EvidenceCounts:
+    """一个想法的依据计数：支持/反对它的论文各几篇（按论文去重），没有文献依据的
+    子命题几条。想法列表和研究详情都用这一个算法，两处的数才对得上。"""
+    support: set[str] = set()
+    refute: set[str] = set()
+    for entry in idea.evidence or []:
+        if not isinstance(entry, dict) or not entry.get("paper_id"):
+            continue
+        if entry.get("stance") == "refute":
+            refute.add(str(entry["paper_id"]))
+        else:  # 想法生成写的依据没有立场字段：都算支持
+            support.add(str(entry["paper_id"]))
+    origin = idea.origin if isinstance(idea.origin, dict) else {}
+    unsupported = origin.get("unsupported_subclaims")
+    return EvidenceCounts(
+        support=len(support),
+        refute=len(refute),
+        unsupported=len(unsupported) if isinstance(unsupported, list) else 0,
+    )
+
+
+def to_read[T: IdeaRead](idea: Idea, schema: type[T] = IdeaRead) -> T:
+    """Idea 行 → 读模型（IdeaRead 或它的子类），带上算出来的依据计数。"""
+    out = schema.model_validate(idea)
+    out.evidence_counts = evidence_counts(idea)
+    return out
 
 # 同项目 idea 类 voyage 互斥（docs/task-system.md §7）
 IDEA_VOYAGE_KINDS = ("idea_forge", "idea_review", "idea_proposal")

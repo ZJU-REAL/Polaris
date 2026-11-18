@@ -914,6 +914,8 @@ async def forge_persist(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                 depth="sketch",
                 evidence=cand.get("evidence"),
                 parent_paper_ids=parent_paper_ids,
+                # 哪次任务写的：界面据此说明来路，不用靠「没有 origin 就是想法生成」去猜
+                source_voyage_id=ctx.run.id,
             )
             session.add(idea)
             await session.flush()

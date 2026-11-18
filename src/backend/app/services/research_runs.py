@@ -55,7 +55,6 @@ from app.schemas.ingest import IngestKnobs
 from app.schemas.project import ProjectCreate
 from app.schemas.research import (
     BriefDraft,
-    EvidenceCounts,
     HypothesesRead,
     LastErrorRead,
     ResearchAttention,
@@ -74,6 +73,7 @@ from app.schemas.research import (
 )
 from app.schemas.voyage import VoyageCreate, VoyageMessageRead
 from app.services import capabilities as capabilities_service
+from app.services import ideas as ideas_service
 from app.services import ingest as ingest_service
 from app.services import libraries as libraries_service
 from app.services import projects as projects_service
@@ -1551,25 +1551,6 @@ async def _hypotheses_read(session: AsyncSession, run: ResearchRun) -> Hypothese
     return out
 
 
-def _evidence_counts(idea: Idea) -> EvidenceCounts:
-    support: set[str] = set()
-    refute: set[str] = set()
-    for entry in idea.evidence or []:
-        if not isinstance(entry, dict) or not entry.get("paper_id"):
-            continue
-        if entry.get("stance") == "refute":
-            refute.add(str(entry["paper_id"]))
-        else:  # 想法生成写的依据没有立场字段：都算支持
-            support.add(str(entry["paper_id"]))
-    origin = idea.origin if isinstance(idea.origin, dict) else {}
-    unsupported = origin.get("unsupported_subclaims")
-    return EvidenceCounts(
-        support=len(support),
-        refute=len(refute),
-        unsupported=len(unsupported) if isinstance(unsupported, list) else 0,
-    )
-
-
 async def to_detail(
     session: AsyncSession, run: ResearchRun, *, user_id: uuid.UUID
 ) -> ResearchRunDetail:
@@ -1625,7 +1606,7 @@ async def to_detail(
                 summary=i.summary or "",
                 scores=i.scores,
                 status=i.status,
-                evidence_counts=_evidence_counts(i),
+                evidence_counts=ideas_service.evidence_counts(i),
                 origin=i.origin if isinstance(i.origin, dict) else None,
                 source_voyage_id=i.source_voyage_id,
                 created_at=i.created_at,

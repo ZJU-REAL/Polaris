@@ -96,6 +96,12 @@ class DeepStateRead(BaseModel):
 # ---- Idea 读写 ----
 
 
+class EvidenceCounts(BaseModel):
+    support: int = 0  # 支持它的论文数
+    refute: int = 0  # 反对它的论文数
+    unsupported: int = 0  # 没有文献依据的子命题数
+
+
 class IdeaRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -110,8 +116,11 @@ class IdeaRead(BaseModel):
     research_type: str | None  # method | benchmark | analysis | survey | application | theory
     trashed_at: datetime | None = None  # 非空即在回收站
     created_at: datetime
-    # 写出这个想法的任务（假设探索）；任务已删或不是任务写的为空
+    # 写出这个想法的任务（想法生成 / 深度生成 / 假设探索）；任务已删或不是任务写的为空
     source_voyage_id: uuid.UUID | None = None
+    # 依据计数，和研究详情里的想法是同一个算法（services.ideas.evidence_counts）。
+    # 由 services.ideas.to_read 填；直接 model_validate 得到的是全零
+    evidence_counts: EvidenceCounts = Field(default_factory=EvidenceCounts)
     # 来路说明，见 models/idea.py；novelty_scope="library" = 新颖性只对照了文献库
     origin: dict[str, Any] | None = None
 

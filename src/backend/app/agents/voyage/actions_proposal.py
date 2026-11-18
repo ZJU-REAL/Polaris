@@ -1199,6 +1199,7 @@ async def proposal_assemble(ctx: ActionContext, params: dict[str, Any]) -> dict[
             evidence=evidence,
             seed_idea_id=seed_idea_id,
             parent_paper_ids=[g["paper_id"] for g in goal.get("grounding") or []],
+            source_voyage_id=ctx.run.id,
         )
         session.add(idea)
         await session.flush()
