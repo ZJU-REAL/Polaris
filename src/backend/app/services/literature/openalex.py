@@ -21,22 +21,68 @@ _RATE_LIMIT_RETRIES = 2
 ARXIV_DOI_TEMPLATE = "10.48550/arXiv.{arxiv_id}"
 
 
-_ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf)/([0-9]{4}\.[0-9]{4,5}|[a-z\-]+/[0-9]{7})", re.I)
-_ARXIV_DOI_RE = re.compile(r"^10\.48550/arxiv\.(.+)$", re.I)
+# arXiv 编号的两种形状：2002.08909 / hep-th/9901001、math.GT/0309136（末尾的版本号不要）
+_ARXIV_ID = r"(\d{4}\.\d{4,5}|[a-z][a-z\-]*(?:\.[a-z]{2})?/\d{7})"
+_ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf|html)/" + _ARXIV_ID, re.I)
+_ARXIV_DOI_RE = re.compile(r"10\.48550/arxiv\." + _ARXIV_ID, re.I)
+_ARXIV_BARE_RE = re.compile(r"^(?:arxiv:)?" + _ARXIV_ID + r"(?:v\d+)?$", re.I)
+_DOI_URL_RE = re.compile(r"(?:^|doi\.org/|doi:)(10\.\d{4,9}/\S+)$", re.I)
+
+
+def _locations(work: dict[str, Any]) -> list[dict[str, Any]]:
+    """这条 work 的全部收录位置：locations 列表，加上单独给出的主位置 / 最佳开放获取
+    位置（检索接口不一定把它们也放进 locations）。"""
+    raw = work.get("locations")
+    out = [loc for loc in (raw if isinstance(raw, list) else []) if isinstance(loc, dict)]
+    for key in ("primary_location", "best_oa_location"):
+        if isinstance(work.get(key), dict):
+            out.append(work[key])
+    return out
+
+
+def _link_texts(work: dict[str, Any]) -> list[str]:
+    """可能藏着标识的那些字符串：ids 里的各项、各收录位置的链接、开放获取链接。"""
+    texts: list[Any] = []
+    ids = work.get("ids")
+    if isinstance(ids, dict):
+        texts.extend(ids.values())
+    for loc in _locations(work):
+        texts.extend(loc.get(key) for key in ("landing_page_url", "pdf_url"))
+    open_access = work.get("open_access")
+    if isinstance(open_access, dict):
+        texts.append(open_access.get("oa_url"))
+    return [t for t in texts if isinstance(t, str) and t]
+
+
+def _doi_of(work: dict[str, Any]) -> str | None:
+    """这条 work 的 DOI：``doi`` 字段，没有就看 ``ids.doi`` 和各收录位置里指向
+    doi.org 的链接。"""
+    ids = work.get("ids")
+    candidates = [work.get("doi"), ids.get("doi") if isinstance(ids, dict) else None]
+    candidates.extend(
+        loc.get("landing_page_url")
+        for loc in _locations(work)
+        if "doi.org/" in str(loc.get("landing_page_url") or "").lower()
+    )
+    for raw in candidates:
+        if isinstance(raw, str) and (m := _DOI_URL_RE.search(raw.strip())):
+            return m.group(1)
+    return None
 
 
 def _arxiv_id_of(work: dict[str, Any], doi: str | None) -> str | None:
-    """这条 work 对应的 arXiv 编号（有的话）：DOI 是 arXiv 的 DataCite DOI，或者某个
-    收录位置的链接指向 arxiv.org。跨来源去重靠它认出「这是同一篇预印本」。"""
-    if doi and (m := _ARXIV_DOI_RE.match(doi)):
+    """这条 work 对应的 arXiv 编号（有的话，不带版本号）：DOI 是 arXiv 的 DataCite
+    DOI，``ids`` 里直接给了，或者某个收录位置 / 开放获取链接指向 arxiv.org。
+    跨来源去重靠它认出「这是同一篇预印本」。"""
+    if doi and (m := _ARXIV_DOI_RE.search(doi)):
         return m.group(1)
-    locations = work.get("locations")
-    for loc in locations if isinstance(locations, list) else []:
-        if not isinstance(loc, dict):
-            continue
-        for key in ("landing_page_url", "pdf_url"):
-            if isinstance(loc.get(key), str) and (m := _ARXIV_URL_RE.search(loc[key])):
-                return m.group(1)
+    ids = work.get("ids")
+    bare = ids.get("arxiv") if isinstance(ids, dict) else None
+    if isinstance(bare, str) and (m := _ARXIV_BARE_RE.match(bare.strip())):
+        return m.group(1)
+    for text in _link_texts(work):
+        if m := _ARXIV_URL_RE.search(text) or _ARXIV_DOI_RE.search(text):
+            return m.group(1)
     return None
 
 
@@ -60,7 +106,10 @@ def _simplify(work: dict[str, Any]) -> dict[str, Any]:
         if tokens:
             abstract = " ".join(token for _, token in sorted(tokens))
     raw_doi = work.get("doi")
-    doi = (raw_doi if isinstance(raw_doi, str) else "").removeprefix("https://doi.org/") or None
+    # 认不出形状的 DOI 照旧原样留着（只去掉链接前缀），不因为写法怪就丢掉
+    doi = _doi_of(work) or (
+        (raw_doi if isinstance(raw_doi, str) else "").removeprefix("https://doi.org/") or None
+    )
     authorships = work.get("authorships")
     authorships = (
         [a for a in authorships if isinstance(a, dict)] if isinstance(authorships, list) else []

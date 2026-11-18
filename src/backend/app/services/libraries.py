@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import Select, String, cast, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.library_direction import (
@@ -23,6 +23,14 @@ from app.models.library_direction import (
 from app.models.paper import CONCEPT_STATUS_ACTIVE, Concept, Paper, PaperWiki, paper_concepts
 from app.models.project import Project
 from app.models.user import User
+from app.services.dedup import (
+    PoolKey,
+    WorkRef,
+    first_author_name,
+    first_author_surname,
+    same_work,
+    title_keys,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +176,12 @@ async def find_pool_paper(
     doi: str | None = None,
     dedup_key: str | None = None,
 ) -> Paper | None:
-    """按 arxiv → doi → dedup_key 优先级查全局内容池（写路径「先查池」的统一入口）。"""
+    """按 arxiv → doi → dedup_key 优先级查全局内容池（写路径「先查池」的统一入口）。
+
+    三个硬键都没命中、而 ``dedup_key`` 是 :func:`app.services.dedup.pool_dedup_key`
+    算出来的（带着标题 / 年份 / 作者）时，再按「同一篇论文、标题写法不同」找一遍，
+    见 :func:`find_same_work`。
+    """
     if arxiv_id:
         stmt = select(Paper).where(Paper.arxiv_id == arxiv_id).limit(1)
         if (paper := (await session.execute(stmt)).scalars().first()) is not None:
@@ -179,7 +192,45 @@ async def find_pool_paper(
             return paper
     if dedup_key:
         stmt = select(Paper).where(Paper.dedup_key == dedup_key).limit(1)
-        return (await session.execute(stmt)).scalars().first()
+        if (paper := (await session.execute(stmt)).scalars().first()) is not None:
+            return paper
+    if isinstance(dedup_key, PoolKey) and dedup_key.title:
+        return await find_same_work(
+            session,
+            WorkRef(
+                title=dedup_key.title,
+                year=dedup_key.year,
+                authors=dedup_key.authors,
+                arxiv_id=arxiv_id or dedup_key.arxiv_id,
+            ),
+        )
+    return None
+
+
+async def find_same_work(session: AsyncSession, ref: WorkRef) -> Paper | None:
+    """池里有没有「同一篇论文、只是标题写法不同」的一行（判定见 dedup.same_work）。
+
+    arXiv 给的 "REALM: Retrieval-Augmented Language Model Pre-Training" 和 OpenAlex
+    收的会议版 "Retrieval Augmented Language Model Pre-Training"（没有 arXiv 号也
+    没有 DOI）标识对不上、标题哈希也对不上；不查这一层，同一篇就进池两次。
+
+    先在 SQL 里按年份（±1）圈出候选，首作者的姓是纯 ASCII 时再加一道姓的筛选，
+    然后逐行按规则核对。有多行符合时取最早入池的那行，结果不随查询顺序变。
+    """
+    author = first_author_surname(ref.authors)
+    if ref.year is None or author is None or not title_keys(ref.title)[0]:
+        return None
+    stmt = select(Paper.id, Paper.title, Paper.year, Paper.authors, Paper.arxiv_id).where(
+        Paper.year.between(ref.year - 1, ref.year + 1)
+    )
+    needle = author[0].split()[-1]
+    if needle.isascii() and needle.isalnum() and (first_author_name(ref.authors) or "").isascii():
+        # 作者存成 JSON；纯 ASCII 的姓在序列化后原样出现，可以直接按子串筛
+        stmt = stmt.where(func.lower(cast(Paper.authors, String)).like(f"%{needle}%"))
+    stmt = stmt.order_by(Paper.created_at, Paper.id)
+    for paper_id, title, year, authors, arxiv_id in (await session.execute(stmt)).all():
+        if same_work(ref, WorkRef(title=title, year=year, authors=authors, arxiv_id=arxiv_id)):
+            return await session.get(Paper, paper_id)
     return None
 
 

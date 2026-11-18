@@ -31,6 +31,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.core.llm.base import Message
+from app.services.dedup import WorkRef, same_work, title_keys
 
 logger = logging.getLogger(__name__)
 
@@ -404,6 +405,22 @@ def _keys(entry: dict[str, Any]) -> list[str]:
     return keys
 
 
+def _title_buckets(entry: dict[str, Any]) -> list[str]:
+    """同一篇论文的不同标题写法会共用的键（整题，以及去掉开头代号后的部分）。"""
+    return [k for k in title_keys(str(entry.get("title") or "")) if k]
+
+
+def _work_ref(entry: dict[str, Any]) -> WorkRef:
+    year = entry.get("year")
+    authors = entry.get("authors")
+    return WorkRef(
+        title=str(entry.get("title") or ""),
+        year=year if isinstance(year, int) and not isinstance(year, bool) else None,
+        authors=authors if isinstance(authors, list) else None,
+        arxiv_id=str(entry.get("arxiv_id") or "") or None,
+    )
+
+
 def _merge_entry(into: dict[str, Any], other: dict[str, Any]) -> None:
     """同一篇论文的两条记录合成一条：缺的补上，摘要取长的。"""
     for key, value in other.items():
@@ -439,6 +456,7 @@ def fuse(
     """把各来源、各查询的结果合并去重并打融合分，按分从高到低返回。"""
     excluded = [t.strip().lower() for t in (exclude or []) if str(t).strip()]
     by_key: dict[str, Candidate] = {}
+    by_title: dict[str, list[Candidate]] = {}
     ordered: list[Candidate] = []
     for source, entries in lists:
         seen_here: set[int] = set()
@@ -452,12 +470,28 @@ def fuse(
             keys = _keys(entry)
             found = next((by_key[k] for k in keys if k in by_key), None)
             if found is None:
+                # 标识和整题都对不上，再看是不是同一篇的另一种标题写法（开头多个代号、
+                # 连字符换成空格……），要年份和首作者也对得上才算
+                found = next(
+                    (
+                        cand
+                        for tk in _title_buckets(entry)
+                        for cand in by_title.get(tk, ())
+                        if same_work(_work_ref(entry), _work_ref(cand.entry))
+                    ),
+                    None,
+                )
+            if found is None:
                 found = Candidate(entry=dict(entry))
                 ordered.append(found)
             else:
                 _merge_entry(found.entry, entry)
             for k in (*keys, *_keys(found.entry)):
                 by_key.setdefault(k, found)
+            for tk in (*_title_buckets(entry), *_title_buckets(found.entry)):
+                bucket = by_title.setdefault(tk, [])
+                if all(cand is not found for cand in bucket):
+                    bucket.append(found)
             found.sources.add(source)
             if id(found) not in seen_here:  # 同一份结果里重复出现只算一次
                 seen_here.add(id(found))

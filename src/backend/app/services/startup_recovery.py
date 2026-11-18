@@ -15,6 +15,8 @@ running 的定时文献发现，会让 claim_due_schedules 对那个库永远报
 - Zotero 导入与全量导出的状态只在进程内 redis 里，随进程消失；留下的只有暂存目录，
   这里一并清掉。
 
+顺带把各库里已有的重复论文合并掉（paper_merge.merge_all_library_duplicates）。
+
 航程不在这里：reconcile_stuck_voyages 会把在途航程重新排上续跑。
 """
 
@@ -148,6 +150,17 @@ async def recover_interrupted_work() -> None:
             await reset_interrupted_work(session)
     except Exception:  # noqa: BLE001 — 收拾不了旧摊子不该让引擎起不来
         logger.warning("resetting interrupted work failed", exc_info=True)
+    # 库里已有的重复论文（同一篇以两种标题写法各进了一次）合并掉。放在启动时：此刻
+    # 没有任何任务在读写这些行；规则见 paper_merge.merge_library_duplicates，可重复跑
+    try:
+        from app.services.paper_merge import merge_all_library_duplicates
+
+        async with get_sessionmaker()() as session:
+            merged = await merge_all_library_duplicates(session)
+        if merged:
+            logger.info("merged %d duplicate paper(s) across libraries", merged)
+    except Exception:  # noqa: BLE001
+        logger.warning("merging duplicate papers failed", exc_info=True)
     try:
         removed = await asyncio.to_thread(_clear_staging_dirs, Path(get_settings().data_dir))
         if removed:
