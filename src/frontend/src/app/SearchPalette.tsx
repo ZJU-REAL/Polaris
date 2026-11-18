@@ -5,6 +5,7 @@ import { Icon, type IconName } from '../components/ui/Icon';
 import { PaperStatusPill, StatusPill } from '../components/ui/StatusPill';
 import { api, type GlobalSearchHit, type GlobalSearchHitType } from '../lib/api';
 import { tr } from '../lib/i18n';
+import { plainSummary } from '../lib/format';
 
 /** 各实体类型的展示顺序 / 文案 / 图标 / 跳转目标（pid = 当前课题，课题域列表页需要拼前缀）。 */
 const TYPE_META: Record<
@@ -166,7 +167,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
                             marginTop: 1,
                           }}
                         >
-                          {h.snippet}
+                          {plainSummary(h.snippet)}
                         </span>
                       )}
                     </span>

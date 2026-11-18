@@ -151,9 +151,9 @@ export function groupByClaim(list: IdeaEvidence[]): ClaimGroup[] {
   return out;
 }
 
-function Excerpt({ raw }: { raw: string }) {
+function Excerpt({ raw, title }: { raw: string; title?: string }) {
   const [open, setOpen] = useState(false);
-  const snip = useMemo(() => cleanSnippet(raw), [raw]);
+  const snip = useMemo(() => cleanSnippet(raw, title), [raw, title]);
   if (!snip.text) return null;
   const long = snip.text.length > 260;
   return (
@@ -188,7 +188,7 @@ function PaperSource({ ev }: { ev: IdeaEvidence }) {
         )}
         {!ev.paper_id && <span className="idea-ev-tag">{ev.source === 'external' ? tr('不在文献库里', 'Not in your library') : tr('趋势信号', 'Trend signal')}</span>}
       </div>
-      {snippet && <Excerpt raw={snippet} />}
+      {snippet && <Excerpt raw={snippet} title={ev.title} />}
     </li>
   );
 }

@@ -150,6 +150,8 @@ describe('idea text: what real runs look like', () => {
     expect(boldLeadLabels(`阶段二（一次性索引重建）。${long}`)).toBe(`**阶段二（一次性索引重建）。**${long}`);
     expect(boldLeadLabels(`实验 1（主对比）：${long}`)).toBe(`**实验 1（主对比）：**${long}`);
     expect(boldLeadLabels(`缓解：${long}`)).toBe(`**缓解：**${long}`);
+    // 括号说明里可以有逗号
+    expect(boldLeadLabels(`实验一（偶极标定，针对未证实命题1）：${long}`)).toBe(`**实验一（偶极标定，针对未证实命题1）：**${long}`);
     // 十几个字带冒号的是一句话，不是标签；短段落、列表、标题不动
     const sentence = `这两条线索共同提示一个尚未被检验的可能：${long}`;
     expect(boldLeadLabels(sentence)).toBe(sentence);
@@ -188,6 +190,13 @@ describe('idea text: what real runs look like', () => {
     // 完整的句子不加省略号；真连字符保留
     expect(cleanSnippet('Query-side fine-tuning decouples the encoders.')).toEqual({ text: 'Query-side fine-tuning decouples the encoders.', cutStart: false, cutEnd: false });
     expect(cleanSnippet('  ').text).toBe('');
+    // 片段以论文标题起头：标题不重复
+    expect(cleanSnippet('Buried Interface Engineering: a Key to SAM\nRuida Xu, Chengji Wang. In recent years, PSCs improved.', 'Buried Interface Engineering: a Key to SAM').text).toBe('Ruida Xu, Chengji Wang. In recent years, PSCs improved.');
+  });
+
+  it('turns hand-numbered paragraphs into a real list', () => {
+    expect(splitInlineEnumerations('1) 偶极轴的构建与标定。\n\n2）钝化能力的解耦。')).toBe('1. 偶极轴的构建与标定。\n\n2. 钝化能力的解耦。');
+    expect(splitInlineEnumerations('见式 1) 的推导')).toBe('见式 1) 的推导');
   });
 
   it('replaces leaked field names in score reasons', () => {
@@ -201,6 +210,7 @@ describe('idea text: what real runs look like', () => {
     expect(plainSummary('端到端反向传播训练出来的 [文1·句3][文1·句4]。在三个榜单上')).toBe('端到端反向传播训练出来的。在三个榜单上');
     expect(plainSummary('把 [[检索增强语言模型]] 用于 **少样本** 学习')).toBe('把 检索增强语言模型 用于 少样本 学习');
     expect(plainSummary('BLEU [1] 提升，区间 [0, 1]')).toBe('BLEU [1] 提升，区间 [0, 1]');
+    expect(plainSummary('端到端训练出来的 [文1·句3][文1·')).toBe('端到端训练出来的');
     expect(plainSummary(null)).toBe('');
   });
 });

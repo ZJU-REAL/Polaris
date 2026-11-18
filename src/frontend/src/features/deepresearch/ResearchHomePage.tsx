@@ -243,7 +243,7 @@ export function ResearchHomePage() {
             {hasRuns && (
               <div className="dr-rows">
                 {runs.map((d) => (
-                  <TopicRow key={d.projectId} d={d} />
+                  <TopicRow key={d.projectId} d={d} runsKnown={!(runsQuery.isError && !runsQuery.data)} />
                 ))}
               </div>
             )}
@@ -255,7 +255,8 @@ export function ResearchHomePage() {
   );
 }
 
-function TopicRow({ d }: { d: Direction }) {
+/** runsKnown=false：研究进展这次没取到（引擎忙或连不上），不能据此说「还没有研究进展」。 */
+function TopicRow({ d, runsKnown }: { d: Direction; runsKnown: boolean }) {
   const run = d.run;
   const head = run ? runHeadline(run) : null;
   const reason = run ? runReason(run) : '';
@@ -268,7 +269,7 @@ function TopicRow({ d }: { d: Direction }) {
       <div className="dr-row-state">
         {head ? (
           <StatusDot tone={head.tone} label={head.label} />
-        ) : (
+        ) : !runsKnown ? null : (
           // 之前按老办法建的课题：没有时间线，点开是它的概览
           <span className="dr-row-reason">{tr('还没有研究进展', 'No research run yet')}</span>
         )}

@@ -146,7 +146,16 @@ export function VoyageRow({ v, first }: { v: VoyageRead; first?: boolean }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           title={v.goal}
-          style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            lineHeight: '18px',
+            overflow: 'hidden',
+            overflowWrap: 'anywhere',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+          }}
         >
           {taskTitle(v)}
         </div>

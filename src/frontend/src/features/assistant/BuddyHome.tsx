@@ -1,6 +1,6 @@
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { PolarisMark } from '../../components/ui/PolarisLogo';
-import { tr } from '../../lib/i18n';
+import { getLang, tr } from '../../lib/i18n';
 import { greetingFor } from './greeting';
 
 /* ============================================================
@@ -57,7 +57,12 @@ export function BuddyHome({
   cards?: { kind: string; summary: string; prompt: string }[];
   onPick: (prompt: string) => void;
 }) {
-  const picks = (cards ?? []).filter((c) => c.summary.trim() && c.prompt.trim());
+  // 开场问句和卡片是引擎写的，目前只有中文。英文界面下不把中文的问句和卡片摆出来
+  // （卡片背后的问题也是中文，点了会得到中文回答）——退回那句通用的英文招呼。
+  const cjk = (t: string) => /[\u4e00-\u9fff]/.test(t);
+  const english = getLang() === 'en';
+  if (english && question && cjk(question)) question = undefined;
+  const picks = (cards ?? []).filter((c) => c.summary.trim() && c.prompt.trim() && !(english && cjk(c.summary)));
   return (
     <div
       style={{

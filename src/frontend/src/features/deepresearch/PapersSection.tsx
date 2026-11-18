@@ -51,9 +51,14 @@ export function PapersSection({ run, state, actions }: PapersSectionProps) {
   const now = useNow(30_000, active);
   // 花了多久：进行中数到现在，结束后是定数；卡住、停下时任务没有结束时刻，不写
   const started = state !== 'pending' && !!survey.started_at && (active || !!survey.finished_at);
-  const sources = sourceLines(survey.sources ?? []);
+  const queryGroupsAll = groupQueries(survey.queries);
+  // 检索过但一条都没返回的来源，引擎的来源清单里没有它：照实补上「0 条」，不让它悄悄消失
+  const silent = queryGroupsAll
+    .filter((g) => !(survey.sources ?? []).some((x) => x.source === g.source))
+    .map((g) => ({ source: g.source, fetched: g.returned, error: g.queries.every((q) => q.error) ? (g.queries[0]?.error ?? null) : null }));
+  const sources = sourceLines([...(survey.sources ?? []), ...silent]);
   const briefSources = (run.brief?.sources ?? []).map(sourceName);
-  const queryGroups = groupQueries(survey.queries);
+  const queryGroups = queryGroupsAll;
   const queryCount = queryGroups.reduce((n, g) => n + g.queries.length, 0);
   const [showQueries, setShowQueries] = useState(false);
   const funnel = state === 'done' ? surveyFunnelText(p) : '';

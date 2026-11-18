@@ -94,6 +94,8 @@ export function plainSummary(text: string | null | undefined): string {
   if (!text) return '';
   return text
     .replace(/\s*\[(?:文\s*\d+[^\]]{0,24}|EVIDENCE[^\]]{0,40}|(?:p|s|页|句)\s*[=＝]?\s*\d+[^\]]{0,24})\]/gi, '')
+    // 摘要被截断时，最后一个记号可能只剩半个（「…训练出来的 [文1·句」）
+    .replace(/\s*\[(?:文\s*\d|EVIDENCE)[^\]]*…?$/i, '')
     .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
     .replace(/\[\[([^\]]+)\]\]/g, '$1')
     .replace(/\*\*([^*]+)\*\*/g, '$1')

@@ -117,10 +117,11 @@ export function splitEnumeratedLine(line: string): string[] | null {
 /** 整篇 markdown：逐行把行内编号列举拆成列表，代码块原样保留。 */
 export function splitInlineEnumerations(source: string): string {
   if (!source) return source;
-  const lines = source.split('\n');
+  // 行首的「1) …」「2）…」是模型手写的编号段落：markdown 只认「1. 」，换过去才会排成列表
+  const lines = source.split('\n').map((l) => l.replace(/^(\s{0,3})(\d{1,2})[)）]\s*(?=\S)/, '$1$2. '));
   const out: string[] = [];
   let inFence = false;
-  let changed = false;
+  let changed = lines.join('\n') !== source;
   for (const line of lines) {
     if (/^\s*```/.test(line)) {
       inFence = !inFence;
@@ -158,8 +159,11 @@ export function splitInlineEnumerations(source: string): string {
  * - 「标签（说明）。正文」——带括号说明、以句号收尾（「阶段一（…）。」这一类）。
  * 已有 markdown 记号（标题、列表、加粗、表格、代码、公式）的行不动。
  */
-const LEAD_COLON_RE = /^([^\s：:，,。；;、！？!?（）()「」*`$|#>-][^：:，,。；;！？!?*`$|]{1,23})([：:])(?=\s*\S)/;
-const LEAD_PAREN_RE = /^([^\s：:，,。；;、！？!?（）()「」*`$|#>-][^：:，,。；;！？!?*`$|（(]{0,11}[（(][^）)\n]{1,28}[）)])([。.])(?=\s*\S)/;
+// 标签 = 不含标点的短头（≤12 个字符，可以有空格：「实验 1」）+ 可选的一个括号说明（里面可以有逗号）
+const LABEL_HEAD = '[^\\s：:，,。；;、！？!?（）()「」*`$|#>\\-][^：:，,。；;、！？!?（）()「」*`$|]{0,11}';
+const LABEL_NOTE = '[（(][^）)\\n]{1,32}[）)]';
+const LEAD_COLON_RE = new RegExp(`^(${LABEL_HEAD}(?:${LABEL_NOTE})?)([：:])(?=\\s*\\S)`);
+const LEAD_PAREN_RE = new RegExp(`^(${LABEL_HEAD}${LABEL_NOTE})([。.])(?=\\s*\\S)`);
 
 export function boldLeadLabels(source: string): string {
   if (!source) return source;
@@ -181,8 +185,6 @@ export function boldLeadLabels(source: string): string {
       const m = LEAD_COLON_RE.exec(line) ?? LEAD_PAREN_RE.exec(line);
       if (!m) return line;
       const label = m[1]!;
-      // 不带括号说明的标签要短（「缓解」「假设精度风险」）：十几个字的是一句话，不是标签
-      if (!/[（(]/.test(label) && label.length > 12) return line;
       // 网址（http:）不是标签
       if (/^https?$/i.test(label)) return line;
       return `**${label}${m[2]}**${line.slice(m[0].length)}`;
@@ -252,9 +254,16 @@ const LIGATURES: Record<string, string> = { ﬁ: 'fi', ﬂ: 'fl', ﬀ: 'ff', ﬃ
  * 这里把它接回成一段能读的文字：换行并成空格、拆开的词接上、两端截断的残词去掉并
  * 标上省略号。不改写内容。
  */
-export function cleanSnippet(raw: string | null | undefined): CleanSnippet {
+export function cleanSnippet(raw: string | null | undefined, title?: string | null): CleanSnippet {
   let t = (raw ?? '').replace(/[ﬁﬂﬀﬃﬄ]/g, (c) => LIGATURES[c] ?? c);
   if (!t.trim()) return { text: '', cutStart: false, cutEnd: false };
+  // 取自论文开头的片段以标题起头（标题就在它上面一行）：不重复一遍
+  const head = (title ?? '').trim();
+  if (head.length > 12) {
+    const norm = (x: string) => x.replace(/\s+/g, ' ').trim().toLowerCase();
+    const flat = t.replace(/\s+/g, ' ').trim();
+    if (norm(flat).startsWith(norm(head))) t = flat.slice(head.replace(/\s+/g, ' ').length).replace(/^[\s:：.\-–]+/, '');
+  }
   // 行尾连字符：两边都是小写字母才接（行内的 query-side 这类真连字符不受影响）
   t = t.replace(/([a-z])-\n([a-z])/g, '$1$2');
   // 列表符号单独占一行（「•\nRevela learns…」）：并到下一行

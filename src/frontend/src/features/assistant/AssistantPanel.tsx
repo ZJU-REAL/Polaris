@@ -141,6 +141,29 @@ function parseRestoredImageRefs(raw: unknown): ImageRef[] {
   return out;
 }
 
+/** 助手自带的工具：函数名（search_papers）换成一个词。认不出的把下划线换成空格，至少不是代码。 */
+function builtinToolLabel(name: string): string {
+  switch (name) {
+    case 'search_papers':
+      return tr('找论文', 'Find papers');
+    case 'search_chunks':
+      return tr('找段落', 'Find passages');
+    case 'grep_fulltext':
+      return tr('查全文', 'Search full text');
+    case 'get_paper':
+    case 'read_paper':
+      return tr('读论文', 'Read paper');
+    case 'list_ideas':
+    case 'get_idea':
+      return tr('看想法', 'Look at ideas');
+    case 'list_experiments':
+    case 'get_experiment':
+      return tr('看实验', 'Look at experiments');
+    default:
+      return name.replace(/_/g, ' ');
+  }
+}
+
 function ToolCard({ block }: { block: Extract<AssistantBlock, { kind: 'tool' }> }) {
   const [open, setOpen] = useState(false);
   const color =
@@ -187,16 +210,21 @@ function ToolCard({ block }: { block: Extract<AssistantBlock, { kind: 'tool' }> 
           </>
         ) : (
           <>
-            <span className="mono" style={{ color: 'var(--text-2)' }}>{block.name}</span>
+            <span style={{ color: 'var(--text-2)', flexShrink: 0 }} title={block.name}>
+              {builtinToolLabel(block.name)}
+            </span>
             <span style={{ color: 'var(--text-3)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {block.summary ?? tr('运行中…', 'Running…')}
             </span>
           </>
         )}
         {block.durationMs !== undefined && (
-          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-            {block.durationMs}ms
-          </span>
+          // 几十毫秒的耗时没有人关心；等了一秒以上的才写出来
+          block.durationMs >= 1000 && (
+            <span style={{ fontSize: 11, color: 'var(--text-3)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+              {(block.durationMs / 1000).toFixed(1)} s
+            </span>
+          )
         )}
       </div>
       {block.images?.length ? <ToolImages images={block.images} /> : null}

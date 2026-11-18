@@ -98,6 +98,7 @@ const STEP_LABELS: Record<string, { zh: string; en: string }> = {
   'forge.persist': { zh: '保存想法', en: 'Save the ideas' },
   // 研究方案
   'proposal.goal': { zh: '确定研究目标', en: 'Set the research goal' },
+  'goal.explore': { zh: '确定研究目标', en: 'Set the research goal' },
   'proposal.related_work': { zh: '梳理相关工作', en: 'Position against related work' },
   'proposal.design': { zh: '设计研究方案', en: 'Design the approach' },
   'proposal.experiments': { zh: '制定实验与评估计划', en: 'Plan experiments and evaluation' },
@@ -189,6 +190,10 @@ const en = (count: number, one: string, many = `${one}s`) => `${count} ${count =
  */
 export function stepResult(action: string, obs: Record<string, unknown>): string | null {
   switch (action) {
+    case 'goal.explore':
+      return n(obs.grounding) > 0
+        ? tr(`对照 ${n(obs.grounding)} 处文献依据定下了研究目标`, `Set the goal against ${en(n(obs.grounding), 'piece')} of evidence from the papers`)
+        : tr('定下了研究目标', 'Set the research goal');
     case 'forge.read_context':
       return tr(`读了 ${n(obs.papers)} 篇论文、${n(obs.concepts)} 个概念`, `Read ${en(n(obs.papers), 'paper')} and ${en(n(obs.concepts), 'concept')}`);
     case 'forge.collect_signals': {

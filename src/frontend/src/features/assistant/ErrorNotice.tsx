@@ -23,6 +23,14 @@ export function errorText(detail: string): string {
     );
   }
   if (isLlmNotConfigured(detail)) return llmNotConfiguredText();
+  // 模型的回答传到一半断了（引擎原话是「LLMTransportError: model stream ended before the final message」）：
+  // 异常类名对用户没有意义，说清发生了什么、怎么办
+  if (/LLMTransportError|stream ended before|incomplete chunked|peer closed connection/i.test(detail)) {
+    return tr('模型的回答中途断开了，请再发一次', 'The model’s reply was cut off before it finished. Send your message again.');
+  }
+  if (/LLMTimeout|timed? ?out/i.test(detail) && /LLM|model/i.test(detail)) {
+    return tr('模型太久没有回应，请再发一次', 'The model took too long to respond. Send your message again.');
+  }
   return genericErrorText(detail);
 }
 
@@ -32,7 +40,8 @@ export function errorBlock(detail: string, withDetail = false): NoticeBlock {
   return {
     kind: 'notice',
     text,
-    detail: withDetail && detail !== text ? detail : undefined,
+    // 换成了人话的，原话留在第二行给排查用
+    detail: (withDetail || /Error:/.test(detail)) && detail !== text ? detail : undefined,
     action: isLlmNotConfigured(detail) ? 'model-settings' : undefined,
   };
 }
