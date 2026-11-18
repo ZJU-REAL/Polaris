@@ -24,6 +24,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy import Select, delete, exists, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,6 +58,20 @@ CONCEPT_DEF_SYSTEM_PROMPT = """\
 {"concepts": [{"name": "原样回抄的名字", "valid": true, "definition": "一句话定义", \
 "category": "method|architecture|methodology|problem|metric|dataset|other"}]}
 """
+
+
+class ConceptVerdictOut(BaseModel):
+    """一个名字的判定：是不是学术概念；是的话带一句话定义与类别。"""
+
+    name: str
+    valid: bool
+    definition: str | None = None
+    category: str | None = None
+
+
+class ConceptVerdictsOut(BaseModel):
+    concepts: list[ConceptVerdictOut]
+
 
 # [[概念名]] / [[概念名|别名]] / [[概念名#锚点]]
 WIKILINK_RE = re.compile(r"\[\[([^\[\]|#]+?)(?:[|#][^\[\]]*)?\]\]")
@@ -260,10 +275,10 @@ async def fetch_concept_definitions(
     project_id: uuid.UUID | None = None,
     library_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, Any]]:
     """向 LLM 要「是不是概念」的判定 + 一句话定义与类别；分批调用避免响应截断，
     失败的批重试一次；仍失败则该批返回不到结果，调用方按「判不了就照常放行」降级。"""
-    out: dict[str, dict[str, str]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for i in range(0, len(names), _DEF_BATCH_SIZE):
         chunk = names[i : i + _DEF_BATCH_SIZE]
         got = await _fetch_definitions_batch(
@@ -296,29 +311,27 @@ async def _fetch_definitions_batch(
     project_id: uuid.UUID | None = None,
     library_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, Any]]:
     """单批（≤_DEF_BATCH_SIZE 个）判定 + 定义调用；失败返回空 dict（调用方兜底）。"""
     if not names:
         return {}
     try:
-        result = await llm.complete(
+        result = await llm.complete_json(
             "extract",
             [
                 Message(role="system", content=CONCEPT_DEF_SYSTEM_PROMPT),
                 Message(role="user", content="概念列表：" + json.dumps(names, ensure_ascii=False)),
             ],
+            schema=ConceptVerdictsOut,
             user_id=user_id,
             project_id=project_id,
             library_id=library_id,
             voyage_id=voyage_id,
         )
-        start = result.content.find("{")
-        end = result.content.rfind("}")
-        data = json.loads(result.content[start : end + 1])
         return {
-            str(item["name"]): item
-            for item in data.get("concepts", [])
-            if isinstance(item, dict) and item.get("name")
+            item.name: item.model_dump(exclude_none=True)
+            for item in result.data.concepts
+            if item.name
         }
     except asyncio.CancelledError:
         raise

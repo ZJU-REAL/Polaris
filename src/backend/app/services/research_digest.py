@@ -7,8 +7,9 @@ import json
 import logging
 import uuid
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -68,15 +69,43 @@ Markdown 代码块，格式：
 """
 
 
-def _extract_json_object(content: str) -> dict[str, Any]:
-    start = content.find("{")
-    end = content.rfind("}")
-    if start < 0 or end <= start:
-        raise ValueError("digest model returned no JSON object")
-    value = json.loads(content[start : end + 1])
-    if not isinstance(value, dict):
-        raise ValueError("digest model returned a non-object JSON value")
-    return value
+# ---- 三个模型环节的输出 schema（结构化输出，不再从回答文字里切 JSON） ----
+
+
+class PaperInsightOut(BaseModel):
+    paper_id: str
+    highlight: str
+    direction_relation: str
+    concepts: list[str]
+
+
+class PaperInsightsOut(BaseModel):
+    paper_insights: list[PaperInsightOut]
+
+
+class CrossPaperSignalOut(BaseModel):
+    title: str
+    summary: str
+    paper_ids: list[str]
+
+
+class DigestSynthesisOut(BaseModel):
+    summary: str
+    cross_paper_signals: list[CrossPaperSignalOut]
+
+
+class TrendOut(BaseModel):
+    title: str
+    status: Literal["emerging", "active", "converging", "stale"]
+    summary: str
+    evidence_trajectory: str
+    concepts: list[str]
+    paper_ids: list[str]
+    last_seen: str | None = None
+
+
+class TrendsOut(BaseModel):
+    trends: list[TrendOut]
 
 
 def _string(value: Any, fallback: str = "") -> str:
@@ -146,7 +175,7 @@ async def _generate_insight_batch(
             f"{retry_note}"
         )
         try:
-            result = await llm.complete(
+            result = await llm.complete_json(
                 "digest",
                 [
                     Message(
@@ -155,26 +184,21 @@ async def _generate_insight_batch(
                     ),
                     Message(role="user", content=prompt),
                 ],
+                schema=PaperInsightsOut,
                 user_id=user_id,
                 project_id=run.project_id,
                 library_id=library.id,
                 voyage_id=run.id,
             )
-            generated = _extract_json_object(result.content)
-            raw_insights = generated.get("paper_insights")
-            if not isinstance(raw_insights, list):
-                raise ValueError("daily digest batch JSON misses paper_insights")
             model = result.model or model
-            for item in raw_insights:
-                if not isinstance(item, dict):
-                    continue
-                paper_id = str(item.get("paper_id") or "")
+            for item in result.data.paper_insights:
+                paper_id = item.paper_id
                 concepts = _generated_concepts(
-                    item.get("concepts"), expected.get(paper_id, {}).get("concepts")
+                    item.concepts, expected.get(paper_id, {}).get("concepts")
                 )
                 # 概念是简报必填项；缺失时把该论文留在 pending，下一轮只补跑这一篇。
                 if paper_id in expected and concepts:
-                    collected[paper_id] = item
+                    collected[paper_id] = item.model_dump()
             pending = [item for item in papers if item["paper_id"] not in collected]
             if not pending:
                 return collected, model, retries, None
@@ -300,7 +324,7 @@ async def _synthesize_digest_summary(
         if attempt > 1:
             prompt += "\n上次综合输出无效，请严格按 JSON schema 重新生成。"
         try:
-            result = await llm.complete(
+            result = await llm.complete_json(
                 "digest",
                 [
                     Message(
@@ -309,29 +333,23 @@ async def _synthesize_digest_summary(
                     ),
                     Message(role="user", content=prompt),
                 ],
+                schema=DigestSynthesisOut,
                 user_id=user_id,
                 project_id=run.project_id,
                 library_id=library.id,
                 voyage_id=run.id,
             )
-            generated = _extract_json_object(result.content)
-            if not isinstance(generated.get("cross_paper_signals"), list):
-                raise ValueError("daily digest synthesis JSON misses cross_paper_signals")
-            summary = _string(generated.get("summary"))
+            summary = _string(result.data.summary)
             if not summary:
                 raise ValueError("daily digest synthesis JSON misses summary")
             signals = [
                 {
-                    "title": _string(item.get("title"), "共同信号"),
-                    "summary": _string(item.get("summary")),
-                    "paper_ids": [
-                        str(paper_id)
-                        for paper_id in (item.get("paper_ids") or [])
-                        if str(paper_id) in valid_ids
-                    ],
+                    "title": _string(item.title, "共同信号"),
+                    "summary": _string(item.summary),
+                    "paper_ids": [pid for pid in item.paper_ids if pid in valid_ids],
                 }
-                for item in generated["cross_paper_signals"]
-                if isinstance(item, dict) and _string(item.get("summary"))
+                for item in result.data.cross_paper_signals
+                if _string(item.summary)
             ]
             return summary, signals, result.model or None, attempt - 1
         except Exception as error:
@@ -800,46 +818,40 @@ async def synthesize_rolling_trends(
     last_error: Exception | None = None
     for attempt in range(1, _DIGEST_MAX_ATTEMPTS + 1):
         try:
-            result = await llm.complete(
+            result = await llm.complete_json(
                 "digest",
                 [
                     Message(role="system", content=TREND_SYSTEM_PROMPT + extra_guidance),
                     Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
                 ],
+                schema=TrendsOut,
                 user_id=user_id,
                 project_id=run.project_id,
                 library_id=library.id,
                 voyage_id=run.id,
             )
-            generated = _extract_json_object(result.content)
-            if not isinstance(generated.get("trends"), list):
-                raise ValueError("trend synthesis JSON misses trends")
-        except Exception as error:  # noqa: BLE001 — 连不上、超时、JSON 坏了，处理方式一样
+        except Exception as error:  # noqa: BLE001 — 连不上、超时、结构不对，处理方式一样
             last_error = error
             if attempt < _DIGEST_MAX_ATTEMPTS:
                 await _retry_pause(attempt)
             continue
 
-        allowed_status = {"emerging", "active", "converging", "stale"}
         trends: list[dict[str, Any]] = []
-        for item in generated["trends"][:12]:
-            if not isinstance(item, dict):
-                continue
-            title = _string(item.get("title"))
-            summary = _string(item.get("summary"))
-            trajectory = _string(item.get("evidence_trajectory"))
+        for item in result.data.trends[:12]:
+            title = _string(item.title)
+            summary = _string(item.summary)
+            trajectory = _string(item.evidence_trajectory)
             if not (title and summary and trajectory):
                 continue
-            status = str(item.get("status") or "active")
             trends.append(
                 {
                     "title": title,
-                    "status": status if status in allowed_status else "active",
+                    "status": item.status,
                     "summary": summary,
                     "evidence_trajectory": trajectory,
-                    "concepts": [str(name) for name in (item.get("concepts") or [])],
-                    "paper_ids": [str(pid) for pid in (item.get("paper_ids") or [])],
-                    "last_seen": _string(item.get("last_seen"), digest.report_date.isoformat()),
+                    "concepts": list(item.concepts),
+                    "paper_ids": list(item.paper_ids),
+                    "last_seen": _string(item.last_seen, digest.report_date.isoformat()),
                 }
             )
         digest.rolling_trends = trends

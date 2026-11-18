@@ -46,7 +46,7 @@ from app.core.llm.base import (
     ToolUseStop,
     normalize_finish_reason,
 )
-from app.core.llm.errors import LLMRefusalError
+from app.core.llm.errors import LLMRefusalError, LLMTransportError
 
 logger = logging.getLogger("polaris.llm")
 
@@ -191,6 +191,16 @@ def _blocks_from_message(message: Any) -> tuple[list[ContentBlock], str]:
                 continue
             blocks.append(ToolUseBlock(block.id, block.name, dict(block.input or {})))
     return blocks, "".join(texts)
+
+
+async def _final_message(stream: Any) -> Any:
+    """流读完后取完整消息。流被网关中途掐断时 SDK 在这里是一个光秃秃的
+    ``AssertionError``（没有收到收尾事件）——那是连接问题，换成带 ``transient`` 的错误，
+    上层才会按「过一会儿再试」处理，而不是当成程序内部出错。"""
+    try:
+        return await stream.get_final_message()
+    except AssertionError as e:
+        raise LLMTransportError("model stream ended before the final message") from e
 
 
 class AnthropicProvider(LLMProvider):
@@ -379,7 +389,7 @@ class AnthropicProvider(LLMProvider):
         if limit > NONSTREAM_MAX_TOKENS:
             # 长输出：流式收齐再返回，连接上一直有数据，不会被空等超时掐断
             async with api.stream(**request, **extra) as stream:
-                message = await stream.get_final_message()
+                message = await _final_message(stream)
         else:
             message = await api.create(**request, **extra)
         return self._result(message, model)
@@ -417,7 +427,7 @@ class AnthropicProvider(LLMProvider):
         api, extra = self._api(model)
         if limit > NONSTREAM_MAX_TOKENS:
             async with api.stream(**request, **extra) as stream:
-                message = await stream.get_final_message()
+                message = await _final_message(stream)
         else:
             message = await api.create(**request, **extra)
         return self._result(message, model)
@@ -496,7 +506,7 @@ class AnthropicProvider(LLMProvider):
                         yield ThinkingDelta("", delta.signature)
                 elif kind == "content_block_stop" and event.index in tool_indexes:
                     yield ToolUseStop(event.index)
-            message = await stream.get_final_message()
+            message = await _final_message(stream)
         if message.stop_reason == "refusal":
             details = getattr(message, "stop_details", None)
             raise LLMRefusalError(

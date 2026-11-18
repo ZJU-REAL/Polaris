@@ -86,6 +86,39 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
 # 收场，记账行丢掉，调用方白白卡住整个超时。所以先用很短的超时试一次；被锁住就转到
 # 后台去写（调用方提交后锁自然放开），不让调用方等。
 
+def is_busy_error(exc: BaseException) -> bool:
+    """这个异常是不是「SQLite 正被另一个写入占着」（等一下再试就好）。"""
+    text = str(exc).lower()
+    return "database is locked" in text or "database is busy" in text
+
+
+async def write_with_retry[T](
+    write: Callable[[AsyncSession], Awaitable[T]], *, attempts: int = 4, what: str = "write"
+) -> T:
+    """用一个新会话做一次**很小、重做也无害**的写入并提交；库正忙就退避重试。
+
+    SQLite 同一时刻只有一个写者，busy_timeout 让后来的排队等；等过了超时才报
+    "database is locked"。对「把任务停到出错状态」「记一笔状态」这类写入，报错的代价
+    远大于再等一会儿（任务会悬在运行中没人管），所以这里再试几次。``write`` 每次都
+    拿到全新的会话，必须自己重新读要改的行。
+    """
+    last: BaseException | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            async with get_sessionmaker()() as session:
+                result = await write(session)
+                await session.commit()
+                return result
+        except OperationalError as exc:
+            if not is_busy_error(exc):
+                raise
+            last = exc
+            logger.warning("%s: database busy, retry %d/%d", what, attempt + 1, attempts)
+            await asyncio.sleep(min(2.0, 0.25 * 2**attempt))
+    assert last is not None
+    raise last
+
+
 SIDE_WRITE_QUICK_TIMEOUT_MS = 200
 _side_writes: set[asyncio.Task[None]] = set()
 

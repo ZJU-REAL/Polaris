@@ -16,12 +16,25 @@ import json
 from typing import Any
 
 from app.agents.voyage.actions import ActionContext
-from app.agents.voyage.actions_ideas import _extract_json
 from app.core.llm.base import Message
 from app.tools import ToolContext, get_tool, result_payload, run_tool
 
 _TOOL_RESULT_CHARS = 4000  # 单个工具结果注入 prompt 的截断
 _FORCE_FINISH_ATTEMPTS = 2  # 轮次耗尽后强制 finish 的补充尝试
+
+
+def _extract_json(content: str) -> Any:
+    """回答文字里的 JSON 对象（首个 ``{`` 到最后一个 ``}``）。
+
+    工具循环每轮的回答是 ``{"tool":..,"args":..}`` 或 ``{"finish":..}``，其中 args 与
+    finish 的形状由各个调用方、各个工具自己定，写不成一个封闭的 schema，所以这里
+    仍然从文字里取。解析不了的那一轮按「输出不合法」回给模型重来，不会让步骤失败。
+    """
+    start = content.find("{")
+    end = content.rfind("}")
+    if start == -1 or end <= start:
+        raise ValueError("no JSON object found")
+    return json.loads(content[start : end + 1])
 
 
 def tool_context_from_action(ctx: ActionContext) -> ToolContext:

@@ -20,14 +20,16 @@ import uuid
 from datetime import timedelta
 from itertools import zip_longest
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
 
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
 from app.core.db import get_sessionmaker
 from app.core.embedding_space import EmbeddingSpace
+from app.core.errors import PreconditionError
 from app.core.llm.base import Message
 from app.core.llm.budgets import FORGE_CONTEXT, FORGE_EXCERPT, resolve_budget
 from app.models.activity import Activity
@@ -61,7 +63,6 @@ DEFAULT_FORGE_KNOBS: dict[str, Any] = {
 }
 DEFAULT_ROUNDS = 2
 
-_MAX_JSON_ATTEMPTS = 3  # 首次 + 重试 2 次
 _SCORE_DIMS = ("novelty", "feasibility", "operability", "impact")
 
 GAP_SYSTEM_PROMPT = """\
@@ -89,15 +90,19 @@ SECTION_STYLE_GUIDE = """\
 - 言简意赅：直接写做法和结论，不写套话和重复的铺垫。
 """
 
+# 一次调用只写一个想法（POLARIS_FORGE_IDEA 是 fake provider 认的标记）。以前一次要
+# 全部 num_ideas 个放在同一个对象里，八个想法的长 JSON 经常写到一半被截断。
 GENERATE_SYSTEM_PROMPT = (
     """\
+POLARIS_FORGE_IDEA
 你是 Idea Forge 的想法生成器，围绕研究空白提出具体可执行的研究想法。
-研究空白清单中每条带有下标与信号来源（signal），生成时注意：
-- 每个想法通过 gap_index 绑定它主要针对的空白（0 起下标）；
-- 不同想法尽量覆盖不同空白与不同信号来源，避免扎堆。
+每次只写一个想法。用户消息会指明这一次针对研究空白清单里的哪一条，以及此前已经
+写出的想法标题，生成时注意：
+- 想法要针对指定的那条空白；
+- 不要与已经写出的想法重复，换一个角度或路线。
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
-{"ideas": [{"title": "想法标题", "summary": "一句话概述", "gap_index": 0, "motivation": "动机",
-"method": "方法概述", "experiments": "预期实验", "risks": "风险"}]}
+{"title": "想法标题", "summary": "一句话概述", "motivation": "动机",
+"method": "方法概述", "experiments": "预期实验", "risks": "风险"}
 motivation / method / experiments / risks 都是 markdown 字符串（换行写成 \\n），
 每节不超过 150 字左右。
 """
@@ -151,35 +156,83 @@ def _statement(project: Project) -> str:
     return str(project.statement or project.name)
 
 
-def _extract_json(content: str) -> Any:
-    start = content.find("{")
-    end = content.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError("no JSON object found")
-    return json.loads(content[start : end + 1])
+# ---- 各环节的输出 schema（结构化输出，不再从回答文字里切 JSON） ----
+
+NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-async def _complete_json(
-    ctx: ActionContext, *, stage: str, system: str, user: str, validate
-) -> Any:
-    """LLM JSON 请求：解析/校验失败重试（共 _MAX_JSON_ATTEMPTS 次），仍失败抛 ValueError。"""
-    last_error: Exception | None = None
-    for _attempt in range(_MAX_JSON_ATTEMPTS):
-        result = await ctx.llm.complete(
-            stage,
-            [
-                Message(role="system", content=system + ctx.evidence_guidance()),
-                Message(role="user", content=user),
-            ],
-            user_id=ctx.run.created_by,
-            project_id=ctx.run.project_id,
-            voyage_id=ctx.run.id,
-        )
-        try:
-            return validate(_extract_json(result.content))
-        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
-            last_error = e
-    raise ValueError(f"LLM 连续输出非法 JSON：{last_error}")
+class GapOut(BaseModel):
+    title: NonEmptyStr
+    description: str = ""
+
+
+class GapsOut(BaseModel):
+    """研究空白清单：综述空白分析与论文局限归纳共用。"""
+
+    gaps: list[GapOut] = Field(min_length=1)
+
+
+class ForgeIdeaOut(BaseModel):
+    """一个候选想法（一次调用只要一个）。"""
+
+    title: NonEmptyStr
+    summary: str
+    motivation: str
+    method: str
+    experiments: str
+    risks: str
+
+
+class ScoreRationaleOut(BaseModel):
+    novelty: str
+    feasibility: str
+    operability: str
+    impact: str
+
+
+class IdeaScoreOut(BaseModel):
+    """四维打分（各维 0-10）加逐维理由。"""
+
+    novelty: int
+    feasibility: int
+    operability: int
+    impact: int
+    rationale: ScoreRationaleOut
+
+
+class DebateVerdictOut(BaseModel):
+    winner: Literal["a", "b"]
+    reason: str = ""
+
+
+async def _ask[T: BaseModel](
+    ctx: ActionContext,
+    *,
+    stage: str,
+    system: str,
+    user: str,
+    schema: type[T],
+    cache_prefix: str | None = None,
+) -> T:
+    """一次结构化调用，返回校验过的 schema 实例。
+
+    格式不对时的那一次重问由 ``complete_json`` 自己做；仍然不行、或者调用本身失败
+    （网络、限流、密钥），抛带 ``code`` / ``transient`` 的 ``LLMError``，不在这里吞。
+    ``cache_prefix`` 是同一步里多次调用共享的大段材料（知识库上下文）。
+    """
+    result = await ctx.llm.complete_json(
+        stage,
+        [
+            Message(role="system", content=system + ctx.evidence_guidance()),
+            Message(role="user", content=user),
+        ],
+        schema=schema,
+        cache_prefix=cache_prefix,
+        user_id=ctx.run.created_by,
+        project_id=ctx.run.project_id,
+        voyage_id=ctx.run.id,
+    )
+    return result.data
 
 
 # 去重的算法在 services/idea_dedup.py（假设探索写想法时也用它）；这两个名字留在这里
@@ -257,9 +310,9 @@ async def forge_read_context(ctx: ActionContext, params: dict[str, Any]) -> dict
         if not papers:
             # 以前这里会把上下文写成「（知识库为空）」然后照常往下跑，模型只凭课题名
             # 编空白和想法，结果看起来和正常的一样。没有依据就不生成。
-            raise ValueError(
-                f"{IDEA_CONTEXT_EMPTY}: 关联的文献库里没有可用的论文，"
-                "请先添加论文（至少要有摘要或解读）再生成想法"
+            raise PreconditionError(
+                IDEA_CONTEXT_EMPTY,
+                "关联的文献库里没有可用的论文，请先添加论文（至少要有摘要或解读）再生成想法",
             )
         concept_names = (
             (
@@ -495,25 +548,17 @@ async def forge_collect_signals(ctx: ActionContext, params: dict[str, Any]) -> d
 
     if "limitations" in enabled:
         if excerpt_blocks:
-
-            def validate(data: Any) -> list[dict[str, str]]:
-                gaps = data.get("gaps") if isinstance(data, dict) else None
-                if not isinstance(gaps, list) or not gaps:
-                    raise ValueError('expected {"gaps": [...]}')
-                return [
-                    {"title": str(g["title"]), "description": str(g.get("description") or "")}
-                    for g in gaps
-                    if isinstance(g, dict) and g.get("title")
-                ]
-
             try:
-                signals["limitations"] = await _complete_json(
+                found = await _ask(
                     ctx,
                     stage="forge_signal",
                     system=LIMITATIONS_SYSTEM_PROMPT,
                     user="\n\n".join(excerpt_blocks)[:12000],
-                    validate=validate,
+                    schema=GapsOut,
                 )
+                signals["limitations"] = [
+                    {"title": g.title, "description": g.description} for g in found.gaps
+                ]
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 — 单信号失败不阻塞其余信号
@@ -560,31 +605,17 @@ async def forge_gap_analysis(ctx: ActionContext, params: dict[str, Any]) -> dict
     # 按信号分桶收集，最后轮转铺开（#428）；插入顺序即轮转顺序，保持确定性
     buckets: dict[str, list[dict[str, str]]] = {}
     if "survey_gap" in enabled:
-
-        def validate(data: Any) -> list[dict[str, str]]:
-            raw_gaps = data.get("gaps") if isinstance(data, dict) else None
-            if not isinstance(raw_gaps, list) or not raw_gaps:
-                raise ValueError('expected {"gaps": [...]}')
-            normalized = []
-            for gap in raw_gaps:
-                if not isinstance(gap, dict) or not gap.get("title"):
-                    raise ValueError("gap missing title")
-                normalized.append(
-                    {
-                        "title": str(gap["title"]),
-                        "description": str(gap.get("description") or ""),
-                        "signal": "survey_gap",
-                    }
-                )
-            return normalized
-
-        buckets["survey_gap"] = await _complete_json(
+        found = await _ask(
             ctx,
             stage="forge",
             system=GAP_SYSTEM_PROMPT + ctx.workflow_guidance("forge.gap_analysis"),
             user=_context_prompt(ctx, statement),
-            validate=validate,
+            schema=GapsOut,
         )
+        buckets["survey_gap"] = [
+            {"title": g.title, "description": g.description, "signal": "survey_gap"}
+            for g in found.gaps
+        ]
 
     # 确定性信号 → gap 条目（不经 LLM）
     signals = ctx.checkpoint.get("forge_signals") or {}
@@ -642,82 +673,72 @@ async def forge_generate(ctx: ActionContext, params: dict[str, Any]) -> dict[str
         statement = _statement(project)
 
     gaps = ctx.checkpoint.get("forge_gaps") or []
-    user_prompt = (
-        f"{_context_prompt(ctx, statement)}\n"
-        f"研究空白清单：{json.dumps(gaps, ensure_ascii=False)}\n"
-        f"请围绕以上空白生成 {num_ideas} 个候选想法。"
-    )
-
-    def validate(data: Any) -> list[dict[str, Any]]:
-        ideas = data.get("ideas") if isinstance(data, dict) else None
-        if not isinstance(ideas, list) or not ideas:
-            raise ValueError('expected {"ideas": [...]}')
-        normalized = []
-        for i, item in enumerate(ideas):
-            if not isinstance(item, dict) or not str(item.get("title") or "").strip():
-                raise ValueError("idea missing title")
-            # gap 绑定（evidence 记录依据信号，docs/task-system.md §7）；非法下标回退轮转
-            raw_index = item.get("gap_index")
-            index = (
-                raw_index
-                if isinstance(raw_index, int) and 0 <= raw_index < len(gaps)
-                else i % len(gaps)
-                if gaps
-                else None
-            )
-            evidence = None
-            if index is not None:
-                gap = gaps[index]
-                evidence = [
-                    {
-                        "source": "signal",
-                        "title": str(gap.get("title") or ""),
-                        "why": str(gap.get("description") or ""),
-                        "signal": str(gap.get("signal") or "survey_gap"),
-                    }
-                ]
-            normalized.append(
+    # 每个想法各问一次；知识库上下文与空白清单每次都一样，放进可缓存的前缀
+    gap_list = json.dumps(gaps, ensure_ascii=False)
+    shared = f"{_context_prompt(ctx, statement)}\n研究空白清单：{gap_list}"
+    system = GENERATE_SYSTEM_PROMPT + ctx.workflow_guidance("forge.generate")
+    # 写到一半失败（网络、限流）再续跑时，已经写好的那几个不重写
+    partial = ctx.checkpoint.get("forge_candidates_partial")
+    candidates: list[dict[str, Any]] = list(partial) if isinstance(partial, list) else []
+    for i in range(len(candidates), num_ideas):
+        # 空白清单已按信号轮转铺开（_interleave_by_signal），想法依次各领一条，
+        # 不同想法自然落在不同空白、不同信号上——以前这件事交给模型自己选下标
+        index = i % len(gaps) if gaps else None
+        gap = gaps[index] if index is not None else None
+        target = (
+            f"这一次针对清单里下标 {index} 的空白：{gap.get('title') or ''}\n"
+            if gap is not None
+            else ""
+        )
+        earlier = json.dumps([c["title"] for c in candidates], ensure_ascii=False)
+        idea = await _ask(
+            ctx,
+            stage="forge_generate",
+            system=system,
+            user=(
+                f"{target}此前已经写出的想法标题：{earlier}\n"
+                f"请生成第 {i + 1} 个候选想法（共 {num_ideas} 个）。"
+            ),
+            schema=ForgeIdeaOut,
+            cache_prefix=shared,
+        )
+        # evidence 记录这个想法依据的是哪条空白、来自哪个信号（docs/task-system.md §7）
+        evidence = (
+            [
                 {
-                    "title": str(item["title"]).strip()[:512],
-                    "summary": str(item.get("summary") or "").strip() or None,
-                    "content": _idea_markdown(item),
-                    "scores": None,
-                    "score_rationale": None,
-                    "duplicate": False,
-                    "evidence": evidence,
+                    "source": "signal",
+                    "title": str(gap.get("title") or ""),
+                    "why": str(gap.get("description") or ""),
+                    "signal": str(gap.get("signal") or "survey_gap"),
                 }
-            )
-        return normalized[:num_ideas]
-
-    candidates = await _complete_json(
-        ctx,
-        stage="forge_generate",
-        system=GENERATE_SYSTEM_PROMPT + ctx.workflow_guidance("forge.generate"),
-        user=user_prompt,
-        validate=validate,
-    )
+            ]
+            if gap is not None
+            else None
+        )
+        candidates.append(
+            {
+                "title": idea.title[:512],
+                "summary": idea.summary.strip() or None,
+                "content": _idea_markdown(idea.model_dump()),
+                "scores": None,
+                "score_rationale": None,
+                "duplicate": False,
+                "evidence": evidence,
+            }
+        )
+        ctx.checkpoint["forge_candidates_partial"] = list(candidates)
     ctx.checkpoint["forge_candidates"] = candidates
+    ctx.checkpoint.pop("forge_candidates_partial", None)
     return {"requested": num_ideas, "generated": len(candidates)}
 
 
 # ---- forge 4. 四维打分（LLM stage=forge，逐 idea 独立调用） ----
 
 
-def _validate_scores(data: Any) -> tuple[dict[str, float], dict[str, str]]:
-    if not isinstance(data, dict):
-        raise ValueError("scores payload is not an object")
-    scores: dict[str, float] = {}
-    for dim in _SCORE_DIMS:
-        value = data.get(dim)
-        if not isinstance(value, int | float):
-            raise ValueError(f"missing numeric score: {dim}")
-        scores[dim] = min(10.0, max(0.0, float(value)))
-    raw_rationale = data.get("rationale")
-    rationale = (
-        {dim: str(raw_rationale.get(dim) or "") for dim in _SCORE_DIMS}
-        if isinstance(raw_rationale, dict)
-        else {}
-    )
+def _scores_of(out: IdeaScoreOut) -> tuple[dict[str, float], dict[str, str]]:
+    """打分结果 → (四维分数，夹到 0-10；逐维理由)。"""
+    scores = {dim: min(10.0, max(0.0, float(getattr(out, dim)))) for dim in _SCORE_DIMS}
+    rationale = {dim: str(getattr(out.rationale, dim) or "") for dim in _SCORE_DIMS}
     return scores, rationale
 
 
@@ -743,12 +764,14 @@ async def forge_score(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
             f"详情：\n{cand.get('content') or ''}"
         )
         try:
-            scores, rationale = await _complete_json(
-                ctx,
-                stage="forge",
-                system=SCORE_SYSTEM_PROMPT + ctx.workflow_guidance("forge.score"),
-                user=user_prompt,
-                validate=_validate_scores,
+            scores, rationale = _scores_of(
+                await _ask(
+                    ctx,
+                    stage="forge",
+                    system=SCORE_SYSTEM_PROMPT + ctx.workflow_guidance("forge.score"),
+                    user=user_prompt,
+                    schema=IdeaScoreOut,
+                )
             )
         except asyncio.CancelledError:
             raise
@@ -1084,12 +1107,6 @@ async def _add_agent_message(
     return message
 
 
-def _validate_verdict(data: Any) -> dict[str, str]:
-    if not isinstance(data, dict) or data.get("winner") not in ("a", "b"):
-        raise ValueError('expected {"winner": "a"|"b", "reason": ...}')
-    return {"winner": str(data["winner"]), "reason": str(data.get("reason") or "")}
-
-
 async def _run_match(
     ctx: ActionContext, session: AsyncSession, idea_a: Idea, idea_b: Idea, match_no: int
 ) -> dict[str, Any]:
@@ -1147,14 +1164,15 @@ async def _run_match(
             )
             transcript.append(f"{persona['name']}（{side}）：{content}")
 
-    # 裁判判定（JSON 校验重试）
-    verdict = await _complete_json(
+    # 裁判判定（结构化输出）
+    judged = await _ask(
         ctx,
         stage="debate",
         system=JUDGE_SYSTEM_PROMPT.format(name=judge["name"], stance=judge.get("stance") or ""),
         user=f"{base_context}\n\n辩论全文：\n" + "\n\n".join(transcript),
-        validate=_validate_verdict,
+        schema=DebateVerdictOut,
     )
+    verdict = {"winner": judged.winner, "reason": judged.reason}
     round_no += 1
     winner_idea = idea_a if verdict["winner"] == "a" else idea_b
     await _add_agent_message(

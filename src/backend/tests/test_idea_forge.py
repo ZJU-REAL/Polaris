@@ -29,7 +29,7 @@ DEFINITION = {"statement": "自动化科研 agent 的方法研究"}
 
 KNOBS = {"num_ideas": 2, "dedup_threshold": 0.9, "max_context_papers": 20}
 
-# fake provider 生成想法的确定性文案（app/core/llm/fake.py::_respond_forge_ideas）
+# fake provider 生成想法的确定性文案（app/core/llm/fake.py::_respond_forge_idea）
 FAKE_IDEA_1_TITLE = "候选想法 1：面向空白 g1 的方法（fake）"
 FAKE_IDEA_1_SUMMARY = "fake-summary-1：探索主题 t1 的独立路线 token1"
 FAKE_IDEA_2_TITLE = "候选想法 2：面向空白 g2 的方法（fake）"
@@ -255,16 +255,17 @@ class _CrashOnFirstScore(FakeProvider):
     """模拟 worker 在第一次四维打分时被杀；同时按 marker 统计各类 forge 调用次数。"""
 
     def __init__(self) -> None:
+        super().__init__()
         self.gap_calls = 0
         self.generate_calls = 0
         self.score_calls = 0
         self.crashed = False
 
-    async def complete(self, messages, *, model, temperature=0.7, max_tokens=None):
+    async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, **kwargs):
         full = "\n".join(m.content for m in messages)
         if '"gaps"' in full:
             self.gap_calls += 1
-        if '"ideas"' in full:
+        if "POLARIS_FORGE_IDEA" in full:
             self.generate_calls += 1
         if '"operability"' in full:
             self.score_calls += 1
@@ -272,7 +273,7 @@ class _CrashOnFirstScore(FakeProvider):
                 self.crashed = True
                 raise asyncio.CancelledError("simulated worker kill")
         return await super().complete(
-            messages, model=model, temperature=temperature, max_tokens=max_tokens
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, **kwargs
         )
 
 
@@ -286,12 +287,13 @@ async def test_forge_resume_does_not_regenerate(client, queue_stub):
     run_id = uuid.UUID(resp.json()["id"])
 
     provider = _CrashOnFirstScore()
+    num_ideas = KNOBS["num_ideas"]  # 生成是一个想法一次调用
     router = LLMRouter()
     router.override_provider(provider)
     engine = VoyageEngine(event_bus=RecordingBus(), llm_router=router)
     with pytest.raises(asyncio.CancelledError):
         await engine.run(run_id)
-    assert provider.gap_calls == 1 and provider.generate_calls == 1
+    assert provider.gap_calls == 1 and provider.generate_calls == num_ideas
 
     # resume（同一 provider 计数）：gap/生成步骤已过 cursor，不再调 LLM
     engine2 = VoyageEngine(event_bus=RecordingBus(), llm_router=router)
@@ -299,7 +301,7 @@ async def test_forge_resume_does_not_regenerate(client, queue_stub):
     resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
     assert resp.json()["status"] == "done"
     assert provider.gap_calls == 1
-    assert provider.generate_calls == 1
+    assert provider.generate_calls == num_ideas
     assert provider.score_calls == 3  # 崩溃 1 次 + resume 后 2 个 idea 各 1 次
 
     async with get_sessionmaker()() as session:
@@ -574,6 +576,16 @@ async def test_forge_fails_on_an_empty_corpus_instead_of_inventing(client, queue
     assert IDEA_CONTEXT_EMPTY in (first["observation"] or {}).get("error", "")
     assert all(s["status"] != "passed" for s in detail["steps"])
     assert CountingFake.calls == 0  # 没有任何模型调用
+    # 停下来的原因带的是它自己的错误码，不是笼统的 INVALID_OUTPUT；重试没有用，不排自动重试
+    failure = first["observation"]["failure"]
+    assert (failure["code"], failure["transient"]) == (IDEA_CONTEXT_EMPTY, False)
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, uuid.UUID(run_id))
+        last_error = run.checkpoint["last_error"]
+    assert last_error["code"] == IDEA_CONTEXT_EMPTY
+    assert last_error["transient"] is False
+    assert "没有可用的论文" in last_error["message"]
+    assert "auto_retry" not in run.checkpoint
 
     async with get_sessionmaker()() as session:
         ideas = (

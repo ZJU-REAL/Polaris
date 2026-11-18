@@ -16,6 +16,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import PreconditionError
 from app.core.llm.base import Message
 from app.core.llm.budgets import LIBRARIAN_FULLTEXT, resolve_budget
 from app.core.llm.router import LLMRouter, get_llm_router
@@ -260,7 +261,10 @@ async def compile_paper(
             (int(item["article_no"]), int(item["sentence_no"])) for item in evidence_bundle.manifest
         }
         if any(ref not in valid_refs for ref in citation_refs(content)):
-            raise ValueError("LIBRARIAN_EVIDENCE_CITATIONS_INVALID")
+            raise PreconditionError(
+                "LIBRARIAN_EVIDENCE_CITATIONS_INVALID",
+                "解读里引用了原文中不存在的句子编号，这一稿不能采用",
+            )
         evidence = evidence_locators(evidence_bundle)
     return CompiledWiki(
         content=content,

@@ -33,12 +33,14 @@ import uuid
 from typing import Any
 
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.voyage.actions import ActionContext
 from app.agents.voyage.checks import run_deterministic_checks
 from app.agents.voyage.errorsig import error_signature
 from app.agents.voyage.failures import (
+    DB_BUSY_DETAIL_CHARS,
     MESSAGES,
     clear_auto_retry,
     describe_failure,
@@ -49,7 +51,7 @@ from app.agents.voyage.helm import Helm
 from app.agents.voyage.navigator import Navigator, NavigatorError, done_criteria_for_kind
 from app.agents.voyage.plan_edit import SIGNAL_TABLES, PlanEditError
 from app.agents.voyage.sextant import Sextant
-from app.core.db import get_sessionmaker
+from app.core.db import get_sessionmaker, is_busy_error
 from app.core.events import EventBus
 from app.core.llm.router import LLMRouter, get_llm_router
 from app.models.base import utcnow
@@ -90,6 +92,27 @@ def _park_text(error: dict[str, Any]) -> str:
 
 
 async def park_run(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    bus: EventBus | None,
+    run_id: uuid.UUID,
+    *,
+    exc: BaseException | None = None,
+    error: dict[str, Any] | None = None,
+) -> bool:
+    """把任务停到 ``paused_error``（见 :func:`_park_run_once`）；本地库正忙就退避再试。
+
+    这一笔写不进去的后果是任务悬在「运行中」却没人驱动，所以值得多等几次。"""
+    for attempt in range(4):
+        try:
+            return await _park_run_once(sessionmaker, bus, run_id, exc=exc, error=error)
+        except OperationalError as busy:
+            if not is_busy_error(busy) or attempt == 3:
+                raise
+            await asyncio.sleep(min(2.0, 0.25 * 2**attempt))
+    return False
+
+
+async def _park_run_once(
     sessionmaker: async_sessionmaker[AsyncSession],
     bus: EventBus | None,
     run_id: uuid.UUID,
@@ -1364,9 +1387,14 @@ class VoyageEngine:
         observation = node.observation if isinstance(node.observation, dict) else {}
         failure = observation.get("failure")
         failure = failure if isinstance(failure, dict) else {}
+        message: str | None = None
         if observation.get("error"):
             code = str(failure.get("code") or "STEP_FAILED")
             transient = failure.get("transient") is True
+            if code == "DB_BUSY":  # 原始报错带着整条 SQL：只留开头那句
+                diagnosis = diagnosis.split("[SQL:", 1)[0].strip()[:DB_BUSY_DETAIL_CHARS]
+            raw_message = failure.get("user_message")
+            message = raw_message if isinstance(raw_message, str) and raw_message else None
         else:
             code, transient = "CHECK_FAILED", False
         return error_record(
@@ -1374,6 +1402,7 @@ class VoyageEngine:
             transient=transient,
             source="action",
             detail=diagnosis,
+            message=message,
             step_id=node.id,
             step_title=node.title,
         )

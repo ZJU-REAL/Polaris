@@ -27,13 +27,11 @@ from app.agents.voyage.actions import ActionContext, register
 from app.agents.voyage.actions_ideas import (
     SCORE_SYSTEM_PROMPT,
     SECTION_STYLE_GUIDE,
-    _complete_json,
     _get_project,
     _params,
     _statement,
-    _validate_scores,
 )
-from app.agents.voyage.tool_loop import run_tool_loop
+from app.agents.voyage.tool_loop import _extract_json, run_tool_loop
 from app.core.db import get_sessionmaker
 from app.core.embedding_space import EmbeddingSpace
 from app.core.llm.base import Message
@@ -70,6 +68,55 @@ _PROPOSAL_REVIEW_CHARS = 9000  # 评审时 proposal 全文截断
 _GROUNDING_EXCERPT_CHARS = 700  # grounding 论文 wiki 摘录
 _INTERNAL_SIMILAR_K = 5
 _EXTERNAL_SIMILAR_K = 5
+
+_MAX_JSON_ATTEMPTS = 3  # 首次 + 重试 2 次
+_SCORE_DIMS = ("novelty", "feasibility", "operability", "impact")
+
+
+async def _complete_json(
+    ctx: ActionContext, *, stage: str, system: str, user: str, validate
+) -> Any:
+    """LLM JSON 请求：解析/校验失败重试（共 _MAX_JSON_ATTEMPTS 次），仍失败抛 ValueError。
+
+    这是从回答文字里切 JSON 的旧做法，原来放在 actions_ideas 里；那边已经改用结构化
+    输出，只剩本模块的调用点还在用，所以搬到这里。这些调用点迁完后连同它一起删。
+    """
+    last_error: Exception | None = None
+    for _attempt in range(_MAX_JSON_ATTEMPTS):
+        result = await ctx.llm.complete(
+            stage,
+            [
+                Message(role="system", content=system + ctx.evidence_guidance()),
+                Message(role="user", content=user),
+            ],
+            user_id=ctx.run.created_by,
+            project_id=ctx.run.project_id,
+            voyage_id=ctx.run.id,
+        )
+        try:
+            return validate(_extract_json(result.content))
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
+            last_error = e
+    raise ValueError(f"LLM 连续输出非法 JSON：{last_error}")
+
+
+def _validate_scores(data: Any) -> tuple[dict[str, float], dict[str, str]]:
+    if not isinstance(data, dict):
+        raise ValueError("scores payload is not an object")
+    scores: dict[str, float] = {}
+    for dim in _SCORE_DIMS:
+        value = data.get(dim)
+        if not isinstance(value, int | float):
+            raise ValueError(f"missing numeric score: {dim}")
+        scores[dim] = min(10.0, max(0.0, float(value)))
+    raw_rationale = data.get("rationale")
+    rationale = (
+        {dim: str(raw_rationale.get(dim) or "") for dim in _SCORE_DIMS}
+        if isinstance(raw_rationale, dict)
+        else {}
+    )
+    return scores, rationale
+
 
 # ---- prompts（POLARIS_* 标记与 core/llm/fake.py 对齐） ----
 

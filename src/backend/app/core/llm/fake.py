@@ -66,7 +66,7 @@ _DAILY_DIGEST_MARKER = "POLARIS_DAILY_DIGEST"
 _TREND_SYNTHESIS_MARKER = "POLARIS_TREND_SYNTHESIS"
 _INTERVIEW_MARKER = '"out_of_scope"'
 _GAPS_MARKER = '"gaps"'  # forge gap 分析
-_IDEAS_MARKER = '"ideas"'  # forge 候选生成
+_FORGE_IDEA_MARKER = "POLARIS_FORGE_IDEA"  # forge 候选生成（一次调用一个想法）
 _IDEA_SCORE_MARKER = '"operability"'  # forge 四维打分
 _JUDGE_MARKER = '"winner"'  # debate 裁判判定
 _EXP_PLAN_MARKER = '"repro_strategy"'  # experiment 计划
@@ -100,6 +100,7 @@ _HYP_NOVELTY_MARKER = "POLARIS_HYP_NOVELTY"
 _HYP_FEASIBILITY_MARKER = "POLARIS_HYP_FEASIBILITY"
 _HYP_WRITEUP_MARKER = "POLARIS_HYP_WRITEUP"  # 假设写成想法草案（actions_discovery）
 _RESEARCH_BRIEF_MARKER = "POLARIS_RESEARCH_BRIEF"  # 研究方向 → 检索简报
+_SURVEY_QUERIES_MARKER = "POLARIS_SURVEY_QUERIES"  # 检索简报 → 检索查询
 # 锦标赛两两对比（services/hypothesis_tournament.py，#653）。system prompt 里有
 # "winner" 字样，会撞 debate 裁判的 _JUDGE_MARKER——必须先于它判断
 _HYP_COMPARE_MARKER = "POLARIS_HYP_COMPARE"
@@ -509,6 +510,11 @@ class FakeProvider(LLMProvider):
             return FakeProvider._respond_paper_reviewer(full_text)
         # 假设管线四 marker（#648）：user payload 内嵌检索片段（可能撞任意通用
         # marker），须先于通用 marker 判断
+        if _SURVEY_QUERIES_MARKER in full_text:
+            # 调研检索的查询：原样回简报里的英文关键词（确定性、可测）
+            m = re.search(r"已有的英文关键词：(.+)", last_user)
+            keywords = [k.strip() for k in (m.group(1) if m else "").split(";") if k.strip()]
+            return json.dumps({"queries": keywords or ["fake survey query"]}, ensure_ascii=False)
         if _RESEARCH_BRIEF_MARKER in full_text:
             return FakeProvider._respond_research_brief(last_user)
         if _HYP_WRITEUP_MARKER in full_text:
@@ -637,8 +643,8 @@ class FakeProvider(LLMProvider):
             )
         if _GAPS_MARKER in full_text:
             return FakeProvider._respond_gaps()
-        if _IDEAS_MARKER in full_text:
-            return FakeProvider._respond_forge_ideas(last_user)
+        if _FORGE_IDEA_MARKER in full_text:
+            return FakeProvider._respond_forge_idea(last_user)
         if _IDEA_SCORE_MARKER in full_text:
             return FakeProvider._respond_idea_scores(last_user)
         if _RELEVANCE_MARKER in full_text:
@@ -1013,11 +1019,11 @@ class FakeProvider(LLMProvider):
         )
 
     @staticmethod
-    def _respond_forge_ideas(last_user: str) -> str:
-        """forge 候选生成：从「生成 N 个」提取数量，返回 N 个互不相似的确定性想法。"""
-        m = re.search(r"生成\s*(\d+)\s*个", last_user)
-        n = int(m.group(1)) if m else 3
-        ideas = [
+    def _respond_forge_idea(last_user: str) -> str:
+        """forge 候选生成：一次一个。从「生成第 N 个」取序号，各序号的想法互不相似。"""
+        m = re.search(r"生成第\s*(\d+)\s*个", last_user)
+        i = int(m.group(1)) if m else 1
+        return json.dumps(
             {
                 "title": f"候选想法 {i}：面向空白 g{i} 的方法（fake）",
                 "summary": f"fake-summary-{i}：探索主题 t{i} 的独立路线 token{i}",
@@ -1025,10 +1031,9 @@ class FakeProvider(LLMProvider):
                 "method": f"方法概述（fake idea {i}）",
                 "experiments": f"预期实验（fake idea {i}）",
                 "risks": f"风险（fake idea {i}）",
-            }
-            for i in range(1, n + 1)
-        ]
-        return json.dumps({"ideas": ideas}, ensure_ascii=False)
+            },
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _respond_idea_scores(last_user: str) -> str:

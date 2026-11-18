@@ -5,8 +5,10 @@ import re
 import uuid
 
 import pytest
+from pydantic import ValidationError
 
-from app.core.llm.base import CompletionResult
+from app.core.llm.base import CompletionResult, JsonResult
+from app.core.llm.errors import LLMSchemaError
 from app.models.library_direction import DirectionLibrary
 from app.models.voyage import VoyageRun
 from app.services.research_digest import (
@@ -15,7 +17,23 @@ from app.services.research_digest import (
 )
 
 
-class _RetryingDigestLLM:
+class _StructuredStub:
+    """替身路由的结构化入口：拿子类 ``complete`` 给的文字按 schema 校验。
+
+    简报的三个环节走 ``complete_json``。真实路由在结构不符时抛 ``LLMSchemaError``，
+    这里照做，子类只管决定每次回什么。
+    """
+
+    async def complete_json(self, stage, messages, *, schema, **kwargs):
+        result = await self.complete(stage, messages, **kwargs)
+        try:
+            data = schema.model_validate_json(result.content)
+        except ValidationError as e:
+            raise LLMSchemaError(f"{stage}: output does not match {schema.__name__}: {e}") from e
+        return JsonResult(data=data, usage={}, model=result.model, calls=1)
+
+
+class _RetryingDigestLLM(_StructuredStub):
     """首批漏一篇、首次综合返回坏 JSON，随后都成功。"""
 
     def __init__(self) -> None:
@@ -135,7 +153,7 @@ async def test_digest_batches_retry_only_missing_then_retry_synthesis():
     assert llm.synthesis_calls == 2
 
 
-class _AlwaysMissingDigestLLM:
+class _AlwaysMissingDigestLLM(_StructuredStub):
     """指定的几篇论文永远不返回，其余都正常——模拟模型对某几篇死活不出结果。"""
 
     def __init__(self, doomed_ids: set[str]) -> None:
@@ -225,7 +243,7 @@ async def test_a_batch_that_never_completes_degrades_instead_of_raising():
     assert retries == 2, "该批应当补跑到上限（共三轮）"
 
 
-class _BrokenTrendLLM:
+class _BrokenTrendLLM(_StructuredStub):
     """趋势综合永远返回截断的 JSON——2026-08-10 生产上网关提前断流的形态。"""
 
     def __init__(self) -> None:

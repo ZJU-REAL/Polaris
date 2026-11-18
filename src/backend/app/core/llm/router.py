@@ -319,8 +319,8 @@ _SHORT_CALL_STAGES = frozenset(
 # 「要给长耐心」与「要流式播出去」是两件事，不能共用一个集合。
 # digest 就是反例：它输出 JSON（不该流式，否则整段 JSON 灌进任务终端日志），
 # 但一次要为一批论文生成洞察，实测 p95 313 秒，必须给长档预算。
-# forge_generate 同理：默认一次生成 8 个含方法、实验与风险的完整想法，生产请求
-# 会超过 60 秒；仍保持非流式，避免把半截 JSON 写进任务终端。
+# forge_generate 同理：每次调用写一个含方法、实验与风险的完整想法，还带着整段
+# 知识库上下文，生产请求会超过 60 秒；仍保持非流式，避免把半截 JSON 写进任务终端。
 _LONG_CALL_STAGES = STREAM_STAGES | frozenset({"digest", "forge_generate"})
 
 # 中档用于多轮代理和较长的结构化生成。一次调用比短 JSON 长得多，但**不能**

@@ -11,13 +11,14 @@
 import json
 from typing import Any
 
+from pydantic import BaseModel
+
 from app.agents.voyage.checks import run_deterministic_checks
 from app.agents.voyage.errorsig import error_text
 from app.core.llm.base import Message
+from app.core.llm.errors import LLMSchemaError, LLMTruncatedError
 from app.core.llm.router import LLMRouter
 from app.models.voyage import VoyageRun
-
-_MAX_ATTEMPTS = 3  # 首次 + 重试 2 次
 
 # 无需判定的 M1 基础动作（LLM 自由计划可用，无产出文本）
 DETERMINISTIC_ACTIONS = frozenset({"sleep", "artifact.write"})
@@ -29,15 +30,11 @@ VERIFY_SYSTEM_PROMPT = """\
 """
 
 
-def _parse_verdict(content: str) -> dict[str, Any]:
-    start = content.find("{")
-    end = content.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError("no JSON object found")
-    data = json.loads(content[start : end + 1])
-    if not isinstance(data, dict) or not isinstance(data.get("passed"), bool):
-        raise ValueError("verdict must contain boolean 'passed'")
-    return {"passed": data["passed"], "reason": str(data.get("reason", ""))}
+class VerdictOut(BaseModel):
+    """判定结果：过没过，加一句理由。"""
+
+    passed: bool
+    reason: str = ""
 
 
 class SextantError(Exception):
@@ -117,29 +114,26 @@ class Sextant:
             f"验收标准：{rubric}\n"
             f"步骤产出：\n{str(content)[:4000]}"
         )
-        usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
-        last_error: Exception | None = None
-        for _attempt in range(_MAX_ATTEMPTS):
-            try:
-                result = await self._llm.complete(
-                    "sextant",
-                    [
-                        Message(role="system", content=VERIFY_SYSTEM_PROMPT),
-                        Message(role="user", content=user_prompt),
-                    ],
-                    user_id=run.created_by,
-                    project_id=run.project_id,
-                    voyage_id=run.id,
-                )
-            except Exception as e:  # noqa: BLE001 — 任何调用失败都要带着原因交给引擎
-                raise SextantError(error_text(e)) from e
-            usage_total["prompt_tokens"] += int(result.usage.get("prompt_tokens", 0))
-            usage_total["completion_tokens"] += int(result.usage.get("completion_tokens", 0))
-            try:
-                return _parse_verdict(result.content), usage_total
-            except (ValueError, json.JSONDecodeError) as e:
-                last_error = e
-        return (
-            {"passed": False, "reason": f"自动校验输出无法解析为合法判定 JSON：{last_error}"},
-            usage_total,
-        )
+        try:
+            # 结构化输出：格式不对的那一次重问由 complete_json 自己做
+            result = await self._llm.complete_json(
+                "sextant",
+                [
+                    Message(role="system", content=VERIFY_SYSTEM_PROMPT),
+                    Message(role="user", content=user_prompt),
+                ],
+                schema=VerdictOut,
+                user_id=run.created_by,
+                project_id=run.project_id,
+                voyage_id=run.id,
+            )
+        except (LLMSchemaError, LLMTruncatedError) as e:
+            # 模型给不出一个合法的判定：和以前一样按「未通过」处理，交给重规划
+            return {"passed": False, "reason": f"自动校验没有给出合法的判定：{e}"}, {}
+        except Exception as e:  # noqa: BLE001 — 其余调用失败都要带着原因交给引擎
+            raise SextantError(error_text(e)) from e
+        usage = {
+            "prompt_tokens": int(result.usage.get("prompt_tokens", 0)),
+            "completion_tokens": int(result.usage.get("completion_tokens", 0)),
+        }
+        return {"passed": result.data.passed, "reason": result.data.reason}, usage

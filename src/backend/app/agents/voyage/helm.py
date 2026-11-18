@@ -24,4 +24,7 @@ class Helm:
             # code / transient：引擎据此决定停下来之后要不要自己过一会儿再试
             found = classify_failure(e)
             failure = report.to_dict() | {"code": found.code, "transient": found.transient}
+            if found.user_message:
+                # 异常自带的给人看的说明：任务停下来时用它，而不是按错误码查不到的兜底文案
+                failure["user_message"] = found.user_message
             return {"error": error_text(e), "failure": failure}

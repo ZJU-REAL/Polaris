@@ -1,7 +1,7 @@
 """单篇文献相关性打分（LLM stage=relevance）。
 
 voyage 的 wiki.score_relevance 动作与手动添加端点共用：按项目 definition 组
-context（稀疏容忍）→ 调 LLM → 解析 → 写成员行 relevance_score/scored_at 与论文 tldr。
+context（稀疏容忍）→ 调 LLM（结构化输出）→ 写成员行 relevance_score/scored_at 与论文 tldr。
 本模块不改成员行 status、不 commit——状态转移与落库时机由调用方决定。
 """
 
@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.base import Message
@@ -23,8 +24,14 @@ logger = logging.getLogger(__name__)
 
 RELEVANCE_SYSTEM_PROMPT = """\
 你是文献相关性评审，对照研究方向定义评估一篇论文（只看标题与摘要）。
-只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
-{"score": 0 到 1 之间的小数, "reason": "简要理由", "tldr": "一句话中文总结"}
+给出三项："score"（0 到 1 之间的小数）、"reason"（简要理由）、"tldr"（一句话中文总结）。
+
+score 的刻度：
+- 0.8 以上：直接研究这个方向的问题（方法、实验或综述就是冲着它来的）；
+- 0.5–0.8：密切相关——研究同一类方法或同一个对象，结论对这个方向有用，
+  这个方向的经典奠基工作也算在这一档或更高；
+- 0.2–0.5：只是同一个大领域，或者只在背景里提到；
+- 0.2 以下：无关。
 
 reason 与 tldr 是两回事，别写成同一句：
 - reason 是**给这个方向的判词**，可以说相关或不相关、缺了什么。
@@ -34,6 +41,10 @@ reason 与 tldr 是两回事，别写成同一句：
   看到的就是一句与自己无关的评价。"""
 
 
+# 一次打分的输出上限（思考与正文合计）：三个短字段，用不着默认的 16,000
+RELEVANCE_MAX_TOKENS = 4000
+
+
 @dataclass
 class RelevanceResult:
     score: float
@@ -41,12 +52,12 @@ class RelevanceResult:
     tldr: str
 
 
-def _extract_json(content: str) -> Any:
-    start = content.find("{")
-    end = content.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError("no JSON object found")
-    return json.loads(content[start : end + 1])
+class RelevanceOut(BaseModel):
+    """相关性打分的结构化输出。数值范围不写进 schema（接口不支持），拿到后夹到 0..1。"""
+
+    score: float
+    reason: str
+    tldr: str
 
 
 def _include_keywords(definition: dict[str, Any]) -> list[str]:
@@ -135,25 +146,29 @@ async def score_paper_relevance(
     """
     llm = llm or get_llm_router()
     user_prompt = f"{context_text}\n标题：{paper.title}\n摘要：{paper.abstract or '（无摘要）'}"
-    result = await llm.complete(
+    # 结构化输出：理由里带引号、换行都不会再让解析失败（以前从文本里抠 JSON，
+    # 实测 30 篇里 5 篇因为中文理由里的引号解析不了，直接算成「没筛」）
+    result = await llm.complete_json(
         "relevance",
         [
             Message(role="system", content=RELEVANCE_SYSTEM_PROMPT + extra_guidance),
             Message(role="user", content=user_prompt),
         ],
+        schema=RelevanceOut,
+        max_tokens=RELEVANCE_MAX_TOKENS,
         user_id=user_id,
         project_id=project_id,
         library_id=membership.library_id,  # 打分是库侧判断，记方向库账（P6）
         voyage_id=voyage_id,
     )
-    data = _extract_json(result.content)
-    score = min(1.0, max(0.0, float(data["score"])))
+    data = result.data
+    score = min(1.0, max(0.0, float(data.score)))
     membership.relevance_score = score
-    membership.relevance_reason = str(data.get("reason") or "")
+    membership.relevance_reason = data.reason.strip()
     # **只在空的时候填。** 打分是库侧判断，而 tldr 挂在全平台共享的论文上：谁最后
     # 打分谁就覆盖掉前一个库（乃至编译产出的正式 TL;DR），于是所有库看到的都是最后
     # 那个库的判词。这里只当「还没有摘要时的临时占位」，编译一跑就由正式的接管。
-    paper.tldr = paper.tldr or str(data.get("tldr") or "")
+    paper.tldr = paper.tldr or data.tldr.strip()
     membership.scored_at = utcnow()
     membership.scored_run_id = voyage_id  # 手动加论文没有任务，留 NULL
     return RelevanceResult(score=score, reason=membership.relevance_reason, tldr=paper.tldr or "")

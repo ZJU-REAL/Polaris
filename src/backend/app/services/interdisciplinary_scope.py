@@ -7,6 +7,7 @@ import re
 import uuid
 from typing import Any
 
+from app.core.errors import PreconditionError
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter, get_llm_router
 from app.schemas.interdisciplinary import (
@@ -131,7 +132,9 @@ def parse_suggestion(content: str, *, model: str) -> InterdisciplinaryScopeSugge
             payload = value
             break
     if payload is None:
-        raise ValueError("INTERDISCIPLINARY_SCOPE_INVALID")
+        raise PreconditionError(
+            "INTERDISCIPLINARY_SCOPE_INVALID", "模型给出的交叉研究范围不是一个可用的对象"
+        )
 
     def first(*names: str) -> object:
         return next((payload[name] for name in names if name in payload), None)
@@ -163,7 +166,9 @@ def parse_suggestion(content: str, *, model: str) -> InterdisciplinaryScopeSugge
             model=model,
         )
     except ValueError as exc:
-        raise ValueError("INTERDISCIPLINARY_SCOPE_INVALID") from exc
+        raise PreconditionError(
+            "INTERDISCIPLINARY_SCOPE_INVALID", "模型给出的交叉研究范围缺少必填内容"
+        ) from exc
 
 
 def _fallback(

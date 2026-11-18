@@ -10,7 +10,8 @@ from sqlalchemy import select
 
 from app.agents.voyage import actions as actions_registry
 from app.agents.voyage.engine import VoyageEngine, park_run
-from app.agents.voyage.failures import classify_failure
+from app.agents.voyage.failures import PreconditionError, classify_failure
+from app.agents.voyage.helm import Helm
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
 from app.models.base import utcnow
@@ -99,6 +100,9 @@ def _wrapped(inner: BaseException) -> BaseException:
         (FileNotFoundError(2, "no such file"), "MISSING_PREREQUISITE", False),
         (RuntimeError("bug"), "INTERNAL", False),
         (KeyError("x"), "INTERNAL", False),
+        # 前置条件不满足：是 ValueError 的子类，但用它自己的错误码，不落到 INVALID_OUTPUT
+        (PreconditionError("IDEA_CONTEXT_EMPTY", "库里没有论文"), "IDEA_CONTEXT_EMPTY", False),
+        (_wrapped(PreconditionError("SOME_PRECONDITION", "缺东西")), "SOME_PRECONDITION", False),
         # 外面包了一层普通异常：看里面的起因
         (_wrapped(httpx.ReadTimeout("")), "TIMEOUT", True),
         (_wrapped(_http_error(401)), "AUTH", False),
@@ -191,16 +195,62 @@ async def test_raising_action_pauses_with_a_stored_reason(
 
 
 def _router_failing_at(stage: str, exc: Exception) -> LLMRouter:
+    """这个环节的模型调用一律抛 ``exc``（普通补全和结构化输出两个入口都拦）。"""
     router = LLMRouter()
-    original = router.complete
 
-    async def complete(called_stage, *args, **kwargs):
-        if called_stage == stage:
-            raise exc
-        return await original(called_stage, *args, **kwargs)
+    def failing(original):
+        async def call(called_stage, *args, **kwargs):
+            if called_stage == stage:
+                raise exc
+            return await original(called_stage, *args, **kwargs)
 
-    router.complete = complete  # type: ignore[method-assign]
+        return call
+
+    router.complete = failing(router.complete)  # type: ignore[method-assign]
+    router.complete_json = failing(router.complete_json)  # type: ignore[method-assign]
     return router
+
+
+async def test_precondition_error_keeps_its_code_from_helm_to_last_error(
+    client, queue_stub, monkeypatch
+):
+    """动作抛「前置条件不满足」：错误码一路带到 observation 和任务停下来的原因里。
+
+    以前写成 ``ValueError("IDEA_CONTEXT_EMPTY: …")``，归类时只认得它是个 ValueError，
+    记成 INVALID_OUTPUT，真正的码埋在 detail 的文字里。
+    """
+    raised = PreconditionError("IDEA_CONTEXT_EMPTY", "关联的文献库里没有可用的论文")
+    # 原来按 ValueError 接、按子串找错误码的地方照常工作
+    assert isinstance(raised, ValueError)
+    assert str(raised) == "IDEA_CONTEXT_EMPTY: 关联的文献库里没有可用的论文"
+    assert raised.user_message == "关联的文献库里没有可用的论文"
+
+    async def boom(ctx, params):
+        raise raised
+
+    monkeypatch.setitem(actions_registry._REGISTRY, "test.precondition", boom)
+
+    observation = await Helm().execute(None, {"action": "test.precondition"})  # type: ignore[arg-type]
+    assert "IDEA_CONTEXT_EMPTY" in observation["error"]
+    failure = observation["failure"]
+    assert (failure["code"], failure["transient"]) == ("IDEA_CONTEXT_EMPTY", False)
+
+    project_id, _headers = await _project(client, "robust-precondition@example.com")
+    run_id = await _pipeline_voyage(project_id, "test.precondition")
+    await _engine().run(run_id)
+
+    run = await _load(run_id)
+    assert run.status == "paused_error"
+    error = run.checkpoint["last_error"]
+    assert (error["code"], error["transient"], error["source"]) == (
+        "IDEA_CONTEXT_EMPTY",
+        False,
+        "action",
+    )
+    # 给人看的那句话用异常自己带的说明，而不是查不到错误码时的「程序内部出错」
+    assert "关联的文献库里没有可用的论文" in error["message"]
+    assert "IDEA_CONTEXT_EMPTY" in error["detail"]
+    assert "auto_retry" not in run.checkpoint  # 重试没有用，不自己再试
 
 
 async def test_verifier_call_that_raises_pauses_instead_of_hanging(client, queue_stub):
@@ -445,3 +495,38 @@ async def test_reclaim_resume_keeps_step_attempts(client, queue_stub):
         assert await attempts() == 2
     finally:
         actions_registry._REGISTRY.pop("test.flaky", None)
+
+
+# ---- Sextant 的判定走结构化输出 ----
+
+
+async def test_sextant_verdict_failures_are_told_apart(app):
+    """给不出合法判定 = 这一步没通过；调用本身失败 = 抛 SextantError 交给引擎停下来。
+
+    判定以前是从回答文字里切 JSON：引号、多一个花括号都会让它解析失败。
+    """
+    from app.agents.voyage.sextant import Sextant, SextantError, VerdictOut
+    from app.core.llm.errors import LLMRateLimitedError, LLMSchemaError
+    from app.core.llm.fake import FakeProvider
+
+    provider = FakeProvider()
+    router = LLMRouter()
+    router.override_provider(provider)
+    sextant = Sextant(router)
+    run = VoyageRun(id=uuid.uuid4(), kind="demo", goal="t")
+    step = {"title": "写一段总结", "action": "llm.complete", "acceptance": "提到了结论"}
+    observation = {"content": '总结：实验"成功"了 {见附录}'}
+
+    verdict, usage = await sextant.verify(run, step, observation)
+    assert verdict["passed"] is True and verdict["reason"]
+    assert usage["prompt_tokens"] > 0
+
+    provider.fail_next(LLMSchemaError("sextant: bad shape"), schema=VerdictOut)
+    verdict, _usage = await sextant.verify(run, step, observation)
+    assert verdict["passed"] is False and "合法的判定" in verdict["reason"]
+
+    provider.fail_next(LLMRateLimitedError("HTTP 429"), schema=VerdictOut)
+    with pytest.raises(SextantError) as caught:
+        await sextant.verify(run, step, observation)
+    found = classify_failure(caught.value)
+    assert (found.code, found.transient) == ("LLM_RATE_LIMITED", True)

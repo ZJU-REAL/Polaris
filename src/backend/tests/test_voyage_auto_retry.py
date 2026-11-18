@@ -198,14 +198,14 @@ async def test_escaped_transient_error_is_scheduled_too(client, queue_stub):
     )
     run_id = resp.json()["id"]
     router = LLMRouter()
-    original = router.complete
+    original = router.complete_json  # 校验的判定走结构化输出
 
-    async def complete(stage, *args, **kwargs):
+    async def complete_json(stage, *args, **kwargs):
         if stage == "sextant":
             raise httpx.ReadTimeout("")
         return await original(stage, *args, **kwargs)
 
-    router.complete = complete  # type: ignore[method-assign]
+    router.complete_json = complete_json  # type: ignore[method-assign]
     await VoyageEngine(event_bus=RecordingBus(), llm_router=router).run(uuid.UUID(run_id))
 
     detail = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()

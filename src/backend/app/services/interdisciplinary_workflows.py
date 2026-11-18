@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import PreconditionError
 from app.models.guidance_document import GuidanceDocument
 from app.models.interdisciplinary import InterdisciplinaryResearchProfileVersion
 from app.models.project import Project
@@ -151,8 +152,11 @@ async def ensure_guidance_documents(session: AsyncSession) -> int:
     return 1
 
 
-class InterdisciplinaryScopeInvalidError(ValueError):
-    pass
+class InterdisciplinaryScopeInvalidError(PreconditionError):
+    """The confirmed scope has empty or placeholder disciplines; a person has to fix it."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__("INTERDISCIPLINARY_SCOPE_INVALID", message)
 
 
 def validate_disciplines(primary_domain: str, related_domains: list[str]) -> None:
@@ -161,9 +165,9 @@ def validate_disciplines(primary_domain: str, related_domains: list[str]) -> Non
     values = [primary_domain, *related_domains]
     normalized = [str(value or "").strip().casefold() for value in values]
     if not normalized[0] or not related_domains or any(not value for value in normalized):
-        raise InterdisciplinaryScopeInvalidError("INTERDISCIPLINARY_SCOPE_INVALID")
+        raise InterdisciplinaryScopeInvalidError("交叉研究范围缺少主学科或关联学科")
     if any(marker in value for value in normalized for marker in _PLACEHOLDERS):
-        raise InterdisciplinaryScopeInvalidError("INTERDISCIPLINARY_SCOPE_INVALID")
+        raise InterdisciplinaryScopeInvalidError("交叉研究范围里的学科还是占位内容")
 
 
 async def _latest_confirmed_profile(
@@ -205,7 +209,9 @@ async def snapshot_for_project(
     validate_disciplines(profile.primary_domain, list(profile.related_domains or []))
     document = await _latest_guidance_document(session)
     if document is None:
-        raise RuntimeError("INTERDISCIPLINARY_WORKFLOW_SKILL_MISSING")
+        raise PreconditionError(
+            "INTERDISCIPLINARY_WORKFLOW_SKILL_MISSING", "找不到跨学科工作流的指引文档"
+        )
     return {
         "schema_version": 1,
         "project_id": str(project_id),

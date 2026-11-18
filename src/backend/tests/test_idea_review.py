@@ -48,11 +48,11 @@ def _make_engine() -> tuple[VoyageEngine, RecordingBus]:
 
 
 class _FailOnePairProvider(FakeProvider):
-    async def complete(self, messages, *, model, temperature=0.7, max_tokens=None):
+    async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, **kwargs):
         if any("FAIL_PAIR" in message.content for message in messages):
             raise RuntimeError("temporary upstream failure")
         return await super().complete(
-            messages, model=model, temperature=temperature, max_tokens=max_tokens
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, **kwargs
         )
 
 

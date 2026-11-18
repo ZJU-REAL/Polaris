@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.agents.voyage.errorsig import error_text
+from app.core.errors import PreconditionError
 from app.models.base import utcnow
 
 
@@ -99,7 +100,7 @@ def _http_status(exc: BaseException) -> int | None:
 
 def _strong(exc: BaseException) -> FailureClass | None:
     """这个异常本身带着明确信号时给出归类；只是个普通 ValueError 之类则返回 None。"""
-    # 1. 类型化的模型错误自己声明了 transient：以它为准
+    # 1. 类型化的错误（模型错误、PreconditionError）自己声明了 transient：以它为准
     declared = getattr(exc, "transient", None)
     if isinstance(declared, bool):
         code = getattr(exc, "code", None)
@@ -292,14 +293,21 @@ def auto_retry_attempt(checkpoint: dict[str, Any] | None) -> int:
         return 0
 
 
+#: 本地库正忙的原始报错带着整条 SQL 和参数，留这么多就够排查
+DB_BUSY_DETAIL_CHARS = 300
+
+
 def describe_failure(exc: BaseException, *, source: str) -> dict[str, Any]:
-    """异常 → ``last_error`` 记录。"""
+    """异常 → ``last_error`` 记录。``message`` 永远是一句短话；原始报错只进 ``detail``。"""
     found = classify_failure(exc)
+    detail = error_text(exc)
+    if found.code == "DB_BUSY":
+        detail = detail.split("[SQL:", 1)[0].strip()[:DB_BUSY_DETAIL_CHARS]
     return error_record(
         found.code,
         transient=found.transient,
         source=source,
-        detail=error_text(exc),
+        detail=detail,
         message=found.user_message,
     )
 
@@ -308,6 +316,7 @@ __all__ = [
     "AUTO_RETRY_DELAYS_MINUTES",
     "MESSAGES",
     "FailureClass",
+    "PreconditionError",
     "auto_retry_attempt",
     "auto_retry_due_at",
     "classify_failure",
