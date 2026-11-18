@@ -152,9 +152,29 @@ class UsageRead(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
-    # 按模型的标价估的费用（美元）：输入 $5 / 百万 token，输出 $25 / 百万 token。
-    # 不计缓存折扣，所以是上限的近似
+    # prompt_tokens 里读缓存 / 写缓存的部分（读按输入价 0.1 倍、写按 1.25 倍计）
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    # 按模型的标价估的费用（美元），已计缓存折扣；向量与重排不计价。token 数只算
+    # 对话模型的调用。网关可能另有加价或折扣，所以是近似值——界面要标「约」
     cost_usd: float = 0.0
+    cost_approximate: bool = True
+
+
+class ResearchEstimate(BaseModel):
+    """开始之前的估算：大约多少 token、多少钱、多少分钟（都是区间）。"""
+
+    max_papers: int
+    compile_top_n: int
+    tokens_low: int
+    tokens_high: int
+    cost_usd_low: float
+    cost_usd_high: float
+    minutes_low: int
+    minutes_high: int
+    # 依据最近几次跑完的研究；0 = 还没有历史，用的是内置的参考值
+    based_on_runs: int = 0
+    approximate: bool = True
 
 
 class LastErrorRead(BaseModel):
@@ -173,6 +193,8 @@ class SurveyProgress(BaseModel):
     kept: int = 0  # 留下的
     summarised: int = 0  # 已写好解读的
     to_summarise: int = 0  # 这次打算写解读的篇数
+    # 解读没写成的篇数（模型连接反复中断等）：这些论文留在库里，可在论文页补「生成解读」
+    summarise_failed: int = 0
 
 
 class TopPaper(BaseModel):

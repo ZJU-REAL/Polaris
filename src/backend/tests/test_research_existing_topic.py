@@ -263,6 +263,15 @@ async def test_single_linked_library_is_reused_and_keeps_its_papers(client, live
         assert survey.checkpoint["params"]["query_terms"] == detail["brief"]["include_keywords"]
         assert survey.library_id == library_id
 
+    # 改名只改课题：沿用的库有自己的名字（别的课题也在用），不跟着改
+    resp = await client.patch(
+        f"/api/research/{run_id}", json={"name": "改过的名字"}, headers=headers
+    )
+    assert resp.status_code == 200 and resp.json()["name"] == "改过的名字"
+    async with get_sessionmaker()() as session:
+        assert (await session.get(Project, uuid.UUID(project_id))).name == "改过的名字"
+        assert (await session.get(DirectionLibrary, library_id)).name == "我原来的库"
+
     # 连带删除：沿用的库和原来的课题都留着，论文也在
     resp = await client.delete(f"/api/research/{run_id}?purge=true", headers=headers)
     assert resp.status_code == 204

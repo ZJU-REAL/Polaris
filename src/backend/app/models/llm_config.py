@@ -136,6 +136,14 @@ class LLMUsage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: prompt_tokens 里读缓存 / 写缓存的部分（提示缓存）。费用按它们打折或加价
+    #: （core/llm/pricing.py）；命中率 = cache_read_tokens / prompt_tokens。
+    cache_read_tokens: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    cache_write_tokens: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
 
 
 class LLMCallLog(UUIDPrimaryKeyMixin, TimestampMixin, Base):

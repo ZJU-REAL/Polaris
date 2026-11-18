@@ -270,7 +270,7 @@ STREAM_STAGES = frozenset(
     {"navigator", "debate", "experiment", "writing", "proposal", "review", "librarian"}
 )
 _STREAM_FLUSH_CHARS = 80  # token 增量攒到此长度再广播一段（节流，防刷爆 pub/sub）
-_STREAM_RETRY_ATTEMPTS = 3  # 流式请求网络瞬断整段重试次数
+_STREAM_RETRY_ATTEMPTS = 4  # 流式请求网络瞬断：第一次之外最多再整段重试 3 次
 _STREAM_RETRY_BASE_SECONDS = 2.0
 
 # 一次调用能等多久、重试几次，按环节分三档。
@@ -604,6 +604,8 @@ class LLMRouter:
             model=model,
             prompt_tokens=int(usage.get("prompt_tokens", 0)),
             completion_tokens=int(usage.get("completion_tokens", 0)),
+            cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
+            cache_write_tokens=int(usage.get("cache_creation_input_tokens", 0)),
         )
 
         async def _write(session) -> None:
@@ -959,8 +961,14 @@ class LLMRouter:
         """流式补全并把 token 增量节流广播成 llm_delta 事件，返回拼好的完整结果。
 
         节流见 _STREAM_FLUSH_CHARS：攒够长度再发一段，避免每 token 刷爆 pub/sub；始终
-        返回完整 content，对调用方与 complete() 等价（流式 provider 拿不到精确 usage，
-        由 _ensure_usage 估算）。
+        返回完整 content，对调用方与 complete() 等价。用量取流收尾事件里服务端报的数
+        （含思考、图片与缓存读写）；以前这条路径按「正文长度 / 4」估，论文解读一篇
+        实际几千 token 的思考完全没记上，费用被系统性低估。只实现了 ``stream`` 的
+        替身拿不到收尾事件，仍由 _ensure_usage 估算。
+
+        流被网关中途掐断（收不到收尾事件）也算网络瞬断：SDK 抛的是带 ``transient``
+        的 ``LLMTransportError``，与连接错误走同一条整段重试的路。以前它不在重试名单
+        里，20 篇解读实测丢 5 篇。
 
         网络瞬断重试：非流式路径的 _post_with_retry 会自动重试 TransportError，流式
         路径以前没有——LLM 网关一次 ReadTimeout 就把整个任务步骤打失败（线上实测，
@@ -974,9 +982,30 @@ class LLMRouter:
         transient = (httpx.TransportError, httpx.TimeoutException, anthropic.APIConnectionError)
         stream_extra: dict[str, Any] = {"effort": effort} if effort is not None else {}
         collected: list[str] = []
+        reported: dict[str, int] = {}
         last_exc: Exception | None = None
+
+        async def chunks() -> AsyncIterator[str]:
+            kwargs: dict[str, Any] = {
+                "model": route.model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "images": images,
+                **stream_extra,
+            }
+            if not isinstance(provider, LLMProvider):
+                async for text in provider.stream(messages, **kwargs):
+                    yield text
+                return
+            async for ev in provider.stream_events(messages, **kwargs):
+                if isinstance(ev, TextDelta):
+                    yield ev.text
+                elif isinstance(ev, StreamDone) and ev.usage:
+                    reported.update(ev.usage)
+
         for attempt in range(_STREAM_RETRY_ATTEMPTS):
             collected = []
+            reported.clear()
             buf: list[str] = []
             buf_len = 0
             seq = 0
@@ -993,22 +1022,18 @@ class LLMRouter:
 
             await self.event_bus.publish_voyage_event(voyage_id, "llm_start", {"stage": stage})
             try:
-                async for chunk in provider.stream(
-                    messages,
-                    model=route.model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    images=images,
-                    **stream_extra,
-                ):
+                async for chunk in chunks():
                     collected.append(chunk)
                     buf.append(chunk)
                     buf_len += len(chunk)
                     if buf_len >= _STREAM_FLUSH_CHARS:
                         await flush()
                 await flush()
-            except transient as e:
+            except Exception as e:
                 await self.event_bus.publish_voyage_event(voyage_id, "llm_end", {"stage": stage})
+                typed = classify(e)
+                if not isinstance(e, transient) and not (typed is not None and typed.transient):
+                    raise
                 last_exc = e
                 if attempt >= _STREAM_RETRY_ATTEMPTS - 1:
                     raise
@@ -1046,7 +1071,7 @@ class LLMRouter:
             from app.services.voyage_logs import record_terminal_log
 
             await record_terminal_log(voyage_id, "llm", message=full_text, stage=stage)
-        return CompletionResult(content=full_text, model=route.model)
+        return CompletionResult(content=full_text, model=route.model, usage=dict(reported))
 
     async def embed(
         self,

@@ -562,13 +562,12 @@ async def test_one_direction_runs_from_post_to_ideas(client, live_queue, literat
         "kept": 6,
         "summarised": 6,
         "to_summarise": 6,
+        "summarise_failed": 0,
     }
     assert len(survey["top_papers"]) == 6
     assert survey["top_papers"][0]["title"].startswith("Verifiable Agent Workflow Study")
     assert survey["top_papers"][0]["relevance"] == 0.88 and survey["top_papers"][0]["tldr"]
-    assert survey["sources"] == [
-        {"source": "arxiv", "fetched": 28, "selected": 7, "error": None}
-    ]
+    assert survey["sources"] == [{"source": "arxiv", "fetched": 28, "selected": 7, "error": None}]
     # 每一条查询都按相关度排、各自留了记录
     assert [q["sort"] for q in survey["queries"]] == ["relevance"] * 4
     assert survey["queries"][0]["query"] == 'ti:"agent planning" OR abs:"agent planning"'
@@ -638,7 +637,7 @@ async def test_one_direction_runs_from_post_to_ideas(client, live_queue, literat
     assert row.phases["hypotheses"]["history"] == [hyp["voyage_id"]]
     assert row.phases["hypotheses"]["attempts"] == 2
 
-    # 改名：课题和库一起改
+    # 改名：课题和这次研究自己建的库一起改
     resp = await client.patch(
         f"/api/research/{created['id']}", json={"name": "新名字"}, headers=headers
     )
@@ -1208,10 +1207,16 @@ async def test_arxiv_failure_is_soft_when_another_source_returned_results(
     assert [q for q in stats["queries"] if q["source"] == "arxiv"][0]["error"]
     async with get_sessionmaker()() as session:
         first = (
-            await session.execute(
-                select(VoyageStep).where(VoyageStep.run_id == voyage.id).order_by(VoyageStep.seq)
+            (
+                await session.execute(
+                    select(VoyageStep)
+                    .where(VoyageStep.run_id == voyage.id)
+                    .order_by(VoyageStep.seq)
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
     assert first.action == "wiki.search_candidates" and first.status == "passed"
     assert first.observation["queries"] == stats["queries"]
 

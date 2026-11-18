@@ -6,7 +6,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.failures import classify_failure
@@ -21,6 +21,7 @@ from app.schemas.research import (
     MoreIdeasRequest,
     ResearchBrief,
     ResearchCreate,
+    ResearchEstimate,
     ResearchRename,
     ResearchRetry,
     ResearchRunDetail,
@@ -124,6 +125,19 @@ async def list_research(
     return [await research_service.to_read(session, run) for run in runs]
 
 
+@router.get("/estimate", response_model=ResearchEstimate)
+async def estimate_research(
+    max_papers: int = Query(default=200, ge=5, le=500),
+    compile_top_n: int = Query(default=60, ge=5, le=200),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ResearchEstimate:
+    """开始之前的估算：这样的规模大约要多少 token、多少钱、多少分钟（区间，近似值）。"""
+    return await research_service.estimate(
+        session, user.id, max_papers=max_papers, compile_top_n=compile_top_n
+    )
+
+
 @router.get("/{run_id}", response_model=ResearchRunDetail)
 async def get_research(
     run_id: uuid.UUID,
@@ -213,7 +227,7 @@ async def rename_research(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> ResearchRunRead:
-    """改名：课题和它的文献库一起改。"""
+    """改名：课题改名；文献库只在是这次研究自己建的时候跟着改。"""
     run = await _owned(session, run_id, user)
     run = await research_service.rename_run(session, run, data.name)
     return await research_service.to_read(session, run)

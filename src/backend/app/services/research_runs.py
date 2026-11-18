@@ -42,11 +42,13 @@ from app.agents.voyage.failures import (
     clear_auto_retry,
 )
 from app.core.db import is_busy_error
+from app.core.llm import pricing
 from app.core.llm.base import Message
 from app.models.base import utcnow
 from app.models.hypothesis import HypothesisNode
 from app.models.idea import Idea
 from app.models.library_direction import DirectionLibrary, LibraryPaper, TopicSourceLibrary
+from app.models.llm_config import LLMUsage
 from app.models.paper import Paper
 from app.models.project import Project
 from app.models.research_run import ResearchRun
@@ -61,6 +63,7 @@ from app.schemas.research import (
     ResearchBrief,
     ResearchBriefInput,
     ResearchCounts,
+    ResearchEstimate,
     ResearchIdea,
     ResearchRunDetail,
     ResearchRunRead,
@@ -77,6 +80,7 @@ from app.services import ideas as ideas_service
 from app.services import ingest as ingest_service
 from app.services import libraries as libraries_service
 from app.services import projects as projects_service
+from app.services import research_estimate
 from app.services import voyage_messages as messages_service
 from app.services import voyages as voyages_service
 from app.services.papers import PAPER_STATUS_GROUPS
@@ -247,9 +251,7 @@ def classify_survey(stats: dict[str, Any] | None, facts: Facts) -> dict[str, Any
     if fetched == 0 and facts.papers_kept < MIN_CORPUS_PAPERS:
         sources = [s for s in str(stats.get("source") or "").split(",") if s and s != "none"]
         errored = {
-            str(e.get("source"))
-            for e in (stats.get("source_errors") or [])
-            if isinstance(e, dict)
+            str(e.get("source")) for e in (stats.get("source_errors") or []) if isinstance(e, dict)
         }
         if sources and all(s in errored for s in sources):
             return _attention("SURVEY_SOURCES_UNREACHABLE", "retry", counts=counts)
@@ -298,9 +300,7 @@ def decide(phase: str, status: str, facts: Facts) -> Decision:
                     return _needs("survey", problem)
                 return Decision("start_hypotheses", "survey", "running")
             if facts.ideas < 1:
-                return _needs(
-                    "hypotheses", _attention("NO_HYPOTHESES_SURVIVED", "add_papers")
-                )
+                return _needs("hypotheses", _attention("NO_HYPOTHESES_SURVIVED", "add_papers"))
             return Decision("none", "choose", "done" if facts.picked >= 1 else "waiting_user")
         return Decision("none", phase, "running")  # 不认识的状态：当它还在跑
 
@@ -726,9 +726,7 @@ def _plan_error_record(exc: BaseException) -> dict[str, Any]:
     found = classify_failure(exc)
     # 给人看的一句话：异常自带的说明优先；临时故障（连不上、限流、本地库正忙）用
     # 错误码对应的短句——原始报错可能是一大段 SQL，放进 detail
-    message = found.user_message or (
-        FAILURE_MESSAGES.get(found.code) if found.transient else None
-    )
+    message = found.user_message or (FAILURE_MESSAGES.get(found.code) if found.transient else None)
     return {
         "code": found.code,
         "message": message or str(exc)[:300],
@@ -1322,12 +1320,16 @@ async def delete_run(session: AsyncSession, run: ResearchRun, *, purge: bool = F
 
 
 async def rename_run(session: AsyncSession, run: ResearchRun, name: str) -> ResearchRun:
-    """改名：课题和它的文献库一起改。"""
+    """改名：课题改名；文献库只在是这次研究自己建的时候跟着改。
+
+    沿用课题原有的库时不动它：那个库有自己的名字，别的课题和每日同步也在用，
+    给一次研究改名不该把它一起改掉。
+    """
     name = name.strip()
     project = await session.get(Project, run.project_id)
     if project is not None:
         project.name = name
-    if run.library_id is not None:
+    if run.library_id is not None and not _phase_state(run, "plan").get("reused_library"):
         library = await session.get(DirectionLibrary, run.library_id)
         if library is not None:
             library.name = name
@@ -1394,23 +1396,67 @@ async def to_read(session: AsyncSession, run: ResearchRun) -> ResearchRunRead:
     )
 
 
-# 估费用的标价（美元 / 百万 token）：claude-opus-5 输入 5、输出 25
-_USD_PER_MTOK_IN = 5.0
-_USD_PER_MTOK_OUT = 25.0
+async def _usage(session: AsyncSession, *voyages: VoyageRun | None) -> UsageRead:
+    """这些任务的用量与估算费用：逐次调用的记账（``llm_usage``）按模型标价算，读缓存
+    打一折、写缓存加价，向量与重排不计价（core/llm/pricing.py）。
 
-
-def _usage(*voyages: VoyageRun | None) -> UsageRead:
-    prompt = completion = 0
-    for voyage in voyages:
-        raw = voyage.usage if voyage is not None and isinstance(voyage.usage, dict) else {}
-        prompt += int(raw.get("prompt_tokens", 0) or 0)
-        completion += int(raw.get("completion_tokens", 0) or 0)
+    以前用的是任务上各步自报的 token 数乘输入全价：缓存折扣没算、向量化的 token 被
+    当成对话模型的输入、流式调用的思考没记上——三处都不准。
+    """
+    ids = [v.id for v in voyages if v is not None]
+    if not ids:
+        return UsageRead()
+    rows = (
+        await session.execute(
+            select(
+                LLMUsage.stage,
+                LLMUsage.model,
+                func.sum(LLMUsage.prompt_tokens),
+                func.sum(LLMUsage.completion_tokens),
+                func.sum(LLMUsage.cache_read_tokens),
+                func.sum(LLMUsage.cache_write_tokens),
+            )
+            .where(LLMUsage.voyage_id.in_(ids))
+            .group_by(LLMUsage.stage, LLMUsage.model)
+        )
+    ).all()
+    prompt = completion = cache_read = cache_write = 0
+    cost = 0.0
+    for stage, model, p, c, read, write in rows:
+        if pricing.price_for(model, stage) is None:
+            continue
+        p, c, read, write = int(p or 0), int(c or 0), int(read or 0), int(write or 0)
+        prompt, completion = prompt + p, completion + c
+        cache_read, cache_write = cache_read + read, cache_write + write
+        cost += pricing.cost_usd(
+            model=model,
+            stage=stage,
+            prompt_tokens=p,
+            completion_tokens=c,
+            cache_read_tokens=read,
+            cache_write_tokens=write,
+        )
     return UsageRead(
         prompt_tokens=prompt,
         completion_tokens=completion,
         total_tokens=prompt + completion,
-        cost_usd=round(
-            prompt * _USD_PER_MTOK_IN / 1e6 + completion * _USD_PER_MTOK_OUT / 1e6, 2
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
+        cost_usd=round(cost, 2),
+    )
+
+
+async def estimate(
+    session: AsyncSession, user_id: uuid.UUID, *, max_papers: int, compile_top_n: int
+) -> ResearchEstimate:
+    """开始之前的估算（见 services/research_estimate.py）。"""
+    units, based_on = await research_estimate.learned_unit_costs(session, user_id)
+    return ResearchEstimate(
+        max_papers=max_papers,
+        compile_top_n=min(compile_top_n, max_papers),
+        based_on_runs=based_on,
+        **research_estimate.estimate_from(
+            units, max_papers=max_papers, compile_top_n=compile_top_n
         ),
     )
 
@@ -1448,6 +1494,34 @@ async def _current_step(session: AsyncSession, voyage: VoyageRun | None) -> dict
     return {"step_title": step.title, "step_action": step.action}
 
 
+async def _summarise_failed(
+    session: AsyncSession, library_id: uuid.UUID, voyage: VoyageRun | None
+) -> int:
+    """这次调研里解读没写成、现在也还没补上的篇数（事后补了「生成解读」的不再算）。"""
+    raw = (voyage.checkpoint or {}).get("compile_failed") if voyage is not None else None
+    ids: list[uuid.UUID] = []
+    for item in raw if isinstance(raw, list) else []:
+        try:
+            ids.append(uuid.UUID(str(item)))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return 0
+    return int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(LibraryPaper)
+                .where(
+                    LibraryPaper.library_id == library_id,
+                    LibraryPaper.paper_id.in_(ids),
+                    LibraryPaper.status.in_(("scored", "fetched")),
+                )
+            )
+        ).scalar_one()
+    )
+
+
 async def _survey_read(
     session: AsyncSession, run: ResearchRun, brief: ResearchBrief | None
 ) -> SurveyRead:
@@ -1455,7 +1529,7 @@ async def _survey_read(
     out = SurveyRead(
         voyage_id=voyage.id if voyage is not None else None,
         state=voyage.status if voyage is not None else None,
-        usage=_usage(voyage),
+        usage=await _usage(session, voyage),
         **await _current_step(session, voyage),
         **_times(voyage),
     )
@@ -1476,6 +1550,7 @@ async def _survey_read(
         kept=kept,
         summarised=counts["compiled"],
         to_summarise=min(top_n, kept),
+        summarise_failed=await _summarise_failed(session, run.library_id, voyage),
     )
     rows = (
         await session.execute(
@@ -1526,7 +1601,7 @@ async def _hypotheses_read(session: AsyncSession, run: ResearchRun) -> Hypothese
     out = HypothesesRead(
         voyage_id=voyage.id if voyage is not None else None,
         state=voyage.status if voyage is not None else None,
-        usage=_usage(voyage),
+        usage=await _usage(session, voyage),
         **await _current_step(session, voyage),
         **_times(voyage),
     )
@@ -1617,6 +1692,6 @@ async def to_detail(
         next_retry_at=next_retry_at,
         retry_attempt=retry_attempt,
         last_error=last_error,
-        usage=_usage(*await _all_phase_voyages(session, run)),
+        usage=await _usage(session, *await _all_phase_voyages(session, run)),
         capabilities=await capabilities_service.local_capabilities(session, user_id),
     )
