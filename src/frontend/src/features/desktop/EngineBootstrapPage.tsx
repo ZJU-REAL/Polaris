@@ -123,7 +123,36 @@ export function EngineBootstrapPage({
 
   if (gate === 'failed') {
     if (problem === undefined) return null;
-    return problem ? <EngineUnavailablePage problem={problem} /> : <EngineUnavailablePage setupFailed />;
+    // 失败原因随状态一起给了就直接用（null = 确实没有），兜底页不必再问一次
+    const failure = status.failure ?? null;
+    if (problem) return <EngineUnavailablePage problem={problem} failure={failure} />;
+    // 运行中退出没救回来、或环境装好了但引擎没起来：不是「安装没完成」
+    const setupFailed = failure?.code !== 'engine-crashed' && failure?.code !== 'engine-start';
+    return <EngineUnavailablePage setupFailed={setupFailed} failure={failure} />;
+  }
+
+  // 引擎运行中退出、主进程正在自动重启：不是首次安装，别摆那四个安装步骤
+  if (status.restarting && !leaving) {
+    return (
+      <div className="auth-page">
+        <div className="auth-brand">
+          <PolarisMark size={56} />
+          <PolarisWordmark height={32} />
+        </div>
+
+        <div className="auth-lang">
+          <LangToggle />
+        </div>
+
+        <div className="auth-card fadeup" data-testid="engine-restarting">
+          <div className="auth-card-title">{tr('本机引擎已停止', 'The local engine stopped')}</div>
+          <div className="auth-card-sub" style={{ marginBottom: 0 }}>
+            <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite', verticalAlign: '-2px', marginRight: 6 }} />
+            {tr('正在重新启动，通常只需要几秒…', 'Restarting it. This usually takes a few seconds…')}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

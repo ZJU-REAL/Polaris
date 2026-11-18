@@ -190,7 +190,10 @@ export function PluginsSettings() {
     setPendingImport(parsed.tree); // 先确认再动手：导入是全量替换
   };
 
-  const plugins = data ?? [];
+  // 只列用户自己装的插件。内置条目（cordis:…）是应用自己的零件——本机引擎曾经
+  // 就列在这里，用户能把它关掉、能改它的启动参数。现在的外壳已经不把它们放进
+  // 插件配置里了；这道过滤是给还没更新的外壳兜底。
+  const plugins = (data ?? []).filter((p) => !p.name.startsWith('cordis:'));
   const modalBusy = validateMutation.isPending || saveMutation.isPending;
 
   return (

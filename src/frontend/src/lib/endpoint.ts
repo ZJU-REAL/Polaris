@@ -56,6 +56,14 @@ export function probeLocalBackend(): Promise<string | null> {
       localBase = info?.baseUrl?.replace(/\/+$/, '') || null;
       localSecret = info?.sessionSecret || null;
       localProblem = info?.problem ?? null;
+      // 有宿主（info 非空）就开始看着引擎：中途退出时主进程会自动重启它并推事件，
+      // 界面据此盖一层说明、恢复后撤掉（见 engineWatch）。动态 import：浏览器开发态
+      // 走不到这里，不必为它加载这块代码。
+      if (info != null) {
+        void import('../features/desktop/engineWatch')
+          .then((watch) => watch.startEngineWatch())
+          .catch(() => undefined);
+      }
     } catch {
       // 探测失败按「无本地引擎」处理；不让一次 IPC 故障卡死首屏
       localBase = null;

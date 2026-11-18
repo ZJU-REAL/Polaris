@@ -13,7 +13,9 @@ export type HostEvent =
   | { type: 'job.progress'; jobId: string; phase: string; done: number; total: number; note?: string }
   | { type: 'job.log'; jobId: string; chunk: string }
   | { type: 'job.done'; jobId: string; result: unknown }
-  | { type: 'job.error'; jobId: string; code: string; message: string };
+  | { type: 'job.error'; jobId: string; code: string; message: string }
+  /** 本机引擎运行状态变了：中途退出正在自动重启 / 回来了 / 没救回来。老外壳不发。 */
+  | { type: 'engine.state'; state: 'running' | 'restarting' | 'failed'; reason?: string };
 
 export interface CapabilityState {
   available: boolean;
@@ -86,6 +88,21 @@ export interface LocalBackendInfo {
   sessionSecret?: string | null;
   /** 引擎没起来的已知原因（#850）。 */
   problem?: 'port-in-use' | 'stale-engine' | null;
+  /** 引擎进程的运行状态；老外壳没有。baseUrl 只在 running 时非空。 */
+  state?: EngineRunState;
+}
+
+export type EngineRunState = 'running' | 'restarting' | 'failed' | 'none';
+
+/**
+ * 引擎没准备好 / 没起来 / 中途挂掉的原因（contract.ts 的 EngineFailure 镜像）。
+ * lines 是最后几行相关输出，主进程已抹掉密钥。
+ */
+export interface EngineFailure {
+  code: 'disk-space' | 'download' | 'install' | 'resources' | 'engine-start' | 'engine-crashed' | 'tree';
+  message: string;
+  lines: string[];
+  at: number;
 }
 
 /**
@@ -110,6 +127,10 @@ export interface EngineBootstrapStatus {
   lastOutputAt?: number;
   /** python / install 阶段相对阶段开始的落盘字节数。 */
   downloadedBytes?: number;
+  /** 引擎运行中退出、正在自动重启（phase 此时是 engine）。 */
+  restarting?: boolean;
+  /** phase=failed 时的原因与最后几行输出。 */
+  failure?: EngineFailure;
 }
 
 /**
@@ -125,6 +146,78 @@ export async function engineBootstrapStatus(): Promise<EngineBootstrapStatus | n
   } catch {
     return null;
   }
+}
+
+/* —— 日志、诊断信息、联网设置 ——
+   出了问题用户得有东西可以发给我们：日志文件夹能打开，诊断信息能一键复制。
+   老外壳没有这几个方法，invoke 会抛「未知方法」——统一折叠成 null / false，
+   界面据此不显示对应的按钮，而不是点了报错。 */
+
+/** 诊断信息快照（contract.ts 的 Diagnostics 镜像）。text 可直接贴进 issue。 */
+export interface Diagnostics {
+  /** 外壳（安装包）版本。 */
+  appVersion: string;
+  /** 眼前这份界面的版本；热更新过才会与 appVersion 不同。 */
+  uiVersion: string;
+  /** 引擎自报的版本；引擎没在跑时为 null。 */
+  engineVersion: string | null;
+  os: string;
+  engineState: EngineRunState;
+  bootstrapPhase: string;
+  failure: EngineFailure | null;
+  /** 新环境没装成、暂时沿用旧环境时的原因。 */
+  degraded: string | null;
+  logsDir: string;
+  dataDir: string;
+  text: string;
+}
+
+/** 取诊断信息；web 端与老外壳返回 null。 */
+export async function hostDiagnostics(): Promise<Diagnostics | null> {
+  const b = bridge();
+  if (!b) return null;
+  try {
+    return (await b.invoke('host.diagnostics')) as Diagnostics;
+  } catch {
+    return null;
+  }
+}
+
+/** 在文件管理器里打开日志文件夹；打不开（或没有宿主）返回 false。 */
+export async function openLogsFolder(): Promise<boolean> {
+  const b = bridge();
+  if (!b) return false;
+  try {
+    return (await b.invoke('host.openLogsFolder')) === true;
+  } catch {
+    return false;
+  }
+}
+
+/** 联网设置（contract.ts 的 NetworkSettings 镜像）：首次安装下载用的代理与镜像策略。 */
+export interface NetworkSettings {
+  /** 代理地址；空串 = 不指定（沿用环境变量 / 系统代理）。 */
+  proxy: string;
+  /** auto = 官方源不通再换国内镜像；on = 先用镜像；off = 不用镜像。 */
+  mirror: 'auto' | 'on' | 'off';
+}
+
+/** 读联网设置；web 端与老外壳返回 null。 */
+export async function getNetworkSettings(): Promise<NetworkSettings | null> {
+  const b = bridge();
+  if (!b) return null;
+  try {
+    return (await b.invoke('host.network.get')) as NetworkSettings;
+  } catch {
+    return null;
+  }
+}
+
+/** 改联网设置。代理地址不合法时主进程抛错（消息以 ERR_INVALID_PARAMS 开头），由调用方回显。 */
+export async function setNetworkSettings(next: NetworkSettings): Promise<NetworkSettings> {
+  const b = bridge();
+  if (!b) throw new Error('desktop host unavailable');
+  return (await b.invoke('host.network.set', next)) as NetworkSettings;
 }
 
 /* —— 能力清单 ——
@@ -166,6 +259,8 @@ export interface UpdateInfo {
   publishedAt?: string;
   /** hot=换界面即可、免重启；full=要装安装器。 */
   kind?: 'hot' | 'full';
+  /** 为什么要装安装器：engine=本机引擎也要更新；shell=外壳要更新；no-renderer=没发界面包。 */
+  fullReason?: 'engine' | 'shell' | 'no-renderer';
   contract?: number;
   downloadUrl?: string;
   downloadSize?: number;
@@ -192,13 +287,6 @@ export async function checkUpdate(): Promise<UpdateInfo | null> {
   const b = bridge();
   if (!b) return null;
   return (await b.invoke('host.update.check')) as UpdateInfo;
-}
-
-/** 下载并应用更新，返回 JobHandle；进度经 job.* 事件推送（用 invokeJob 更方便）。 */
-export async function applyUpdate(): Promise<{ jobId: string } | null> {
-  const b = bridge();
-  if (!b) return null;
-  return (await b.invoke('host.update.apply')) as { jobId: string };
 }
 
 /** 订阅宿主事件，返回取消订阅函数；web 端为 no-op。 */
@@ -336,17 +424,6 @@ export async function fetchMarketIndex(): Promise<MarketIndexEntry[] | null> {
   const b = bridge();
   if (!b) return null;
   return (await b.invoke('plugins.market.fetchIndex')) as MarketIndexEntry[];
-}
-
-/** 安装插件：返回 JobHandle，下载/校验/解压/登记进度走 job.* 事件。
-    装/启分离：装完是 disabled 条目，用户在插件列表里显式启用。 */
-export async function installMarketPlugin(
-  name: string,
-  version: string,
-): Promise<{ jobId: string } | null> {
-  const b = bridge();
-  if (!b) return null;
-  return (await b.invoke('plugins.market.install', { name, version })) as { jobId: string };
 }
 
 /** 卸载插件；条目仍启用时返回 ok:false（先禁用再卸）。

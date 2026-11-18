@@ -8,11 +8,24 @@
    手动检查和自动检查的差别在失败时：自动的查失败了安静地当作没有更新，这是对的；
    手动的要是也这样，就会在网络出错、GitHub 限流时告诉用户「已是最新版本」——
    一件没发生的事。所以这里如实区分「已是最新」「没查成」「有新版但安装包还没传完」。
+
+   版本有两个：应用（安装包）和本机引擎。两者平时相同，但只换界面的更新不动引擎，
+   反馈问题时两个都要——所以两个都写在这里，也都进「复制诊断信息」。
+   这一页同时是出问题时的落脚处：打开日志文件夹、复制诊断信息、网络设置。
    ============================================================ */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../../components/ui/Icon';
 import { UpdateDialog } from '../../components/ui/UpdateDialog';
-import { checkUpdate, hostAppVersion, openExternal, type UpdateInfo } from '../../lib/host';
+import { NetworkSettingsForm } from '../desktop/NetworkSettingsForm';
+import { SupportActions } from '../desktop/SupportActions';
+import {
+  checkUpdate,
+  hostAppVersion,
+  hostDiagnostics,
+  openExternal,
+  type Diagnostics,
+  type UpdateInfo,
+} from '../../lib/host';
 import { tr } from '../../lib/i18n';
 import { SettingsGroup, SettingsRow, SettingsSection, SettingsStack } from './settingsUi';
 
@@ -67,12 +80,55 @@ export function failureReason(info: UpdateInfo): string {
   }
 }
 
+export interface VersionLines {
+  /** 应用版本，如 v0.6.0；界面单独更新过时带上界面版本。 */
+  app: string;
+  /** 本机引擎版本；没在运行时是一句说明而不是版本号。 */
+  engine: string;
+  engineRunning: boolean;
+}
+
+/**
+ * 版本两行该写什么。诊断信息还没取到（或老外壳取不到）时，应用版本退回界面
+ * 自己知道的那个，引擎写「—」——不知道就不写，不编一个。
+ */
+export function versionLines(
+  diagnostics: Pick<Diagnostics, 'appVersion' | 'uiVersion' | 'engineVersion'> | null,
+  fallbackVersion: string | null,
+): VersionLines {
+  if (!diagnostics) {
+    return { app: fallbackVersion ? `v${fallbackVersion}` : '—', engine: '—', engineRunning: false };
+  }
+  const app =
+    diagnostics.uiVersion && diagnostics.uiVersion !== diagnostics.appVersion
+      ? `v${diagnostics.appVersion}${tr(`（界面 v${diagnostics.uiVersion}）`, ` (interface v${diagnostics.uiVersion})`)}`
+      : `v${diagnostics.appVersion}`;
+  if (!diagnostics.engineVersion) {
+    return { app, engine: tr('未运行', 'Not running'), engineRunning: false };
+  }
+  // 从源码跑的引擎自报 dev，不是一个版本号
+  const engine = /^\d/.test(diagnostics.engineVersion) ? `v${diagnostics.engineVersion}` : diagnostics.engineVersion;
+  return { app, engine, engineRunning: true };
+}
+
 export function AboutSettings() {
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<UpdateInfo | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   // 优先用最近一次检查回报的版本：热更新后它才是用户眼前这份界面的版本
   const version = result?.currentVersion ?? hostAppVersion();
+
+  useEffect(() => {
+    let alive = true;
+    void hostDiagnostics().then((next) => {
+      if (alive) setDiagnostics(next);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const versions = versionLines(diagnostics, version);
 
   const check = async () => {
     setChecking(true);
@@ -98,13 +154,29 @@ export function AboutSettings() {
       <SettingsSection title={tr('关于 Polaris', 'About Polaris')}>
         <SettingsGroup>
           <SettingsRow label={tr('版本', 'Version')}>
-            <span className="mono" style={{ fontSize: 13 }}>{version ? `v${version}` : '—'}</span>
+            <span className="mono" style={{ fontSize: 13 }}>{versions.app}</span>
+          </SettingsRow>
+          <SettingsRow label={tr('本机引擎', 'Local engine')}>
+            <span
+              className={versions.engineRunning ? 'mono' : undefined}
+              style={{ fontSize: 13, color: versions.engineRunning ? undefined : 'var(--text-3)' }}
+            >
+              {versions.engine}
+            </span>
           </SettingsRow>
           <SettingsRow
             label={tr('更新', 'Updates')}
             hint={outcome && result ? (
               outcome.kind === 'available' ? (
-                <span>{tr('有新版本', 'New version')}：<span className="mono">v{outcome.latest}</span></span>
+                <span>
+                  {tr('有新版本', 'New version')}：<span className="mono">v{outcome.latest}</span>
+                  {result.kind === 'full' && result.fullReason === 'engine' && (
+                    <>
+                      {' · '}
+                      {tr('本机引擎也会更新，需要重新安装', 'The local engine changes too, so this one needs the installer')}
+                    </>
+                  )}
+                </span>
               ) : outcome.kind === 'latest' ? (
                 <span style={{ color: 'var(--ok-tx)' }}>{tr('已是最新版本', 'You’re up to date')}</span>
               ) : outcome.kind === 'no-newer' ? (
@@ -141,6 +213,30 @@ export function AboutSettings() {
               GitHub
             </button>
           </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection
+        title={tr('问题排查', 'Troubleshooting')}
+        desc={tr('反馈问题时，请附上诊断信息。', 'When you report a problem, include the diagnostics.')}
+      >
+        <SettingsGroup>
+          <SettingsRow
+            label={tr('日志与诊断信息', 'Logs and diagnostics')}
+            hint={tr('诊断信息包含版本、系统和最近的引擎日志，不含密钥。', 'Diagnostics list versions, your system and recent engine logs. No keys.')}
+            stack
+          >
+            <SupportActions />
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection
+        title={tr('网络', 'Network')}
+        desc={tr('下载本机引擎组件和检索文献时使用。', 'Used when downloading local engine components and searching literature.')}
+      >
+        <SettingsGroup pad>
+          <NetworkSettingsForm />
         </SettingsGroup>
       </SettingsSection>
 
