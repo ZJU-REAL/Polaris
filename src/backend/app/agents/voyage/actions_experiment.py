@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
@@ -792,10 +793,28 @@ async def _get_experiment(session: AsyncSession, ctx: ActionContext) -> Experime
 async def _set_status(
     ctx: ActionContext, session: AsyncSession, experiment: Experiment, status: str
 ) -> None:
+    """步骤联动的状态流转。条件 UPDATE：绝不覆盖已经落定的终态。
+
+    动作手里的 ``experiment`` 是它开始时读的那一份。用户在一步进行中点了取消
+    （另一个会话把行写成 cancelled），这一步收尾时若照旧 ``experiment.status = …``
+    再提交，就把 cancelled 盖回 awaiting_gate / running——任务停了，实验却永远
+    显示还在进行。所以写之前由数据库把关，没写成就把内存里这份也对齐成真实状态。
+    """
     if experiment.status == status:
         return
-    experiment.status = status
+    result = await session.execute(
+        sa_update(Experiment)
+        .where(
+            Experiment.id == experiment.id,
+            Experiment.status.notin_(EXPERIMENT_TERMINAL_STATUSES),
+        )
+        .values(status=status)
+        .execution_options(synchronize_session=False)
+    )
     await session.commit()
+    await session.refresh(experiment, ["status", "updated_at"])
+    if not result.rowcount:
+        return
     await ctx.notify(
         {"type": "experiment.status", "experiment_id": str(experiment.id), "status": status}
     )

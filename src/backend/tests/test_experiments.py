@@ -1174,6 +1174,55 @@ async def test_cancel_during_run_polling(client, queue_stub, fake_ssh, bus_recor
     assert exp_statuses[-1] == "cancelled"
 
 
+async def test_cancel_during_a_step_is_not_overwritten_when_the_step_finishes(
+    client, queue_stub, fake_ssh
+):
+    """一步进行中取消：取消接口返回 cancelled，这一步收尾时也不能把它盖回去。
+
+    计划那一步等模型的时候用户点了取消；模型返回后这一步照常收尾，以前会用它
+    开始时读到的那份实验行把状态写成 awaiting_gate——任务已经取消，实验却一直
+    显示「等确认」，取消接口刚返回的 cancelled 转眼就不算数了。
+    """
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+    cancel_responses: list[dict] = []
+
+    class _CancelWhilePlanning(FakeProvider):
+        async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, **kwargs):
+            if not cancel_responses and any('"repro_strategy"' in m.content for m in messages):
+                resp = await client.post(f"/api/experiments/{exp_id}/cancel", headers=headers)
+                assert resp.status_code == 200, resp.text
+                cancel_responses.append(resp.json())
+            return await super().complete(
+                messages, model=model, temperature=temperature, max_tokens=max_tokens, **kwargs
+            )
+
+    router = LLMRouter()
+    router.override_provider(_CancelWhilePlanning())
+    engine, bus = _make_engine(router)
+    await engine.run(uuid.UUID(voyage_id))
+
+    assert len(cancel_responses) == 1, "取消应当正好发生在计划那一步等模型的时候"
+    assert cancel_responses[0]["status"] == "cancelled"
+    detail = (await client.get(f"/api/experiments/{exp_id}", headers=headers)).json()
+    assert detail["status"] == "cancelled"
+    listed = (await client.get(f"/api/projects/{project_id}/experiments", headers=headers)).json()
+    assert [e["status"] for e in listed] == ["cancelled"]
+    assert (await client.get(f"/api/voyages/{voyage_id}", headers=headers)).json()[
+        "status"
+    ] == "cancelled"
+    # 没有哪条通知把它说成别的状态；也没有为已取消的实验建审批
+    statuses = [m["status"] for _, m in bus.notify if m.get("type") == "experiment.status"]
+    assert "awaiting_gate" not in statuses
+    assert (await client.get(f"/api/gates?project_id={project_id}", headers=headers)).json() == []
+    # 仍是终态：再取消 409
+    resp = await client.post(f"/api/experiments/{exp_id}/cancel", headers=headers)
+    assert resp.status_code == 409
+
+
 async def test_cancel_api(client, queue_stub, fake_ssh, bus_recorder):
     """cancel API：取消 voyage + kill 运行中的 PID + run 置 failed；重复取消 409。"""
     project_id, headers = await _setup_project(client)
