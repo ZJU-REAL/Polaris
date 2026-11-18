@@ -2536,3 +2536,39 @@ async def test_a_summary_that_cannot_be_written_is_recorded_not_dropped(
             m.status = "compiled"
         await session.commit()
         assert await research_service._summarise_failed(session, library_id, voyage) == 0
+
+
+async def test_citation_expansion_failure_does_not_stop_the_survey(
+    client, queue_stub, wiki_mocks, monkeypatch
+):
+    """OpenAlex 限流、按引用扩展没做成：这一步照样通过，调研带着已筛好的论文走完，
+    提示里说明这次只用了检索到的论文。"""
+    from app.agents.voyage import actions_wiki
+
+    async def limited(_source, seeds, *, limit):
+        return [], {"seeds": len(seeds), "candidates": 0, "error": "HTTPStatusError: 429"}
+
+    monkeypatch.setattr(actions_wiki.survey_search, "expand_by_citations", limited)
+    project_id, headers, run_id = await _bootstrap_run(client)
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, run_id)
+        ctx = actions_wiki.ActionContext(
+            run=run,
+            llm=LLMRouter(),
+            checkpoint={
+                "params": dict((run.checkpoint or {}).get("params") or {}),
+                "ingest_search_stats": {"inserted": 3, "messages": []},
+            },
+            bus=RecordingBus(),
+        )
+        # 库里放一篇这次筛出来的论文当种子
+        from app.agents.voyage.actions import get_action
+
+        await get_action("wiki.search_candidates")(ctx, {})
+        await get_action("wiki.score_relevance")(ctx, {})
+        obs = await get_action("wiki.expand_citations")(ctx, {})
+    assert "error" not in obs and obs["expand_error"] == "HTTPStatusError: 429"
+    assert obs["inserted"] == 0
+    assert any(
+        "按引用关系扩展没有做成" in m for m in ctx.checkpoint["ingest_search_stats"]["messages"]
+    )

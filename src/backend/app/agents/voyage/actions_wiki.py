@@ -1839,6 +1839,12 @@ async def expand_citations(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             search_stats["expanded"] = state
             # 「取进来筛选的」总数要把这一批算上，界面上的「找到」才对得上
             search_stats["inserted"] = int(search_stats.get("inserted") or 0) + len(inserted)
+            if state.get("error"):
+                # 给调研页的提示：这一步没做成，论文只来自关键词检索
+                search_stats["messages"] = [
+                    *(search_stats.get("messages") or []),
+                    f"按引用关系扩展没有做成（{str(state['error'])[:120]}），这次只用了检索到的论文",
+                ]
             ctx.checkpoint["ingest_search_stats"] = search_stats
         await ctx.log(
             f"按引用关系扩展：{state.get('seeds', 0)} 篇种子 → 候选 {state.get('candidates', 0)}"
@@ -1850,7 +1856,9 @@ async def expand_citations(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         "seeds_found": state.get("seeds_found", 0),
         "candidates": state.get("candidates", 0),
         "inserted": state.get("inserted", 0),
-        "error": state.get("error"),
+        # 不叫 "error"：引擎把带 error 的观察一律判成这一步失败，而扩展是锦上添花——
+        # OpenAlex 限流（实测 429）时调研应当带着已筛好的论文继续，不是整个停下
+        "expand_error": state.get("error"),
         "processed": scored["processed"],
         "succeeded": scored["succeeded"],
         "excluded": scored["excluded"],
@@ -2149,9 +2157,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             )
             return {"id": str(paper.id), "title": paper.title}
 
-    results = await _gather_bounded(
-        _LLM_CONCURRENCY, [compile_one(mid) for mid in membership_ids]
-    )
+    results = await _gather_bounded(_LLM_CONCURRENCY, [compile_one(mid) for mid in membership_ids])
     _reraise_if_cancelled(results)  # worker 被杀须上抛，不当作单篇失败
     # 没写成的在这一批最后再试一次（实测 20 篇里 7 篇因为模型的流被网关中途掐断而
     # 失败，重来一次多半就好）。全军覆没就不试了：那是模型连不上
