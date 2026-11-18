@@ -566,8 +566,6 @@ export function ForgePage() {
   return (
     <div className="page fadeup">
       <PageHead
-        eyebrow="Stage 01 · Ideas"
-        title={tr('想法生成', 'Ideas')}
         sub={
           pid
             ? undefined

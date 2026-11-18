@@ -334,8 +334,6 @@ export function ExperimentPage() {
   return (
     <div className="page fadeup" style={{ maxWidth: 1180 }}>
       <PageHead
-        eyebrow="Stage 03 · Experiments"
-        title={tr('实验搭建', 'Experiments')}
         sub={
           pid
             ? undefined

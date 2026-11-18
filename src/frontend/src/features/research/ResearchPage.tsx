@@ -19,7 +19,7 @@ import {
 } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
-import { useProject } from '../../app/project';
+import { topicPath, useProject } from '../../app/project';
 import { libraryPath } from '../libraries/hooks';
 import { TrashModal, type TrashItemView } from '../shared/TrashModal';
 import {
@@ -254,7 +254,7 @@ function LinkedLibrariesRow({
           <span style={{ color: 'var(--text-3)' }}>
             {tr('还没有关联文献库', 'None linked yet')}
           </span>
-          <button className="btn btn-ghost sm" onClick={() => onNavigate(`/projects/${pid}`)}>
+          <button className="btn btn-ghost sm" onClick={() => onNavigate(topicPath(pid, 'settings'))}>
             <Icon name="link" size={12} />
             {tr('关联文献库', 'Link a library')}
           </button>
@@ -546,7 +546,7 @@ export function ResearchPage() {
   // （不再指向隐式库 topicLib——新模型里课题无单一隐式库）
   const firstLib = libs[0];
   const libEntryHref =
-    libs.length === 1 && firstLib ? libraryPath(firstLib.id) : libs.length > 1 ? `/projects/${pid}` : '/libraries';
+    libs.length === 1 && firstLib ? libraryPath(firstLib.id) : libs.length > 1 ? topicPath(pid, 'settings') : '/libraries';
   const libEntryLabel =
     libs.length === 1
       ? tr('打开文献库', 'Open library')

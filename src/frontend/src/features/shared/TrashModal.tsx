@@ -194,9 +194,14 @@ function TrashRow({
   onRestore: () => void;
   onPurge: () => void;
 }) {
+  // 永久删除要点两下：第一下把按钮换成「确认删除」，再点才真的删。
+  // 回收站是最后一道防线，这里删了就找不回来，不能一次点击就没了。
+  const [confirming, setConfirming] = useState(false);
   return (
     <div
       className="row gap10"
+      data-trash-row
+      onMouseLeave={() => setConfirming(false)}
       style={{
         padding: '12px 16px',
         borderBottom: last ? 'none' : '0.5px solid var(--border)',
@@ -249,16 +254,33 @@ function TrashRow({
           <Icon name="refresh" size={12} />
           {tr('恢复', 'Restore')}
         </button>
-        <button
-          className="btn btn-ghost sm"
-          style={{ height: 26, color: 'var(--danger-tx)' }}
-          disabled={busy}
-          title={purgeHint ?? tr('永久删除，包括文件', 'Delete permanently, including files')}
-          onClick={onPurge}
-        >
-          <Icon name="x" size={12} />
-          {tr('永久删除', 'Delete')}
-        </button>
+        {confirming ? (
+          <button
+            className="btn btn-danger sm"
+            style={{ height: 26 }}
+            disabled={busy}
+            autoFocus
+            title={tr('无法恢复', 'This can’t be undone')}
+            onBlur={() => setConfirming(false)}
+            onClick={() => {
+              setConfirming(false);
+              onPurge();
+            }}
+          >
+            {tr('确认删除', 'Confirm delete')}
+          </button>
+        ) : (
+          <button
+            className="btn btn-ghost sm"
+            style={{ height: 26, color: 'var(--danger-tx)' }}
+            disabled={busy}
+            title={purgeHint ?? tr('永久删除，包括文件', 'Delete permanently, including files')}
+            onClick={() => setConfirming(true)}
+          >
+            <Icon name="x" size={12} />
+            {tr('永久删除', 'Delete permanently')}
+          </button>
+        )}
       </div>
     </div>
   );

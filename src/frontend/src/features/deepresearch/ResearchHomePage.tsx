@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
@@ -8,12 +8,13 @@ import { errorText } from '../../lib/errors';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { isLlmNotConfigured, llmNotConfiguredText, MODEL_SETTINGS_HREF } from '../../lib/llmNotConfigured';
-import { isEngineUnreachable, researchApi, type ResearchBrief, type ResearchRunRead } from '../../lib/researchApi';
+import { isEngineUnreachable, researchApi, type ResearchBrief } from '../../lib/researchApi';
 import { StatusDot } from '../voyages/shared/StatusDot';
 import { BriefEditor } from './BriefEditor';
 import { DirectionBox, loadDraft, saveDraft } from './DirectionBox';
+import { useDirections, type Direction } from './directions';
 import { researchKeys, useResearchRuns } from './hooks';
-import { countsText, runHeadline, runReason, waitingFor } from './phase';
+import { countsText, runHeadline, runReason } from './phase';
 import './deepresearch.css';
 
 /* ============================================================
@@ -22,12 +23,6 @@ import './deepresearch.css';
    默认路径只有一步：写方向 → 开始。「调整范围」是可选的，会先让模型拟一份
    检索范围给你改。
    ============================================================ */
-
-/** 等用户的排最前，其次是运行中的，再是其余；同组内按最近更新。 */
-function sortRuns(runs: ResearchRunRead[]): ResearchRunRead[] {
-  const rank = (r: ResearchRunRead) => (waitingFor(r) ? 0 : r.status === 'running' ? 1 : 2);
-  return [...runs].sort((a, b) => rank(a) - rank(b) || b.updated_at.localeCompare(a.updated_at));
-}
 
 /** 首次打开时给的几个方向例子（跨几个学科，都是一句话能说清的方向）。 */
 function exampleDirections(): string[] {
@@ -75,8 +70,9 @@ export function ResearchHomePage() {
     saveDraft(direction);
   }, [direction]);
 
+  // 课题列表：有研究进展的和之前按老办法建的都在这里（见 directions.ts）
   const runsQuery = useResearchRuns();
-  const runs = useMemo(() => sortRuns(runsQuery.data ?? []), [runsQuery.data]);
+  const { directions: runs, isLoading: listLoading } = useDirections();
   const engineDown = runsQuery.isError && isEngineUnreachable(runsQuery.error);
 
   // 模型没连上时研究开始不了：提前说，而不是等点了才报错
@@ -118,7 +114,7 @@ export function ResearchHomePage() {
 
   const hasRuns = runs.length > 0;
   // 第一次打开（还没有课题、框是空的）：给几个方向做例子，点一下填进框里
-  const showExamples = !hasRuns && !runsQuery.isLoading && !brief && direction.trim() === '' && !draft.isPending;
+  const showExamples = !hasRuns && !listLoading && !brief && direction.trim() === '' && !draft.isPending;
 
   return (
     <div className={'page fadeup dr-home' + (hasRuns ? ' has-runs' : '')}>
@@ -225,29 +221,33 @@ export function ResearchHomePage() {
       )}
 
       {/* 还没有课题时不画这一段：一个只写着「还没有课题」的空列表帮不上第一次来的人 */}
-      {(runsQuery.isLoading || runsQuery.isError || hasRuns) && (
+      {(listLoading || runsQuery.isError || hasRuns) && (
       <div className="dr-list">
         <div className="group-label">{tr('课题', 'Topics')}</div>
-        {runsQuery.isLoading ? (
+        {listLoading ? (
           <LoadingState rows={3} />
-        ) : runsQuery.isError && !runsQuery.data ? (
-          engineDown ? (
-            // 连不上已经在框下面说过了，这里不再重复一遍
-            <div className="dr-list-empty">{tr('连接后会显示你的课题', 'Your topics appear here once connected')}</div>
-          ) : (
-            <ErrorState
-              compact
-              title={tr('无法加载课题，请重试', 'Couldn’t load your topics. Try again.')}
-              detail={errorText(runsQuery.error)}
-              onRetry={() => void runsQuery.refetch()}
-            />
-          )
         ) : (
-          <div className="dr-rows">
-            {runs.map((run) => (
-              <RunRow key={run.id} run={run} />
-            ))}
-          </div>
+          <>
+            {runsQuery.isError && !runsQuery.data &&
+              (engineDown ? (
+                // 连不上已经在框下面说过了，这里不再重复一遍
+                !hasRuns && <div className="dr-list-empty">{tr('连接后会显示你的课题', 'Your topics appear here once connected')}</div>
+              ) : (
+                <ErrorState
+                  compact
+                  title={tr('无法加载研究进展，请重试', 'Couldn’t load research progress. Try again.')}
+                  detail={errorText(runsQuery.error)}
+                  onRetry={() => void runsQuery.refetch()}
+                />
+              ))}
+            {hasRuns && (
+              <div className="dr-rows">
+                {runs.map((d) => (
+                  <TopicRow key={d.projectId} d={d} />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
       )}
@@ -255,17 +255,23 @@ export function ResearchHomePage() {
   );
 }
 
-function RunRow({ run }: { run: ResearchRunRead }) {
-  const head = runHeadline(run);
-  const reason = runReason(run);
-  const meta = [countsText(run.counts), fmtRelative(run.updated_at)].filter(Boolean).join(' · ');
+function TopicRow({ d }: { d: Direction }) {
+  const run = d.run;
+  const head = run ? runHeadline(run) : null;
+  const reason = run ? runReason(run) : '';
+  const meta = [run ? countsText(run.counts) : '', fmtRelative(d.updatedAt)].filter(Boolean).join(' · ');
   return (
-    <Link to={`/research/${run.id}`} className="dr-row">
-      <div className="dr-row-name" title={run.name}>
-        {run.name}
+    <Link to={d.href} className="dr-row">
+      <div className="dr-row-name" title={d.name}>
+        {d.name}
       </div>
       <div className="dr-row-state">
-        <StatusDot tone={head.tone} label={head.label} />
+        {head ? (
+          <StatusDot tone={head.tone} label={head.label} />
+        ) : (
+          // 之前按老办法建的课题：没有时间线，点开是它的概览
+          <span className="dr-row-reason">{tr('还没有研究进展', 'No research run yet')}</span>
+        )}
         {reason && (
           <span className="dr-row-reason" title={reason}>
             {reason}

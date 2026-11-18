@@ -610,8 +610,6 @@ export function ReviewPage() {
   return (
     <div className="page fadeup" style={{ maxWidth: 1280 }}>
       <PageHead
-        eyebrow="Stage 02 · Idea Review"
-        title={tr('想法评审', 'Idea Review')}
         sub={
           currentProject
             ? undefined

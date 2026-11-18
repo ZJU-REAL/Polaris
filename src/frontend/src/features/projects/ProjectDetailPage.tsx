@@ -101,7 +101,7 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
       setDeleteOpen(false);
       if (currentProjectId === id) setCurrentProjectId(null);
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
-      navigate('/');
+      navigate('/research');
     },
     onError: (err) => {
       const forbidden = err instanceof ApiError && err.status === 403;
@@ -188,7 +188,7 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
         title={notFound ? tr('找不到这个课题，可能已被删除', 'This topic no longer exists.') : tr('无法加载课题设置，请确认本机引擎正在运行', 'Couldn’t load topic settings. Check that the local engine is running.')}
         detail={notFound ? null : error instanceof Error ? error.message : null}
         onRetry={notFound ? undefined : () => void refetch()}
-        action={<button className="btn btn-ghost sm" onClick={() => navigate('/')}>{tr('返回工作台', 'Back to workbench')}</button>}
+        action={<button className="btn btn-ghost sm" onClick={() => navigate('/research')}>{tr('返回研究', 'Back to Research')}</button>}
       />
     );
   }

@@ -28,7 +28,7 @@ const PATTERNS: [RegExp, (m: RegExpMatchArray) => PageContext][] = [
     (m) => ({ kind: 'library', id: m[1], label: '正在浏览一个文献库' }),
   ],
   [/^\/writer\/([0-9a-f-]{36})/, (m) => ({ kind: 'manuscript', id: m[1], label: '正在写论文稿' })],
-  [/^\/t\/([0-9a-f-]{36})/, (m) => ({ kind: 'project', id: m[1], label: '正在课题工作台' })],
+  [/^\/t\/([0-9a-f-]{36})/, (m) => ({ kind: 'project', id: m[1], label: '正在课题页面' })],
   [/^\/daily/, () => ({ kind: 'daily', label: '正在看每日新论文' })],
 ];
 

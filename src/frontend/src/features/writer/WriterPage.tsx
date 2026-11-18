@@ -382,8 +382,6 @@ export function WriterPage() {
   return (
     <div className="page fadeup" style={{ maxWidth: 1180 }}>
       <PageHead
-        eyebrow="Stage 04 · Paper Writer"
-        title={tr('论文撰写', 'Paper Writer')}
         sub={
           pid
             ? undefined

@@ -55,7 +55,10 @@ export const EXP_FLOW: { key: ExperimentStatus; zh: string }[] = [
 
 /** 状态 → 进度百分比（列表卡进度条用）。 */
 export function expProgress(status: ExperimentStatus): number {
-  const i = EXP_FLOW.findIndex((s) => s.key === status);
+  // 等你回答：实验停在半路（提问出现在搭环境 / 试运行阶段），不是做完了。
+  // 以前这个状态不在流程表里，落到下面的「画满」，一个在等人的实验显示成 100%。
+  const at: ExperimentStatus = status === 'waiting_user' ? 'setup' : status;
+  const i = EXP_FLOW.findIndex((s) => s.key === at);
   if (i >= 0) return Math.round((i / (EXP_FLOW.length - 1)) * 100);
   return 100; // failed / cancelled：走到哪算哪，统一画满并靠颜色区分
 }

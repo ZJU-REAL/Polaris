@@ -207,7 +207,7 @@ function EvidenceCard({ idea }: { idea: IdeaDetail }) {
             <div
               key={i}
               className={`row gap8${clickable ? ' hoverable' : ''}`}
-              onClick={clickable ? () => navigate(topicPath(idea.project_id, `wiki?paper=${ev.paper_id}`)) : undefined}
+              onClick={clickable ? () => navigate(`/papers/${ev.paper_id}/read`) : undefined}
               style={{
                 borderTop: i > 0 ? '0.5px solid var(--border)' : 'none',
                 padding: '8px 0',
@@ -477,10 +477,10 @@ export function IdeaDetailPage() {
         className="wikilink"
         role="link"
         tabIndex={0}
-        title={tr('打开库内论文', 'Open the paper in the library')}
-        onClick={() => navigate(topicPath(idea?.project_id, `wiki?paper=${paperId}`))}
+        title={tr('打开这篇论文', 'Open this paper')}
+        onClick={() => navigate(`/papers/${paperId}/read`)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') navigate(topicPath(idea?.project_id, `wiki?paper=${paperId}`));
+          if (e.key === 'Enter') navigate(`/papers/${paperId}/read`);
         }}
       >
         {paperTitles.get(paperId) ?? tr('库内论文', 'Library paper')}
@@ -595,7 +595,7 @@ export function IdeaDetailPage() {
                   <div
                     key={p.id}
                     className="row gap8 hoverable"
-                    onClick={() => navigate(topicPath(idea.project_id, `wiki?paper=${p.id}`))}
+                    onClick={() => navigate(`/papers/${p.id}/read`)}
                     style={{
                       borderTop: i > 0 ? '0.5px solid var(--border)' : 'none',
                       padding: '8px 0',

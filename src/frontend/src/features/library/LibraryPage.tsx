@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PapersTabs } from '../libraries/PapersTabs';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { Segmented } from '../../components/ui/Segmented';
@@ -591,6 +592,7 @@ export function LibraryPage() {
       className="page fadeup page-fill"
       style={{ maxWidth: 1360, paddingBottom: 24 }}
     >
+      <PapersTabs active="mine" />
       {/* —— tab 行：操作并在同一行右侧，顶部不再单占一行 —— */}
       <div className="row page-tabs literature-workspace-tabs" style={{ marginBottom: 14 }}>
         <Segmented<PageTab>

@@ -101,7 +101,7 @@ export function NextSection({ run, state }: { run: ResearchRunDetail; state: Sec
                 </div>
               </div>
               <Link className="btn btn-ghost sm" to={`/t/${run.project_id}/writer`}>
-                {tr('打开论文撰写', 'Open Paper Writer')}
+                {tr('打开写作', 'Open Writing')}
               </Link>
             </div>
           </div>

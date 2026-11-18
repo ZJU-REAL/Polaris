@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { PapersTabs } from './PapersTabs';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -452,6 +453,7 @@ export function LibrariesPage() {
 
   return (
     <div className="page fadeup" style={{ maxWidth: 1200 }}>
+      <PapersTabs active="libraries" />
       {/* —— 筛选行：操作并在同一行右侧 —— */}
       <div className="row gap12" style={{ margin: '0 0 16px', flexWrap: 'wrap', alignItems: 'center' }}>
         {canCreate && (

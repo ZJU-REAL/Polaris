@@ -12,7 +12,7 @@ import { fmtTime } from '../../lib/format';
 import { clickable } from '../../lib/a11y';
 import { type PaperConceptRef, type PaperDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { topicPath } from '../../app/project';
+import { libraryPath } from '../libraries/hooks';
 import { PaperMyTagsRow } from '../shared/PaperDetailBlocks';
 import { PdfUploadButton } from '../shared/PdfUploadButton';
 import { MetaFold } from '../wiki/shared';
@@ -48,6 +48,8 @@ export function InfoPanel({
 }) {
   const navigate = useNavigate();
   const [abstractOpen, setAbstractOpen] = useState(false);
+  // 作者 / 机构点了去这篇论文所在的文献库按它过滤；论文不在任何文献库里时就只是文字
+  const libHref = paper.library_id ? libraryPath(paper.library_id) : null;
   const arxivUrl = paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : null;
   const extUrl = arxivUrl ?? paper.url;
 
@@ -90,13 +92,15 @@ export function InfoPanel({
               <span key={`${a.name}-${i}`}>
                 {i > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
                 <span
-                  className="author-link"
+                  className={libHref ? 'author-link' : undefined}
                   title={
                     affil.length > 0
                       ? `${a.name} — ${affil.join('; ')}`
-                      : tr(`在文献库中查看 ${a.name} 的论文`, `See papers by ${a.name} in the library`)
+                      : libHref
+                        ? tr(`在文献库中查看 ${a.name} 的论文`, `See papers by ${a.name} in the library`)
+                        : undefined
                   }
-                  {...clickable(() => navigate(topicPath(paper.project_id, `wiki?author=${encodeURIComponent(a.name)}`)))}
+                  {...(libHref ? clickable(() => navigate(`${libHref}?author=${encodeURIComponent(a.name)}`)) : {})}
                 >
                   {a.name}
                 </span>
@@ -116,8 +120,8 @@ export function InfoPanel({
               key={name}
               className="chip"
               style={{ fontSize: 11, height: 20 }}
-              title={tr(`在文献库中查看 ${name} 的论文`, `See papers from ${name} in the library`)}
-              {...clickable(() => navigate(topicPath(paper.project_id, `wiki?affiliation=${encodeURIComponent(name)}`)))}
+              title={libHref ? tr(`在文献库中查看 ${name} 的论文`, `See papers from ${name} in the library`) : undefined}
+              {...(libHref ? clickable(() => navigate(`${libHref}?affiliation=${encodeURIComponent(name)}`)) : {})}
             >
               {name}
             </span>

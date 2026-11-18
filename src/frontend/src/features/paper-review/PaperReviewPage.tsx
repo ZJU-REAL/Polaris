@@ -994,8 +994,6 @@ export function PaperReviewPage() {
   return (
     <div className="page fadeup" style={{ maxWidth: 1280 }}>
       <PageHead
-        eyebrow="Stage 05 · Paper Review"
-        title={tr('论文评审', 'Paper Review')}
         sub={
           currentProject
             ? undefined

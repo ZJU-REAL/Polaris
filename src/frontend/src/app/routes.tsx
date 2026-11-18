@@ -1,8 +1,35 @@
 import { Suspense, lazy, useEffect, type ComponentType, type ReactNode } from 'react';
-import { Navigate, Outlet, createBrowserRouter, useLocation, useOutletContext, useParams } from 'react-router-dom';
+import {
+  Navigate,
+  Outlet,
+  createBrowserRouter,
+  useLocation,
+  useOutletContext,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { RequireAuth } from './auth';
+import { DirectionHeader } from './DirectionNav';
 import { ProjectProvider, topicPath, useProject } from './project';
+import { useDirections } from '../features/deepresearch/directions';
+
+/* ============================================================
+   路由表。结构跟着侧栏走：
+
+   研究      /research                 首页：一个输入框 + 课题列表
+             /research/:id             有研究进展的课题的概览（时间线）
+             /t/:topicId               没有研究进展的课题的概览；有的话转到时间线
+             /t/:topicId/<页签>        forge 想法 · experiment 实验 · writer 写作 · review 想法评审 ·
+                                       paper-review 稿件评审 · research 相关研究 · tasks 任务 · settings 设置
+             /ideas/:id /experiment/:id /writer/:id /voyages/:id   具体条目
+   论文      /libraries /libraries/:id /library /papers/:id/read /concepts/:id
+   每日新论文 /daily
+   任务与待办 /activity                 全部任务（顶栏面板里的「查看全部任务」）
+   设置      /settings
+
+   旧地址都还能用，见最下面「旧地址」一节。
+   ============================================================ */
 
 // 路由级代码分割：每个页面独立 chunk，首屏只加载壳层与当前页
 function page<K extends string>(
@@ -32,9 +59,8 @@ function PageFallback() {
 }
 
 /**
- * 课题作用域路由守卫：确认没有任何课题时统一重定向到 /research，
- * 替代各页面重复的「还没有课题」空态。加载中渲染骨架（不闪跳）；
- * 加载失败（后端不可用）放行，由页面自身优雅降级。
+ * 具体条目页（想法 / 实验 / 稿件 / 任务详情）的守卫：一个课题都没有时回「研究」首页。
+ * 加载中渲染骨架（不闪跳）；加载失败（引擎连不上）放行，由页面自己降级。
  * 透传 AppShell 的 Outlet context，子页面 useShell() 不受影响。
  */
 function RequireTopic() {
@@ -46,18 +72,18 @@ function RequireTopic() {
 }
 
 /**
- * /t/:topicId 布局路由：URL 是课题作用域的事实源。
- * - URL 中的课题在列表里 → 同步给 ProjectProvider（含写 localStorage），子页面照常用
- *   useProject().currentProjectId 拉数据；
- * - 列表加载完但 URL 课题不存在 → 重定向 /research；
- * - 列表加载中 / context 尚未同步 → 渲染骨架（不闪现上一个课题的数据）；
- * - 列表加载失败（后端不可用）→ 信任 URL 放行，页面自身降级。
+ * /t/:topicId 布局：URL 是「当前课题」的事实源，并给这个课题的每一页套上同一个页头
+ * （课题名 + 页签）。
+ * - URL 中的课题在列表里 → 同步给 ProjectProvider，子页面照常用 useProject().currentProjectId；
+ * - 列表加载完但课题不存在 → 回「研究」首页；
+ * - 列表加载中 / context 尚未同步 → 骨架（不闪现上一个课题的数据）；
+ * - 列表加载失败（引擎连不上）→ 信任 URL 放行，页面自己降级。
  */
 function TopicScope() {
   const { topicId = '' } = useParams();
   const { projects, isLoading, isError, currentProjectId, setCurrentProjectId } = useProject();
   const ctx = useOutletContext();
-  const known = projects.some((p) => p.id === topicId);
+  const known = projects.find((p) => p.id === topicId);
 
   useEffect(() => {
     if (topicId && (known || isError) && topicId !== currentProjectId) setCurrentProjectId(topicId);
@@ -66,13 +92,43 @@ function TopicScope() {
   if (isLoading) return <PageFallback />;
   if (!known && !isError) return <Navigate to="/research" replace />;
   if (topicId !== currentProjectId) return <PageFallback />;
-  return <Outlet context={ctx} />;
+  return (
+    <div className="topic-layout">
+      <div className="topic-shell">
+        <DirectionHeader projectId={topicId} fallbackName={known?.name} />
+      </div>
+      <Outlet context={ctx} />
+    </div>
+  );
 }
 
 /**
- * 旧课题域路径（/、/wiki、/forge…）重定向：收藏夹 / 刷新兼容。
- * localStorage 记住的课题（仍在列表中）优先，否则列表第一个；都没有 → /research。
- * 列表加载失败时信任 localStorage 里的 id（页面自身降级）。
+ * /t/:topicId 本身：课题的概览。
+ * - 有研究进展 → 概览就是时间线（/research/:runId）；
+ * - 没有 → 课题概览页（现有的内容 + 「用这个方向开始研究」）。
+ * 旧的 `?tab=settings` / `?tab=tasks`（原来是工作台里的标签）转到各自的页面。
+ */
+function TopicHome() {
+  const { topicId = '' } = useParams();
+  const [searchParams] = useSearchParams();
+  const { byProject, isLoading } = useDirections();
+  const tab = searchParams.get('tab');
+  if (tab === 'settings' || tab === 'tasks') return <Navigate to={topicPath(topicId, tab)} replace />;
+  if (isLoading) return <PageFallback />;
+  const run = byProject(topicId)?.run;
+  if (run) return <Navigate to={`/research/${run.id}`} replace />;
+  return <>{topicOverview}</>;
+}
+
+// 元素建一次：page() 每次调用都会造一个新的 lazy 组件，放在渲染里会反复重挂载
+const topicOverview = page(() => import('../features/dashboard/TopicOverviewPage'), 'TopicOverviewPage');
+
+/* —————————————————— 旧地址 —————————————————— */
+
+/**
+ * 不带课题的旧路径（/forge、/review…）→ 当前课题下的同名页面。应用内部在「还不知道是
+ * 哪个课题」时也会落到这里（topicPath(null, sub)）。
+ * 记住的课题（仍在列表中）优先，否则列表第一个；都没有 → 「研究」首页。
  */
 function LegacyTopicRedirect({ sub }: { sub?: string }) {
   const { projects, isLoading, isError, currentProjectId } = useProject();
@@ -81,25 +137,19 @@ function LegacyTopicRedirect({ sub }: { sub?: string }) {
   const remembered = currentProjectId && projects.some((p) => p.id === currentProjectId) ? currentProjectId : null;
   const id = remembered ?? projects[0]?.id ?? (isError ? currentProjectId : null);
   if (!id) return <Navigate to="/research" replace />;
-  // 保留查询串与锚点（如 /wiki?paper=xxx）
   return <Navigate to={topicPath(id, sub) + location.search + location.hash} replace />;
 }
 
-/**
- * 旧「管理」页 `/admin` → `/settings`（#755）。
- *
- * 标签名两边一致（literature / processing / experiment / daily / usage），所以 query
- * 原样带过去即可；已经撤掉的 `?tab=llm` 由设置页自己换到 `?tab=model`。
- */
+/** 旧「管理」页 `/admin` → `/settings`（标签名两边一致，query 原样带过去）。 */
 function AdminRedirect() {
   const location = useLocation();
   return <Navigate to={'/settings' + location.search + location.hash} replace />;
 }
 
-/** 旧课题设置页 `/projects/:id` → 工作台「课题设置」标签 `/t/:id?tab=settings`。 */
+/** 旧课题设置页 `/projects/:id` → `/t/:id/settings`。 */
 function ProjectSettingsRedirect() {
   const { id = '' } = useParams();
-  return <Navigate to={topicPath(id) + '?tab=settings'} replace />;
+  return <Navigate to={topicPath(id, 'settings')} replace />;
 }
 
 export const router = createBrowserRouter([
@@ -113,73 +163,71 @@ export const router = createBrowserRouter([
       </RequireAuth>
     ),
     children: [
-      // —— 课题作用域路由：没有任何课题时统一重定向到 /research ——
+      // —— 研究 ——
+      { index: true, element: <Navigate to="/research" replace /> },
+      { path: 'research', element: page(() => import('../features/deepresearch/ResearchHomePage'), 'ResearchHomePage') },
+      { path: 'research/:id', element: page(() => import('../features/deepresearch/ResearchRunPage'), 'ResearchRunPage') },
+      { path: 'projects/new', element: page(() => import('../features/projects/ProjectWizardPage'), 'ProjectWizardPage') },
       {
         element: <RequireTopic />,
         children: [
-          // 课题域列表页：/t/:topicId 前缀，URL 即作用域
+          // 课题的各页：/t/:topicId 前缀，URL 即当前课题
           {
             path: 't/:topicId',
             element: <TopicScope />,
             children: [
-              { index: true, element: page(() => import('../features/dashboard/DashboardPage'), 'DashboardPage') },
-              // 旧文献追踪路径 → 该课题隐式库的 /libraries/:id（保留 ?paper= 等深链）
-              { path: 'wiki', element: page(() => import('../features/libraries/TopicWikiRedirect'), 'TopicWikiRedirect') },
-              { path: 'research', element: page(() => import('../features/research/ResearchPage'), 'ResearchPage') },
+              { index: true, element: <TopicHome /> },
               { path: 'forge', element: page(() => import('../features/forge/ForgePage'), 'ForgePage') },
               { path: 'review', element: page(() => import('../features/review/ReviewPage'), 'ReviewPage') },
               { path: 'experiment', element: page(() => import('../features/experiment/ExperimentPage'), 'ExperimentPage') },
               { path: 'writer', element: page(() => import('../features/writer/WriterPage'), 'WriterPage') },
               { path: 'paper-review', element: page(() => import('../features/paper-review/PaperReviewPage'), 'PaperReviewPage') },
-              // 任务已并入工作台「任务」标签：/t/:id/voyages → /t/:id?tab=tasks
-              { path: 'voyages', element: <Navigate to="..?tab=tasks" replace /> },
+              { path: 'research', element: page(() => import('../features/research/ResearchPage'), 'ResearchPage') },
+              { path: 'tasks', element: page(() => import('../features/dashboard/TopicPages'), 'TopicTasksPage') },
+              { path: 'settings', element: page(() => import('../features/dashboard/TopicPages'), 'TopicSettingsPage') },
+              // 旧地址：课题的任务列表、课题名下的文献页
+              { path: 'voyages', element: <Navigate to="../tasks" replace /> },
+              { path: 'wiki', element: page(() => import('../features/libraries/TopicWikiRedirect'), 'TopicWikiRedirect') },
             ],
           },
-          // 实体详情页：按实体 id 拉数据，保持顶层路径（分享/收藏链接稳定）
+          // 具体条目：按条目 id 取数，保持顶层路径
           { path: 'voyages/:id', element: page(() => import('../features/voyages/VoyageDetailPage'), 'VoyageDetailPage') },
           { path: 'ideas/:id', element: page(() => import('../features/forge/IdeaDetailPage'), 'IdeaDetailPage') },
           { path: 'experiment/:id', element: page(() => import('../features/experiment/ExperimentDetailPage'), 'ExperimentDetailPage') },
           { path: 'writer/:id', element: page(() => import('../features/writer/WriterEditorPage'), 'WriterEditorPage') },
-          // 旧路径重定向：跳到当前课题下的同名子页面
+          // 旧地址：不带课题的路径 → 当前课题下的同名页面
           { path: 'wiki', element: <LegacyTopicRedirect sub="wiki" /> },
-          // 旧的 /research（相关研究）不再重定向：这个路径现在是「研究」首页
           { path: 'forge', element: <LegacyTopicRedirect sub="forge" /> },
           { path: 'review', element: <LegacyTopicRedirect sub="review" /> },
           { path: 'experiment', element: <LegacyTopicRedirect sub="experiment" /> },
           { path: 'writer', element: <LegacyTopicRedirect sub="writer" /> },
           { path: 'paper-review', element: <LegacyTopicRedirect sub="paper-review" /> },
-          { path: 'voyages', element: <LegacyTopicRedirect sub="voyages" /> },
+          { path: 'voyages', element: <LegacyTopicRedirect sub="tasks" /> },
         ],
       },
-      // —— 非课题作用域 ——
-      // 研究：打开应用的第一站。一句方向开始，时间线上看进展；`/` 与旧的 `/start` 都到这里
-      { index: true, element: <Navigate to="/research" replace /> },
-      { path: 'research', element: page(() => import('../features/deepresearch/ResearchHomePage'), 'ResearchHomePage') },
-      { path: 'research/:id', element: page(() => import('../features/deepresearch/ResearchRunPage'), 'ResearchRunPage') },
-      // 阅读页按论文 id 取数，文献库 / 每日新论文的论文都可读，与课题无关：
-      // 放在守卫外，否则没有任何课题的用户点「阅读原文」会被重定向去建课题。
-      { path: 'papers/:id/read', element: page(() => import('../features/reading/ReadingPage'), 'ReadingPage') },
-      // 概念页同理按 id 取数：概念是论文级的平台实体，不属于任何课题；
-      // `?library=` 可选，带上就只列该库里关联的论文（从库的上下文点进来时带）。
-      { path: 'concepts/:id', element: page(() => import('../features/wiki/ConceptPage'), 'ConceptPage') },
-      { path: 'start', element: <Navigate to="/research" replace /> },
-      { path: 'projects/new', element: page(() => import('../features/projects/ProjectWizardPage'), 'ProjectWizardPage') },
-      // 课题设置已并入工作台「课题设置」标签：/projects/:id → /t/:id?tab=settings
-      { path: 'projects/:id', element: <ProjectSettingsRedirect /> },
-      { path: 'library', element: page(() => import('../features/library/LibraryPage'), 'LibraryPage') },
-      // 课题外任务列表（文献库任务 + 每日新论文）。原实验室数据面板随 #626 移除
-      { path: 'lab', element: page(() => import('../features/library-tasks/LibraryTasksPage'), 'LibraryTasksPage') },
-      // 共享方向文献库（无需课题即可读）
+
+      // —— 论文 ——（按 id 取数，和课题无关：没有任何课题的人也能读论文）
       { path: 'libraries', element: page(() => import('../features/libraries/LibrariesPage'), 'LibrariesPage') },
       { path: 'libraries/:id', element: page(() => import('../features/libraries/LibraryDetailPage'), 'LibraryDetailPage') },
-      // 实验室区：每日新论文池（arxiv 每日新提交，保留最近 7 天）
+      { path: 'library', element: page(() => import('../features/library/LibraryPage'), 'LibraryPage') },
+      { path: 'papers/:id/read', element: page(() => import('../features/reading/ReadingPage'), 'ReadingPage') },
+      // `?library=` 可选，带上就只列该库里关联的论文（从库的上下文点进来时带）
+      { path: 'concepts/:id', element: page(() => import('../features/wiki/ConceptPage'), 'ConceptPage') },
+
+      // —— 每日新论文 ——
       { path: 'daily', element: page(() => import('../features/daily/DailyPage'), 'DailyPage') },
-      // MCP 说明已并入设置页签，旧链接重定向
-      { path: 'mcp-tools', element: <Navigate to="/settings?tab=mcp" replace /> },
+
+      // —— 任务与待办：全部任务 ——
+      { path: 'activity', element: page(() => import('../features/library-tasks/LibraryTasksPage'), 'ActivityPage') },
+
+      // —— 设置 ——
       { path: 'settings', element: page(() => import('../features/settings/SettingsPage'), 'SettingsPage') },
-      // 管理员设置独立成页（非管理员进来是「无权访问」空态）
-      // 设置入口只剩一个（#755）：/admin 的六个标签已并进 /settings，旧链接重定向过去。
-      // 保留重定向而不是直接删路由——书签、文档与旧任务日志里都还有 /admin 的链接。
+
+      // —— 旧地址 ——
+      { path: 'start', element: <Navigate to="/research" replace /> },
+      { path: 'lab', element: <Navigate to="/activity" replace /> },
+      { path: 'projects/:id', element: <ProjectSettingsRedirect /> },
+      { path: 'mcp-tools', element: <Navigate to="/settings?tab=mcp" replace /> },
       { path: 'admin', element: <AdminRedirect /> },
     ],
   },

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../../../components/ui/Icon';
-import { topicPath, useProject } from '../../../app/project';
 import { fmtDuration, fmtTime, fmtTokens } from '../../../lib/format';
 import { tr } from '../../../lib/i18n';
 import type {
@@ -193,7 +192,6 @@ const PAPER_LIST_PREVIEW = 5;
 
 function StepPaperList({ papers, total }: { papers: PaperBrief[]; total?: number }) {
   const navigate = useNavigate();
-  const { currentProjectId } = useProject();
   const [open, setOpen] = useState(false);
   if (papers.length === 0) return null;
   const shown = open ? papers : papers.slice(0, PAPER_LIST_PREVIEW);
@@ -219,7 +217,7 @@ function StepPaperList({ papers, total }: { papers: PaperBrief[]; total?: number
               minWidth: 0,
             }}
             title={p.title}
-            onClick={() => navigate(topicPath(currentProjectId, `wiki?paper=${p.id}`))}
+            onClick={() => navigate(`/papers/${p.id}/read`)}
           >
             {p.title}
           </span>

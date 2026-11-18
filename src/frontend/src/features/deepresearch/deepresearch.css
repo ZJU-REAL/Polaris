@@ -147,7 +147,8 @@
 }
 
 /* ---------- 时间线页 ---------- */
-.dr-run { max-width: 820px; padding-top: 28px; }
+/* 页头（课题名 + 页签）和别的课题页同宽；时间线自己收窄到好读的宽度，靠左 */
+.dr-run-body { max-width: 820px; }
 
 .dr-banner {
   display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2);

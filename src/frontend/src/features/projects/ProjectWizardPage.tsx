@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { PageHead } from '../../components/ui/PageHead';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
 import { topicPath, useProject } from '../../app/project';
@@ -193,7 +192,7 @@ export function ProjectWizardPage() {
           `${tr('课题已创建，但', 'The topic was created, but ')}${phase}${tr('，请在课题设置中重试：', '. Try again in topic settings: ')}${errorText(error)}`,
           'error',
         );
-        navigate(`${topicPath(error.project.id)}?tab=settings`);
+        navigate(topicPath(error.project.id, 'settings'));
         return;
       }
       toast(
@@ -210,7 +209,7 @@ export function ProjectWizardPage() {
 
   return (
     <div className="page fadeup project-wizard-page">
-      <PageHead eyebrow={tr('课题', 'Topics')} title={tr('新建课题', 'New Topic')} />
+      
 
       <div className="card card-pad project-wizard-card">
         <FormField label={tr('名称', 'Name')}>

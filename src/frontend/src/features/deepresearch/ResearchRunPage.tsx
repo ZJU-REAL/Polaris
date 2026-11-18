@@ -6,6 +6,8 @@ import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
 import { Icon } from '../../components/ui/Icon';
 import { PromptModal } from '../../components/ui/PromptModal';
 import { toast } from '../../components/ui/Toast';
+import { DirectionHeader } from '../../app/DirectionNav';
+import { useProject } from '../../app/project';
 import { api } from '../../lib/api';
 import { errorText } from '../../lib/errors';
 import { fmtRelative } from '../../lib/format';
@@ -18,7 +20,7 @@ import { IdeasSection } from './IdeasSection';
 import { NextSection } from './NextSection';
 import { PapersSection } from './PapersSection';
 import type { RunActions } from './parts';
-import { countsText, elapsedText, runHeadline, sectionStates, usageText } from './phase';
+import { countsText, elapsedText, sectionStates, usageText } from './phase';
 import { ScopeSection } from './ScopeSection';
 import './deepresearch.css';
 
@@ -165,6 +167,13 @@ export function ResearchRunPage() {
   const running = run?.status === 'running';
   const now = useNow(30_000, running);
 
+  // 这一页的课题就是「当前课题」：接着点开想法、实验这些页面时，它们要知道是哪个课题
+  const { currentProjectId, setCurrentProjectId } = useProject();
+  const runProjectId = run?.project_id;
+  useEffect(() => {
+    if (runProjectId && runProjectId !== currentProjectId) setCurrentProjectId(runProjectId);
+  }, [runProjectId, currentProjectId, setCurrentProjectId]);
+
   if (query.isLoading) {
     return (
       <div className="page dr-run">
@@ -195,7 +204,6 @@ export function ResearchRunPage() {
   }
 
   const states = sectionStates(run);
-  const head = runHeadline(run);
   const engineDown = query.isError && isEngineUnreachable(query.error);
   const stoppable = run.status === 'running' || run.status === 'waiting_user' || run.status === 'needs_attention';
   const actions: RunActions = {
@@ -211,20 +219,8 @@ export function ResearchRunPage() {
   // 名称就是方向原话（还没起名、或方向本来就短）时不重复一遍
   const showDirection = run.direction.trim() !== run.name.trim();
 
-  return (
-    <div className="page fadeup dr-run">
-      {engineDown && (
-        <div className="dr-banner" role="status">
-          <StatusDot tone="warn" label={tr('无法连接本机引擎，正在重试…', 'Couldn’t reach the local engine. Retrying…')} />
-          <span className="dr-banner-sub">{tr('下面是上一次取到的内容。', 'Showing the last known state.')}</span>
-        </div>
-      )}
-
-      <header className="dr-run-head">
-        <div className="dr-run-titlebar">
-          <h1 className="dr-run-title" title={run.name}>
-            {run.name}
-          </h1>
+  // 课题页头右侧的「更多」：重命名 / 停止 / 删除
+  const menu = (
           <div className="dr-menu-root" ref={menuRef}>
             <button
               type="button"
@@ -285,14 +281,30 @@ export function ResearchRunPage() {
               </div>
             )}
           </div>
+  );
+
+  return (
+    <div className="topic-layout">
+      <div className="topic-shell">
+        <DirectionHeader projectId={run.project_id} fallbackName={run.name} actions={menu} />
+      </div>
+      <div className="page fadeup dr-run">
+        <div className="dr-run-body">
+      {engineDown && (
+        <div className="dr-banner" role="status">
+          <StatusDot tone="warn" label={tr('无法连接本机引擎，正在重试…', 'Couldn’t reach the local engine. Retrying…')} />
+          <span className="dr-banner-sub">{tr('下面是上一次取到的内容。', 'Showing the last known state.')}</span>
         </div>
+      )}
+
+      <header className="dr-run-head">
         {showDirection && (
           <p className="dr-run-direction" title={run.direction}>
             {run.direction}
           </p>
         )}
+        {/* 状态词在页头的课题名旁边；这一行是数字：多少论文和想法、跑了多久、用了多少 */}
         <div className="dr-run-status" data-run-status={run.status} data-run-phase={run.phase}>
-          <StatusDot tone={head.tone} label={head.label} />
           <span className="dr-run-meta">{meta}</span>
           {usage && (
             <span className="dr-run-meta" title={usage.title}>
@@ -321,6 +333,7 @@ export function ResearchRunPage() {
         />
         <NextSection run={run} state={states.next} />
       </div>
+        </div>
 
       <PromptModal
         open={renaming}
@@ -353,6 +366,7 @@ export function ResearchRunPage() {
         busy={remove.isPending}
         onConfirm={() => remove.mutate()}
       />
+      </div>
     </div>
   );
 }

@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
 import { TaskStatus } from './shared/StatusDot';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
-import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useProject } from '../../app/project';
+import { useDirections } from '../deepresearch/directions';
 import { api, LIBRARY_TASK_KINDS, VOYAGE_TERMINAL, type VoyageRead } from '../../lib/api';
 import { VoyageActions } from '../../components/ui/VoyageActions';
 import { DiscoveryCreateButton } from './discovery';
@@ -66,8 +66,6 @@ export const KIND_META: Record<string, KindMeta> = {
   paper_review: { zh: '论文评审', en: 'Paper review', icon: 'check', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
   presentation: { zh: '论文汇报', en: 'Slides', icon: 'chart', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
   discovery: { zh: '假设探索', en: 'Hypothesis search', icon: 'compass', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
-  custom: { zh: '自定义任务', en: 'Custom task', icon: 'sparkle', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
-  demo: { zh: '演示', en: 'Demo', icon: 'play', bg: 'var(--surface-3)', tx: 'var(--text-2)' },
   daily_feed_sync: { zh: '每日新论文', en: 'Daily papers', icon: 'refresh', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
 };
 
@@ -199,37 +197,44 @@ export function SkeletonRows() {
 }
 
 /**
- * 任务列表主体（过滤条 + 列表）：无自身 PageHead / 页壳，供工作台「任务」标签内嵌。
- * - `showScopeSwitch`：是否显示「当前课题 / 全部课题」切换器。课题工作台里固定看本课题
- *   （课题外的任务在 /lab 的文献任务页按归属分组看），所以默认关闭。
- * - `labLink`：底部是否显示「课题外的任务在文献任务页」引导（课题工作台用）。
+ * 当前课题的任务列表（过滤条 + 列表），放在课题页头的「任务」页签下。
+ * 一个课题的任务 = 挂在这个课题上的任务 + 它的研究所用文献库的检索任务（那类任务挂在
+ * 文献库上，不挂课题，但对用户来说就是「这个课题在找文献」）。全部任务见 /activity。
  */
 export function VoyagesList({
-  showScopeSwitch = false,
-  labLink = false,
   kinds,
 }: {
-  showScopeSwitch?: boolean;
-  labLink?: boolean;
-  /** 类型筛选下拉列哪些类型；不传=全部。课题工作台传课题类型，实验室传库/每日类型。 */
+  /** 类型筛选下拉列哪些类型；不传 = 这个课题的任务里出现过的类型。 */
   kinds?: readonly string[];
 } = {}) {
   const { currentProjectId } = useProject();
+  const { byProject } = useDirections();
+  const runLibraryId = byProject(currentProjectId)?.run?.library_id ?? null;
 
   const [filter, setFilter] = useState<Filter>('all');
   const [kindFilter, setKindFilter] = useState<string>('all');
-  const [scope, setScope] = useState<'current' | 'all'>('current');
 
-  const projectId = scope === 'current' ? (currentProjectId ?? undefined) : undefined;
+  // 取全部任务再按课题筛（与「任务与待办」面板同一份缓存）：文献库上的任务不带课题 id
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['voyages', projectId ?? 'all'],
-    queryFn: () => api.listVoyages(projectId),
+    queryKey: ['voyages', 'all'],
+    queryFn: () => api.listVoyages(),
     retry: false,
     refetchInterval: 30_000,
   });
+  const mine = useMemo(
+    () =>
+      (data ?? []).filter(
+        (v) => (!!currentProjectId && v.project_id === currentProjectId) || (!!runLibraryId && v.library_id === runLibraryId),
+      ),
+    [data, currentProjectId, runLibraryId],
+  );
+  const kindOptions = useMemo(() => {
+    const present = new Set(mine.map((v) => v.kind));
+    return [...new Set([...(kinds ?? []), ...present])].filter((k) => present.has(k));
+  }, [mine, kinds]);
   const voyages = useMemo(
-    () => (data ?? []).filter((v) => matchFilter(v, filter) && (kindFilter === 'all' || v.kind === kindFilter)),
-    [data, filter, kindFilter],
+    () => mine.filter((v) => matchFilter(v, filter) && (kindFilter === 'all' || v.kind === kindFilter)),
+    [mine, filter, kindFilter],
   );
 
   return (
@@ -244,22 +249,12 @@ export function VoyagesList({
               style={{ height: 33, fontSize: 13, fontWeight: 600, width: 128, color: kindFilter === 'all' ? 'var(--text-3)' : 'var(--text)' }}
             >
               <option value="all">{tr('全部类型', 'All types')}</option>
-              {(kinds ?? Object.keys(KIND_META)).map((k) => (
+              {kindOptions.map((k) => (
                 <option key={k} value={k}>{tr(KIND_META[k]?.zh ?? k, KIND_META[k]?.en)}</option>
               ))}
             </select>
             <div style={{ flex: 1 }} />
-            {showScopeSwitch && (
-              <Segmented
-                options={[
-                  { v: 'current' as const, label: tr('当前课题', 'Current topic') },
-                  { v: 'all' as const, label: tr('全部课题', 'All topics') },
-                ]}
-                value={scope}
-                onChange={setScope}
-              />
-            )}
-            {/* 新建假设探索（#642）：目前唯一从任务列表直接发起的任务类型 */}
+            {/* 单独寻找一次假设：目前唯一从任务列表直接发起的任务类型 */}
             <DiscoveryCreateButton projectId={currentProjectId ?? null} />
           </div>
 
@@ -304,27 +299,6 @@ export function VoyagesList({
             </div>
           )}
 
-          {labLink && (
-            <div className="row gap6" style={{ marginTop: 12, fontSize: 12, color: 'var(--text-3)' }}>
-              <Icon name="flask" size={13} style={{ flexShrink: 0 }} />
-              <span>{tr('建库和每日新论文的任务见', 'Library builds and daily papers are under')}</span>
-              <Link to="/lab" style={{ color: 'var(--accent)', fontWeight: 600 }}>
-                {tr('文献任务', 'Library Tasks')}
-              </Link>
-            </div>
-          )}
     </>
-  );
-}
-
-export function VoyagesPage() {
-  return (
-    <div className="page fadeup">
-      <PageHead
-        eyebrow="Polaris · Tasks"
-        title={tr('任务', 'Tasks')}
-      />
-      <VoyagesList showScopeSwitch />
-    </div>
   );
 }

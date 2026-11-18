@@ -7,13 +7,13 @@ import { VoyageActions } from '../../components/ui/VoyageActions';
 import { Timeline, TimelineItem } from '../../components/ui/Timeline';
 import { toast } from '../../components/ui/Toast';
 import { useShell } from '../../app/AppShell';
-import { topicPath, useProject } from '../../app/project';
+import { topicPath } from '../../app/project';
+import { useDirections } from '../deepresearch/directions';
 import { fmtDuration, fmtTime, fmtTokens } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import {
   api,
   ApiError,
-  isLabScopedTask,
   VOYAGE_TERMINAL,
   type VoyageStepRead,
 } from '../../lib/api';
@@ -130,7 +130,7 @@ export function VoyageDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { openGates } = useShell();
-  const { currentProjectId } = useProject();
+  const { byProject, byLibrary } = useDirections();
   const [showObsolete, setShowObsolete] = useState(false);
 
   const { data: voyage, isLoading, isError, error, refetch } = useQuery({
@@ -196,12 +196,19 @@ export function VoyageDetailPage() {
           </div>
           <div className="row gap8" style={{ justifyContent: 'center' }}>
             <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-            <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'voyages'))}>{tr('返回任务列表', 'Back to tasks')}</button>
+            <button className="btn btn-ghost" onClick={() => navigate('/activity')}>{tr('查看全部任务', 'View all tasks')}</button>
           </div>
         </div>
       </div>
     );
   }
+
+  // 这个任务属于哪个课题：研究用的文献库的检索任务挂在文献库上，也算那个课题的
+  const topic = byLibrary(voyage.library_id) ?? byProject(voyage.project_id);
+  const partOfRun = !!topic?.run && (voyage.kind === 'discovery' || voyage.kind.startsWith('wiki_'));
+  const back = topic
+    ? { to: partOfRun ? topic.href : topicPath(topic.projectId, 'tasks'), label: topic.name }
+    : { to: '/activity', label: tr('任务与待办', 'Activity') };
 
   const steps = [...(voyage.steps ?? [])].sort(byListOrder);
   const planEvents = voyage.plan_history ?? [];
@@ -215,24 +222,10 @@ export function VoyageDetailPage() {
       <div className="row" style={{ alignItems: 'flex-start', marginBottom: 20 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="h-eyebrow row gap8">
-            {/* 返回按任务层级分流：文献库任务（建库/增量更新）与每日新论文归 /lab
-                任务列表，其余归课题工作台。判据与面包屑同一份（isLabScopedTask）——
-                原来这里单用 WIKI_RUN_KINDS，漏掉每日新论文，把它送去了课题工作台；
-                而它 project_id 为空，跳课题只会落到首页。 */}
-            <span
-              className="row gap6"
-              style={{ cursor: 'pointer' }}
-              onClick={() =>
-                navigate(
-                  isLabScopedTask(voyage)
-                    ? '/lab'
-                    : topicPath(voyage.project_id, 'voyages'),
-                )
-              }
-            >
-              {isLabScopedTask(voyage)
-                ? tr('← 文献任务', '← Library tasks')
-                : tr('← 课题任务', '← Topic tasks')}
+            {/* 返回：任务属于哪个课题就回哪个课题（判据与面包屑同一份）；不属于任何课题的
+                （独立文献库的检索、每日新论文）回全部任务。 */}
+            <span className="row gap6" style={{ cursor: 'pointer' }} onClick={() => navigate(back.to)}>
+              ← {back.label}
             </span>
             {live && (
               <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
@@ -263,7 +256,7 @@ export function VoyageDetailPage() {
           </div>
         </div>
         {/* 取消 / 删除；续跑在下方 ActivityBar 里（紧挨报错说明，那里更好理解） */}
-        <VoyageActions voyage={voyage} showResume={false} onDone={() => navigate('/voyages')} />
+        <VoyageActions voyage={voyage} showResume={false} onDone={() => navigate(back.to)} />
         {voyage.kind === 'presentation' && voyage.status === 'done' && (
           <PresentationDownload voyageId={voyage.id} goal={voyage.goal} />
         )}
