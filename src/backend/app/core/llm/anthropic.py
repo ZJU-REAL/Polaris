@@ -48,6 +48,7 @@ from app.core.llm.base import (
     normalize_finish_reason,
     structured_stream_started,
 )
+from app.core.llm.concurrency import limit_for
 from app.core.llm.errors import LLMRefusalError, LLMTransportError
 
 logger = logging.getLogger("polaris.llm")
@@ -205,6 +206,15 @@ async def _final_message(stream: Any) -> Any:
         raise LLMTransportError("model stream ended before the final message") from e
 
 
+def _is_overload(error: BaseException) -> bool:
+    """接口在说「忙」：限流、过载、没有可用账号，或者流被中途掐断、连不上。"""
+    if isinstance(error, anthropic.RateLimitError | LLMTransportError):
+        return True
+    if isinstance(error, anthropic.APIStatusError):
+        return error.status_code in (503, 529)
+    return isinstance(error, anthropic.APIConnectionError)
+
+
 class AnthropicProvider(LLMProvider):
     name = "anthropic"
     supports_tools = True
@@ -227,6 +237,21 @@ class AnthropicProvider(LLMProvider):
             timeout=timeout,
             max_retries=max(0, max_attempts - 1),
         )
+        # 同一个接口地址共用一道并发闸（core/llm/concurrency.py）
+        self._limit_key = f"anthropic:{base_url or ''}"
+
+    @contextlib.asynccontextmanager
+    async def _gated(self) -> AsyncIterator[None]:
+        """占一个在途名额跑一次请求；接口说忙就让闸收紧，成功了记一次。"""
+        gate = limit_for(self._limit_key)
+        async with gate.slot():
+            try:
+                yield
+            except BaseException as e:
+                if _is_overload(e):
+                    gate.overloaded()
+                raise
+        await gate.succeeded()
 
     # ---- 请求构造 ----
 
@@ -388,12 +413,13 @@ class AnthropicProvider(LLMProvider):
             show_thinking=False,
         )
         api, extra = self._api(model)
-        if limit > NONSTREAM_MAX_TOKENS:
-            # 长输出：流式收齐再返回，连接上一直有数据，不会被空等超时掐断
-            async with api.stream(**request, **extra) as stream:
-                message = await _final_message(stream)
-        else:
-            message = await api.create(**request, **extra)
+        async with self._gated():
+            if limit > NONSTREAM_MAX_TOKENS:
+                # 长输出：流式收齐再返回，连接上一直有数据，不会被空等超时掐断
+                async with api.stream(**request, **extra) as stream:
+                    message = await _final_message(stream)
+            else:
+                message = await api.create(**request, **extra)
         return self._result(message, model)
 
     async def complete_structured(
@@ -428,20 +454,22 @@ class AnthropicProvider(LLMProvider):
         )
         api, extra = self._api(model)
         started = structured_stream_started.get()
-        if limit > NONSTREAM_MAX_TOKENS or started is not None:
-            async with api.stream(**request, **extra) as stream:
-                if started is not None:
-                    # 第一个事件到了 = 服务端已读完提示、缓存已写好：告诉等着扇出的调用方。
-                    # 迭代器要留着读完再取整条消息（半途丢掉的异步生成器被回收时会关流）
-                    events = stream.__aiter__()
-                    with contextlib.suppress(StopAsyncIteration):
-                        await events.__anext__()
-                    started.set()
-                    async for _event in events:
-                        pass
-                message = await _final_message(stream)
-        else:
-            message = await api.create(**request, **extra)
+        async with self._gated():
+            if limit > NONSTREAM_MAX_TOKENS or started is not None:
+                async with api.stream(**request, **extra) as stream:
+                    if started is not None:
+                        # 第一个事件到了 = 服务端已读完提示、缓存已写好：告诉等着扇出的
+                        # 调用方。迭代器要留着读完再取整条消息（半途丢掉的异步生成器被
+                        # 回收时会关流）
+                        events = stream.__aiter__()
+                        with contextlib.suppress(StopAsyncIteration):
+                            await events.__anext__()
+                        started.set()
+                        async for _event in events:
+                            pass
+                    message = await _final_message(stream)
+            else:
+                message = await api.create(**request, **extra)
         return self._result(message, model)
 
     async def stream(
@@ -496,7 +524,7 @@ class AnthropicProvider(LLMProvider):
         )
         api, extra = self._api(model)
         tool_indexes: set[int] = set()
-        async with api.stream(**request, **extra) as stream:
+        async with self._gated(), api.stream(**request, **extra) as stream:
             async for event in stream:
                 kind = event.type
                 if kind == "content_block_start":
