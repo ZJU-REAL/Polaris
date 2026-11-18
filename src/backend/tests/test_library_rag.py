@@ -228,3 +228,35 @@ async def test_qa_api_end_to_end_over_the_full_pipeline(client, monkeypatch):
         f"/api/libraries/{missing}/qa", json={"question": "hi"}, headers=headers
     )
     assert resp.status_code == 404
+
+
+async def test_library_papers_sort_by_when_they_were_added(client):
+    """库内论文按入库时间排序（「最新收录」视图）：以前 sort=-created_at 被 422 挡掉。"""
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.library_direction import LibraryPaper
+
+    headers, library_id, ids = await _setup(client)
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    async with get_sessionmaker()() as session:
+        for hours, key in enumerate(("A", "B", "C")):
+            member = (
+                await session.execute(
+                    select(LibraryPaper).where(
+                        LibraryPaper.library_id == uuid.UUID(str(library_id)),
+                        LibraryPaper.paper_id == ids[key],
+                    )
+                )
+            ).scalar_one()
+            member.created_at = t0 + timedelta(hours=hours)
+        await session.commit()
+    newest_first = await client.get(
+        f"/api/libraries/{library_id}/papers?sort=-created_at", headers=headers
+    )
+    oldest_first = await client.get(
+        f"/api/libraries/{library_id}/papers?sort=created_at", headers=headers
+    )
+    assert newest_first.status_code == 200 and oldest_first.status_code == 200
+    newest = [p["id"] for p in newest_first.json()["items"]]
+    assert newest == [str(ids[k]) for k in ("C", "B", "A")]
+    assert [p["id"] for p in oldest_first.json()["items"]] == newest[::-1]

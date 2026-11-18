@@ -465,7 +465,8 @@ async def list_library_papers(
         default=False,
         description="只看最近一次同步新增的（没同步过则返回空；「最新收录」视图用）",
     ),
-    sort: str = Query(default="relevance", pattern="^(relevance|-published_at)$"),
+    # 与 papers_service.PAPER_SORTS 同一组：以前只放行两种，「最新收录」排序被 422 挡掉
+    sort: str = Query(default="relevance", pattern="^(relevance|-?published_at|-?created_at)$"),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
