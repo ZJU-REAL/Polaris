@@ -24,7 +24,7 @@ import { researchKeys } from '../deepresearch/hooks';
 import { IdeaComparisons, matchInfo } from './IdeaComparisons';
 import { researchTypeLabel, SCORE_DIMS } from './ideaShared';
 import { ClaimList, IdeaOutline, PlanSections, useBodySections, type OutlineItem } from './IdeaBody';
-import { humanizeFieldNames } from './ideaText';
+import { humanizeFieldNames, tidyProposalSections } from './ideaText';
 import {
   groupEvidence,
   localizeHeadings,
@@ -388,7 +388,13 @@ export function IdeaDetailPage() {
     const split = splitUnsupportedSection(idea.content);
     return { text: localizeHeadings(split.body), unsupported: split.unsupported };
   }, [idea?.content]);
-  const sections = useBodySections(body.text);
+  const rawSections = useBodySections(body.text);
+  // 研究方案的正文会把页面上已经有的东西再写一遍：开头一节是标题本身，接着一节「研究目标」
+  // 和上面的「研究目标」表是同一份内容。这两节不再重复
+  const sections = useMemo(
+    () => (idea?.depth === 'proposal' ? tidyProposalSections(rawSections, idea.title, !!idea.goal) : rawSections),
+    [rawSections, idea?.depth, idea?.title, idea?.goal],
+  );
 
   if (ideaQuery.isLoading) {
     return (

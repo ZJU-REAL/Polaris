@@ -312,3 +312,49 @@ export function humanizeFieldNames(text: string): string {
   for (const [re, zh, en] of FIELD_WORDS) out = out.replace(re, zhText ? zh : en);
   return out;
 }
+
+/**
+ * 研究方案的正文是几步的产出拼起来的，拼接处会重复：
+ * - 第一节的标题就是想法的标题（页面最上面已经有了）；
+ * - 它下面一小节「研究目标」和页面上的研究目标表是同一份内容；
+ * - 一节的末尾挂着一个没有正文的小标题（「## 背景与相关工作」后面紧跟着同名的大标题）。
+ * 这里把这三样去掉；去掉后没有内容的节整节不要。hasGoal=false 时保留「研究目标」（没有那张表）。
+ */
+export function tidyProposalSections(sections: BodySection[], ideaTitle: string, hasGoal: boolean): BodySection[] {
+  const norm = (t: string) => t.replace(/[\s：:？?，,。.、（）()「」+＋\-–—]/g, '').toLowerCase();
+  const title = norm(ideaTitle);
+  const isGoal = (t: string) => /^(\d+[.、]?)?(研究目标|researchgoals?|goals?)$/.test(norm(t));
+  const out: BodySection[] = [];
+  for (const sec of sections) {
+    if (hasGoal && isGoal(sec.title)) continue;
+    let lines = sec.body.split('\n');
+    const isTitle = !!title && !!sec.title && norm(sec.title) === title;
+    if (hasGoal) {
+      // 去掉正文里的「研究目标」小节：从它的标题到下一个同级或更高级的标题之前
+      const start = lines.findIndex((l) => /^#{1,6}\s/.test(l) && isGoal(l.replace(/^#{1,6}\s+/, '')));
+      if (start >= 0) {
+        const level = /^#+/.exec(lines[start]!)![0].length;
+        let end = lines.length;
+        for (let i = start + 1; i < lines.length; i += 1) {
+          const m = /^(#{1,6})\s/.exec(lines[i]!);
+          if (m && m[1]!.length <= level) {
+            end = i;
+            break;
+          }
+        }
+        lines = [...lines.slice(0, start), ...lines.slice(end)];
+      }
+    }
+    // 末尾没有正文的小标题
+    for (;;) {
+      while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop();
+      if (lines.length > 0 && /^#{1,6}\s/.test(lines[lines.length - 1]!)) lines.pop();
+      else break;
+    }
+    const body = lines.join('\n').trim();
+    if (!body && (isTitle || !sec.title)) continue;
+    if (!body) continue;
+    out.push({ ...sec, title: isTitle ? '' : sec.title, body, chars: body.replace(/\s+/g, '').length });
+  }
+  return out;
+}

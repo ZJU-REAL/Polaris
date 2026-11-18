@@ -271,6 +271,16 @@ function lowScoreText(node: HypothesisNodeRead, score: number, threshold: number
   return why ? `${head}${tr('：', ': ')}${why}` : head;
 }
 
+/** 引擎自动放弃时留的一行记录（「score=0.0833 低于阈值 0.1，自动剪枝」）→ 一句话；别的原因原样。 */
+function plainAutoReason(reason: string): string {
+  const auto = /score\s*=\s*([\d.]+)\D+?([\d.]+)/i.exec(reason);
+  if (!auto || !/阈值|threshold|自动剪枝|auto/i.test(reason)) return reason;
+  return tr(
+    `评分 ${Number(auto[1]).toFixed(2)}，低于 ${Number(auto[2])} 的最低要求`,
+    `Score ${Number(auto[1]).toFixed(2)} is below the minimum of ${Number(auto[2])}`,
+  );
+}
+
 // —— 论文标题解析（证据卡里的引用要能点着标题跳论文） ——
 
 // 一次要解析的标题上限：超出的引用退化为短 id 展示，防极端大树一次打爆请求
@@ -1022,10 +1032,16 @@ function DisclosureView({ disclosure, active }: { disclosure: DisclosureData | n
                     {prunedRound !== null && (
                       <span>{tr(`第 ${prunedRound} 轮放弃 · `, `Dropped in round ${prunedRound} · `)}</span>
                     )}
-                    {b.score !== null && <span className="mono">{tr('评分', 'score')} {b.score.toFixed(2)} · </span>}
+                    {b.score !== null && !/score\s*=/.test(prunedEvent?.reason ?? '') && (
+                      <span>
+                        {tr('评分', 'score')} {b.score.toFixed(2)} ·{' '}
+                      </span>
+                    )}
                     {prunedEvent?.cascadeFrom
                       ? tr('父分支被放弃后随之放弃', 'Dropped along with its parent branch')
-                      : prunedEvent?.reason ?? tr('未记录原因', 'No reason recorded')}
+                      : prunedEvent?.reason
+                        ? plainAutoReason(prunedEvent.reason)
+                        : tr('未记录原因', 'No reason recorded')}
                   </div>
                 </div>
               );

@@ -6,6 +6,7 @@ import {
   splitBodySections,
   splitEnumeratedLine,
   splitInlineEnumerations,
+  tidyProposalSections,
 } from '../ideaText';
 import { plainSummary } from '../../../lib/format';
 
@@ -212,5 +213,43 @@ describe('idea text: what real runs look like', () => {
     expect(plainSummary('BLEU [1] 提升，区间 [0, 1]')).toBe('BLEU [1] 提升，区间 [0, 1]');
     expect(plainSummary('端到端训练出来的 [文1·句3][文1·')).toBe('端到端训练出来的');
     expect(plainSummary(null)).toBe('');
+  });
+});
+
+describe('a real proposal body repeats what the page already shows', () => {
+  const md = [
+    '# 桥接还是联合训练？冻结检索器 + 轻量桥接模块的等价性受控检验',
+    '',
+    '## 研究目标',
+    '',
+    '- **研究类型**：analysis',
+    '',
+    '## 背景与相关工作',
+    '',
+    '# 背景与相关工作',
+    '',
+    '## 1. 问题背景',
+    '',
+    '检索器要不要训。',
+    '',
+    '# 研究方案设计',
+    '',
+    '## 1. 核心假设',
+    '',
+    '本研究把联合训练拆成两个命题。',
+  ].join('\n');
+
+  it('drops the title section, the repeated goal and dangling headings', () => {
+    const secs = tidyProposalSections(splitBodySections(md), '桥接还是联合训练？冻结检索器 + 轻量桥接模块的等价性受控检验', true);
+    expect(secs.map((s) => s.title)).toEqual(['背景与相关工作', '研究方案设计']);
+    expect(secs[0]!.body).toContain('检索器要不要训');
+    expect(secs.map((s) => s.body).join('\n')).not.toContain('研究类型');
+  });
+
+  it('keeps the goal when the page has no goal table', () => {
+    const secs = tidyProposalSections(splitBodySections(md), '另一个标题', false);
+    expect(secs[0]!.body).toContain('研究类型');
+    // 末尾挂着的空标题仍然去掉
+    expect(secs[0]!.body.trim().endsWith('## 背景与相关工作')).toBe(false);
   });
 });
