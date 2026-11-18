@@ -7,6 +7,7 @@ from functools import partial
 
 import httpx
 import pytest
+from sqlalchemy import select
 
 from app.agents.voyage import actions as actions_registry
 from app.agents.voyage.engine import VoyageEngine
@@ -17,7 +18,7 @@ from app.core.llm.router import LLMRouter
 from app.core.queue import InlineTaskQueue, _TaskContextRedis
 from app.core.scheduler import PeriodicJob, Scheduler
 from app.models.base import utcnow
-from app.models.voyage import VoyageRun
+from app.models.voyage import VoyageMessage, VoyageRun
 from app.schemas.voyage import VoyageRead
 from tests.conftest import RecordingBus, register_and_login
 from worker.tasks import retry_paused_voyages
@@ -186,6 +187,28 @@ async def test_permanent_failure_is_not_retried(client, queue_stub, flaky):
     far = utcnow() + timedelta(days=1)
     assert await retry_paused_voyages({"redis": redis}, now=far) == []
     assert redis.jobs == [] and action.calls == 1
+    # 对话流：归好类的一句话，异常原文只在 payload 里
+    async with get_sessionmaker()() as session:
+        stmt = select(VoyageMessage).where(
+            VoyageMessage.run_id == run_id, VoyageMessage.kind == "info"
+        )
+        infos = (await session.execute(stmt)).scalars().all()
+    assert [m.text for m in infos] == ["执行步骤时出错：拿到的结果不符合要求，任务已暂停。"]
+    assert "LLM 连续输出非法 JSON" in infos[0].payload["detail"]
+
+
+async def test_transient_pipeline_failure_says_when_it_retries(client, queue_stub, flaky):
+    project_id, _headers = await _project(client, "retry-notice@example.com")
+    flaky(httpx.ConnectError("connection refused"))
+    run_id = await _pipeline_voyage(project_id)
+    await _engine().run(run_id)
+    async with get_sessionmaker()() as session:
+        stmt = select(VoyageMessage).where(
+            VoyageMessage.run_id == run_id, VoyageMessage.kind == "info"
+        )
+        infos = (await session.execute(stmt)).scalars().all()
+    assert [m.text for m in infos] == ["网络连接失败，约 1 分钟后自动重试（第 1 次，共 3 次）。"]
+    assert "connection refused" in infos[0].payload["detail"]
 
 
 async def test_escaped_transient_error_is_scheduled_too(client, queue_stub):

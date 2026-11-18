@@ -45,6 +45,8 @@ from app.agents.voyage.failures import (
     clear_auto_retry,
     describe_failure,
     error_record,
+    notice_payload,
+    pause_notice,
     schedule_auto_retry,
 )
 from app.agents.voyage.helm import Helm
@@ -83,12 +85,6 @@ _PARKABLE_STATUSES = IN_FLIGHT_STATUSES | {"paused_gate"}
 # 出错那一刻的状态 → 出错位置（给人看的说明用）
 _SOURCE_BY_STATUS = {"planning": "planner", "replanning": "planner", "verifying": "verifier"}
 _PARK_DB_ATTEMPTS = 3
-
-
-def _park_text(error: dict[str, Any]) -> str:
-    message = str(error.get("message") or MESSAGES["INTERNAL"])
-    detail = str(error.get("detail") or "").strip()
-    return f"{message}，任务已暂停。{detail[:500]}" if detail else f"{message}，任务已暂停。"
 
 
 async def park_run(
@@ -158,10 +154,17 @@ async def _park_run_once(
         await session.commit()
         await session.refresh(run)
         created_by, cursor = run.created_by, run.cursor
+        # 给人看的一句话（何时自动重试），原始报错只进 payload
+        notice = pause_notice(error, checkpoint)
         serialized: dict[str, Any] | None = None
         try:
             message = await messages_service.append_message(
-                session, run_id, role="agent", kind="info", text=_park_text(error)
+                session,
+                run_id,
+                role="agent",
+                kind="info",
+                text=notice,
+                payload=notice_payload(error),
             )
             serialized = messages_service.serialize_message(message)
         except Exception:  # noqa: BLE001 — 播报是尽力而为，任务已经停好了
@@ -172,7 +175,7 @@ async def _park_run_once(
         await bus.publish_voyage_event(
             run_id,
             "log",
-            {"message": _park_text(error), "level": "error", "at": utcnow().isoformat()},
+            {"message": notice, "level": "error", "at": utcnow().isoformat()},
         )
         if serialized is not None:
             await bus.publish_voyage_event(run_id, "message", {"message": serialized})
@@ -1317,9 +1320,14 @@ class VoyageEngine:
         """验证失败后的分派。返回 True 表示可继续循环，False 表示已停。"""
         diagnosis = str((node.verdict or {}).get("reason", ""))
         is_execution_error = bool((node.observation or {}).get("error"))
+        # 临时性故障（网络、超时、限流、模型服务繁忙、本地库正忙）：原地重试用完之后，
+        # 换计划、问人都没用，各模式一律停到 paused_error 等自动重试（1/5/20 分钟）。
+        # on_failure="fail" 的步骤除外——它们声明了失败要人拍板（盲目重跑烧算力）。
+        wait_and_retry = self._failure_is_transient(node) and step_def.get("on_failure") != "fail"
 
-        # 执行类错误（工具/网络/代码异常）在节点尝试预算内原地重试；
-        # 判断类失败（校验未过）重试无意义，直接进入分派
+        # 执行类错误（工具/网络/代码异常）在节点尝试预算内原地重试（临时性故障也是：
+        # 并发调用里偶尔一次 429，立刻再试多半就好了）；判断类失败（校验未过）重试
+        # 无意义，直接进入分派
         if is_execution_error and node.attempt < self._max_attempts(run, node):
             params = dict(node.params or {})
             params["diagnosis"] = diagnosis[:2000]
@@ -1339,12 +1347,20 @@ class VoyageEngine:
         if step_def.get("on_failure") == "fail":
             await self._emit_log(run, f"步骤失败（不自动重试）：{diagnosis}", level="error")
             attempts_note = f"（已尝试 {node.attempt} 次）" if node.attempt > 1 else ""
+            # 临时性故障的原始报错（整段 HTTP 响应）不进问题正文，留在 context 里
+            reason = diagnosis[:500]
+            failure = self._step_failure(node)
+            if failure is not None and failure.get("transient") is True:
+                reason = str(
+                    failure.get("user_message")
+                    or MESSAGES.get(str(failure.get("code")))
+                    or MESSAGES["UPSTREAM_UNAVAILABLE"]
+                )
             await self._raise_ask(
                 session,
                 run,
                 ask_kind="fatal_step",
-                question=f"步骤「{node.title}」失败了{attempts_note}：{diagnosis[:500]}。"
-                "怎么处理？",
+                question=f"步骤「{node.title}」失败了{attempts_note}：{reason}。怎么处理？",
                 context={
                     "step_title": node.title,
                     "diagnosis": diagnosis[:2000],
@@ -1355,11 +1371,22 @@ class VoyageEngine:
             )
             return False
 
+        if wait_and_retry:
+            error = self._step_error(node, diagnosis)
+            await self._pause_on_error(session, run, error, announce_step=node)
+            return False
+
         if run.mode == "pipeline":
             # 确定性管线不经 LLM 重规划：暂停等人工（修复代码后可从断点重试，
             # 前面步骤的成果不作废）。语义保持 paused_error（多为无人值守 cron，
             # reclaim 机制依赖它），但补一条 info 消息让对话流里也看得到诊断。
             await self._emit_log(run, f"步骤失败，任务暂停等待人工处理：{diagnosis}", level="error")
+            error = self._step_error(node, diagnosis)
+            if self._step_raised(node):
+                # 动作抛了异常：诊断是原始报错，对话流里只说归好类的那句话
+                await self._pause_on_error(session, run, error, announce_step=node)
+                return False
+            # 动作自己写的错误说明 / 验收没过的理由：本来就是写给人看的
             await self._post_agent_message(
                 session,
                 run,
@@ -1367,7 +1394,7 @@ class VoyageEngine:
                 text=f"步骤「{node.title}」失败，任务已暂停：{diagnosis[:500]}",
                 step_id=node.id,
             )
-            await self._pause_on_error(session, run, self._step_error(node, diagnosis))
+            await self._pause_on_error(session, run, error)
             return False
 
         if run.mode == "template":
@@ -1375,6 +1402,22 @@ class VoyageEngine:
             return await self._replan(session, run, node, step_def)
         # loop：失败回灌 Navigator 做计划编辑（阶段 D）
         return await self._navigator_edit(session, run, node, step_def)
+
+    @staticmethod
+    def _step_failure(node: VoyageStep) -> dict[str, Any] | None:
+        """动作抛异常时 Helm 归好类的记录（code / transient / user_message）；没抛异常为 None。"""
+        observation = node.observation if isinstance(node.observation, dict) else {}
+        failure = observation.get("failure")
+        return failure if observation.get("error") and isinstance(failure, dict) else None
+
+    @classmethod
+    def _step_raised(cls, node: VoyageStep) -> bool:
+        return cls._step_failure(node) is not None
+
+    @classmethod
+    def _failure_is_transient(cls, node: VoyageStep) -> bool:
+        failure = cls._step_failure(node)
+        return failure is not None and failure.get("transient") is True
 
     @staticmethod
     def _step_error(node: VoyageStep, diagnosis: str) -> dict[str, Any]:
@@ -1408,16 +1451,34 @@ class VoyageEngine:
         )
 
     async def _pause_on_error(
-        self, session: AsyncSession, run: VoyageRun, error: dict[str, Any]
+        self,
+        session: AsyncSession,
+        run: VoyageRun,
+        error: dict[str, Any],
+        *,
+        announce_step: VoyageStep | None = None,
     ) -> None:
         """停到 paused_error，原因存进 checkpoint["last_error"]（界面与自动重试都读它）。
 
-        临时性故障顺手排好下一次自动重试（1 / 5 / 20 分钟），由定时任务到点续跑。"""
+        临时性故障顺手排好下一次自动重试（1 / 5 / 20 分钟），由定时任务到点续跑。
+        ``announce_step``：在对话流里播报一句（:func:`pause_notice`：何时自动重试 / 已经
+        停下等人），挂在这一步上；原始报错只进消息的 payload。"""
         checkpoint = dict(run.checkpoint or {})
         checkpoint["last_error"] = error
         schedule_auto_retry(checkpoint, error)
         run.checkpoint = checkpoint
         await session.commit()
+        if announce_step is not None:
+            notice = pause_notice(error, checkpoint)
+            await self._emit_log(run, notice, level="error", step_id=announce_step.id)
+            await self._post_agent_message(
+                session,
+                run,
+                kind="info",
+                text=notice,
+                payload=notice_payload(error),
+                step_id=announce_step.id,
+            )
         await self._set_status(session, run, "paused_error")
 
     # ---- 计划编辑（loop 模式失败回灌 + plan_signal 分支表，docs/task-system.md §7）----
@@ -1654,6 +1715,9 @@ class VoyageEngine:
         )
         # 同签名重复时明确告诉 Navigator：上次的编辑没改变故障面，必须换思路
         nav_diagnosis = diagnosis + _ZERO_PROGRESS_DIRECTIVE if sig_repeated else diagnosis
+        # 只接 NavigatorError（输出不合格）。Navigator 自己的模型调用失败（503、超时）
+        # 故意不接：冒到 run()/resume() 的兜底停到 paused_error，临时性的照样排自动重试，
+        # 不会因为模型繁忙就问用户要指示（_plan / _replan / _extend_plan_from_user 同理）
         try:
             edit = await self.navigator.on_result(
                 run,

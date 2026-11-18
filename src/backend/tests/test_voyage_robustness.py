@@ -267,7 +267,10 @@ async def test_verifier_call_that_raises_pauses_instead_of_hanging(client, queue
     # 半路的步骤不留在「执行中」
     assert "running" not in {s["status"] for s in detail["steps"]}
     messages = (await client.get(f"/api/voyages/{run_id}/messages", headers=headers)).json()
-    assert any("任务已暂停" in m["text"] for m in messages)
+    # 对话流里一句话说清楚何时再试；原始报错只在 payload 里
+    notice = next(m for m in messages if m["kind"] == "info")
+    assert notice["text"] == "模型服务响应超时，约 1 分钟后自动重试（第 1 次，共 3 次）。"
+    assert "ReadTimeout" in notice["payload"]["detail"]
 
     # 网络好了，重试能接着跑完；上次的原因不再挂着
     resp = await client.post(f"/api/voyages/{run_id}/resume", headers=headers)

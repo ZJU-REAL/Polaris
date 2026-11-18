@@ -293,6 +293,73 @@ def auto_retry_attempt(checkpoint: dict[str, Any] | None) -> int:
         return 0
 
 
+# ---- 停下来时写进对话流的那一句话 ----
+#
+# 对话流里的 info 消息是给人看的：只说发生了什么、接下来会怎样，不带原始报错。
+# 原始报错在 last_error.detail 里，消息的 payload.detail 也带一份截断的，排查用。
+
+# 临时性故障的原因（不带「出错位置」前缀，后面接「约 N 分钟后自动重试」）
+_TRANSIENT_REASONS: dict[str, str] = {
+    "LLM_OVERLOADED": "模型服务暂时繁忙",
+    "LLM_RATE_LIMITED": "模型服务请求太频繁，被暂时限流",
+    "LLM_UNREACHABLE": "暂时连不上模型服务",
+    "NETWORK": "网络连接失败",
+    "TIMEOUT": "请求超时",
+    "RATE_LIMITED": "请求太频繁，被对方服务暂时限流",
+    "UPSTREAM_UNAVAILABLE": "对方服务暂时不可用",
+    "DB_BUSY": "本地数据库正忙",
+}
+# 规划和检查步骤结果时往外连的只有模型服务：说「模型服务」比「对方服务」准确
+_MODEL_CALL_SOURCES = frozenset({"planner", "verifier"})
+_MODEL_REASONS: dict[str, str] = {
+    "NETWORK": "暂时连不上模型服务",
+    "TIMEOUT": "模型服务响应超时",
+    "RATE_LIMITED": "模型服务请求太频繁，被暂时限流",
+    "UPSTREAM_UNAVAILABLE": "模型服务暂时繁忙",
+}
+
+#: 消息 payload 里留的原始报错长度
+NOTICE_DETAIL_CHARS = 500
+
+
+def _transient_reason(error: dict[str, Any]) -> str:
+    code = str(error.get("code") or "")
+    if error.get("source") in _MODEL_CALL_SOURCES and code in _MODEL_REASONS:
+        return _MODEL_REASONS[code]
+    return _TRANSIENT_REASONS.get(code) or MESSAGES["UPSTREAM_UNAVAILABLE"]
+
+
+def pause_notice(error: dict[str, Any], checkpoint: dict[str, Any] | None) -> str:
+    """任务停到 paused_error 时对话流里的那一句话。``checkpoint`` 是已经排过自动重试的。
+
+    - 临时性故障、排了下一次：「模型服务暂时繁忙，约 1 分钟后自动重试（第 1 次，共 3 次）。」
+    - 临时性故障、次数用完：说已经试了几次、现在等人；
+    - 其余：``last_error.message``（本来就是一句话）加「任务已暂停」。
+    """
+    if error.get("transient") is True:
+        reason = _transient_reason(error)
+        attempt = auto_retry_attempt(checkpoint)
+        if auto_retry_due_at(checkpoint) is not None and 1 <= attempt <= len(
+            AUTO_RETRY_DELAYS_MINUTES
+        ):
+            minutes = AUTO_RETRY_DELAYS_MINUTES[attempt - 1]
+            total = len(AUTO_RETRY_DELAYS_MINUTES)
+            return f"{reason}，约 {minutes} 分钟后自动重试（第 {attempt} 次，共 {total} 次）。"
+        if attempt:
+            return f"{reason}，已自动重试 {attempt} 次仍未恢复，任务已暂停，可以稍后手动重试。"
+        return f"{reason}，任务已暂停，可以稍后重试。"
+    message = str(error.get("message") or MESSAGES["INTERNAL"])
+    return f"{message}，任务已暂停。"
+
+
+def notice_payload(error: dict[str, Any]) -> dict[str, Any] | None:
+    """给 :func:`pause_notice` 那条消息配的 payload：原始报错（截断）和错误码，排查用。"""
+    detail = str(error.get("detail") or "").strip()
+    if not detail:
+        return None
+    return {"code": error.get("code"), "detail": detail[:NOTICE_DETAIL_CHARS]}
+
+
 #: 本地库正忙的原始报错带着整条 SQL 和参数，留这么多就够排查
 DB_BUSY_DETAIL_CHARS = 300
 
@@ -324,4 +391,6 @@ __all__ = [
     "schedule_auto_retry",
     "describe_failure",
     "error_record",
+    "notice_payload",
+    "pause_notice",
 ]

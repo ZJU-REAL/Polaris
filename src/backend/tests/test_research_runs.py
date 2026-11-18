@@ -1164,6 +1164,53 @@ async def test_transient_failure_with_a_pending_auto_retry_still_counts_as_runni
     assert run.attention["code"] == "SURVEY_SOURCES_UNREACHABLE"
 
 
+async def test_busy_model_while_finding_hypotheses_keeps_running_until_retries_run_out(
+    client, queue_stub, literature, failing_llm
+):
+    """寻找假设的第一步撞上模型网关 503：研究显示「进行中」并给出下一次重试时间，
+    而不是「等你回复」（以前 loop 模式把它交给 Navigator，最后转成问用户）。"""
+    from app.agents.voyage.actions_discovery import SeedOut
+
+    headers = await _login(client)
+    run_id = (
+        await client.post("/api/research", json={"direction": DIRECTION}, headers=headers)
+    ).json()["id"]
+    run = await _advance(run_id, queue_stub)
+    await worker_tasks.run_voyage(_ctx(queue_stub), run.phases["survey"]["voyage_id"])
+    run = await _run_row(run_id)
+    assert run.phase == "hypotheses"
+    hyp_id = run.phases["hypotheses"]["voyage_id"]
+
+    for _ in range(2):  # 第一次和紧接着的原地重试
+        failing_llm.fail_next(LLMOverloadedError("HTTP 503 No available accounts"), schema=SeedOut)
+    await worker_tasks.run_voyage(_ctx(queue_stub), hyp_id)
+    async with get_sessionmaker()() as session:
+        voyage = await session.get(VoyageRun, uuid.UUID(hyp_id))
+        assert voyage.status == "paused_error"
+        assert voyage.checkpoint["auto_retry"]["next_at"]
+    await worker_tasks.reconcile_research_runs(_ctx(queue_stub))
+    run = await _run_row(run_id)
+    assert (run.phase, run.status, run.attention) == ("hypotheses", "running", None)
+    detail = (await client.get(f"/api/research/{run_id}", headers=headers)).json()
+    assert detail["status"] == "running" and detail["open_ask"] is None
+    assert detail["hypotheses"]["state"] == "paused_error"
+    assert detail["next_retry_at"] and detail["retry_attempt"] == 1
+    assert detail["last_error"]["transient"] is True
+    assert "503" not in detail["last_error"]["message"]
+
+    # 自动重试用完：模型服务连不上，给「重试」
+    async with get_sessionmaker()() as session:
+        voyage = await session.get(VoyageRun, uuid.UUID(hyp_id))
+        checkpoint = dict(voyage.checkpoint)
+        checkpoint["auto_retry"] = {"attempt": 3, "next_at": None}
+        voyage.checkpoint = checkpoint
+        await session.commit()
+    await worker_tasks.reconcile_research_runs(_ctx(queue_stub))
+    run = await _run_row(run_id)
+    assert run.status == "needs_attention"
+    assert run.attention["code"] == "LLM_UNREACHABLE" and run.attention["action"] == "retry"
+
+
 # ---- arXiv 失败不再拖垮整次检索 ----
 
 
