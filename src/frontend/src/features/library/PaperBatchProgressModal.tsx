@@ -21,6 +21,13 @@ function statusMeta(status: PaperBatchItemStatus): { zh: string; en: string; ico
   return { zh: '添加失败', en: 'Failed', icon: 'x', color: 'var(--danger)' };
 }
 
+/** 标题跟着状态走（进行中 / 完成 / 失败），不让完成后的对勾旁边还是进行中的说法。 */
+export function batchProgressTitle(state: 'running' | 'done' | 'failed'): string {
+  if (state === 'failed') return tr('批量添加失败', 'Couldn’t import the papers');
+  if (state === 'done') return tr('论文已添加完成', 'Papers imported');
+  return tr('正在添加论文', 'Importing papers');
+}
+
 export interface PaperBatchProgressModalProps {
   taskId: string;
   total: number;
@@ -115,7 +122,7 @@ export function PaperBatchProgressModal({
               animation: !fatal && !done ? 'spin 1s linear infinite' : undefined,
             }}
           />
-          {tr('批量添加论文', 'Import papers')}
+          {batchProgressTitle(fatal ? 'failed' : done ? 'done' : 'running')}
         </>
       }
       sub={tr(

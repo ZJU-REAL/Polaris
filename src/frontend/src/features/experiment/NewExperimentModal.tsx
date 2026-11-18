@@ -8,11 +8,12 @@ import { toast } from '../../components/ui/Toast';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { api, type ExperimentIntakeQuestion, type RunnerBackendSummary } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { selectableIdeaOptions } from '../../lib/ideaOptions';
 import { topicPath } from '../../app/project';
 import { ConfigRow } from '../voyages/shared/ConfigRow';
 
 /* ============================================================
-   新建实验 Modal：选 promoted idea + SSH 凭据 + 预算 →
+   新建实验 Modal：选一个想法（没淘汰的都行，已选中的排前面）+ SSH 凭据 + 预算 →
    AI 按 idea 生成 ≤5 个开题问题（代替静态 GPU 提示/高级选项表单），
    用户作答（可跳过）→ POST /projects/{pid}/experiments。
    其余不确定点实验过程中经提问机制动态交互——用户决定权更大、更灵活。
@@ -61,8 +62,9 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
   const [intakeState, setIntakeState] = useState<'idle' | 'loading' | 'ready' | 'skipped'>('idle');
 
   const ideasQuery = useQuery({
-    queryKey: ['ideas', pid, 'promoted'],
-    queryFn: () => api.listIdeas(pid, { status: 'promoted' }),
+    // 不按状态筛：后端允许从任意想法开始实验（创建时顺手把它选中）
+    queryKey: ['ideas', pid, 'selectable'],
+    queryFn: () => api.listIdeas(pid),
     enabled: open && !!pid,
     retry: false,
   });
@@ -85,7 +87,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
     enabled: open,
     retry: false,
   });
-  const ideas = ideasQuery.data ?? [];
+  const ideaOptions = selectableIdeaOptions(ideasQuery.data ?? []);
   const creds = credsQuery.data ?? [];
   const backends = backendsQuery.data ?? [];
   const packs = packsQuery.data ?? [];
@@ -175,7 +177,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
     onError: (e) => toast(`${tr('创建失败：', 'Create failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
-  const noIdeas = !ideasQuery.isLoading && ideas.length === 0;
+  const noIdeas = !ideasQuery.isLoading && !ideasQuery.isError && ideaOptions.length === 0;
   const noCreds = !credsQuery.isLoading && creds.length === 0;
   const canSubmit = !!ideaId && (!needsSsh || !!credentialId) && !mutation.isPending;
 
@@ -211,22 +213,22 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
     >
       <FormField
         label={tr('想法', 'Idea')}
-        hint={noIdeas ? undefined : tr('只列出已晋级的想法', 'Only promoted ideas are listed')}
-        error={noIdeas ? tr('这个课题还没有已晋级的想法', 'No promoted ideas in this topic yet') : null}
+        hint={noIdeas ? undefined : tr('已选中的想法排在前面，实验开始后这个想法会标为已选中', 'Picked ideas come first. Starting an experiment marks the idea as picked.')}
+        error={noIdeas ? tr('这个课题还没有想法，请先生成想法', 'This topic has no ideas yet. Generate some first.') : null}
       >
         <SelectMenu
           value={ideaId}
           disabled={noIdeas}
           placeholder={ideasQuery.isLoading ? tr('加载中…', 'Loading…') : ideasQuery.isError ? tr('无法加载想法', 'Couldn’t load ideas') : tr('选择想法', 'Choose an idea')}
-          options={ideas.map((i) => ({ value: i.id, label: i.title }))}
+          options={ideaOptions}
           onChange={setIdeaId}
         />
       </FormField>
       {noIdeas && (
         <div style={{ marginTop: -6, marginBottom: 14 }}>
-          <button className="btn btn-soft sm" onClick={() => { onClose(); navigate(topicPath(pid, 'review')); }}>
-            <Icon name="scale" size={13} />
-            {tr('前往想法评审', 'Go to Idea Review')}
+          <button className="btn btn-soft sm" onClick={() => { onClose(); navigate(topicPath(pid, 'forge')); }}>
+            <Icon name="bulb" size={13} />
+            {tr('前往想法生成', 'Go to Ideas')}
           </button>
         </div>
       )}

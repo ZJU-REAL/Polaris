@@ -46,6 +46,15 @@ export function summarizeDetail(status: StageStatus, detail: string | undefined)
   }
 }
 
+/** 弹窗标题跟着状态走：以前处理完了还写着「正在处理论文」，旁边却是一个对勾。 */
+export function progressTitle(state: 'running' | 'done' | 'partial' | 'failed'): string {
+  if (state === 'failed') return tr('论文处理失败', 'Couldn’t process the paper');
+  // 整体走完了，但有步骤没成功：不能配一个对勾说「已处理完成」
+  if (state === 'partial') return tr('论文已添加，部分步骤没有成功', 'Paper added, but some steps didn’t succeed');
+  if (state === 'done') return tr('论文已处理完成', 'Paper processed');
+  return tr('正在处理论文', 'Processing paper');
+}
+
 interface StageState {
   status: StageStatus;
   detail?: string;
@@ -179,6 +188,7 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
     };
   }, [taskId]);
 
+  const stageFailed = STAGES.some((s) => stages[s.id].status === 'error');
   const sub = paperTitle ?? (done ? tr('处理完成', 'Done') : tr('处理中…', 'Processing…'));
 
   return (
@@ -189,11 +199,11 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
       title={
         <>
           <Icon
-            name={fatal ? 'x' : done ? 'check' : 'sparkle'}
+            name={fatal ? 'x' : done ? (stageFailed ? 'minus' : 'check') : 'sparkle'}
             size={15}
-            style={{ color: fatal ? 'var(--warn)' : done ? 'var(--ok)' : 'var(--accent)' }}
+            style={{ color: fatal || (done && stageFailed) ? 'var(--warn)' : done ? 'var(--ok)' : 'var(--accent)' }}
           />
-          {tr('正在处理论文', 'Processing paper')}
+          {progressTitle(fatal ? 'failed' : done ? (stageFailed ? 'partial' : 'done') : 'running')}
         </>
       }
       sub={sub}
@@ -274,13 +284,15 @@ export function PaperProgressModal({ taskId, paperTitle, onClose, onDone }: Pape
             marginTop: 14,
             fontSize: 12,
             lineHeight: 1.6,
-            color: 'var(--ok-tx)',
-            background: 'var(--ok-bg)',
+            color: stageFailed ? 'var(--warn-tx)' : 'var(--ok-tx)',
+            background: stageFailed ? 'var(--warn-bg)' : 'var(--ok-bg)',
             borderRadius: 8,
             padding: '9px 11px',
           }}
         >
-          {tr('处理完成', 'Done')}
+          {stageFailed
+            ? tr('没有成功的步骤，原因见上方', 'See above for why a step didn’t succeed.')
+            : tr('处理完成', 'Done')}
         </div>
       )}
     </Modal>

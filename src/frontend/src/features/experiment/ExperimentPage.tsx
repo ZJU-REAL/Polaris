@@ -443,10 +443,10 @@ export function ExperimentPage() {
             <EmptyState
               icon="flask"
               title={tr('还没有实验', 'No experiments yet')}
-              desc={tr('晋级一个想法后，就可以为它新建实验。', 'Promote an idea, then start an experiment for it.')}
+              desc={tr('有了想法，就可以为它新建实验。', 'Once the topic has an idea, you can start an experiment for it.')}
               action={
-                <button className="btn btn-soft sm" onClick={() => navigate(topicPath(currentProjectId, 'review'))}>
-                  {tr('前往想法评审', 'Go to Idea Review')}
+                <button className="btn btn-soft sm" onClick={() => navigate(topicPath(currentProjectId, 'forge'))}>
+                  {tr('前往想法生成', 'Go to Ideas')}
                 </button>
               }
             />

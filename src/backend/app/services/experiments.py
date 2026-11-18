@@ -1,6 +1,7 @@
 """Experiment Lab 业务逻辑（不 import fastapi，docs/task-system.md §7（原 api-m4.md §2/§3））。
 
-- 创建实验：校验 idea promoted + 凭据属本人 → Experiment 与 kind=experiment 的 voyage 1:1；
+- 创建实验：任意未淘汰的 idea 都行（创建时顺手选中它）+ 凭据属本人 →
+  Experiment 与 kind=experiment 的 voyage 1:1；
 - 本地日志镜像：{data_dir}/experiments/<exp_id>/run_<seq>.log（logs API / SSE 只读本地镜像）；
 - 取消：协作式 cancel voyage + 尽力 SSH kill 运行中的进程。
 """

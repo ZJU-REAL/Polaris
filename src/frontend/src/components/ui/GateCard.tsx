@@ -6,12 +6,13 @@ import { useProject } from '../../app/project';
 import type { GateDecision, GateRead } from '../../lib/api';
 
 const GATE_KIND: Record<string, { zh: string; en: string }> = {
-  idea_promotion: { zh: '想法晋级', en: 'Promote idea' },
+  // 已停用的类型，只剩历史记录里会出现：选中想法现在直接生效，不走审批
+  idea_promotion: { zh: '选中想法（旧）', en: 'Pick idea (retired)' },
   idea_goal: { zh: '确认研究目标', en: 'Confirm research goal' },
   idea_pivot: { zh: '调整研究方向', en: 'Change direction' },
   compute_budget: { zh: '算力预算', en: 'Compute budget' },
   pr_push: { zh: '推送 PR', en: 'Push pull request' },
-  paper_submission: { zh: '论文投稿', en: 'Submit paper' },
+  paper_submission: { zh: '论文投稿（旧）', en: 'Submit paper (retired)' },
 };
 
 /** gate kind → 当前语言标签（未收录的原样展示）。 */

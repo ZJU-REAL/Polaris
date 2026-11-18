@@ -9,11 +9,12 @@ import { SelectMenu } from '../../components/ui/SelectMenu';
 import { api, type TemplateInfo, type TemplateDownloadProgress } from '../../lib/api';
 import { subscribeTemplateDownloadProgress } from '../../lib/sse';
 import { tr } from '../../lib/i18n';
+import { selectableIdeaOptions } from '../../lib/ideaOptions';
 import { TemplateUploadModal } from './TemplateUploadModal';
 
 /* ============================================================
    新建论文草稿Modal：标题 + 模板画廊（GET /manuscripts/templates）
-   + 可选关联 idea（promoted）与 experiment（done）。
+   + 可选关联 idea（没淘汰的都行）与 experiment（done）。
    创建成功后进入编辑工作台 /writer/:id。
    ============================================================ */
 
@@ -70,8 +71,8 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
     staleTime: 5 * 60_000,
   });
   const ideasQuery = useQuery({
-    queryKey: ['ideas', pid, 'promoted'],
-    queryFn: () => api.listIdeas(pid, { status: 'promoted' }),
+    queryKey: ['ideas', pid, 'selectable'],
+    queryFn: () => api.listIdeas(pid),
     enabled: open && !!pid,
     retry: false,
   });
@@ -83,7 +84,7 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
   });
 
   const templates = templatesQuery.data ?? [];
-  const ideas = ideasQuery.data ?? [];
+  const ideaOptions = selectableIdeaOptions(ideasQuery.data ?? []);
   const doneExps = (expsQuery.data ?? []).filter((e) => e.status === 'done');
   const selected = templates.find((t) => t.id === template) ?? null;
 
@@ -342,13 +343,13 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
         <FormField
           label={tr('关联想法（可选）', 'Linked idea (optional)')}
           style={{ flex: 1, minWidth: 0 }}
-          hint={tr('只显示已晋级的想法', 'Promoted ideas only')}
+          hint={tr('已选中的想法排在前面', 'Picked ideas come first')}
         >
           <SelectMenu
             value={ideaId}
             options={[
               { value: '', label: ideasQuery.isLoading ? tr('加载中…', 'Loading…') : tr('不关联', 'None') },
-              ...ideas.map((i) => ({ value: i.id, label: i.title })),
+              ...ideaOptions,
             ]}
             onChange={setIdeaId}
           />

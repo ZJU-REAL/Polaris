@@ -52,7 +52,7 @@ function buildPipelineStages(
 // ============================================================
 // 「下一步」checklist：纯前端按产出计数推导（不加后端端点）。
 // 各阶段完成度做级联兜底：晚期产物存在即视为前置步骤已完成
-// （如实验只能由晋级想法而来），避免 stats 只统计部分状态时误判。
+// （如实验一定来自某个想法），避免 stats 只统计部分状态时误判。
 // ============================================================
 
 interface NextStep {
@@ -607,7 +607,7 @@ export function DashboardPage() {
   const shelfCount = shelfIdsQuery.data?.paper_ids.length ?? null;
 
   const stats = statsQuery.data;
-  // 级联兜底：晚期产物存在 ⇒ 前置阶段必然完成（实验只能由晋级想法而来）
+  // 级联兜底：晚期产物存在 ⇒ 前置阶段必然完成（实验一定来自某个想法）
   const hasManuscripts = (stats?.manuscripts_total ?? 0) > 0;
   const hasExperiments =
     (experimentsQuery.data?.length ?? 0) > 0 || (stats?.experiments_active ?? 0) > 0 || hasManuscripts;

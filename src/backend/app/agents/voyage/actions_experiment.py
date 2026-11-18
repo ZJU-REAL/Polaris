@@ -196,7 +196,7 @@ METRIC_LINE_RE = re.compile(r"POLARIS_METRIC\s+(\{.*\})")
 _FIGURE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")  # 远端文件名白名单（防目录穿越）
 
 PLAN_SYSTEM_PROMPT = """\
-你是 Experiment Lab 的实验规划师，基于晋级 idea 与相关 wiki 摘要产出实验计划。
+你是 Experiment Lab 的实验规划师，基于用户选中的想法（idea）与相关 wiki 摘要产出实验计划。
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
 {"kind": "eval|training|agent|analysis|other",
  "hypotheses": [{"text": "可检验的假设", "status": "testing"}],

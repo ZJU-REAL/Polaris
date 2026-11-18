@@ -271,7 +271,7 @@ async def read_task_logs(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
 
 @tool(
     "list_gates",
-    description="列出本课题的人工审批闸门，含想法晋级、算力预算与投稿等类型；审批操作需在网页端完成",
+    description="列出本课题需要用户确认的事项（研究目标确认、研究方向调整、算力预算等）；确认操作需由用户在界面上完成",
     input_schema={
         "type": "object",
         "properties": {
