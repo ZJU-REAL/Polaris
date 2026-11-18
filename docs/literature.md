@@ -82,8 +82,8 @@ direction:
 
 ### The daily feed
 
-**Daily Papers** is the deployment-wide feed of each day's new arXiv announcements (`new` and `cross`
-listings) in the categories an admin subscribes. There is no default subscription — until categories
+**Daily Papers** is the feed of each day's new arXiv announcements (`new` and `cross`
+listings) in the categories you subscribe to. There is no default subscription — until categories
 are added in Settings the feed stays empty and the page says so. While the app is running, the
 engine scheduler probes arXiv from a configurable time each day (default 01:30 UTC) until the day's batch actually appears;
 weekends show as quiet because arXiv does not publish. Feed papers enter the content pool as
@@ -93,7 +93,7 @@ search works over them immediately.
 The feed is also the platform's **single arXiv entry point**: direction libraries do not crawl arXiv
 on their own schedule; the daily sync task fans out to every due library right after new papers
 land, and each library filters the pool. Entries roll off after a retention window (default 14 days,
-admin-configurable 1–90).
+configurable 1–90).
 
 On the page you can filter by day, category, and announcement type, search the pool (keyword or
 semantic), like papers (likes are deployment-wide, with a likers preview), read the abstract, trigger a
@@ -121,7 +121,7 @@ as resumable [tasks](task-system.md) with a live step plan:
    only: pool papers are vector-ranked against the library's statement and include terms, exclude
    terms hard-filter, and previously rejected papers are remembered and skipped. Once a library has
    had its initial build, it syncs automatically every day after the feed lands — the tab shows
-   **Last sync** and **Next auto sync (approx.)**. The scan scope is an admin setting: since last
+   **Last sync** and **Next auto sync (approx.)**. The scan scope is a setting: since last
    sync (default), today only, or the whole pool.
 
 Every mode then runs the same tail: relevance scoring, fetch and extract, wiki compile, concept
@@ -260,7 +260,7 @@ frontmatter (title, arXiv id, year, relevance, concepts) and the wiki article wi
 `[[wikilinks]]` intact, extracted figure images, one file per concept with backlinks to the papers
 that use it, and your own notes appended to each paper. The export is one-way and covers the
 library's compiled papers. (A reverse importer for an existing Obsidian literature vault exists as
-an admin CLI, `python -m app.cli.sync_obsidian_vault`.)
+a command-line tool for source checkouts, `python -m app.cli.sync_obsidian_vault`.)
 
 ## Key settings
 

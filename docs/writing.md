@@ -149,7 +149,7 @@ are shown as warnings rather than blocking, since you are in the loop.
 
 - **Main file** and **compiler** — top bar dropdowns; per manuscript.
 - **Collaborators** — manage who can edit and get a share link from the **Collaborators** dialog.
-- **Templates** — admins and users can upload zip templates; built-in style files stay read-only.
+- **Templates** — you can upload zip templates; built-in style files stay read-only.
 - **Pin / trash** — manuscripts can be pinned to the top of the list; deletion is a two-step
   trash + permanent purge, restorable in between.
 

@@ -41,9 +41,8 @@ query-vs-document asymmetry is normal — only the document formula needs to be 
 ## Embedding spaces
 
 Vectors from different models live in unrelated coordinate systems: a cosine between them is
-noise. When the dimensions differ, Postgres errors out and the caller degrades to keyword search.
-**When the dimensions happen to match, nothing errors at all** — the ranking is simply wrong, and
-neither the caller nor the user can tell. That silent mode is what this design exists to prevent.
+noise. **When the dimensions happen to match, nothing errors at all** — the ranking is simply wrong,
+and neither the caller nor the user can tell. That silent mode is what this design exists to prevent.
 
 So every vector row carries a **space** — `<model>@<dim>`, e.g. `bge-m3@1024` — and every read
 filters on it. Vectors of different spaces cannot meet in one comparison, structurally.
@@ -53,7 +52,7 @@ filters on it. Vectors of different spaces cannot meet in one comparison, struct
   per-paper index dots) count only that space, so switching models makes coverage drop honestly
   instead of counting vectors that retrieval can no longer use.
 - **The dimension is never hardcoded.** The first successful embed defines the active space from the
-  model's *actual* returned dimension, and `paper_vectors.embedding` is a dimension-less pgvector
+  model's *actual* returned dimension, and `paper_vectors.embedding` is a dimension-less JSON
   column. Moving to a 4096-dim model needs no migration and no code change (issue #191).
 - **The embedding model is global.** There is one embedding model for the whole engine — `BGE-M3`
   by default, served by the gateway's `{base}/v1/embeddings` endpoint and overridable with
@@ -64,8 +63,8 @@ filters on it. Vectors of different spaces cannot meet in one comparison, struct
   validates every returned vector's dimension, and raises `EmbeddingSpaceMismatchError` rather than
   storing anything questionable — on SQLite the JSON column would otherwise swallow it silently.
 - **Changing the model is an explicit act.** Once the configured model differs from the active space,
-  embedding calls refuse to run. An admin confirms via
-  `POST /admin/settings/embedding-space/adopt`, which probes the model for its real dimension and
+  embedding calls refuse to run. You confirm the switch in Settings (the endpoint is
+  `POST /admin/settings/embedding-space/adopt`), which probes the model for its real dimension and
   switches the active space. Old vectors are left in place: they stop being searchable, and adopting
   the previous model again is a complete rollback. `GET /admin/settings/embedding-space` reports the
   active space, the configured model, `mismatched`, and the row counts of every space in the database.
@@ -93,8 +92,8 @@ In summary:
     library, topic- and library-scoped forms of the same maintenance action) are synchronous
     maintenance endpoints that return `{indexed, embedded, skipped}`. The library-scoped form needs
     manage rights on that library and works for standalone libraries (no origin topic).
-- **Daily-feed papers are embedded only when an admin turns it on.** `sync_daily_feed` builds
-  lightweight rows with no LLM, so daily papers have no vector by default. The admin setting
+- **Daily-feed papers are embedded only when you turn it on.** `sync_daily_feed` builds
+  lightweight rows with no LLM, so daily papers have no vector by default. The setting
   **`daily_feed_embed_enabled` (off by default)** makes each sync embed the papers it touched that
   still have a `NULL` vector, using the shared `paper_embedding_text` formula;
   `POST /admin/settings/daily-embed/backfill` fills the current window in one shot. Both are
@@ -119,8 +118,9 @@ scoped to a library, a paper set or the daily pool — never the whole vector ta
 Used by the library search box (keyword ↔ semantic toggle) and, by reuse, the related-work page.
 
 1. Embed the query (`get_llm_router().embed([q])`).
-2. `papers.py::semantic_search_papers` runs a pgvector cosine distance `1 - (p.embedding <=> qv)`,
-   **JOINed to `library_papers`** and filtered to `p.embedding IS NOT NULL`. It is therefore
+2. `papers.py::semantic_search_papers` selects the candidates in SQL — vectors of the active space
+   **JOINed to `library_papers`** — and scores cosine similarity in Python
+   (`services/vector_search.py`). It is therefore
    **library-scoped** and only ranks papers that have both a membership and a vector.
 3. `rerank_paper_rows` applies a lightweight rerank over the candidates.
 4. `GET /libraries/{id}/search?mode=semantic` returns `SearchResponse{papers, concepts, mode_used,
@@ -128,13 +128,13 @@ Used by the library search box (keyword ↔ semantic toggle) and, by reuse, the 
    fallback notice.
 
 Because this query is library-membership-scoped, collections without library membership need their
-own pgvector query over the right candidate set. Two exist:
+own query over the right candidate set. Two exist:
 
 - **Personal library** — `GET /me/library?mode=semantic` ranks the caller's **saved** entries whose
   `last_paper_id` points at a pool paper with a vector (`user_library.semantic_saved_entries`), then
   reranks. Coverage is inherently partial (an entry whose source paper is gone, or which was never
   embedded, cannot be ranked), and the UI says so.
-- **Daily feed** — `GET /daily/papers?mode=semantic` runs a pgvector query over
+- **Daily feed** — `GET /daily/papers?mode=semantic` runs the same kind of query over
   `daily_feed_entries ⨝ papers` with **no library join** (`daily_feed.semantic_search_daily`),
   honoring the date / category / announce filters, then reranks. It returns `mode_used` plus
   `vector_ready` / `vector_total` so the UI can state honestly how much of the pool is embedded.
@@ -184,8 +184,8 @@ is shared by the shelf, personal-library and daily chats and changing it must no
   daily paper into a library skips the embed step and only does the missing work.
 - **Opt-in for the expensive part.** Chunk embeddings (and daily embeddings) are the token-heavy
   pieces, so they are gated behind explicit settings rather than run for every paper.
-- **Same results on every database.** pgvector ranks in SQL on PostgreSQL; SQLite filters in SQL and
-  scores in Python with the same semantics. Without an embedding model, search and chat fall back to
+- **Search without a vector extension.** SQLite filters in SQL and scores in Python. Without an
+  embedding model, search and chat fall back to
   keyword / summary retrieval and stay functional.
 - **Honest coverage.** Index-build endpoints report `indexed` / `skipped (no full text)` so users can
   see that a fast build skipped most papers rather than silently indexing "everything".

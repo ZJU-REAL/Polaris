@@ -106,8 +106,7 @@ papers.
 <!-- screenshot: the Idea Forge page with the selection funnel card, filters, and a grid of scored candidate cards -->
 
 Ideas you don't want are removed with **Reject** (keeps them in the pool, excluded from future
-tournaments) or moved to the **Trash** tab (restorable; emptying the trash is permanent). Trash and
-batch operations require the topic owner or an admin.
+tournaments) or moved to the **Trash** tab (restorable; emptying the trash is permanent).
 
 ::: tip One idea task at a time
 A topic runs at most one Forge / Deep Dive / tournament task at a time. Starting a second one while

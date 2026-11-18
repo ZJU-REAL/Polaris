@@ -9,7 +9,6 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/AI_Scientist-7438F0?style=flat-square&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAxQzEzLjIgNyAxNSA4LjggMjIgMTIgMTUgMTUuMiAxMy4yIDE3IDEyIDIzIDEwLjggMTcgOSAxNS4yIDIgMTIgOSA4LjggMTAuOCA3IDEyIDFaIi8+PC9zdmc+&logoColor=white" alt="AI Scientist">
-  <a href="http://101.37.174.109:8080"><img src="https://img.shields.io/badge/Live_Demo-online-2ea44f?style=flat-square&logo=rocket&logoColor=white" alt="Live Demo"></a>
   <a href="https://github.com/ZJU-REAL/Polaris/releases/latest"><img src="https://img.shields.io/github/v/release/ZJU-REAL/Polaris?style=flat-square&color=7438F0&label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square" alt="License: Apache 2.0"></a>
   <a href="docs/assets/wechat-group-qr.jpg"><img src="https://img.shields.io/badge/%E5%BE%AE%E4%BF%A1%E7%BE%A4-%E6%89%AB%E7%A0%81%E5%8A%A0%E5%85%A5-07C160?style=flat-square&logo=wechat&logoColor=white" alt="扫码加入微信群"></a>
@@ -41,16 +40,6 @@ Polaris 把完整的科研生命周期做进一个桌面应用：文献调研、
 
 https://github.com/user-attachments/assets/388972c1-7ffa-45f2-94c4-07f388379ba2
 
-### 在线试用
-
-有一个跑在旧版网页实例上的访客账号可以随便逛（该实例已冻结，新版本只发布桌面版）：在 <http://101.37.174.109:8080> 用用户名 `guest`、
-密码 `zjuguest123` 登录。
-
-**该账号仅用于演示：它是只读的，且不能调用任何模型。** 它能走到每一个页面，包括管理端视图，
-但它做的任何事都不会改变状态——新建、编辑、删除和上传一律被拒绝，也不会触发任何 LLM 调用，
-无论来自对话、编译还是助手。它的作用是展示平台长
-什么样，而不是在上面干活。
-
 ## 科研流水线
 
 Polaris 把科研建模成六个阶段。每个阶段都产出可留存的产物供下一阶段消费，而每一次交接都可以
@@ -81,8 +70,8 @@ flowchart LR
 | --- | --- |
 | **文献** | Research Wiki 从 OpenAlex、Semantic Scholar 和 arXiv 摄入论文。冷启动时以锚点论文为起点滚雪球式扩展引用网络，按**方向库**的收录配置（方向陈述、目标、范围与排除项，由一场结构化 AI 访谈写成）打分筛选相关性，再抽取全文（PyMuPDF）并编译成互相链接的 wiki 页面（TL;DR、方法、可复用的点子、概念反向链接）。**一篇论文只有一份解读，全平台共享**:编译时不带任何库的方向陈述或 rubric，所以同一篇论文不会因为你从哪儿点进去而读到不同内容；一个概念要有两篇论文引用才会被提升为正式概念。arXiv 新论文统一从每日新论文流进来，它是各文献库同步的唯一入口；支持带水位线断点续传的增量同步、研究摘要，以及 Obsidian 库同步。 |
 | **想法** | Idea Forge 在知识库上做多信号缺口分析（概念共现的空洞、从论文中抽取的局限、趋势速度、综述空白）,以此驱动带检索规划的想法生成。想法会在四个维度上打分（新颖性、可行性、可操作性、影响力）,做语义去重，汇入候选池。随后一个深度 Research Proposal 构建器用「规划—执行—验证」循环把胜出的想法夯实。 |
-| **想法评审** | 可配置人设的评审智能体两两辩论；由一个裁判产出 Elo 锦标赛排名。实验室成员可通过 WebSocket 实时加入讨论，他们的意见会作为一等输入进入智能体上下文。 |
-| **实验** | Experiment Lab 使用按用户隔离、经 Fernet 加密的 SSH 凭据连接实验室的 GPU 服务器。一次实验 Voyage 会先做摸底提问，然后规划研究方案、通过算力预算校验、编写代码、跑冒烟测试、启动运行并流式输出日志与实时指标曲线，接着自动迭代：解析指标、反思，再决定改进、调试还是停止——修复失败靠的是**时间**预算，而不是固定的重试次数。它还有一份跨步骤读写的文件式记忆；真卡住时它会**向你提问**,而不是直接失败。控制台为每次运行提供任务图和一个可以边跑边对话的终端。图表会被生成并交由 VLM 检查。 |
+| **想法评审** | 可配置人设的评审智能体两两辩论；由一个裁判产出 Elo 锦标赛排名。你可以实时加入讨论，你的意见会作为一等输入进入智能体上下文。 |
+| **实验** | Experiment Lab 使用经 Fernet 加密的 SSH 凭据连接你的 GPU 服务器。一次实验 Voyage 会先做摸底提问，然后规划研究方案、通过算力预算校验、编写代码、跑冒烟测试、启动运行并流式输出日志与实时指标曲线，接着自动迭代：解析指标、反思，再决定改进、调试还是停止——修复失败靠的是**时间**预算，而不是固定的重试次数。它还有一份跨步骤读写的文件式记忆；真卡住时它会**向你提问**,而不是直接失败。控制台为每次运行提供任务图和一个可以边跑边对话的终端。图表会被生成并交由 VLM 检查。 |
 | **论文写作** | Paper Writer 打开一个多文件 LaTeX 项目（NeurIPS、ICLR、ACL 模板）,配 CodeMirror 6 编辑器、实时协同编辑（CRDT）,以及本地 tectonic 编译出的实时 PDF 预览。智能体逐节起草，但实验数字只能来自真实的 `ExperimentRun` 指标，引文也必须能对应到真实的知识库条目。一键刷新参考文献，并把 bibliography 接进主 TeX 文件。 |
 | **论文评审** | 逐条引文核查（存在性：精确、轻微偏差或伪造；支撑度：支撑、部分支撑或不支撑）,外加把每一个数字与实验记录做确定性事实核对，然后由多视角的顶会评审智能体给出意见并汇总成 meta-review。只要出现一条伪造引文，就直接判为不通过。 |
 
@@ -112,11 +101,11 @@ flowchart LR
   而不是在查询时才做即时 RAG。一篇论文一份解读，全平台共享。支持研究摘要，以及带
   `[[wikilinks]]` 和 frontmatter 的 Obsidian 库同步。
 - **一个内容池，四种集合。** 每篇论文只存一份；方向库、课题书架、个人库和每日新论文流都是长在
-  这个池子上的成员关系层。文献库已与课题解耦（多对多）,自己持有收录配置，并配有治理机制：
-  策展人、月度预算、重复合并、用户建库 + 管理员审批，以及一个不会污染搜索结果的回收站。
+  这个池子上的成员关系层。文献库已与课题解耦（多对多）,自己持有收录配置，并配有重复合并
+  和一个不会污染搜索结果的回收站。
 - **每日 arXiv 新论文流。** 每天的新论文，可点赞，也可一键收藏进你的任何一个
-  文献库。它同时是 arXiv 的唯一入口：各文献库从这个池子同步，而不是自己去查 arXiv,抓取时刻由
-  管理员配置。
+  文献库。它同时是 arXiv 的唯一入口：各文献库从这个池子同步，而不是自己去查 arXiv,抓取时刻在
+  设置里配置。
 - **Idea Forge。** 信号驱动的缺口分析、四维打分、语义去重，以及一个会对照本地文献库和外部来源
   二次核查新颖性的深度 Research Proposal 构建器。
 - **多智能体 + 人类评审。** 人设化的评审智能体辩论出 Elo 排名；人可以实时加入，其意见被注入
@@ -134,7 +123,7 @@ flowchart LR
   (只调研、先给方案再动手)和 `goal`(朝一个目标持续循环)三种模式。它和 Voyage 用同一套
   Navigator / Helm / Sextant 拆分，所以每一步是被验证过的而不只是被生成出来的，还能把活交给
   子智能体。它的问候语由真实的 SQL 计数拼出来而不是模型生成，它能搜索你可见的每一个文献库，
-  并携带页面上下文和按用户持久化的记忆。账号若无权调用模型，它就不启用。
+  并携带页面上下文和持久化的记忆。它需要先配置好 Claude API key。
 - **两层技能系统。** 智能体行为以数据而非代码的形式打包。*Voyage 技能*是可版本化、可组合的
   `guidance`、`rubric`、`persona` 和 `workflow` 包，在具名位置注入智能体提示词，全局启用，并配有
   「发布—审批—安装—评分」的市场；每次 Voyage 都会对其用到的技能做快照以保证可复现。*Agent 技能*
@@ -216,7 +205,7 @@ make desktop-dist           # 为当前平台打一个未签名的安装包
 
 ```bash
 make migrate                # alembic upgrade head
-make test                   # 后端 pytest + 前端测试与构建
+make test                   # 后端 pytest + 前端与内核测试 + 前端构建
 make lint                   # ruff check + tsc --noEmit
 make help                   # 列出所有目标
 ```

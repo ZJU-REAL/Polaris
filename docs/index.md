@@ -29,8 +29,8 @@ The full loop — Navigator plans, Helm executes, Sextant verifies — is explai
 [Core concepts](concepts.md) and, at implementation depth, in [The task system](task-system.md).
 
 **Built for individual researchers.** There is no login at all — the computer's owner is the only
-user and their own admin. You get encrypted SSH credentials, per-call token and cost accounting
-attributed to project and run, and your own libraries (with optional monthly AI budgets).
+user. You get encrypted SSH credentials, per-call token and cost accounting attributed to project
+and run, and your own libraries.
 
 **One model, nothing to tune.** Polaris uses the Claude API with one fixed model. Set your Claude
 API key as an environment variable, restart the app, and every stage works; there is no provider
@@ -50,8 +50,8 @@ flowchart LR
 | --- | --- | --- |
 | **Literature** | The Research Wiki ingests papers from OpenAlex, Semantic Scholar, and arXiv, scores relevance against each direction library's inclusion config, extracts full text and figures, and compiles a cross-linked wiki page per paper — one wiki per paper, shared platform-wide. A daily arXiv feed keeps libraries current. | [Literature guide](literature.md) |
 | **Idea** | Idea Forge runs multi-signal gap analysis over the knowledge base (concept co-occurrence holes, paper limitations, trend velocity), generates ideas with retrieval-planned prompts, scores them on four axes, deduplicates semantically, and hardens the winner into a full research proposal. | [Ideas guide](ideas.md) |
-| **Idea review** | Configurable-persona reviewer agents debate ideas pairwise; a judge produces an Elo tournament ranking. Lab members join the discussion live, and their comments enter the agent context as first-class input. Promotion to experiment passes a human gate. | [Ideas guide](ideas.md) |
-| **Experiment** | The Experiment Lab reaches your lab's GPU servers over per-user encrypted SSH. An experiment run plans the study (optionally pausing at a compute-budget approval if you ask for one), writes code, smoke-tests it, launches runs with streamed logs and live metric curves, then iterates on the results — and pauses to ask you a question when it is stuck. | [Experiments guide](experiments.md) |
+| **Idea review** | Configurable-persona reviewer agents debate ideas pairwise; a judge produces an Elo tournament ranking. You can join the discussion live, and your comments enter the agent context as first-class input. Promotion to experiment passes a human gate. | [Ideas guide](ideas.md) |
+| **Experiment** | The Experiment Lab reaches your GPU servers over SSH with encrypted credentials. An experiment run plans the study (optionally pausing at a compute-budget approval if you ask for one), writes code, smoke-tests it, launches runs with streamed logs and live metric curves, then iterates on the results — and pauses to ask you a question when it is stuck. | [Experiments guide](experiments.md) |
 | **Paper writing** | A multi-file LaTeX project (NeurIPS, ICLR, ACL templates) with collaborative editing and server-side tectonic compilation to a live PDF. An agent drafts section by section, but numbers may only come from real experiment metrics and citations from real knowledge-base entries. | [Writing guide](writing.md) |
 | **Paper review** | Line-by-line citation verification (existence and support, per citation), deterministic fact-checking of every number against the experiment record, then multi-perspective reviewer agents and a meta-review. A fabricated citation forces a non-pass. | [Paper review guide](paper-review.md) |
 
@@ -72,19 +72,11 @@ Predictable pipelines — wiki compilation, idea review, paper drafting — run 
 templates instead of being over-orchestrated. [The task system](task-system.md) documents the
 data model, run modes, budgets, and failure handling in full.
 
-## Try it live
-
-A guest account on a running instance, for looking around: sign in at
-<http://101.37.174.109:8080> with the username `guest` and the password `zjuguest123`. The account
-is read-only and cannot call any model — it reaches every screen, admin views included, but
-creating, editing, and uploading are refused, and no LLM call will run. It shows what the platform
-looks like; to do real work, [run your own instance](getting-started.md).
-
 ## Beyond the pipeline
 
 - **[PolarisBuddy](buddy.md)** — an in-app assistant that rides along on every page: a multi-turn
   tool loop over the platform's read-only tool layer, with chat, plan, and goal modes, page context,
-  and persistent per-user memory.
+  and persistent memory.
 - **[Skills](skills.md)** — agent behavior packaged as data, not code: guidance, rubric, persona,
   and workflow packs injected into agent prompts, with a marketplace and per-run snapshots for
   reproducibility.

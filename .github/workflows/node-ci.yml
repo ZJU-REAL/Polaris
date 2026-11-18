@@ -1,5 +1,5 @@
 # Workspace-level Node checks: the vendored cordis runtime contract test,
-# kernel lint/tests (as packages appear), and the frontend vitest suite (#728).
+# kernel lint/tests, and the frontend vitest suite (#728).
 # Desktop/frontend build coverage lives in desktop-build.yml.
 name: node-ci
 
@@ -9,7 +9,16 @@ on:
       - "vendor/**"
       - "src/kernel/**"
       - "src/frontend/**"
-      - "spikes/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/node-ci.yml"
+  # Commits also land on main directly, so the same checks run after every push there.
+  push:
+    branches: [main]
+    paths:
+      - "vendor/**"
+      - "src/kernel/**"
+      - "src/frontend/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - ".github/workflows/node-ci.yml"
@@ -46,13 +55,5 @@ jobs:
 
       - name: Kernel checks
         run: |
-          if [ -d src/kernel ]; then
-            pnpm --dir src/kernel --if-present run lint
-            pnpm --dir src/kernel --if-present run test
-          fi
-
-      - name: Spike tests
-        run: |
-          for dir in spikes/p0/*/; do
-            [ -f "$dir/package.json" ] && pnpm --dir "$dir" --if-present run test
-          done
+          pnpm --dir src/kernel --if-present run lint
+          pnpm --dir src/kernel --if-present run test

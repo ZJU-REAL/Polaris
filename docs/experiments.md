@@ -172,7 +172,7 @@ to keep the tab open.
 
 ## Key settings
 
-**Experiment settings** (admin, under **Settings**) apply platform-wide and are exported into every
+**Experiment settings** (under **Settings**) apply to every experiment and are exported into every
 run's `env.sh` — and, as importantly, stated as facts in the code-generation prompt so the model
 does not guess machine-specific paths:
 

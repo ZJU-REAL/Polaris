@@ -9,7 +9,6 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/AI_Scientist-7438F0?style=flat-square&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAxQzEzLjIgNyAxNSA4LjggMjIgMTIgMTUgMTUuMiAxMy4yIDE3IDEyIDIzIDEwLjggMTcgOSAxNS4yIDIgMTIgOSA4LjggMTAuOCA3IDEyIDFaIi8+PC9zdmc+&logoColor=white" alt="AI Scientist">
-  <a href="http://101.37.174.109:8080"><img src="https://img.shields.io/badge/Live_Demo-online-2ea44f?style=flat-square&logo=rocket&logoColor=white" alt="Live Demo"></a>
   <a href="https://github.com/ZJU-REAL/Polaris/releases/latest"><img src="https://img.shields.io/github/v/release/ZJU-REAL/Polaris?style=flat-square&color=7438F0&label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square" alt="License: Apache 2.0"></a>
   <a href="docs/assets/wechat-group-qr.jpg"><img src="https://img.shields.io/badge/WeChat-join_group-07C160?style=flat-square&logo=wechat&logoColor=white" alt="Join the WeChat group"></a>
@@ -43,17 +42,6 @@ run, and PolarisBuddy.
 
 https://github.com/user-attachments/assets/388972c1-7ffa-45f2-94c4-07f388379ba2
 
-### Try it live
-
-A guest account on an older, frozen web instance, for looking around (new releases are desktop-only):
-sign in at
-<http://101.37.174.109:8080> with the username `guest` and the password `zjuguest123`.
-
-**The account is for demonstration only: it is read-only and cannot call any model.** It reaches every
-screen, the admin views included, but nothing it does changes state — creating, editing, deleting and
-uploading are all refused, and no LLM call will run, whether from chat, compilation or the assistant.
-It is there to show what the platform looks like, not to do work on it.
-
 ## The research pipeline
 
 Polaris models research as six stages. Each stage produces durable artifacts that the next stage
@@ -84,8 +72,8 @@ flowchart LR
 | --- | --- |
 | **Literature** | The Research Wiki ingests papers from OpenAlex, Semantic Scholar, and arXiv. Cold start snowballs citations from anchor papers and scores relevance against the **direction library's** inclusion config — statement, goals, scope and exclusions, written through a structured AI interview — then extracts full text (PyMuPDF) and compiles a cross-linked wiki page (TL;DR, method, reusable ideas, concept backlinks). There is **one wiki per paper, shared platform-wide**: the compile prompt carries no library statement or rubric, so the same paper never reads differently depending on where you opened it, and a concept is promoted only once two papers cite it. New arXiv work arrives through the daily feed, the single entry point libraries sync from; incremental sync with watermark resume, research digests, and Obsidian vault sync. |
 | **Idea** | Idea Forge runs multi-signal gap analysis over the knowledge base (concept co-occurrence holes, extracted paper limitations, trend velocity, survey gaps) to drive retrieval-planned idea generation. Ideas are scored on four axes (novelty, feasibility, operability, impact), deduplicated semantically, and funneled to a candidate pool. A deep Research Proposal builder then hardens the winner with a plan-execute-verify loop. |
-| **Idea Review** | Configurable-persona reviewer agents debate pairwise; a judge produces an Elo tournament ranking. Lab members join the discussion live over WebSocket, and their comments enter the agent context as first-class input. |
-| **Experiment** | The Experiment Lab uses per-user, Fernet-encrypted SSH credentials to reach the lab's GPU servers. An experiment Voyage asks intake questions first, plans the study, passes a compute-budget check, writes code, runs a smoke test, launches runs with streamed logs and live metric curves, then auto-iterates: parse metrics, reflect, then improve, debug, or stop — repairing failures under a **time** budget rather than a fixed retry count. It keeps a file-based memory it reads and writes across steps, and when it is genuinely stuck it **asks the user** instead of failing. A console gives each run a task map and a terminal you can talk to mid-stream. Figures are generated and VLM-checked. |
+| **Idea Review** | Configurable-persona reviewer agents debate pairwise; a judge produces an Elo tournament ranking. You can join the discussion live, and your comments enter the agent context as first-class input. |
+| **Experiment** | The Experiment Lab uses Fernet-encrypted SSH credentials to reach your GPU servers. An experiment Voyage asks intake questions first, plans the study, passes a compute-budget check, writes code, runs a smoke test, launches runs with streamed logs and live metric curves, then auto-iterates: parse metrics, reflect, then improve, debug, or stop — repairing failures under a **time** budget rather than a fixed retry count. It keeps a file-based memory it reads and writes across steps, and when it is genuinely stuck it **asks the user** instead of failing. A console gives each run a task map and a terminal you can talk to mid-stream. Figures are generated and VLM-checked. |
 | **Paper Writing** | The Paper Writer opens a multi-file LaTeX project (NeurIPS, ICLR, ACL templates) with a CodeMirror 6 editor, real-time collaborative editing (CRDT), and local tectonic compilation to a live PDF preview. An agent drafts section by section, but experiment numbers may only come from real `ExperimentRun` metrics and citations must map to real knowledge-base entries. One click refreshes the references and wires the bibliography into the main TeX file. |
 | **Paper Review** | Line-by-line citation verification (existence: exact, minor, or fabricated; support: supported, partial, or unsupported) plus deterministic fact-checking of every number against the experiment record, then multi-perspective top-venue reviewer agents and a meta-review. A fabricated citation forces a non-pass. |
 
@@ -119,12 +107,11 @@ plan-execute-verify loop) activates only for open-ended kinds such as experiment
   platform-wide. Research digests, and Obsidian vault sync with `[[wikilinks]]` and frontmatter.
 - **One content pool, four collections.** Every paper is stored exactly once; direction libraries,
   topic shelves, personal libraries, and the daily feed are membership layers over that pool. Libraries
-  are decoupled from topics (many-to-many), own their own inclusion config, and come with governance:
-  curators, monthly budgets, duplicate merge, user-created libraries under admin approval, and a
-  recycle bin that stays out of search.
+  are decoupled from topics (many-to-many), own their own inclusion config, and come with duplicate merge and a recycle bin that stays out of
+  search.
 - **Daily arXiv feed.** A feed of each day's new papers, with likes and one-click collection
   into any of your libraries. It is also the single arXiv entry point: libraries sync from the
-  pool instead of querying arXiv themselves, on an admin-configurable schedule.
+  pool instead of querying arXiv themselves, on a schedule you set in Settings.
 - **Idea Forge.** Signal-driven gap analysis, four-axis scoring, semantic dedup, and a deep
   Research-Proposal builder with novelty double-checking against the library and external sources.
 - **Multi-agent and human review.** Persona reviewer agents debate to an Elo ranking; humans join live
@@ -145,7 +132,7 @@ plan-execute-verify loop) activates only for open-ended kinds such as experiment
   an objective) modes. It runs the same Navigator / Helm / Sextant split as a Voyage, so its steps are
   verified rather than merely produced, and it can hand work to subagents. Its greeting is stitched from
   real SQL counts rather than the model, it searches every library you can see, and it carries page
-  context and persistent per-user memory. It is off unless the account may call a model.
+  context and persistent memory. It needs a configured Claude API key.
 - **Skills, in two layers.** Agent behavior is packaged as data, not code. *Voyage skills* are
   versionable, composable `guidance`, `rubric`, `persona`, and `workflow` packs injected at named points
   into agent prompts, enabled globally, with a publish-approve-install-rate marketplace; each Voyage
@@ -232,7 +219,7 @@ Common tasks:
 
 ```bash
 make migrate                # alembic upgrade head
-make test                   # backend pytest + frontend tests and build
+make test                   # backend pytest + frontend and kernel tests + frontend build
 make lint                   # ruff check + tsc --noEmit
 make help                   # list every target
 ```

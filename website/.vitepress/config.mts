@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
 
 // The site is served at https://zju-real.github.io/Polaris/
-//  - /            → the landing pages (static files in website/public/)
+//  - /            → the landing pages (static files in docs/public/)
 //  - /docs/…      → English docs, sourced from the repo's docs/*.md
 //  - /zh/docs/…   → Chinese docs, sourced from docs/zh/*.md
 export default withMermaid(
@@ -11,7 +11,8 @@ export default withMermaid(
     base: '/Polaris/',
     srcDir: '../docs',
     // docs/README.md is the GitHub-facing index; the site uses docs/index.md
-    srcExclude: ['README.md'],
+    // docs/archive/ holds historical planning documents; they stay in the repo, not on the site
+    srcExclude: ['README.md', 'archive/**'],
     cleanUrls: true,
     lastUpdated: true,
     // docs legitimately point readers at their own local instance
@@ -96,7 +97,6 @@ export default withMermaid(
                 text: 'Integrations',
                 items: [
                   { text: 'MCP', link: '/docs/mcp' },
-                  { text: 'Agent backends (removed)', link: '/docs/agents' },
                 ],
               },
             ],

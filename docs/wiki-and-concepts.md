@@ -616,12 +616,10 @@ kilobytes of markdown each this is tens of megabytes per call — acceptable, bu
 scale another order of magnitude without changing.
 
 **SQLite quirks.** Both the tests (`tests/conftest.py:15`) and the desktop app's engine run on
-SQLite; older server instances ran on PostgreSQL.
+SQLite.
 - `Concept.name.in_(all_names)` is a bind parameter per name. Older SQLite builds cap variables at
-  999; a library with more distinct concept names than that would fail there (PostgreSQL's limit is
-  65535).
-- `ILIKE` on PostgreSQL does Unicode-aware case folding; SQLAlchemy's `ilike` on SQLite becomes
-  `LIKE`, which only folds ASCII. Irrelevant for CJK names, relevant for accented Latin ones.
+  999; a library with more distinct concept names than that would fail there.
+- SQLAlchemy's `ilike` on SQLite becomes `LIKE`, which only folds ASCII. Irrelevant for CJK names, relevant for accented Latin ones.
 - The concept migration uses `batch_alter_table` to drop `library_id`, because SQLite cannot drop a
   column in place.
 - Semantic paper search scores stored vectors in Python (`services/vector_search.py`).

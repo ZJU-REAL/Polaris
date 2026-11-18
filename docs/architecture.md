@@ -134,8 +134,9 @@ overridden by prompts or skills.
 - **SQLite** is the system of record: projects, papers and concepts, ideas, review sessions,
   experiments and runs, manuscripts, gates, activity, and Voyage runs and steps. The desktop app
   keeps it at `engine/polaris.db` in its user-data folder and snapshots it before each migration.
-  Vector search over papers and chunks needs PostgreSQL's pgvector, so on SQLite semantic search
-  falls back to keyword search (see [Embedding & retrieval](embedding-and-retrieval.md)).
+  Vectors are stored as JSON columns; semantic search filters in SQL and scores cosine similarity
+  in Python (see [Embedding & retrieval](embedding-and-retrieval.md)), falling back to keyword
+  search only when no embedding endpoint is configured.
 - An **in-process Redis stand-in** (fakeredis) carries pub/sub for the live event streams and small
   caches. It lives in memory, so its contents are gone after a restart.
 - A **data folder** (`POLARIS_DATA_DIR`) holds PDFs, exports, experiment logs, and the file

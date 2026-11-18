@@ -136,7 +136,7 @@ version, and review status. A project approver decides it under **Approvals**:
 - **Approve** → the manuscript is marked `submitted`;
 - **Reject** → it returns to `compiled` for another pass.
 
-The review requirement is re-checked at approval time; an administrator can explicitly override it
+The review requirement is re-checked at approval time; you can explicitly override it
 when approving, but by default no paper reaches `submitted` without a passing review.
 
 ## Key settings

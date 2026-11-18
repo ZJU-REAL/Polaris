@@ -33,7 +33,6 @@ body:
         - review
         - skills
         - llm routing / usage
-        - auth / users
         - desktop app / build / CI
         - docs
         - other / not sure

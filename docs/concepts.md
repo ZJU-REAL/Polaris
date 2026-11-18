@@ -220,7 +220,7 @@ topic. The platform-level kinds:
 | --- | --- |
 | `idea_promotion` | Promoting an idea to the experiment stage — promotion is itself an approval action, so this gate is always created. |
 | `compute_budget` | Spending GPU time — created before an experiment's environment setup, **only when the experiment was created with `confirm_budget` enabled**. |
-| `paper_submission` | Marking a manuscript as submitted — always an approval action. Approval requires the manuscript to have passed [paper review](paper-review.md) first, unless an admin explicitly overrides. |
+| `paper_submission` | Marking a manuscript as submitted — always an approval action. Approval requires the manuscript to have passed [paper review](paper-review.md) first, unless you explicitly override it when approving. |
 
 **In-run gates default to off.** A task runs straight through unless you opted in when creating
 it: `confirm_budget` on an experiment inserts the `compute_budget` gate, and `confirm_goal` on a
@@ -231,7 +231,7 @@ submission.
 
 A step that declares `requires_gate` stops the run before executing: the engine creates the gate,
 sets the run to `paused_gate`, and **ends its background job** — a paused voyage consumes nothing while
-it waits. Topic members see the pending gate in the workspace and get a WebSocket notification.
+it waits. The pending gate shows up in the workspace and you get a notification.
 Approving enqueues a resume and the run continues from exactly that step; rejecting sets the run to
 `failed`. Gate decisions also carry domain side effects — approving `idea_promotion` flips the idea's
 status, approving `paper_submission` marks the manuscript submitted.

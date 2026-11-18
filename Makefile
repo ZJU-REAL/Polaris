@@ -1,4 +1,5 @@
-BACKEND_PY   = src/backend/.venv/bin/python
+# The engine needs Python >= 3.12. Override when `python3` is older: make venv PYTHON=python3.12
+PYTHON      ?= python3
 BACKEND_PIP  = src/backend/.venv/bin/pip
 
 # Polaris ships as the desktop app only; there is no server stack to run (#842).
@@ -11,11 +12,14 @@ help:           ## List the targets
 
 ## ---- Engine from source ----
 venv:           ## Create the backend virtualenv and install dependencies
-	python3 -m venv src/backend/.venv
+	@$(PYTHON) -c 'import sys; sys.exit(sys.version_info < (3, 12))' || \
+	  { echo "The engine needs Python >= 3.12; $(PYTHON) is older. Run: make venv PYTHON=python3.12"; exit 1; }
+	$(PYTHON) -m venv src/backend/.venv
 	$(BACKEND_PIP) install -e "src/backend[dev]"
 
 backend-dev:    ## Run the engine from source on :8000 (SQLite, in-process queue and scheduler)
-	cd src/backend && .venv/bin/uvicorn app.main:app --reload --port 8000
+	# Same start sequence as the desktop app: migrate, then serve.
+	cd src/backend && .venv/bin/alembic upgrade head && .venv/bin/uvicorn app.main:app --reload --port 8000
 
 frontend-dev:   ## Run the frontend dev server on :5173
 	pnpm install && pnpm --dir src/frontend run dev
@@ -38,19 +42,20 @@ desktop-dist:   ## Package an installer for the current platform (unsigned)
 	$(DESKTOP) run dist:$(shell uname | tr '[:upper:]' '[:lower:]' | sed 's/darwin/mac/')
 
 ## ---- Quality ----
-migrate:        ## Apply database migrations (alembic upgrade head)
+migrate:        ## Apply database migrations to the dev database (alembic upgrade head)
 	cd src/backend && .venv/bin/alembic upgrade head
 
-test:           ## Backend tests + frontend unit tests + frontend build
+test:           ## Backend tests + frontend and kernel unit tests + frontend build
 	cd src/backend && .venv/bin/pytest -q
 	pnpm --dir src/frontend test
+	pnpm --dir src/kernel test
 	pnpm --dir src/frontend run build
 
-lint:           ## ruff + tsc (frontend and desktop)
+lint:           ## ruff + tsc (frontend, desktop and kernel)
 	# 范围与 python-ci.yml 的 ruff job 保持一致（#746），本地和 CI 判定不分家
 	cd src/backend && .venv/bin/ruff check app worker tests alembic
-	cd src/frontend && npx tsc --noEmit
-	cd src/desktop && npx tsc --noEmit
+	# 根脚本先生成 vendor 的类型声明（外壳和内核的 tsc 依赖它），再逐包 tsc --noEmit
+	pnpm run lint
 
 golden-record:  ## Re-record golden transcripts (intentional wire changes only — read docs/golden-policy.md first)
 	# 一次性容器内录制（与 CI 同一套件形状；宿主机不需要 venv）。镜像用 make engine-image 构建。

@@ -40,15 +40,20 @@ docs/                this documentation
 
 ```bash
 make venv          # one-time: create src/backend/.venv and install deps (editable, with dev extras)
-make backend-dev   # the engine: uvicorn app.main:app --reload --port 8000
+make backend-dev   # the engine: alembic upgrade head, then uvicorn app.main:app --reload --port 8000
 make frontend-dev  # pnpm install && vite dev on :5173
 ```
 
 - Frontend: <http://localhost:5173>
 - Engine API docs: <http://localhost:8000/docs>
 
-The engine started this way uses `polaris_dev.db` (SQLite) and `./data` in `src/backend/`, creates
-its tables on startup, and runs the same scheduler as the desktop app. To override settings, copy
+`make venv` needs Python 3.12 or newer; if your `python3` is older, pass the interpreter:
+`make venv PYTHON=python3.12`.
+
+The engine started this way uses `polaris_dev.db` (SQLite) and `./data` in `src/backend/`, applies
+the migrations before it starts (the same sequence as the desktop app), and runs the same
+scheduler. A `polaris_dev.db` created before `backend-dev` ran migrations has no alembic version
+recorded; delete it, or run `.venv/bin/alembic stamp head` once in `src/backend/`. To override settings, copy
 `.env.example` to `src/backend/.env` (see [Configuration](configuration.md)).
 
 The engine never allows `*` for CORS and only accepts `Host` headers for `127.0.0.1`, `localhost`,
@@ -67,8 +72,8 @@ engine unless you set `POLARIS_DESKTOP_ENGINE`.
 
 ```bash
 make migrate   # cd src/backend && alembic upgrade head (uses the local venv)
-make test      # backend pytest + frontend tests and build
-make lint      # ruff check (backend) + tsc --noEmit (frontend and desktop)
+make test      # backend pytest + frontend and kernel tests + frontend build
+make lint      # ruff check (backend) + tsc --noEmit (frontend, desktop and kernel)
 make help      # list every target
 ```
 

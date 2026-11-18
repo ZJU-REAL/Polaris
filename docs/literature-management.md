@@ -198,7 +198,7 @@ vector (`paper_vectors`) is always produced by the add / ingest paths; the chunk
   the topic's resolved library for `POST /projects/{id}/papers`, and **nothing at all** for
   `POST /me/library/import`, which has no library.
 - **Author ↔ affiliation** (`services/affiliations.py`): per-author institutions, from OpenAlex
-  (structured, for DOI papers) or an LLM read of the title page. The admin setting
+  (structured, for DOI papers) or an LLM read of the title page. The setting
   `affiliations.extraction_mode` (a preference stored on the local user since #737) picks
   whether this runs at add time (`on_add`) or is folded into the
   compile call.

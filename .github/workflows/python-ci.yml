@@ -2,6 +2,8 @@
 # 套件自足（与引擎同一种单进程形态，#842）：conftest 自带 SQLite(aiosqlite) + fakeredis
 # 与全部 POLARIS_* 环境变量，不需要任何服务容器。
 # docker_integration 用例（要真 docker + 镜像）由 pyproject 的 addopts 默认 deselect。
+# 迁移路径也在套件里：tests/test_migrations.py 在全新 SQLite 上跑 alembic upgrade head，
+# 并核对迁移建出的库包含模型声明的每张表、每一列（模型加了却没写迁移会在这里挂）。
 #
 # ruff 单开一个 job 而不是塞进 pytest 的步骤里：lint 几秒出结果、套件二十多分钟，
 # 合在一起就意味着「格式问题要排队等全套跑完才报」，而且套件挂掉时 lint 结论会一起消失。
@@ -9,6 +11,12 @@ name: python-ci
 
 on:
   pull_request:
+    paths:
+      - "src/backend/**"
+      - ".github/workflows/python-ci.yml"
+  # Commits also land on main directly, so the same gates run after every push there.
+  push:
+    branches: [main]
     paths:
       - "src/backend/**"
       - ".github/workflows/python-ci.yml"

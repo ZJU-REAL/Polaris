@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Thanks for filing a bug. Fill in the sections below so it can be reproduced quickly.
-        Workflow conventions (branches, PRs, migrations) live in `docs/git-workflow.md`.
+        Workflow conventions (branches, PRs, migrations) live in `CONTRIBUTING.md`.
   - type: textarea
     id: summary
     attributes:
@@ -33,7 +33,6 @@ body:
         - review
         - skills
         - llm routing / usage
-        - auth / users
         - desktop app install / engine startup
         - docs
         - other / not sure

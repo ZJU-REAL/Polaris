@@ -2430,3 +2430,33 @@ def test_pending_self_approval_gates_are_resolved(tmp_path):
     # 退回是空操作，数据留在批准后的状态；再升一次也不出错
     command.downgrade(cfg, WIKI_EVIDENCE_REVISION)
     command.upgrade(cfg, "head")
+
+
+def test_migrated_database_has_every_model_table_and_column(tmp_path):
+    """A database built by the migrations alone must hold everything the models declare.
+
+    The rest of the suite builds its schema with ``create_all`` (see conftest), and the
+    engine also calls ``create_all`` at startup, so a model added without a migration works
+    on a fresh install and in every other test. It only breaks for users who upgrade an
+    existing database. This is the check that catches it.
+    """
+    import app.models  # noqa: F401  registers every model on the metadata
+    from app.core.db import Base
+
+    db_path = tmp_path / "models.db"
+    command.upgrade(_make_config(db_path), "head")
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+        missing: list[str] = []
+        for table in Base.metadata.sorted_tables:
+            if table.name not in tables:
+                missing.append(table.name)
+                continue
+            columns = {column["name"] for column in inspector.get_columns(table.name)}
+            missing += [f"{table.name}.{c.name}" for c in table.columns if c.name not in columns]
+    finally:
+        engine.dispose()
+    assert missing == [], f"models without a migration: {missing}"

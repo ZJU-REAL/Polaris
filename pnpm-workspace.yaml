@@ -5,4 +5,3 @@ packages:
   - plugins/*
   - vendor/deepseek-cordis/*
   - vendor/contract-smoke
-  - spikes/p0/*

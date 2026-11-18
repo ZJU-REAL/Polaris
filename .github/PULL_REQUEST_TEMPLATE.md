@@ -22,8 +22,6 @@ Closes #
 - [ ] review
 - [ ] skills
 - [ ] llm routing / usage
-- [ ] auth / users
-- [ ] infra / deploy
 - [ ] docs
 
 ## What changed
