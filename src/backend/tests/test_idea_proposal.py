@@ -185,8 +185,9 @@ async def test_deep_full_pipeline_with_goal_gate(client, queue_stub, bus_recorde
             "feasibility": 7.5,
             "impact": 8.5,
         }
+        # 正文不重复页面上已有的标题和研究目标表（它们在 idea.title / idea.goal 里）
+        assert not idea.content.startswith("# ") and "## 研究目标" not in idea.content
         for section in (
-            "## 研究目标",
             "## 背景与相关工作",
             "## 研究方案设计",
             "## 实验与评估计划",
@@ -434,6 +435,8 @@ async def test_deep_seed_validation(client, queue_stub):
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
+    # 任务名就是被展开的那个想法的名字（一个课题常有好几个方案任务）
+    assert resp.json()["goal"] == "研究方案：草案想法"
     run_id = resp.json()["id"]
     engine, _ = _make_engine()
     await engine.run(uuid.UUID(run_id))
@@ -544,3 +547,77 @@ async def test_deep_needs_differentiation_reworks_design(client, queue_stub):
         idea = (await session.execute(select(Idea).where(Idea.depth == "proposal"))).scalars().one()
         # 回炉后的设计（fake 修订版）进入最终正文
         assert "（fake 修订设计）" in idea.content
+
+
+# ---- 正文汇编与外部文献 ----
+
+
+def test_proposal_sections_do_not_repeat_their_headings():
+    """各节模型自己写的同名标题去掉，节内小标题降到章标题下面；标题和研究目标只在
+    给模型看的全文里（想法页已经显示了它们）。"""
+    from app.agents.voyage.actions_proposal import _compose_content
+
+    goal = {
+        "research_type": "method",
+        "task": "任务",
+        "question": "问题",
+        "objectives": ["目标一"],
+        "success_criteria": ["标准一"],
+        "scope": {"in_scope": ["范围"], "out_of_scope": []},
+        "resources_needed": {"compute": "1 卡", "data": ["公开数据"], "time_weeks": 4},
+    }
+    sections = {
+        "related_work": (
+            "# 背景与相关工作\n\n## 1. 问题背景\n\n正文一。\n\n### 1.1 细节\n\n正文二。"
+        ),
+        "design": "## 研究方案设计\n\n## 核心假设\n\n```\n# 代码里的井号\n```",
+        "experiments": "实验正文，没有标题。",
+        "risks": "- 风险一",
+        "novelty": "核查结论。",
+    }
+    content = _compose_content("方案标题", goal, sections, "# 预期成果与产出\n\n论文一篇", [])
+    lines = content.splitlines()
+    assert lines[0] == "## 背景与相关工作"
+    for heading in ("背景与相关工作", "研究方案设计", "预期成果与产出"):
+        assert sum(1 for line in lines if line.lstrip("#").strip() == heading) == 1, heading
+    assert "### 1. 问题背景" in lines and "#### 1.1 细节" in lines
+    assert "### 核心假设" in lines and "# 代码里的井号" in lines
+    assert "## 研究目标" not in content and "方案标题" not in content
+    full = _compose_content("方案标题", goal, sections, "论文一篇", [], for_reader=False)
+    assert full.startswith("# 方案标题\n\n## 研究目标")
+
+
+def test_transliterated_titles_are_recognised():
+    from app.agents.voyage.actions_proposal import looks_transliterated
+
+    assert looks_transliterated("dan bai zhi jie gou fen xi zhi bei jian ding yu wei liang ce xu")
+    assert not looks_transliterated("Dense Passage Retrieval for Open-Domain Question Answering")
+    # 英文标题里碰巧是拼音拼写的词（long、men、he）凑不到八成
+    assert not looks_transliterated("Long Context Retrieval Helps Men and Machines")
+    assert not looks_transliterated("REALM")
+
+
+async def test_external_results_are_checked_for_relevance(client, monkeypatch):
+    """外部检索结果：拼音音译的标题直接不要，其余过一次相关性复核，只留相关的。"""
+    from types import SimpleNamespace
+
+    from app.agents.voyage import actions_proposal
+
+    class _S2:
+        async def search_papers(self, query, *, limit):
+            return [
+                {"title": "dan bai zhi jie gou fen xi zhi bei jian ding yu", "url": "u0"},
+                {"title": "Joint Retriever Training for Generation", "url": "u1"},
+                {"title": "Coral Reef Bleaching in 1998", "url": "u2"},
+            ]
+
+    monkeypatch.setattr(actions_proposal, "get_s2_client", lambda: _S2())
+    ctx = SimpleNamespace(
+        llm=LLMRouter(),
+        bus=None,
+        run=SimpleNamespace(id=uuid.uuid4(), created_by=None, project_id=None),
+        evidence_guidance=lambda: "",
+    )
+    goal = {"task": "retriever training", "question": "does joint training help generation?"}
+    found, ok = await actions_proposal._external_search(ctx, ["q"], limit=5, goal=goal)
+    assert ok and [row["url"] for row in found] == ["u1"]

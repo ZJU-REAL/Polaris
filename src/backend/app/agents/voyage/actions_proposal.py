@@ -18,6 +18,7 @@
 import asyncio
 import contextlib
 import json
+import re
 import uuid
 from typing import Annotated, Any, Literal, get_args
 
@@ -268,7 +269,8 @@ POLARIS_PROPOSAL_RELATED — 你是研究方案的「背景与相关工作」撰
 
 要求：
 - goal.grounding 里的每篇库内论文都必须覆盖，引用写作 [[paper:论文uuid]]；
-- 给出的外部文献（如有）用 [标题](url) 引用，并说明与本工作的差异；
+- 给出的外部文献（如有）用 [标题](url) 引用，并说明与本工作的差异；标题照抄原文，不要
+  翻译、音译或改写；
 - 必须包含「本工作与已有工作的差异」小节，逐条对比。
 
 可用工具（需要补充检索时调用）：
@@ -340,7 +342,8 @@ POLARIS_NOVELTY_CHECK — 你是新颖性核查员。对照给出的相似工作
 
 输出字段：
 {"verdict": "novel" 或 "needs_differentiation" 或 "duplicate",
- "comparisons": [{"title": "相似工作标题", "difference": "本方案与它的本质差异；若无差异要明说"}],
+ "comparisons": [{"title": "相似工作标题（照抄清单里的原文，不翻译、不音译）", \
+"difference": "本方案与它的本质差异；若无差异要明说"}],
  "reason": "总体判定理由"}
 
 判定标准：与所有相似工作都有清晰差异 → novel；核心思路与某工作接近但可以通过调整设计
@@ -739,10 +742,88 @@ async def _grounding_context(ctx: ActionContext) -> str:
     return "依据文献：\n" + "\n\n".join(parts) if parts else "依据文献：（无）"
 
 
+#: 一个汉语拼音音节（不带声调）。
+_PINYIN_SYLLABLE_RE = re.compile(
+    r"^(?:zh|ch|sh|[bpmfdtnlgkhjqxrzcsyw])?"
+    r"(?:iang|iong|uang|ueng|ang|eng|ing|ong|ian|iao|uai|uan|ai|ei|ao|ou|an|en|er|in|un|"
+    r"ia|ie|iu|ua|uo|ue|ui|a|o|e|i|u|v)$"
+)
+
+
+def looks_transliterated(title: str) -> bool:
+    """标题是不是一串拼音（中文标题被书目库音译成了拉丁字母）。
+
+    实测一份真实方案的外部文献只有一条，标题是「dan bai zhi jie gou fen xi zhi bei jian
+    ding yu wei liang ce xu」——一份 2000 年生物多样性馆藏的中文旧文，书目库只给了
+    拼音。它读不懂、也查不到原文，不能当证据。四个词以上、八成以上是拼音音节才算：
+    英文标题里碰巧是拼音的词（long、men、he）凑不到这个比例。
+    """
+    words = re.findall(r"[A-Za-z]+", title)
+    if len(words) < 4:
+        return False
+    pinyin = sum(1 for w in words if _PINYIN_SYLLABLE_RE.match(w.lower()))
+    return pinyin >= 0.8 * len(words)
+
+
+EXTERNAL_RELEVANCE_SYSTEM = """\
+POLARIS_PROPOSAL_EXTERNAL_RELEVANCE
+你判断外部检索到的文献与一个研究目标是否直接相关。输入 JSON：goal（研究任务与核心
+问题）和 candidates（index、title、year、abstract 节选）。只挑出与研究目标**直接相关**
+的条目——研究同一问题、用同类方法或同类评测对象，能拿来比较或引用；只是同一大领域、
+主题不同，或信息不足以判断的都不要。没有就给空列表。
+输出 JSON：{"relevant": [0, 2]}"""
+
+
+class ExternalRelevanceOut(BaseModel):
+    relevant: list[int]
+
+
+async def _relevant_external(
+    ctx: ActionContext, goal: dict[str, Any], rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """外部检索结果的相关性复核（一次小调用）。
+
+    外部检索用研究任务原文去查（常常是中文），S2 / OpenAlex 按字面能凑出一堆主题
+    无关的结果，以前它们原样进了相关工作和新颖性核查，模型只好专门写一段「此条
+    无关」。判不出来（结构不对、写不完、拒答）时一条都不留：没核实过的外部文献
+    不当证据。
+    """
+    if not rows:
+        return []
+    payload = {
+        "goal": {"task": goal.get("task"), "question": goal.get("question")},
+        "candidates": [
+            {
+                "index": i,
+                "title": row["title"],
+                "year": row.get("year"),
+                "abstract": (row.get("abstract") or "")[:300],
+            }
+            for i, row in enumerate(rows)
+        ],
+    }
+    try:
+        out = await _ask(
+            ctx,
+            stage="proposal",
+            system=EXTERNAL_RELEVANCE_SYSTEM,
+            user=json.dumps(payload, ensure_ascii=False),
+            schema=ExternalRelevanceOut,
+        )
+    except _NO_JUDGEMENT:
+        return []
+    keep = {i for i in out.relevant if 0 <= i < len(rows)}
+    return [row for i, row in enumerate(rows) if i in keep]
+
+
 async def _external_search(
-    ctx: ActionContext, queries: list[str], *, limit: int
+    ctx: ActionContext, queries: list[str], *, limit: int, goal: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], bool]:
-    """外部检索（S2 优先，OpenAlex 兜底）；失败降级返回 (已得结果, ok=False)。"""
+    """外部检索（S2 优先，OpenAlex 兜底）；失败降级返回 (已得结果, ok=False)。
+
+    结果先去掉拼音音译的标题（:func:`looks_transliterated`），再过一次相关性复核
+    （:func:`_relevant_external`），只留与研究目标直接相关的。
+    """
     results: list[dict[str, Any]] = []
     seen_titles: set[str] = set()
     ok = True
@@ -766,7 +847,7 @@ async def _external_search(
         for row in rows:
             title = str(row.get("title") or "").strip()
             key = title.lower()
-            if not title or key in seen_titles:
+            if not title or key in seen_titles or looks_transliterated(title):
                 continue
             seen_titles.add(key)
             results.append(
@@ -780,7 +861,11 @@ async def _external_search(
             )
         await _log(ctx, f"外部检索「{query}」→ 累计 {len(results)} 篇")
     # 单例客户端是全进程共用的连接池，不在这里 aclose（裸构造时代的收尾已退役）
-    return results[: limit * 2], ok
+    found = results[: limit * 2]
+    relevant = await _relevant_external(ctx, goal, found)
+    if len(relevant) < len(found):
+        await _log(ctx, f"外部文献相关性复核：{len(found)} 篇里留下 {len(relevant)} 篇")
+    return relevant, ok
 
 
 @register("proposal.related_work")
@@ -793,7 +878,7 @@ async def proposal_related_work(ctx: ActionContext, params: dict[str, Any]) -> d
     external: list[dict[str, Any]] = []
     if knobs["external_search"]:
         external, _ok = await _external_search(
-            ctx, [goal["task"], goal["question"]], limit=_EXTERNAL_SIMILAR_K
+            ctx, [goal["task"], goal["question"]], limit=_EXTERNAL_SIMILAR_K, goal=goal
         )
         if external:
             existing = list(ctx.checkpoint.get("evidence_external") or [])
@@ -984,7 +1069,7 @@ async def proposal_novelty_check(ctx: ActionContext, params: dict[str, Any]) -> 
     external_ok = True
     if knobs["external_search"]:
         external, external_ok = await _external_search(
-            ctx, [goal["task"], goal["question"]], limit=_EXTERNAL_SIMILAR_K
+            ctx, [goal["task"], goal["question"]], limit=_EXTERNAL_SIMILAR_K, goal=goal
         )
 
     similar_block = json.dumps({"library": internal, "external": external}, ensure_ascii=False)
@@ -1097,23 +1182,78 @@ def _render_goal_md(goal: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t#]*$")
+_FENCE_RE = re.compile(r"^[ \t]*(```|~~~)")
+
+
+def _norm_heading(text: str) -> str:
+    """标题比较用：去掉编号、标点和空白，英文小写。"""
+    text = re.sub(r"^[\d一二三四五六七八九十]+[.、．)）]\s*", "", text.strip())
+    return re.sub(r"[\s:：*_`#]+", "", text).lower()
+
+
+def _section_body(text: str, heading: str) -> str:
+    """一节正文放到「## heading」之下：去掉模型自己写的同名标题，其余标题降到它下面。
+
+    各节是分别起草的，模型常常以「# 背景与相关工作」开头，正文里的小节用「##」——
+    拼起来就是「## 背景与相关工作」紧跟「# 背景与相关工作」，小节还和章同级（实测一份
+    真实方案 3 万字，五节都是这样）。代码块里的井号不动。
+    """
+    lines = text.strip().splitlines()
+    first = next((i for i, line in enumerate(lines) if line.strip()), None)
+    if first is not None:
+        match = _HEADING_RE.match(lines[first].strip())
+        if match and _norm_heading(match.group(2)) in ("", _norm_heading(heading)):
+            lines = lines[first + 1 :]
+    in_fence = False
+    levels: list[int] = []
+    for line in lines:
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+        elif not in_fence and (match := _HEADING_RE.match(line)):
+            levels.append(len(match.group(1)))
+    shift = max(0, 3 - min(levels)) if levels else 0
+    if shift:
+        in_fence = False
+        out: list[str] = []
+        for line in lines:
+            if _FENCE_RE.match(line):
+                in_fence = not in_fence
+            elif not in_fence and (match := _HEADING_RE.match(line)):
+                hashes = "#" * min(6, len(match.group(1)) + shift)
+                line = f"{hashes} {match.group(2)}"
+            out.append(line)
+        lines = out
+    return "\n".join(lines).strip() or "（缺）"
+
+
 def _compose_content(
     title: str,
     goal: dict[str, Any],
     sections: dict[str, str],
     expected: str,
     leftovers: list[str],
+    *,
+    for_reader: bool = True,
 ) -> str:
-    parts = [
-        f"# {title}",
-        "## 研究目标\n\n" + _render_goal_md(goal),
-        "## 背景与相关工作\n\n" + sections.get("related_work", "（缺）"),
-        "## 研究方案设计\n\n" + sections.get("design", "（缺）"),
-        "## 实验与评估计划\n\n" + sections.get("experiments", "（缺）"),
-        "## 预期成果与产出\n\n" + (expected or "（缺）"),
-        "## 风险与备选方案\n\n" + sections.get("risks", "（缺）"),
-        "## 新颖性核查\n\n" + sections.get("novelty", "（缺）"),
-    ]
+    """方案正文。
+
+    ``for_reader=True``（存进想法的正文）：不带标题和「研究目标」——想法页上方已经
+    显示了标题和研究目标表（``idea.title`` / ``idea.goal``），正文再写一遍就是重复。
+    ``False``：给评审和打分的模型看的全文，标题与目标都带上。
+    """
+    parts: list[str] = []
+    if not for_reader:
+        parts += [f"# {title}", "## 研究目标\n\n" + _render_goal_md(goal)]
+    for heading, body in (
+        ("背景与相关工作", sections.get("related_work", "")),
+        ("研究方案设计", sections.get("design", "")),
+        ("实验与评估计划", sections.get("experiments", "")),
+        ("预期成果与产出", expected),
+        ("风险与备选方案", sections.get("risks", "")),
+        ("新颖性核查", sections.get("novelty", "")),
+    ):
+        parts.append(f"## {heading}\n\n" + _section_body(body or "", heading))
     if leftovers:
         parts.append("## 遗留问题\n\n" + "\n".join(f"- {item}" for item in leftovers))
     else:
@@ -1201,6 +1341,9 @@ async def proposal_assemble(ctx: ActionContext, params: dict[str, Any]) -> dict[
         "expected": titled.expected.strip(),
     }
     content = _compose_content(meta["title"], goal, sections, meta["expected"], [])
+    full_text = _compose_content(
+        meta["title"], goal, sections, meta["expected"], [], for_reader=False
+    )
     ctx.checkpoint["proposal_expected"] = meta["expected"]
 
     # 四维自评（临时分，评审-修订后被终评覆盖）
@@ -1213,7 +1356,7 @@ async def proposal_assemble(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 system=SCORE_SYSTEM_PROMPT,
                 user=(
                     f"想法标题:{meta['title']}\n一句话概述:{meta['summary']}\n"
-                    f"详情:\n{content[:6000]}"
+                    f"详情:\n{full_text[:6000]}"
                 ),
                 schema=IdeaScoreOut,
             )
@@ -1354,7 +1497,7 @@ async def proposal_review_revise(ctx: ActionContext, params: dict[str, Any]) -> 
     round_no = 0
     while True:
         round_no += 1
-        content = _compose_content(title, goal, sections, expected, [])
+        content = _compose_content(title, goal, sections, expected, [], for_reader=False)
         reviews: dict[str, dict[str, Any]] = {}
         for name, dim, focus in REVIEWERS:
             extra_context = ""

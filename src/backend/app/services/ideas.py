@@ -487,9 +487,16 @@ async def create_deep_voyage(
         session, project_id=project.id, seed_type=data.seed.type, value=data.seed.value
     )
     budget = data.knobs.budget_tokens or _DEEP_DEFAULT_BUDGET
+    # 任务名：从一个想法展开的方案就叫这个想法的名字——任务列表里一个课题常有好几个
+    # 方案任务，都叫「深度研究方案：课题名」时分不出哪个是哪个
+    goal = f"深度研究方案：{project.name}"
+    if data.seed.type == "idea":
+        seed_idea = await session.get(Idea, uuid.UUID(str(data.seed.value)))
+        if seed_idea is not None:
+            goal = f"研究方案：{seed_idea.title}"
     run = VoyageRun(
         kind="idea_proposal",
-        goal=f"深度研究方案：{project.name}",
+        goal=goal,
         status="planning",
         cursor=0,
         checkpoint={"params": {"seed": data.seed.model_dump(), "knobs": data.knobs.model_dump()}},

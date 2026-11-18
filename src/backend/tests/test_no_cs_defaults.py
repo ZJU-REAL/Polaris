@@ -176,10 +176,18 @@ async def test_proposal_external_search_uses_shared_singletons():
         async def search_works(self, query, *, limit):  # pragma: no cover - S2 命中则不落到这
             raise AssertionError("openalex fallback should not run")
 
+    from app.core.llm.router import LLMRouter
+
     set_clients(s2=_S2(), openalex=_OpenAlex())  # type: ignore[arg-type]
     try:
-        ctx = SimpleNamespace(bus=None, run=None)
-        results, ok = await _external_search(ctx, ["quantum sensing"], limit=3)
+        ctx = SimpleNamespace(
+            bus=None,
+            llm=LLMRouter(),  # 结果要过一次相关性复核（fake：标题与目标有共同的词）
+            run=SimpleNamespace(id=uuid.uuid4(), created_by=None, project_id=None),
+            evidence_guidance=lambda: "",
+        )
+        goal = {"task": "quantum sensing", "question": "how far can quantum sensing go?"}
+        results, ok = await _external_search(ctx, ["quantum sensing"], limit=3, goal=goal)
     finally:
         reset_clients()
     assert ok and [r["title"] for r in results] == ["S2 hit for quantum sensing"]

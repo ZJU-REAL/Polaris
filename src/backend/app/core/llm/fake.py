@@ -111,6 +111,7 @@ _PROPOSAL_EXPERIMENTS_MARKER = "POLARIS_PROPOSAL_EXPERIMENTS"  # 实验计划 + 
 _NOVELTY_CHECK_MARKER = "POLARIS_NOVELTY_CHECK"  # 新颖性三档判定
 _PROPOSAL_RISKS_MARKER = "POLARIS_PROPOSAL_RISKS"  # 风险与备选
 _PROPOSAL_TITLE_MARKER = "POLARIS_PROPOSAL_TITLE"  # 标题/概述/预期成果
+_EXTERNAL_RELEVANCE_MARKER = "POLARIS_PROPOSAL_EXTERNAL_RELEVANCE"  # 外部文献相关性复核
 _PROPOSAL_REVIEW_MARKER = "POLARIS_PROPOSAL_REVIEW"  # 专职评审员
 _PROPOSAL_REVISE_MARKER = "POLARIS_PROPOSAL_REVISE"  # 作者修订
 
@@ -537,6 +538,8 @@ class FakeProvider(LLMProvider):
             )
         # Idea 2.0 深耕 marker：prompt 内嵌 goal JSON / wiki 摘录 / 检索结果
         # （会撞 "score"、"out_of_scope"、TL;DR 等通用 marker），须先于它们判断
+        if _EXTERNAL_RELEVANCE_MARKER in full_text:
+            return FakeProvider._respond_external_relevance(last_user)
         if _GOAL_EXPLORE_MARKER in full_text:
             return FakeProvider._respond_goal_explore(full_text)
         if _GOAL_REFINE_MARKER in full_text:
@@ -1701,6 +1704,21 @@ class FakeProvider(LLMProvider):
             },
             ensure_ascii=False,
         )
+
+    @staticmethod
+    def _respond_external_relevance(last_user: str) -> str:
+        """外部文献相关性复核：标题与研究任务 / 问题有共同的词（4 个字母以上、不分大小写）
+        才算相关——确定性、且「主题无关的条目被筛掉」可以直接断言。"""
+        payload = FakeProvider._payload_of(last_user)
+        goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else {}
+        words = set(re.findall(r"[a-z]{4,}", json.dumps(goal, ensure_ascii=False).lower()))
+        relevant = [
+            c.get("index")
+            for c in payload.get("candidates") or []
+            if isinstance(c, dict)
+            and words & set(re.findall(r"[a-z]{4,}", str(c.get("title") or "").lower()))
+        ]
+        return json.dumps({"relevant": relevant})
 
     @staticmethod
     def _respond_proposal_title(full_text: str) -> str:
