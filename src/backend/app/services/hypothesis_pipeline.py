@@ -21,8 +21,10 @@ LLM 只负责五件判断性的事——组合灵感成假设、拆子命题、�
    同环节第二次调用只允许从检索结果里**选择** paper_id + 立场（support/refute）
    或判 speculation；后处理校验所选 id ∈ 检索集，越界一律降为 speculation——
    引用只能指向真实检索结果，结构上杜绝编造引文（各模型引文伪造率 14–95%）。
-3. **novelty**：非 speculation 子命题换措辞再检索一轮（同一措辞查两遍只会
-   复读接地结果），``hyp_novelty`` 逐条判 known / novel / uncertain——先摘出
+3. **novelty**：每条子命题换措辞再检索一轮（同一措辞查两遍只会复读接地
+   结果），``hyp_novelty`` 逐条判 known / novel / uncertain。没有文献依据的
+   子命题也要判：一个好假设恰恰是「有依据的已知部分 + 文献没覆盖的新部分」，
+   只判有依据的那几条，新颖比例就永远接近零——先摘出
    假设中已知的部分再逐项对照文献，co-scientist Reflection 路线。
 4. **feasibility**：venue/年份分布、库内相关片段密度等可得性信号**确定性**
    统计，``hyp_feasibility`` 只写风险论证段——资源匹配是查表不是发挥。
@@ -162,7 +164,8 @@ NOVELTY_SYSTEM_PROMPT = """\
 POLARIS_HYP_NOVELTY
 你是查新判定器。输入 JSON 的 items 每条是假设的一个子命题和再次检索到的文献
 片段。对每条判定：该子命题是否已被这些文献覆盖——
-known（已有文献明确覆盖）| novel（文献未覆盖，是新的）| uncertain（证据不足以判定）。
+known（已有文献明确覆盖）| novel（这些文献都没有提出或验证过它，是新的）|
+uncertain（片段与它沾边但不足以判定）。片段全都与子命题无关时判 novel。
 paper_ids 只允许来自 evidence。
 输出 JSON：{"items": [{"index": <原样回传>, \
 "verdict": "known|novel|uncertain", "paper_ids": ["..."]}]}"""
@@ -729,16 +732,20 @@ async def novelty(
     {"subclaims": [{"subclaim", "verdict": "known|novel|uncertain",
                     "paper_ids", "judged"}]}
 
-    speculation 子命题不送 judge（库里连接地证据都没有，「是否已被覆盖」无从
-    判起），如实记 uncertain / judged=False。模型给不出判定（结构不对、写不完、
-    拒答）时也整体降级为 uncertain——查新判不动不等于假设不成立，不该炸掉整轮
-    扩展。网络、限流、密钥这类失败照常上抛。
+    每条子命题都换措辞复检一轮再送 judge，接地时判成 speculation 的也一样。
+    score 是「新颖比例 × 有支持的比例」：有文献支持的子命题多半会被判 known，
+    新颖的部分恰恰落在没有文献依据的那几条上。只判有依据的子命题时，真实模型
+    下新颖比例接近零，一轮扩展出来的子假设全部低于剪枝线（实测 4 个全剪）。
+
+    复检什么都没捞到的子命题（库里没有可检索的片段）不送 judge：没有任何文献
+    可对照，「是否已被覆盖」无从判起，如实记 uncertain / judged=False。模型给
+    不出判定（结构不对、写不完、拒答）时也整体降级为 uncertain——查新判不动
+    不等于假设不成立，不该炸掉整轮扩展。网络、限流、密钥这类失败照常上抛。
     """
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
-    judged_indices = [i for i, e in enumerate(grounding) if e.get("stance") != "speculation"]
     evidence_by_index: dict[int, list[dict[str, Any]]] = {}
     trace_queries: list[dict[str, Any]] = []
-    for i in judged_indices:
+    for i in range(len(grounding)):
         query = f"{_NOVELTY_QUERY_PREFIX} {grounding[i]['subclaim']}"
         chunks = await _retrieve(
             session,
@@ -748,10 +755,13 @@ async def novelty(
             project_id=project_id,
             limit=GROUND_TOP_K,
         )
-        titles = await _paper_titles(session, list({c.paper_id for c in chunks}))
-        evidence_by_index[i] = [_chunk_entry(c, titles) for c in chunks]
         # 检索留痕（D6 披露 #655）：查新用的是换措辞后的查询，如实记换后的
         trace_queries.append({"query": query, "paper_ids": _ordered_paper_ids(chunks)})
+        if not chunks:
+            continue
+        titles = await _paper_titles(session, list({c.paper_id for c in chunks}))
+        evidence_by_index[i] = [_chunk_entry(c, titles) for c in chunks]
+    judged_indices = sorted(evidence_by_index)
     verdicts: dict[int, tuple[str, list[str]]] = {}
     if judged_indices:
         try:

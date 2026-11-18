@@ -306,7 +306,8 @@ async def test_discovery_pipeline_run(client, queue_stub):
             # 查新：support 子命题判 novel（引证据），speculation 不送 judge、如实 uncertain
             report = child.novelty_report["subclaims"]
             assert [r["verdict"] for r in report] == ["novel", "uncertain"]
-            assert [r["judged"] for r in report] == [True, False]
+            # 两条子命题都送去查新：没有文献依据的那条也要判是不是新的
+            assert [r["judged"] for r in report] == [True, True]
             assert set(report[0]["paper_ids"]) <= member_ids
             # 可行性：确定性信号 + fake 风险论证
             signals = child.feasibility["signals"]

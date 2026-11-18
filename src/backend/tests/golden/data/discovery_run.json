@@ -144,12 +144,12 @@
       "accounting": {
         "node_usage": {
           "<uuid-10>": {
-            "completion_tokens": 115,
-            "prompt_tokens": 835
+            "completion_tokens": 128,
+            "prompt_tokens": 1011
           },
           "<uuid-11>": {
-            "completion_tokens": 115,
-            "prompt_tokens": 839
+            "completion_tokens": 128,
+            "prompt_tokens": 1014
           },
           "<uuid-8>": {
             "completion_tokens": 91,
@@ -157,8 +157,8 @@
           }
         },
         "total": {
-          "completion_tokens": 321,
-          "prompt_tokens": 2163
+          "completion_tokens": 347,
+          "prompt_tokens": 2514
         }
       },
       "branches": [
@@ -270,6 +270,16 @@
           "round": 1
         },
         {
+          "node_id": "<uuid-10>",
+          "paper_ids": [
+            "<uuid-4>",
+            "<uuid-5>"
+          ],
+          "phase": "novelty",
+          "query": "已有研究 prior work on 机制假设（fake A）：structured agent planning；父假设：围绕「stru 的边界子命题（fake s2）",
+          "round": 1
+        },
+        {
           "node_id": "<uuid-11>",
           "paper_ids": [
             "<uuid-4>",
@@ -297,6 +307,16 @@
           ],
           "phase": "novelty",
           "query": "已有研究 prior work on 证据闭环假设（fake B）：structured agent planning；父假设：围绕「st 的机制子命题（fake s1）",
+          "round": 1
+        },
+        {
+          "node_id": "<uuid-11>",
+          "paper_ids": [
+            "<uuid-4>",
+            "<uuid-5>"
+          ],
+          "phase": "novelty",
+          "query": "已有研究 prior work on 证据闭环假设（fake B）：structured agent planning；父假设：围绕「st 的边界子命题（fake s2）",
           "round": 1
         }
       ],
@@ -371,7 +391,7 @@
             "verdict": "novel"
           },
           {
-            "judged": false,
+            "judged": true,
             "paper_ids": [],
             "subclaim": "机制假设（fake A）：structured agent planning；父假设：围绕「stru 的边界子命题（fake s2）",
             "verdict": "uncertain"
@@ -432,7 +452,7 @@
             "verdict": "novel"
           },
           {
-            "judged": false,
+            "judged": true,
             "paper_ids": [],
             "subclaim": "证据闭环假设（fake B）：structured agent planning；父假设：围绕「st 的边界子命题（fake s2）",
             "verdict": "uncertain"
@@ -652,14 +672,14 @@
               },
               "round": 1,
               "usage": {
-                "completion_tokens": 294,
-                "prompt_tokens": 2114
+                "completion_tokens": 320,
+                "prompt_tokens": 2465
               }
             },
             "started_at": "<ts>",
             "tokens": {
-              "completion_tokens": 294,
-              "prompt_tokens": 2114
+              "completion_tokens": 320,
+              "prompt_tokens": 2465
             },
             "verdict": {
               "passed": true,
@@ -681,8 +701,8 @@
           },
           "round": 1,
           "usage": {
-            "completion_tokens": 294,
-            "prompt_tokens": 2114
+            "completion_tokens": 320,
+            "prompt_tokens": 2465
           }
         },
         "params": {
@@ -698,8 +718,8 @@
         "status": "passed",
         "title": "第 1 轮扩展假设",
         "tokens": {
-          "completion_tokens": 294,
-          "prompt_tokens": 2114
+          "completion_tokens": 320,
+          "prompt_tokens": 2465
         },
         "verdict": {
           "passed": true,
@@ -779,9 +799,9 @@
     ],
     "updated_at": "<ts>",
     "usage": {
-      "completion_tokens": 340,
-      "prompt_tokens": 2258,
-      "total_tokens": 2598
+      "completion_tokens": 366,
+      "prompt_tokens": 2609,
+      "total_tokens": 2975
     }
   }
 }

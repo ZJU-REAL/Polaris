@@ -6,7 +6,7 @@
 
 - generate：三路灵感取材（语义近邻 / 引文 2 跳远端 / 多样窗）+ 去重折叠；
 - ground：拆子命题 → top-12 检索 → 只许从检索集内选 + 越界引用降 speculation；
-- novelty：换措辞复检 + 逐子命题 verdict（speculation 不送 judge）；
+- novelty：换措辞复检 + 逐子命题 verdict（没有依据的子命题也判，复检空手的不判）；
 - feasibility：确定性资源信号 + fake 风险论证；
 - score：novel 比例 × support 覆盖率 的乘积公式。
 """
@@ -363,9 +363,9 @@ async def test_ground_without_hits_is_all_speculation(client):
     assert all(g["paper_ids"] == [] for g in result["grounding"])
 
 
-async def test_novelty_judges_only_grounded_subclaims(client):
-    """novelty：support 子命题送 judge（fake 判 novel、引证据首 id）；
-    speculation 不送 judge、如实 uncertain / judged=False。"""
+async def test_novelty_judges_every_subclaim_including_unsupported_ones(client):
+    """novelty：每条子命题都送 judge（fake：第一条 novel 并引证据首 id，其余
+    uncertain）。接地判成 speculation 的也要判——假设里新的那部分正是它们。"""
     library_id, ids = await _setup(client)
     grounding = [
         {
@@ -385,21 +385,41 @@ async def test_novelty_judges_only_grounded_subclaims(client):
         )
     report = result["report"]["subclaims"]
     assert [r["verdict"] for r in report] == ["novel", "uncertain"]
-    assert [r["judged"] for r in report] == [True, False]
-    assert report[0]["paper_ids"] == [str(ids["A"])]  # 复检查询仍只命中 A
+    assert [r["judged"] for r in report] == [True, True]
+    assert report[0]["paper_ids"] == [str(ids["A"])]  # 复检查询里 A 排第一
     assert result["usage"]["prompt_tokens"] > 0
+    # 每条子命题一条复检留痕，用的是换过措辞的查询
+    queries = result["trace"]["queries"]
+    assert len(queries) == 2 and all(q["query"].startswith("已有研究") for q in queries)
 
 
-async def test_novelty_all_speculation_skips_llm(client):
-    """全 speculation：没有可判的子命题，不调 LLM（usage 为零）、全 uncertain。"""
+async def test_novelty_of_an_unsupported_hypothesis_is_still_judged(client):
+    """全 speculation 的假设：库里有可对照的文献，就要判它是不是新的。
+    只判有依据的子命题时，新颖比例永远接近零、子假设全部被剪。"""
     library_id, _ids = await _setup(client)
     grounding = [{"subclaim": "s", "stance": "speculation", "paper_ids": []}]
     async with get_sessionmaker()() as session:
         result = await pipeline.novelty(
             session, LLMRouter(), library_id=library_id, statement="stmt", grounding=grounding
         )
-    assert result["report"]["subclaims"][0]["verdict"] == "uncertain"
+    entry = result["report"]["subclaims"][0]
+    assert entry["verdict"] == "novel" and entry["judged"] is True
+    assert result["usage"]["prompt_tokens"] > 0
+    assert pipeline.novelty_ratio(result["report"]) == 1.0
+
+
+async def test_novelty_without_any_retrieved_evidence_skips_the_model(client):
+    """复检什么都没捞到：没有文献可对照，不调模型（usage 为零）、如实 uncertain。"""
+    library_id, _ids = await _setup(client, indexed=False)
+    grounding = [{"subclaim": "s", "stance": "speculation", "paper_ids": []}]
+    async with get_sessionmaker()() as session:
+        result = await pipeline.novelty(
+            session, LLMRouter(), library_id=library_id, statement="stmt", grounding=grounding
+        )
+    entry = result["report"]["subclaims"][0]
+    assert entry["verdict"] == "uncertain" and entry["judged"] is False
     assert result["usage"] == {"prompt_tokens": 0, "completion_tokens": 0}
+    assert len(result["trace"]["queries"]) == 1  # 查过，只是空手
 
 
 async def test_feasibility_signals_are_deterministic(client):

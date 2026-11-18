@@ -305,15 +305,18 @@ async def test_disclosure_artifact_written_and_served(client, queue_stub):
     assert d["warnings"] == []
     # 燃料节恒在（#670）：本库没有抽取产物/概念 → 三路燃料如实为空
     assert d["fuels"] == {"methods": [], "concept_pairs": [], "gaps": []}
-    # 检索留痕齐全：generate 1 条 + 每子假设接地 2 条/查新 1 条（fake 确定性形状）
+    # 检索留痕齐全：generate 1 条 + 每子假设接地 2 条/查新 2 条（fake 确定性形状；
+    # 查新对每条子命题都复检，没有文献依据的那条也一样）
     phases = [q["phase"] for q in d["queries"]]
     assert phases == [
         "generate",
         "ground",
         "ground",
         "novelty",
+        "novelty",
         "ground",
         "ground",
+        "novelty",
         "novelty",
     ]
     assert all(q["round"] == 1 and q["node_id"] for q in d["queries"])
