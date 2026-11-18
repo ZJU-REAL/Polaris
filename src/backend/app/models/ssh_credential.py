@@ -19,9 +19,8 @@ app/core/security.py；所有敏感字段绝不明文出库/出 API）：
 - ``visa``：host = 仪器主机（展示用）；payload = {"resource": str
   (pyvisa 资源串，如 "TCPIP0::10.0.0.5::INSTR"), "secret"?: str}。
   资源串含内网定位信息，整体按敏感处理。
-- ``ws``：BYO runner tier-2 机器凭据（#695）。连接方向反过来——agent 出站
-  连回平台，host/port 仅作展示；payload = {"secret_sha256": str}，只存 agent
-  secret 的 sha256 摘要（服务端只需验证、永不回读明文，泄库也拼不回 secret）。
+- ``ws``：已移除的出站 WebSocket runner agent 的机器凭据。类型名留着只为
+  让存量行仍然合法，没有代码再创建或读取它。
 """
 
 import uuid

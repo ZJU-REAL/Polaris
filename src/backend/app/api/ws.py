@@ -7,10 +7,6 @@
 - ``WS /ws/manuscripts/{file_id}?token=<jwt>``（docs/task-system.md §7）：pycrdt CRDT
   协同房间（y-websocket 二进制协议，房间名 = file id）。on_connect 校验
   JWT + 课题归属 + 文件存在且非 readonly，失败分别以 4401 / 4404 / 4403 关闭。
-- ``WS /ws/runner-agents/connect``（docs/byo-runner.md tier-2，#695）：BYO runner
-  出站 agent 长连接。鉴权走**首消息**而非 query 参数（agent secret 是长期凭据，
-  放 URL 会进各级访问日志），失败 4401 关闭；协议与生命周期见
-  app/services/runner_ws.py。
 """
 
 import asyncio
@@ -26,7 +22,6 @@ from app.core.events import notify_channel
 from app.core.redis import get_redis
 from app.models.user import User
 from app.services import manuscripts as manuscripts_service
-from app.services import runner_ws as runner_ws_service
 from app.services.crdt_rooms import get_crdt_rooms
 
 router = APIRouter()
@@ -155,10 +150,3 @@ async def manuscript_crdt_ws(
     finally:
         # 断开即冲刷快照（防抖窗口内的最后编辑不丢）
         await rooms.flush(file.id)
-
-
-@router.websocket("/ws/runner-agents/connect")
-async def runner_agent_ws(websocket: WebSocket) -> None:
-    """BYO runner tier-2 agent 出站连接（#695）。薄转发：协议全在 service 层，
-    便于测试直接驱动 serve_agent（注入 fakeredis 与假 WebSocket）。"""
-    await runner_ws_service.serve_agent(websocket, redis=get_redis())

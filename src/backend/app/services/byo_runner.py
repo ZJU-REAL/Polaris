@@ -8,7 +8,7 @@
    ssh_exec 的固定模板里（探测/workdir/run.exit 约定各一摊）。本 PR 把这些约定
    收敛成一小组远端脚本作为 agent 载荷推上去并钉版本；**执行路径本期不切换**
    （固定模板命令继续直跑，行为零变化），脚本先作为版本化的远端契约落位，
-   tier-2 的常驻 agent 与后续「命令走脚本」的收敛都在这个目录上迭代。
+   后续「命令走脚本」的收敛在这个目录上迭代。
 
 2. **runner 主机注册**：注册一台 runner 机器 = 建一个 host 类 Resource（#680），
    credential_id 关联 SSH 凭据——租约互斥/容量计数天然生效。新建主机默认
@@ -54,7 +54,7 @@ _CMD_TIMEOUT = 60.0
 # 内容全部是固定文本（无任何运行期拼接），不构成新的注入面。
 AGENT_SCRIPTS: dict[str, str] = {
     # 环境探测：与 ssh_exec.probe_sysinfo 的四条探测命令同源（CPU/内存/磁盘/GPU），
-    # 单脚本一次拿全，供 tier-2 agent 注册时自述硬件、也供人肉登录排查。
+    # 单脚本一次拿全，供人肉登录排查。
     "probe.sh": (
         "#!/usr/bin/env bash\n"
         "# polaris-runner agent: environment probe (fixed template, no arguments)\n"
@@ -88,7 +88,7 @@ AGENT_SCRIPTS: dict[str, str] = {
         "esac\n"
     ),
     # run.exit 约定：入口命令的退出码落 <workdir>/run.exit（依赖安装同理 setup.exit），
-    # 轮询端只认这两个文件——脚本把该约定固化下来供 tier-2 复用。
+    # 轮询端只认这两个文件——脚本把该约定固化下来。
     "run-status.sh": (
         "#!/usr/bin/env bash\n"
         "# polaris-runner agent: read the run.exit/setup.exit convention\n"
