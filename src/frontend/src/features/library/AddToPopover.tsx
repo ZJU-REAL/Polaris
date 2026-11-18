@@ -368,12 +368,30 @@ function Popover({
 }
 
 /** 论文行里的「+」按钮：点开加入浮层（自管理开合，阻断行点击）。 */
-export function AddToButton({ paperId }: { paperId: string }) {
+export function AddToButton({ paperId, text }: { paperId: string; /** 给了就是带字的按钮（详情里用），否则是行内的 + 图标 */ text?: string }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
 
   return (
     <>
+      {text ? (
+        <button
+          ref={btnRef}
+          type="button"
+          className="btn btn-ghost sm"
+          title={tr('添加到我的文献库或课题', 'Add to My library or a topic')}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          data-testid="paper-add-to"
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen((v) => !v);
+          }}
+        >
+          <Icon name="bookmark" size={13} />
+          {text}
+        </button>
+      ) : (
       <button
         ref={btnRef}
         type="button"
@@ -398,6 +416,7 @@ export function AddToButton({ paperId }: { paperId: string }) {
       >
         <Icon name="plus" size={15} />
       </button>
+      )}
       {open && <Popover paperId={paperId} btnRef={btnRef} onClose={() => setOpen(false)} />}
     </>
   );

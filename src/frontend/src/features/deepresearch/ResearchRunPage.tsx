@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
@@ -51,6 +51,19 @@ export function ResearchRunPage() {
     setEditing(false);
     setMenuOpen(false);
   }, [id]);
+
+  // ?edit=scope：从文献库「找论文」的「调整范围并重新检索」过来，范围数据到了就直接打开编辑器
+  const [searchParams, setSearchParams] = useSearchParams();
+  const wantsEdit = searchParams.get('edit') === 'scope';
+  useEffect(() => {
+    if (!wantsEdit || !run) return;
+    if (run.brief && run.status !== 'running') setEditing(true);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('edit');
+      return next;
+    }, { replace: true });
+  }, [wantsEdit, run, setSearchParams]);
 
   useEffect(() => {
     if (!menuOpen) return;

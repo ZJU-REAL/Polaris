@@ -43,12 +43,15 @@ describe('every "send to browser extension" entry point is gated', () => {
     expect(hits.every(Boolean)).toBe(true);
   });
 
-  it('paper list: per-paper button, batch button and the history entry', () => {
+  it('paper list: per-paper menu item, batch button and the history entry', () => {
     const source = read('features/wiki/PapersTab.tsx');
-    const send = gatedOccurrences(source, "tr('发送到浏览器扩展', 'Send to browser extension')");
-    expect(send).toHaveLength(2);
-    expect(send.every(Boolean)).toBe(true);
-    expect(gatedOccurrences(source, "tr('扩展下载记录', 'Extension downloads')")).toEqual([true]);
+    const perPaper = gatedOccurrences(source, "tr('用浏览器扩展下载 PDF', 'Get the PDF via the browser extension')");
+    const batch = gatedOccurrences(source, "tr('用浏览器扩展下载 PDF', 'Get PDFs via the extension')");
+    expect(perPaper).toEqual([true]);
+    expect(batch).toEqual([true]);
+    // 下载记录在文献库页头的「更多」菜单里
+    const page = read('features/wiki/WikiPage.tsx');
+    expect(gatedOccurrences(page, "tr('浏览器扩展下载记录', 'Browser extension downloads')")).toEqual([true]);
   });
 
   it('the settings tab that only exists to connect the extension', () => {

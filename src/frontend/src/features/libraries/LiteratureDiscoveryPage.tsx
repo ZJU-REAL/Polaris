@@ -170,8 +170,14 @@ export function eligibleExtensionHits(
 
 export function LiteratureDiscoveryPanel({
   libraryId,
+  runId,
+  embedded,
 }: {
   libraryId: string;
+  /** 嵌在「找论文」里时由外面决定看哪一次检索 */
+  runId?: string | null;
+  /** 嵌在「找论文」里：不要自己的标题、检索表单和历史（外面已经有了） */
+  embedded?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [topic, setTopic] = useState('');
@@ -201,7 +207,7 @@ export function LiteratureDiscoveryPanel({
     refetchInterval: 5_000,
   });
   const runs = runsQuery.data?.items ?? [];
-  const selectedRunId = activeRunId ?? runs[0]?.id ?? null;
+  const selectedRunId = embedded ? (runId ?? null) : (activeRunId ?? runs[0]?.id ?? null);
 
   useEffect(() => {
     setPage(1);
@@ -385,6 +391,8 @@ export function LiteratureDiscoveryPanel({
 
   return (
     <div className="literature-discovery">
+      {!embedded && (
+        <>
       <header className="literature-discovery-header">
         <div className="literature-discovery-heading">
           <div className="row gap8">
@@ -423,6 +431,9 @@ export function LiteratureDiscoveryPanel({
           {startMutation.isPending ? tr('正在开始…', 'Starting…') : tr('开始检索', 'Start search')}
         </button>
       </section>
+
+        </>
+      )}
 
       {runQuery.data && (
         <section className="literature-run-status">
@@ -586,7 +597,7 @@ export function LiteratureDiscoveryPanel({
             </div>
           )}
         </>
-      ) : (
+      ) : embedded ? null : (
         <EmptyState icon="compass" title={tr('还没有检索记录', 'No searches yet')} desc={tr('设置结果数和起始年份后开始检索。', 'Set the result count and start year, then start a search.')} />
       )}
 

@@ -1,0 +1,97 @@
+/* ============================================================
+   文献库页（WikiWorkbench）：页头 + 四个页签 + 一张内容卡；
+   知识 / 问答的子视图切换；找论文页。
+   页头沿用课题页头的 .dn 样式，两处长得一样。
+   ============================================================ */
+
+.lw-head { margin-bottom: var(--sp-4); flex-shrink: 0; }
+.lw-head .dn-tabs { margin-top: var(--sp-2); }
+.lw-actions { gap: var(--sp-1); }
+.lw-running { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-2); padding: 0 8px; }
+.lw-meta { margin-top: 4px; font-size: var(--fs-sm); color: var(--text-3); line-height: 18px; min-height: 18px; }
+.lw-topic { color: var(--text-2); text-decoration: none; display: inline-flex; align-items: center; gap: 3px; }
+.lw-topic:hover { color: var(--accent-text); text-decoration: underline; }
+.lw-count { margin-left: 5px; font-weight: 400; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.lw-body { overflow: hidden; display: flex; flex-direction: column; flex: 1; min-height: 480px; }
+@container mainarea (max-width: 900px) {
+  .lw-hide-narrow { display: none; }
+}
+/* 课题页头在窄屏把唯一的动作按钮绝对定位到右上角；这里有三个，照那样会压在标题上。
+   改成标题占左边剩下的宽度（最多两行），动作留在右边。 */
+@media (max-width: 900px) {
+  .lw-head .dn-top { position: static; flex-wrap: nowrap; align-items: flex-start; }
+  .lw-head .dn-title { flex: 1 1 auto; flex-basis: auto; padding-right: 0 !important; }
+  .lw-head .dn-top > .dn-actions { position: static; }
+}
+
+/* —— 知识 / 问答：一行安静的子视图切换 —— */
+.kn-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.kn-nav {
+  display: flex; align-items: center; gap: 2px; padding: 8px 14px; flex-shrink: 0;
+  border-bottom: 0.5px solid var(--border); overflow-x: auto; scrollbar-width: none;
+}
+.kn-nav::-webkit-scrollbar { display: none; }
+.kn-hint { margin-left: auto; padding-left: var(--sp-4); font-size: var(--fs-sm); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.kn-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+@container mainarea (max-width: 900px) {
+  .kn-hint { display: none; }
+}
+
+/* —— 找论文 —— */
+.fp-scroll { overflow-y: auto; flex: 1; }
+.fp-col { max-width: 780px; margin: 0 auto; padding: 8px 28px 56px; }
+.fp-section { padding: 20px 0; border-bottom: 0.5px solid var(--border); }
+.fp-section:last-child { border-bottom: 0; }
+.fp-h { margin: 0 0 12px; font-size: var(--fs-title); font-weight: 600; color: var(--text); }
+.fp-note { font-size: var(--fs-sm); color: var(--text-3); }
+.fp-lead { margin: 0 0 4px; font-size: var(--fs-body); color: var(--text-2); line-height: 1.6; }
+.fp-origin { margin-bottom: 14px; }
+.fp-origin p { margin: 0; font-size: var(--fs-body); line-height: 1.7; color: var(--text); }
+.fp-origin p a { color: var(--accent-text); }
+.fp-row-actions a.btn { text-decoration: none; }
+.fp-row-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: 8px; }
+.fp-queries { margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.fp-queries ol { margin: 6px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.fp-queries li { display: flex; gap: 8px; align-items: baseline; font-size: var(--fs-sm); min-width: 0; }
+.fp-q-src { flex-shrink: 0; width: 92px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-q-text { flex: 1; min-width: 0; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-keep { display: flex; align-items: center; gap: var(--sp-3); padding: 12px 14px; border: 0.5px solid var(--border); border-radius: var(--radius); }
+.fp-keep-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-body); }
+.fp-methods { margin-bottom: 14px; }
+.fp-form { display: flex; flex-direction: column; gap: 14px; }
+.fp-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.fp-label { font-size: var(--fs-sm); font-weight: 500; color: var(--text-2); }
+.fp-small { max-width: 220px; }
+.fp-inline { display: flex; gap: var(--sp-4); flex-wrap: wrap; }
+.fp-radios { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2); }
+.fp-radio {
+  display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; cursor: pointer;
+  border: 0.5px solid var(--border-2); border-radius: var(--radius-sm); background: var(--surface);
+}
+.fp-radio.is-on { border-color: var(--accent); background: var(--accent-soft-row); }
+.fp-radio input { margin: 2px 0 0; accent-color: var(--accent); }
+.fp-radio b { display: block; font-size: var(--fs-body); font-weight: 500; color: var(--text); }
+.fp-radio small { display: block; margin-top: 2px; font-size: var(--fs-sm); color: var(--text-3); line-height: 1.5; }
+@container mainarea (max-width: 640px) {
+  .fp-radios { grid-template-columns: minmax(0, 1fr); }
+  .fp-col { padding: 4px 16px 40px; }
+}
+.fp-more-btn { align-self: flex-start; }
+.fp-knobs { display: flex; flex-direction: column; padding: 0 12px; border: 0.5px solid var(--border); border-radius: var(--radius-sm); }
+.fp-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; font-size: var(--fs-body); }
+.fp-switch small { display: block; font-size: var(--fs-sm); color: var(--text-3); }
+.fp-go { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.fp-results { max-width: none; }
+.fp-results-head { display: flex; align-items: center; justify-content: space-between; }
+.fp-history { list-style: none; margin: 0 0 8px; padding: 0; border-top: 0.5px solid var(--border); }
+.fp-history li { border-bottom: 0.5px solid var(--border); }
+.fp-history-row {
+  width: 100%; display: flex; align-items: center; gap: var(--sp-3); padding: 10px 2px;
+  background: transparent; border: 0; cursor: pointer; text-align: left; font-family: var(--sans); color: inherit;
+}
+.fp-history-row:hover { background: var(--surface-2); }
+.fp-history-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.fp-history-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fp-history-title { font-size: var(--fs-body); font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-history-status { flex-shrink: 0; display: inline-flex; align-items: center; gap: 8px; color: var(--text-3); }
+.link-btn { border: 0; background: none; padding: 0; color: var(--accent-text); cursor: pointer; font: inherit; text-decoration: underline; }

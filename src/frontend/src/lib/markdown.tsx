@@ -462,6 +462,15 @@ function parseBlocks(
   return out;
 }
 
+/**
+ * 模型有时把出处写成「[EVIDENCE p=1·s=5]」而不是约定的「[文1·句5]」。两种写法说的是同一件事
+ * （第几篇 · 第几句），统一成后者，出处就能照常变成可点的引用，而不是一串原样的标记。
+ */
+export function normalizeEvidenceMarkers(source: string): string {
+  if (!source.includes('EVIDENCE')) return source;
+  return source.replace(/\[EVIDENCE\s+p\s*=\s*(\d+)\s*[·・.,，]\s*s\s*=\s*(\d+)\s*\]/g, '[文$1·句$2]');
+}
+
 /** 安全 markdown 渲染（含 [[概念]] 双链与 ![[fig:N]] 嵌入图）。 */
 export function Markdown({
   source,
@@ -475,7 +484,7 @@ export function Markdown({
   style,
 }: MarkdownProps) {
   const nodes = useMemo(
-    () => parseBlocks(source, onWikiLink, renderFigure, renderPaperRef, renderCitation, renderLibraryFigure, renderImage),
+    () => parseBlocks(normalizeEvidenceMarkers(source), onWikiLink, renderFigure, renderPaperRef, renderCitation, renderLibraryFigure, renderImage),
     [source, onWikiLink, renderFigure, renderPaperRef, renderCitation, renderLibraryFigure, renderImage],
   );
   return (

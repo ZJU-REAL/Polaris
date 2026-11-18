@@ -99,6 +99,8 @@ export function plainSummary(text: string | null | undefined): string {
     .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
     .replace(/\[\[([^\]]+)\]\]/g, '$1')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
+    // 斜体（期刊名常写成 *Nature Energy*）：只认两边紧贴文字的一对星号，免得误伤乘号
+    .replace(/(^|[^*\w])\*(?=\S)([^*\n]+?)(?<=\S)\*(?!\*)/g, '$1$2')
     .replace(/\s+([，。；：、,.;:])/g, '$1')
     .replace(/([，。；：、！？])[ \t]+/g, '$1')
     .replace(/[ \t]{2,}/g, ' ')

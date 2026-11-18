@@ -56,8 +56,7 @@ export function LibraryDetailPage() {
 
   return (
     <div className="page fadeup page-fill" style={{ maxWidth: 1360, paddingBottom: 24 }}>
-      {/* 库名与返回入口都在顶栏面包屑里（实验室 › 文献库 › 库名），页面不再单占一行 */}
-      <WikiWorkbench pid={lib.project_id ?? undefined} libraryId={lib.id} />
+      <WikiWorkbench lib={lib} />
     </div>
   );
 }

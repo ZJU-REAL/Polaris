@@ -8,15 +8,17 @@ export interface DrawerProps {
   title: ReactNode;
   sub?: ReactNode;
   children: ReactNode;
+  /** 面板宽度（px），默认 420；窄屏不超过视口 */
+  width?: number;
 }
 
 /** 右侧滑出抽屉（scrim + panel）。 */
-export function Drawer({ open, onClose, title, sub, children }: DrawerProps) {
+export function Drawer({ open, onClose, title, sub, children, width }: DrawerProps) {
   if (!open) return null;
   return (
     <>
       <div className="drawer-scrim" onClick={onClose} />
-      <div className="drawer">
+      <div className="drawer" role="dialog" aria-modal="true" style={width ? { width: `min(${width}px, 100vw)` } : undefined}>
         <div className="row" style={{ padding: '18px 20px', borderBottom: '0.5px solid var(--border)', justifyContent: 'space-between' }}>
           <div>
             <div className="row gap8">{title}</div>

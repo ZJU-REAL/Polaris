@@ -2,33 +2,28 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { PaperStatusPill } from '../../components/ui/StatusPill';
-import { Segmented } from '../../components/ui/Segmented';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
-import { ScoreRing } from '../../components/ui/ScoreRing';
-import { EmptyState } from '../../components/ui/EmptyState';
-import { Modal } from '../../components/ui/Modal';
+import { EmptyState, LoadingState } from '../../components/ui/EmptyState';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { DotsMenu, type DotsMenuItem } from '../../components/ui/DotsMenu';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
 import { CompileBadge } from '../../components/ui/CompileBadge';
 import { citationExportItems, ExportDropdown } from '../../components/ui/ExportDropdown';
 import { PaperReader } from './PaperReader';
-import { readerFrom } from '../reading/shared';
+import { readerFrom, READING_STATUS, readingStatusMeta } from '../reading/shared';
 import { evidenceCitationRenderer, evidenceRefs } from '../reading/evidenceArtifact';
-import { PdfUploadButton } from '../shared/PdfUploadButton';
-import { PaperAssetPanel } from '../shared/PaperAssetPanel';
 import { toast } from '../../components/ui/Toast';
-import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { canSendToExtension, sendLibraryPapersToExtension } from '../../lib/extension-download-batches';
 import { extensionDeliveryAvailable } from '../../lib/polaris-extension';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
-import { fmtTime, parseApiDate, plainSummary } from '../../lib/format';
+import { fmtTime, parseApiDate } from '../../lib/format';
+import { errorText } from '../../lib/errors';
+import { useIsCompact } from '../../lib/useBreakpoint';
 import {
   api,
   ApiError,
   type CitationFormat,
   type MyMeta,
-  type PaperBatchImportInput,
   type PaperDetail,
   type PaperRead,
   type PaperSort,
@@ -38,56 +33,39 @@ import {
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { usePendingByPaper } from '../../lib/pending';
-import {
-  AffiliationChips,
-  AuthorLinks,
-  categoryMeta,
-  MetaFold,
-  MetaItem,
-  saveBlob,
-  SearchInput,
-  useDebounced,
-} from './shared';
-import { READING_STATUS, ReadingDot } from '../reading/shared';
+import { AuthorLinks, categoryMeta, MetaItem, saveBlob, SearchInput, useDebounced } from './shared';
 import { PaperCitationsSection, PaperExtractionsSection, PaperMyTagChips, PaperMyTagsRow, PaperNotesSection } from '../shared/PaperDetailBlocks';
+import { PaperRow, relevanceLabel, relevanceWords, shortAuthors } from '../shared/PaperRow';
+import { PaperDetailTabs, PaperFact, PaperFacts, PaperKeyPoints, PaperKicker, splitSummary } from '../shared/PaperDetail';
+import { PaperFulltextFact } from '../shared/PaperFulltext';
 import { TrashModal, type TrashItemView } from '../shared/TrashModal';
 import { AddToButton } from '../library/AddToPopover';
-import { PaperBatchProgressModal } from '../library/PaperBatchProgressModal';
 import { paperDragProps } from '../assistant/paperDrag';
-import { clampLines } from '../../lib/clamp';
-import { splitPaperInput } from './paperInput';
-import { ExtensionBatchHistoryModal } from './ExtensionBatchHistoryModal';
 import { ComparisonModal } from './ComparisonModal';
 
 /* ============================================================
-   论文库 Tab：左列表（过滤/搜索/排序/加载更多 + 添加文献/导出）
-   + 右详情（元数据 + wiki markdown + 概念 chips + 标签/星标/
-   阅读状态 + 编译/删除 + 阅读入口）；列表支持多选批量删除/导出。
+   文献库的「论文」页签：左边安静的列表，右边一篇论文的详情。
+
+   列表：搜索 + 一行文字筛选（全部 / 有解读 / 已星标 / 新加入）+ 排序；
+         更多条件收在筛选按钮里。
+   详情：出处 · 标题 · 作者 → 一个主动作（阅读原文）→ 事实行（为什么在这里 /
+         PDF 与全文 / 阅读状态 / 我的标签）→ 要点（只出现一次）→ 解读 / 摘要 / 笔记 / 更多。
    ============================================================ */
 
 const PAGE_SIZE = 20;
 
-/** 论文库视图（docs/task-system.md §7（原 api-lit.md §8.5））：全部 = 已纳入（相关性达标）的文献；
-    相关性不足的进回收站，不显示不计数。 */
+/** 列表视图：全部 = 已收进来的论文；不相关的进回收站，不显示不计数。 */
 type ViewFilter = 'all' | 'compiled' | 'starred' | 'today';
 
 // 模块级常量存 zh/en 两份文案，渲染处再 tr（import 时求值不会随语言切换更新）
 const VIEW_FILTERS: { v: ViewFilter; zh: string; en: string; hintZh: string; hintEn: string }[] = [
-  { v: 'all', zh: '全部', en: 'All', hintZh: '本库的全部论文', hintEn: 'Every paper in this library' },
-  { v: 'compiled', zh: '已解读', en: 'Summarized', hintZh: '已生成解读的论文', hintEn: 'Papers with a generated summary' },
+  { v: 'all', zh: '全部', en: 'All', hintZh: '这个文献库的全部论文', hintEn: 'Every paper in this library' },
+  { v: 'compiled', zh: '有解读', en: 'Summarized', hintZh: '已生成解读的论文', hintEn: 'Papers with a summary' },
   { v: 'starred', zh: '已星标', en: 'Starred', hintZh: '加了星标的论文', hintEn: 'Papers you starred' },
-  {
-    v: 'today',
-    zh: '最新收录',
-    en: 'Latest',
-    hintZh: '上次同步新增的论文',
-    hintEn: 'Papers added by the last sync',
-  },
+  { v: 'today', zh: '新加入', en: 'New', hintZh: '上次更新加入的论文', hintEn: 'Papers added by the last update' },
 ];
 
-
-
-/** 视图 → 列表查询参数（未纳入/回收站文献一律不出现在论文库）。 */
+/** 视图 → 列表查询参数（不相关 / 回收站里的论文一律不出现）。 */
 function viewQuery(view: ViewFilter): {
   status: PaperStatusFilter;
   starred?: boolean;
@@ -97,15 +75,12 @@ function viewQuery(view: ViewFilter): {
 } {
   if (view === 'compiled') return { status: 'compiled_any' };
   if (view === 'starred') return { status: 'library', starred: true };
-  // 最新收录：上次同步新增的那批。不能按「今天入库」卡——上次同步要是在昨天，
-  // 今天就永远是 0 篇，而用户想看的是「上次更新带进来什么」。
-  if (view === 'today') {
-    return { status: 'library', last_sync_only: true };
-  }
+  // 新加入：上次更新带进来的那批，不按「今天」卡（上次更新在昨天就永远是 0 篇）
+  if (view === 'today') return { status: 'library', last_sync_only: true };
   return { status: 'library' };
 }
 
-/** 深链 /wiki?author= / ?affiliation= 带进来的高级检索条件；seq 递增触发重新应用 */
+/** 深链 ?author= / ?affiliation= 带进来的筛选条件；seq 递增触发重新应用 */
 export interface AdvSearchSeed {
   author?: string;
   affiliation?: string;
@@ -114,472 +89,45 @@ export interface AdvSearchSeed {
 
 export interface PapersTabProps {
   pid?: string;
-  /** 独立库作用域：给定时集合级调用走 /libraries/{id}/* 端点，并隐藏标签编辑/过滤 */
   libraryId?: string;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onOpenConcept: (id: string) => void;
-  /** wiki 双链 [[概念名]] 点击 → 按名称跳概念 */
+  /** [[概念名]] 点击 → 按名称跳概念 */
   onWikiLink: WikiLinkHandler;
   /** 深链带入的作者/机构筛选（阅读页跳回文献库用） */
   advSeed?: AdvSearchSeed | null;
+  /** 空库时「找论文」去哪 */
+  onFindPapers?: () => void;
 }
 
-/* ---------------- 添加文献 Modal ---------------- */
+/* ---------------- 导出（放在文献库页的「更多」菜单里） ---------------- */
 
-type ImportMethod = 'arxiv' | 'doi' | 'pmid' | 'corpus' | 'bibtex' | 'zotero';
-
-/** 按 BibTeX 条目的配对大括号/圆括号切分，保留坏条目交给后端逐项报错。 */
-function splitBibtexEntries(raw: string): string[] {
-  const entries: string[] = [];
-  let start = -1;
-  let opener = '';
-  let closer = '';
-  let depth = 0;
-  let escaped = false;
-
-  for (let i = 0; i < raw.length; i += 1) {
-    const char = raw[i];
-    if (start < 0) {
-      if (char !== '@') continue;
-      let cursor = i + 1;
-      while (cursor < raw.length && /[A-Za-z]/.test(raw.charAt(cursor))) cursor += 1;
-      while (cursor < raw.length && /\s/.test(raw.charAt(cursor))) cursor += 1;
-      const opening = raw.charAt(cursor);
-      if (opening !== '{' && opening !== '(') continue;
-      start = i;
-      opener = opening;
-      closer = opener === '{' ? '}' : ')';
-      depth = 1;
-      i = cursor;
-      continue;
-    }
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === '\\') {
-      escaped = true;
-      continue;
-    }
-    if (char === opener) depth += 1;
-    if (char === closer) depth -= 1;
-    if (depth === 0) {
-      entries.push(raw.slice(start, i + 1).trim());
-      start = -1;
-    }
-  }
-
-  if (start >= 0) entries.push(raw.slice(start).trim());
-  if (entries.length === 0 && raw.trim()) entries.push(raw.trim());
-  return entries;
-}
-
-function AddPaperModal({
-  pid,
-  libraryId,
-  open,
-  onClose,
-  onImported,
-}: {
-  pid: string;
-  libraryId?: string;
-  open: boolean;
-  onClose: () => void;
-  /** 添加成功 / 已存在时跳转选中该论文 */
-  onImported: (paperId: string) => void;
-}) {
-  const queryClient = useQueryClient();
-  const scopeId = libraryId ?? pid;
-  const [method, setMethod] = useState<ImportMethod>('arxiv');
-  const [arxivId, setArxivId] = useState('');
-  const [doi, setDoi] = useState('');
-  const [pmid, setPmid] = useState('');
-  const [corpusId, setCorpusId] = useState('');
-  const [bibtex, setBibtex] = useState('');
-  const [zoteroBib, setZoteroBib] = useState<File | null>(null);
-  const [zoteroZip, setZoteroZip] = useState<File | null>(null);
-  const [parseError, setParseError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<{ taskId: string; total: number } | null>(null);
-
-  const invalidateLists = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
-    void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
-  }, [queryClient, scopeId]);
-
-  const batchItems = useMemo<PaperBatchImportInput['items']>(() => {
-    if (method === 'arxiv') return splitPaperInput(arxivId).map((value) => ({ arxiv_id: value }));
-    if (method === 'doi') return splitPaperInput(doi).map((value) => ({ doi: value }));
-    if (method === 'pmid') return splitPaperInput(pmid).map((value) => ({ pmid: value }));
-    if (method === 'corpus') return splitPaperInput(corpusId).map((value) => ({ corpus_id: value }));
-    return splitBibtexEntries(bibtex).map((value) => ({ bibtex: value }));
-  }, [arxivId, bibtex, corpusId, doi, method, pmid]);
-  const tooMany = batchItems.length > 50;
-
-  const reset = () => {
-    setArxivId('');
-    setDoi('');
-    setPmid('');
-    setCorpusId('');
-    setBibtex('');
-    setZoteroBib(null);
-    setZoteroZip(null);
-    setParseError(null);
-  };
-
-  const importMutation = useMutation({
-    mutationFn: (input: PaperBatchImportInput) => (
-      libraryId ? api.importLibraryPapersBatch(libraryId, input) : api.importPapersBatch(pid, input)
-    ),
-    onSuccess: (task) => {
-      reset();
-      onClose();
-      setProgress({ taskId: task.task_id, total: task.total });
-    },
-    onError: (e) => {
-      if (e instanceof ApiError && e.status === 422) {
-        setParseError(
-          tr('格式不正确，或超过 50 篇', 'The input isn’t valid, or has more than 50 papers.'),
-        );
-      } else if (e instanceof ApiError && e.status === 503) {
-        setParseError(
-          tr('本机引擎暂时无法处理，请稍后再试', 'The local engine is busy. Try again shortly.'),
-        );
-      } else {
-        toast(`${tr('无法添加：', 'Couldn’t add: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
-      }
-    },
-  });
-
-  // Zotero 导入是文件上传（multipart），与逐条 JSON 的批量添加分开一条 mutation；
-  // 结果复用同一个 paper-task 进度弹窗。
-  const zoteroMutation = useMutation({
-    mutationFn: ({ bib, zip }: { bib: File; zip: File | null }) =>
-      api.importLibraryZotero(libraryId!, bib, zip),
-    onSuccess: (task) => {
-      reset();
-      onClose();
-      setProgress({ taskId: task.task_id, total: task.total });
-    },
-    onError: (e) => {
-      if (e instanceof ApiError && e.status === 422) {
-        setParseError(
-          tr('这个 .bib 文件里没有可识别的条目，或超过 500 条', 'No entries found in this .bib file, or it has more than 500.'),
-        );
-      } else if (e instanceof ApiError && e.status === 413) {
-        setParseError(tr('文件太大，请在 Zotero 中分批导出', 'The file is too large. Export smaller batches from Zotero.'));
-      } else if (e instanceof ApiError && e.status === 503) {
-        setParseError(
-          tr('本机引擎暂时无法处理，请稍后再试', 'The local engine is busy. Try again shortly.'),
-        );
-      } else {
-        toast(`${tr('无法导入：', 'Couldn’t import: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
-      }
-    },
-  });
-
-  return (
-    <>
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={tr('添加论文', 'Add papers')}
-      width={520}
-      footer={
-        <>
-          <button className="btn btn-ghost sm" onClick={onClose}>
-            {tr('取消', 'Cancel')}
-          </button>
-          <button
-            className="btn btn-primary sm"
-            disabled={
-              method === 'zotero'
-                ? !zoteroBib || zoteroMutation.isPending
-                : batchItems.length === 0 || tooMany || importMutation.isPending
-            }
-            onClick={() => {
-              if (method === 'zotero') {
-                if (libraryId && zoteroBib) zoteroMutation.mutate({ bib: zoteroBib, zip: zoteroZip });
-              } else {
-                importMutation.mutate({ items: batchItems });
-              }
-            }}
-          >
-            {(method === 'zotero' ? zoteroMutation.isPending : importMutation.isPending) ? (
-              <>
-                <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-                {method === 'zotero' ? tr('导入中…', 'Importing…') : tr('添加中…', 'Adding…')}
-              </>
-            ) : method === 'zotero' ? (
-              <>
-                <Icon name="plus" size={13} />
-                {tr('导入', 'Import')}
-              </>
-            ) : (
-              <>
-                <Icon name="plus" size={13} />
-                {batchItems.length > 1
-                  ? tr(`添加 ${batchItems.length} 篇`, `Add ${batchItems.length} papers`)
-                  : tr('添加', 'Add')}
-              </>
-            )}
-          </button>
-        </>
-      }
-    >
-      <Segmented<ImportMethod>
-        options={[
-          { v: 'arxiv', label: 'arXiv' },
-          { v: 'doi', label: 'DOI' },
-          { v: 'pmid', label: 'PMID' },
-          { v: 'corpus', label: 'Corpus ID' },
-          { v: 'bibtex', label: 'BibTeX' },
-          ...(libraryId ? [{ v: 'zotero' as const, label: 'Zotero' }] : []),
-        ]}
-        value={method}
-        onChange={(m) => {
-          setMethod(m);
-          setParseError(null);
-        }}
-      />
-      <div style={{ marginTop: 14 }}>
-        {method === 'arxiv' ? (
-          <>
-            <textarea
-              className="textarea mono"
-              style={{ width: '100%', minHeight: 112, resize: 'vertical', fontSize: 12 }}
-              placeholder={tr(
-                '例如 2405.01234, 2405.01235v2',
-                'e.g. 2405.01234, 2405.01235v2',
-              )}
-              value={arxivId}
-              onChange={(e) => {
-                setArxivId(e.target.value);
-                setParseError(null);
-              }}
-            />
-            <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              {tr('可一次粘贴多个，最多 50 篇', 'Paste several at once, up to 50')}
-            </div>
-          </>
-        ) : method === 'doi' ? (
-          <>
-            <textarea
-              className="textarea mono"
-              style={{ width: '100%', minHeight: 112, resize: 'vertical', fontSize: 12 }}
-              placeholder={tr(
-                '例如 10.1145/3567890.1234567',
-                'e.g. 10.1145/3567890.1234567',
-              )}
-              value={doi}
-              onChange={(e) => {
-                setDoi(e.target.value);
-                setParseError(null);
-              }}
-            />
-            <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              {tr('可一次粘贴多个，最多 50 篇', 'Paste several at once, up to 50')}
-            </div>
-          </>
-        ) : method === 'pmid' ? (
-          <>
-            <textarea
-              className="textarea mono"
-              style={{ width: '100%', minHeight: 112, resize: 'vertical', fontSize: 12 }}
-              placeholder={tr(
-                '例如 31452104, PMID:33301246',
-                'e.g. 31452104, PMID:33301246',
-              )}
-              value={pmid}
-              onChange={(e) => {
-                setPmid(e.target.value);
-                setParseError(null);
-              }}
-            />
-            <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              {tr('可一次粘贴多个，最多 50 篇', 'Paste several at once, up to 50')}
-            </div>
-          </>
-        ) : method === 'corpus' ? (
-          <>
-            <textarea
-              className="textarea mono"
-              style={{ width: '100%', minHeight: 112, resize: 'vertical', fontSize: 12 }}
-              placeholder={tr(
-                '例如 13756489, CorpusId:215416146',
-                'e.g. 13756489, CorpusId:215416146',
-              )}
-              value={corpusId}
-              onChange={(e) => {
-                setCorpusId(e.target.value);
-                setParseError(null);
-              }}
-            />
-            <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              {tr('Semantic Scholar 编号，可一次粘贴多个，最多 50 篇', 'Semantic Scholar IDs. Paste several at once, up to 50.')}
-            </div>
-          </>
-        ) : method === 'zotero' ? (
-          <>
-            <label className="col" style={{ gap: 6, fontSize: 12 }}>
-              <span>{tr('BibTeX 文件（.bib）', 'BibTeX file (.bib)')}</span>
-              <input
-                type="file"
-                accept=".bib,text/x-bibtex"
-                onChange={(e) => {
-                  setZoteroBib(e.target.files?.[0] ?? null);
-                  setParseError(null);
-                }}
-              />
-            </label>
-            <label className="col" style={{ gap: 6, fontSize: 12, marginTop: 12 }}>
-              <span>{tr('附件压缩包（可选，.zip）', 'Attachments (optional, .zip)')}</span>
-              <input
-                type="file"
-                accept=".zip,application/zip"
-                onChange={(e) => setZoteroZip(e.target.files?.[0] ?? null)}
-              />
-            </label>
-            <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              {tr(
-                '在 Zotero 中右键分类，选「导出分类」，格式选 BibTeX；勾选「导出文件」并把导出文件夹压缩成 zip 可带上 PDF。已有的论文会跳过。',
-                'In Zotero, right-click a collection, choose Export Collection and pick BibTeX. To include PDFs, check “Export Files” and zip the exported folder. Papers already here are skipped.',
-              )}
-            </div>
-          </>
-        ) : (
-          <>
-            <textarea
-              className="textarea mono"
-              style={{ width: '100%', minHeight: 150, resize: 'vertical', fontSize: 12 }}
-              placeholder={tr(
-                '例如\n@inproceedings{smith2024example,\n  title = {...},\n  year = {2024},\n}',
-                'e.g.\n@inproceedings{smith2024example,\n  title = {...},\n  year = {2024},\n}',
-              )}
-              value={bibtex}
-              onChange={(e) => {
-                setBibtex(e.target.value);
-                setParseError(null);
-              }}
-            />
-            <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              {tr(
-                '可一次粘贴多条，最多 50 条，每条需有 title',
-                'Paste several entries, up to 50. Each needs a title.',
-              )}
-            </div>
-          </>
-        )}
-        {tooMany && (
-          <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--danger-tx)' }}>
-            {tr(`识别到 ${batchItems.length} 篇，一次最多 50 篇`, `Found ${batchItems.length}. The limit is 50 at a time.`)}
-          </div>
-        )}
-        {parseError && (
-          <div
-            style={{
-              marginTop: 10,
-              fontSize: 11.5,
-              color: 'var(--danger-tx)',
-              background: 'var(--danger-bg)',
-              borderRadius: 8,
-              padding: '7px 10px',
-              lineHeight: 1.6,
-            }}
-          >
-            {parseError}
-          </div>
-        )}
-      </div>
-    </Modal>
-    {progress && (
-      <PaperBatchProgressModal
-        taskId={progress.taskId}
-        total={progress.total}
-        onClose={() => setProgress(null)}
-        onDone={invalidateLists}
-        onOpenPaper={(paperId) => {
-          onImported(paperId);
-          setProgress(null);
-        }}
-      />
-    )}
-    </>
-  );
-}
-
-/* ---------------- 导出下拉菜单 ---------------- */
-
-export function ExportMenu({
-  pid,
-  libraryId,
-  filters = {},
-}: {
-  /** 课题作用域（走 /projects/{pid}/export/*）；与 libraryId 二选一 */
-  pid?: string;
-  /** 库作用域（走 /libraries/{id}/export/*，独立库也可用）；优先于 pid */
-  libraryId?: string;
-  /** 列表过滤条件，透传给课题版引用导出；不传导出全部库内文献（库版不支持过滤） */
-  filters?: { status?: PaperStatusFilter; starred?: boolean };
-}) {
+export function useLibraryExport(libraryId: string): { items: DotsMenuItem[]; busy: boolean } {
   const obsidianMutation = useMutation({
-    mutationFn: () =>
-      libraryId ? api.downloadLibraryObsidianExport(libraryId) : api.downloadObsidianExport(pid!),
+    mutationFn: () => api.downloadLibraryObsidianExport(libraryId),
     onSuccess: (blob) => {
-      saveBlob(blob, 'polaris-wiki.zip');
+      saveBlob(blob, 'polaris-library.zip');
       toast(tr('已导出 Obsidian 笔记库', 'Obsidian vault exported'), 'ok');
     },
-    onError: (e) =>
-      toast(`${tr('无法导出：', 'Couldn’t export: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('无法导出：', 'Couldn’t export: ')}${errorText(e)}`, 'error'),
   });
-
   const citationsMutation = useMutation({
-    mutationFn: (format: CitationFormat) =>
-      libraryId
-        ? api.downloadLibraryCitations(libraryId, { format })
-        : api.downloadCitations(pid!, { format, ...filters }),
+    mutationFn: (format: CitationFormat) => api.downloadLibraryCitations(libraryId, { format }),
     onSuccess: (blob, format) => {
       saveBlob(blob, format === 'bibtex' ? 'polaris-references.bib' : 'polaris-references.json');
-      toast(
-        format === 'bibtex' ? tr('已导出 BibTeX', 'BibTeX exported') : tr('已导出 CSL-JSON', 'CSL-JSON exported'),
-        'ok',
-      );
+      toast(format === 'bibtex' ? tr('已导出 BibTeX', 'BibTeX exported') : tr('已导出 CSL-JSON', 'CSL-JSON exported'), 'ok');
     },
-    onError: (e) =>
-      toast(`${tr('无法导出：', 'Couldn’t export: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('无法导出：', 'Couldn’t export: ')}${errorText(e)}`, 'error'),
   });
-
-  const busy = obsidianMutation.isPending || citationsMutation.isPending;
-
-  return (
-    <ExportDropdown
-      busy={busy}
-      minWidth={210}
-      items={[
-        {
-          key: 'obsidian',
-          icon: 'file',
-          label: tr('Obsidian 笔记库', 'Obsidian vault'),
-          hint: '.zip',
-          onSelect: () => obsidianMutation.mutate(),
-        },
-        {
-          key: 'bibtex',
-          icon: 'book',
-          label: tr('BibTeX 引用', 'BibTeX citations'),
-          hint: tr('.bib · 全部论文', '.bib · all papers'),
-          onSelect: () => citationsMutation.mutate('bibtex'),
-        },
-        {
-          key: 'csl-json',
-          icon: 'layers',
-          label: 'CSL-JSON',
-          hint: tr('可导入 Zotero', 'For Zotero'),
-          onSelect: () => citationsMutation.mutate('csl-json'),
-        },
-      ]}
-    />
-  );
+  return {
+    busy: obsidianMutation.isPending || citationsMutation.isPending,
+    items: [
+      { key: 'bibtex', icon: 'download', label: tr('导出全部引用（BibTeX）', 'Export citations (BibTeX)'), onSelect: () => citationsMutation.mutate('bibtex') },
+      { key: 'csl', icon: 'download', label: tr('导出全部引用（CSL-JSON）', 'Export citations (CSL-JSON)'), onSelect: () => citationsMutation.mutate('csl-json') },
+      { key: 'obsidian', icon: 'download', label: tr('导出为 Obsidian 笔记库', 'Export as an Obsidian vault'), onSelect: () => obsidianMutation.mutate() },
+    ],
+  };
 }
 
 /* ---------------- 回收站 ---------------- */
@@ -591,7 +139,7 @@ function trashReasonOf(p: PaperRead): 'irrelevant' | 'manual' {
 }
 
 /** 论文库回收站：弹窗外壳复用共享 TrashModal，端点与行映射留在这里。 */
-function PapersTrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?: string; open: boolean; onClose: () => void }) {
+export function PapersTrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?: string; open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
   const scopeId = libraryId ?? pid;
 
@@ -703,7 +251,7 @@ function PapersTrashModal({ pid, libraryId, open, onClose }: { pid: string; libr
 
 /* memo：父组件（大量筛选/选中 state）任一变更都会触发全列表重渲染。
    忽略函数 props 的比较是安全的：两个 handler 只捕获稳定引用与 p.id。 */
-const PaperRow = memo(function PaperRow({
+const LibraryPaperRow = memo(function LibraryPaperRow({
   p,
   active,
   checked,
@@ -718,100 +266,50 @@ const PaperRow = memo(function PaperRow({
   onClick: () => void;
   onToggleCheck: () => void;
 }) {
+  const reading = p.reading_status && p.reading_status !== 'unread' ? readingStatusMeta(p.reading_status) : null;
   return (
-    <div
+    <PaperRow
+      title={p.title}
+      meta={[shortAuthors(p.authors), p.year, relevanceLabel(p.relevance_score), reading ? tr(reading.label, reading.en) : null, shortVenue(p.venue)]}
+      summary={p.tldr}
+      summaryFallback={p.has_wiki ? undefined : tr('还没有解读', 'No summary yet')}
+      starred={p.starred}
+      noteCount={p.note_count}
+      marks={<PaperMyTagChips myTags={p.my_tags} />}
+      active={active}
       onClick={onClick}
-      // 可以直接拖给 PolarisBuddy 解读（右下角悬浮球是落点）
-      {...paperDragProps(p.id, p.title)}
-      style={{
-        padding: '12px 16px',
-        cursor: 'pointer',
-        borderBottom: '0.5px solid var(--border)',
-        background: active ? 'var(--accent-soft)' : 'transparent',
-        borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
-        transition: 'background 0.12s',
-      }}
-    >
-      <div className="row gap8" style={{ marginBottom: 5 }}>
-        {/* 占位常驻：切换多选时行内容不左右跳（#132） */}
-        <input
-          type="checkbox"
-          checked={checked}
-          onClick={(e) => e.stopPropagation()}
-          onChange={onToggleCheck}
-          style={{ width: 13, height: 13, margin: 0, flexShrink: 0, accentColor: 'var(--accent)', cursor: 'pointer', visibility: selectMode ? 'visible' : 'hidden' }}
-        />
-        {p.starred && <Icon name="starFill" size={11} style={{ color: 'var(--warn-tx)', flexShrink: 0 }} />}
-        <span className="mono" style={{ fontSize: 10.5, color: active ? 'var(--accent-text)' : 'var(--text-3)' }}>
-          {p.arxiv_id ?? p.venue ?? '—'}
-        </span>
-        {p.year !== null && (
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-            {p.year}
-          </span>
-        )}
-        {p.has_wiki && <Icon name="sparkle" size={11} style={{ color: 'var(--accent)' }} />}
-        <span style={{ marginLeft: 'auto' }}>
-          <RelevanceBar value={p.relevance_score} />
-        </span>
-      </div>
-      <div className="row gap8" style={{ alignItems: 'flex-start' }}>
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            fontSize: 13,
-            fontWeight: 600,
-            lineHeight: 1.35,
-            color: 'var(--text)',
-            ...clampLines(2),
-          }}
-          title={p.title}
-        >
-          {p.title}
-        </div>
-        <AddToButton paperId={p.id} />
-      </div>
-      <div className="row gap8" style={{ marginTop: 6 }}>
-        <PaperStatusPill status={p.status} hasWiki={p.has_wiki} sm />
-        <ReadingDot status={p.reading_status} />
-        <PaperMyTagChips myTags={p.my_tags} />
-        {(p.note_count ?? 0) > 0 && (
-          <span
-            className="row"
-            style={{ gap: 3, fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}
-            title={tr(`${p.note_count} 条笔记`, `${p.note_count} notes`)}
-          >
-            <Icon name="pen" size={10} />
-            {p.note_count}
-          </span>
-        )}
-        {p.tldr && (
-          <span
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontSize: 11.5,
-              color: 'var(--text-3)',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {plainSummary(p.tldr)}
-          </span>
-        )}
-      </div>
-    </div>
+      // 可以直接拖给助手解读
+      rowProps={paperDragProps(p.id, p.title)}
+      leading={
+        selectMode ? (
+          <input
+            type="checkbox"
+            checked={checked}
+            aria-label={tr('选择这篇论文', 'Select this paper')}
+            onClick={(e) => e.stopPropagation()}
+            onChange={onToggleCheck}
+          />
+        ) : undefined
+      }
+    />
   );
 }, (prev, next) =>
   prev.p === next.p && prev.active === next.active && prev.checked === next.checked && prev.selectMode === next.selectMode,
 );
 
+/** arXiv 分类号（cs.CL）不是期刊，行里不写；真正的期刊/会议名太长时截一下。 */
+export function shortVenue(venue: string | null | undefined): string | null {
+  if (!venue) return null;
+  if (/^[a-z-]+(\.[A-Za-z-]{2,})?$/.test(venue)) return null;
+  return venue.length > 48 ? `${venue.slice(0, 46)}…` : venue;
+}
+
 /* ---------------- 详情面板 ---------------- */
 
 /** 概念 chips 默认最多展示数，超出折叠 */
 const CONCEPT_CHIP_LIMIT = 12;
+
+type DetailSection = 'summary' | 'abstract' | 'notes' | 'more';
 
 function PaperDetailPane({
   paperId,
@@ -822,6 +320,7 @@ function PaperDetailPane({
   onFilterAuthor,
   onFilterAffiliation,
   onDeleted,
+  onBack,
   compiling,
   onRecompile,
   sendingToExtension,
@@ -829,16 +328,15 @@ function PaperDetailPane({
 }: {
   paperId: string;
   pid: string;
-    libraryId?: string;
+  libraryId?: string;
   onOpenConcept: (id: string) => void;
   onWikiLink: WikiLinkHandler;
-  /** 点击作者名 → 论文库按该作者过滤 */
   onFilterAuthor: (name: string) => void;
-  /** 点击机构 → 论文库按该机构过滤 */
   onFilterAffiliation: (name: string) => void;
-  /** 删除成功后回调（父组件清空选中，自动跳到列表第一篇） */
   onDeleted: () => void;
-  /** 这篇正在 AI 编译（状态存在列表页，切走再切回来照样是「编译中」） */
+  /** 窄屏：回到列表 */
+  onBack: () => void;
+  /** 这篇正在生成解读（状态存在列表页，切走再切回来照样是「生成中」） */
   compiling: boolean;
   onRecompile: (paperId: string) => void;
   sendingToExtension: boolean;
@@ -848,14 +346,14 @@ function PaperDetailPane({
   const location = useLocation();
   const queryClient = useQueryClient();
   const scopeId = libraryId ?? pid;
+  const [section, setSection] = useState<DetailSection | null>(null);
   const [conceptsOpen, setConceptsOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerPrint, setReaderPrint] = useState(false);
-  // 已有解读时重新编译要先确认：解读每篇只有一份，重编即覆盖，旧版本找不回来
+  // 已有解读时重新生成要先确认：解读每篇只有一份，重新生成即覆盖
   const [recompileConfirm, setRecompileConfirm] = useState(false);
 
-  // 作用域读：锁定当前库/课题那份成员行，避免同一论文属多个库时读到跨库归并的错行
-  // （相关度/状态/wiki）。queryKey 带 scope 隔离不同库的缓存。
+  // 作用域读：锁定当前库那份成员行，避免同一论文属多个库时读到跨库归并的错行
   const { data: paper, isLoading, isError } = useQuery({
     queryKey: ['paper', scopeId, paperId],
     queryFn: () =>
@@ -868,11 +366,8 @@ function PaperDetailPane({
   });
 
   const deleteMutation = useMutation({
-    // 作用域删：只删当前库那份成员行（同列表多选删除口径），不误删跨库的另一份。
     mutationFn: () =>
-      libraryId
-        ? api.batchDeleteLibraryPapers(libraryId, [paperId])
-        : api.batchDeletePapers(scopeId, [paperId]),
+      libraryId ? api.batchDeleteLibraryPapers(libraryId, [paperId]) : api.batchDeletePapers(scopeId, [paperId]),
     onSuccess: () => {
       toast(tr('已移入回收站', 'Moved to trash'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['paper', scopeId, paperId] });
@@ -882,11 +377,9 @@ function PaperDetailPane({
       void queryClient.invalidateQueries({ queryKey: ['project-graph', scopeId] });
       onDeleted();
     },
-    onError: (e) =>
-      toast(`${tr('无法删除：', 'Couldn’t delete: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('无法删除：', 'Couldn’t delete: ')}${errorText(e)}`, 'error'),
   });
 
-  // 星标 / 阅读状态（个人视角）
   const metaMutation = useMutation({
     mutationFn: (input: Partial<MyMeta>) => api.putMyMeta(paperId, input),
     onSuccess: (meta) => {
@@ -895,19 +388,17 @@ function PaperDetailPane({
       );
       void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
     },
-    onError: (e) =>
-      toast(`${tr('无法更新：', 'Couldn’t update: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('无法更新：', 'Couldn’t update: ')}${errorText(e)}`, 'error'),
   });
 
-  // 换论文时收起本地开合状态（面板不再随选中项重挂载，得自己收）。
-  // 折叠块的开合在 MetaFold 内部，用 key={paperId} 让它随论文重挂载即可。
+  // 换论文时收起本地开合状态（面板不随选中项重挂载，得自己收）
   useEffect(() => {
+    setSection(null);
     setConceptsOpen(false);
     setReaderOpen(false);
     setRecompileConfirm(false);
   }, [paperId]);
 
-  // 正文 ![[fig:N]] 嵌入图（docs/task-system.md §7（原 api-lit.md §6.6））
   const figures = usePaperFigures(paper);
   const renderFigure = useCallback(
     (n: number) => {
@@ -918,16 +409,13 @@ function PaperDetailPane({
   );
   const refs = useMemo(() => evidenceRefs(paper?.wiki_evidence), [paper?.wiki_evidence]);
   const renderEvidenceCitation = useMemo(
-    () => evidenceCitationRenderer({
-      libraryId,
-      fallbackPaperId: paperId,
-      title: paper?.title ?? '',
-      refs,
-    }),
+    () => evidenceCitationRenderer({ libraryId, fallbackPaperId: paperId, title: paper?.title ?? '', refs }),
     [refs, libraryId, paper?.title, paperId],
   );
+  // 解读开头的「TL;DR」就是上面的要点：正文里拿掉，只出现一次
+  const split = useMemo(() => splitSummary(paper?.wiki_content), [paper?.wiki_content]);
 
-  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
+  if (isLoading) return <LoadingState rows={6} />;
   if (isError || !paper) {
     return (
       <EmptyState
@@ -943,335 +431,295 @@ function PaperDetailPane({
   const relevance = paper.relevance_score;
   const starred = paper.starred ?? false;
   const readingStatus: ReadingStatus = paper.reading_status ?? 'unread';
+  const hasSummary = !!(paper.has_wiki && paper.wiki_content);
+  const current: DetailSection = section ?? (hasSummary ? 'summary' : 'abstract');
+  const openReader = () => navigate(`/papers/${paper.id}/read`, { state: readerFrom(location, 'wiki') });
+  const added = paper.created_at ? fmtDay(paper.created_at) : null;
+
+  const menu: DotsMenuItem[] = [
+    {
+      key: 'regen',
+      icon: 'sparkle',
+      label: hasSummary ? tr('重新生成解读', 'Regenerate summary') : tr('生成解读', 'Generate summary'),
+      disabled: compiling,
+      onSelect: () => (hasSummary ? setRecompileConfirm(true) : onRecompile(paperId)),
+    },
+    ...(hasSummary
+      ? [
+          {
+            key: 'print',
+            icon: 'download' as const,
+            label: tr('把解读导出为 PDF', 'Export the summary as PDF'),
+            onSelect: () => {
+              setReaderPrint(true);
+              setReaderOpen(true);
+            },
+          },
+        ]
+      : []),
+    ...(arxivUrl || paper.url
+      ? [
+          {
+            key: 'src',
+            icon: 'link' as const,
+            label: arxivUrl ? tr('在 arXiv 打开', 'Open on arXiv') : tr('打开原文页面', 'Open the source page'),
+            separated: true,
+            onSelect: () => window.open(arxivUrl ?? paper.url ?? '', '_blank', 'noopener'),
+          },
+        ]
+      : []),
+    ...(libraryId && extensionDeliveryAvailable()
+      ? [
+          {
+            key: 'ext',
+            icon: 'share' as const,
+            label: tr('用浏览器扩展下载 PDF', 'Get the PDF via the browser extension'),
+            disabled: sendingToExtension || !canSendToExtension(paper.status),
+            title: canSendToExtension(paper.status) ? undefined : tr('加入本库后才能发送', 'Add it to the library first'),
+            onSelect: () => onSendToExtension(paper),
+          },
+        ]
+      : []),
+    {
+      key: 'del',
+      icon: 'trash',
+      label: tr('移入回收站', 'Move to trash'),
+      danger: true,
+      separated: true,
+      disabled: deleteMutation.isPending,
+      onSelect: () => deleteMutation.mutate(),
+    },
+  ];
+
+  const sections: { key: DetailSection; label: string; count?: number }[] = [
+    { key: 'summary', label: tr('解读', 'Summary') },
+    { key: 'abstract', label: tr('摘要', 'Abstract') },
+    { key: 'notes', label: tr('笔记', 'Notes'), count: paper.note_count ?? 0 },
+    { key: 'more', label: tr('更多', 'More') },
+  ];
 
   return (
-    <div className="scroll fadeup" key={paper.id} style={{ overflowY: 'auto', flex: 1, padding: '26px 32px 60px' }}>
-      {/* —— 元数据头 —— */}
-      <div className="row" style={{ alignItems: 'flex-start', gap: 20 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="row gap8 wrap" style={{ marginBottom: 8 }}>
-            <PaperStatusPill status={paper.status} hasWiki={paper.has_wiki} sm />
-            {/* 徽标最多两个：状态 + PDF；期刊与笔记数改成纯文字元信息 */}
-            {paper.pdf_available && (
-              <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-                <Icon name="file" size={11} />
-                PDF
+    <div className="scroll fadeup pd-pane" key={paper.id} data-testid="paper-detail">
+      <button type="button" className="btn btn-plain sm lib-back" onClick={onBack}>
+        <Icon name="chevron" size={12} style={{ transform: 'rotate(180deg)' }} />
+        {tr('返回列表', 'Back to the list')}
+      </button>
+      <PaperKicker year={paper.year} venue={shortVenue(paper.venue)} arxivId={paper.arxiv_id} doi={paper.doi} url={paper.url} />
+      <h1 className="pd-title">{paper.title}</h1>
+      <AuthorLinks authors={paper.authors} onFilter={onFilterAuthor} />
+      {paper.affiliations && paper.affiliations.length > 0 && (
+        <div className="pd-affil">
+          {paper.affiliations.slice(0, 4).map((a, i) => (
+            <span key={a}>
+              {i > 0 && ' · '}
+              <span
+                className="author-link"
+                role="button"
+                tabIndex={0}
+                title={tr(`只看 ${a} 的论文`, `Show only papers from ${a}`)}
+                onClick={() => onFilterAffiliation(a)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') onFilterAffiliation(a);
+                }}
+              >
+                {a}
               </span>
-            )}
-            {(paper.venue || (paper.note_count ?? 0) > 0) && (
-              <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                {[
-                  paper.venue,
-                  (paper.note_count ?? 0) > 0
-                    ? tr(`${paper.note_count} 条笔记`, paper.note_count === 1 ? '1 note' : `${paper.note_count} notes`)
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </span>
-            )}
-          </div>
-          <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
-            {paper.title}
-          </h1>
-          <AuthorLinks authors={paper.authors} onFilter={onFilterAuthor} />
-          <AffiliationChips affiliations={paper.affiliations} onFilter={onFilterAffiliation} />
+            </span>
+          ))}
+          {paper.affiliations.length > 4 &&
+            tr(` 等 ${paper.affiliations.length} 家机构`, ` and ${paper.affiliations.length - 4} more`)}
         </div>
-        {relevance !== null && (
-          <ScoreRing value={relevance} max={1} size={56} label={tr('相关度', 'Relevance')} />
-        )}
-      </div>
+      )}
 
-      {/* —— 操作 —— */}
-      <div className="row gap8 wrap" style={{ marginTop: 14 }}>
-        <button className="btn btn-primary sm" onClick={() => navigate(`/papers/${paper.id}/read`, { state: readerFrom(location, 'wiki') })}>
+      <div className="pd-actions">
+        <button className="btn btn-primary sm" onClick={openReader} data-testid="paper-read">
           <Icon name="file" size={13} />
           {tr('阅读原文', 'Read paper')}
         </button>
         <button
-          className="btn btn-soft sm"
-          title={
-            paper.has_wiki
-              ? tr('重新生成这篇论文的解读', 'Regenerate this paper’s summary')
-              : tr('为这篇论文生成图文解读', 'Generate an illustrated summary of this paper')
-          }
-          disabled={compiling}
-          onClick={() => (paper.has_wiki ? setRecompileConfirm(true) : onRecompile(paperId))}
-        >
-          {compiling ? (
-            <>
-              <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-              {tr('正在生成，约 1 分钟…', 'Generating, about a minute…')}
-            </>
-          ) : (
-            <>
-              <Icon name="sparkle" size={13} />
-              {paper.has_wiki ? tr('重新生成', 'Regenerate') : tr('生成解读', 'Generate summary')}
-            </>
-          )}
-        </button>
-        {paper.has_wiki && paper.wiki_content && (
-          <button
-            className="btn btn-soft sm"
-            title={tr('全屏阅读解读，可导出 PDF', 'Read the summary full screen and export it as PDF')}
-            onClick={() => {
-              setReaderPrint(false);
-              setReaderOpen(true);
-            }}
-          >
-            <Icon name="book" size={13} />
-            {tr('阅读模式', 'Reading mode')}
-          </button>
-        )}
-        {arxivUrl && (
-          <a
-            className="btn btn-ghost sm"
-            href={arxivUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            style={{ textDecoration: 'none' }}
-          >
-            <Icon name="link" size={13} />
-            arXiv
-          </a>
-        )}
-        {paper.url && !arxivUrl && (
-          <a
-            className="btn btn-ghost sm"
-            href={paper.url}
-            target="_blank"
-            rel="noreferrer noopener"
-            style={{ textDecoration: 'none' }}
-          >
-            <Icon name="link" size={13} />
-            {tr('原文链接', 'Source')}
-          </a>
-        )}
-        {libraryId && extensionDeliveryAvailable() && (
-          <button
-            className="btn btn-ghost sm"
-            disabled={sendingToExtension || !canSendToExtension(paper.status)}
-            title={
-              canSendToExtension(paper.status)
-                ? undefined
-                : tr('加入本库后才能发送', 'Add it to the library first')
-            }
-            onClick={() => onSendToExtension(paper)}
-          >
-            <Icon name={sendingToExtension ? 'refresh' : 'share'} size={13} style={sendingToExtension ? { animation: 'spin 1s linear infinite' } : undefined} />
-            {tr('发送到浏览器扩展', 'Send to browser extension')}
-          </button>
-        )}
-          {!libraryId && <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />}
-          <button
-            className="btn btn-ghost sm"
-            style={{ color: 'var(--text-3)', marginLeft: 'auto' }}
-            title={tr('移入回收站', 'Move to trash')}
-            disabled={deleteMutation.isPending}
-            onClick={() => deleteMutation.mutate()}
-          >
-            <Icon name="trash" size={13} />
-            {tr('删除', 'Delete')}
-          </button>
-        </div>
-
-        {libraryId && (
-          <PaperAssetPanel
-            libraryId={libraryId}
-            paperId={paper.id}
-            doi={paper.doi}
-          />
-        )}
-
-      {/* —— 个人状态：星标 + 阅读状态 —— */}
-      <div className="row gap12 wrap" style={{ marginTop: 12 }}>
-        <button
           className="btn btn-ghost sm"
           disabled={metaMutation.isPending}
+          aria-pressed={starred}
           onClick={() => metaMutation.mutate({ starred: !starred })}
           style={starred ? { color: 'var(--warn-tx)' } : undefined}
         >
           <Icon name={starred ? 'starFill' : 'star'} size={13} />
-          {starred ? tr('已星标', 'Starred') : tr('加星标', 'Star')}
+          {starred ? tr('已加星标', 'Starred') : tr('加星标', 'Star')}
         </button>
-        <span className="row gap8">
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
-            {tr('阅读状态', 'Reading status')}
-          </span>
-          <Segmented<ReadingStatus>
-            options={READING_STATUS.map((m) => ({ v: m.v, label: tr(m.label, m.en) }))}
-            value={readingStatus}
-            onChange={(v) => metaMutation.mutate({ reading_status: v })}
-          />
-        </span>
+        <AddToButton paperId={paper.id} text={tr('保存到…', 'Save to…')} />
+        <DotsMenu items={menu} label={tr('这篇论文的更多操作', 'More for this paper')} />
       </div>
 
-      {/* —— 我的标签（只有自己看得到） —— */}
-      {/* 库标签的界面入口已移除，个人标签取代了它；后端端点与数据保留。 */}
-      <PaperMyTagsRow
-        paperId={paper.id}
-        myTags={paper.my_tags}
-        detailKey={['paper', scopeId, paper.id]}
-        invalidateKeys={[['papers', scopeId]]}
-        trailing={<PaperIndexStatusRow paperId={paper.id} showRebuild={false} />}
-      />
-
-      {/* —— 概念 chips（过多时折叠） —— */}
-      {paper.concepts.length > 0 && (
-        <div className="row gap8 wrap" style={{ marginTop: 16 }}>
-          {(conceptsOpen ? paper.concepts : paper.concepts.slice(0, CONCEPT_CHIP_LIMIT)).map((c) => {
-            const meta = categoryMeta(c.category);
-            return (
-              <span
-                key={c.id}
-                className="wikilink"
-                style={{ background: meta.bg, color: meta.c, height: 24 }}
-                onClick={() => onOpenConcept(c.id)}
-              >
-                {c.name}
-                <span style={{ opacity: 0.6, marginLeft: 5, fontSize: '0.85em' }}>{tr(meta.zh, meta.en)}</span>
-              </span>
-            );
-          })}
-          {paper.concepts.length > CONCEPT_CHIP_LIMIT && (
-            <span className="chip" style={{ fontSize: 11 }} onClick={() => setConceptsOpen((o) => !o)}>
-              {conceptsOpen
-                ? tr('收起', 'Collapse')
-                : tr(`+${paper.concepts.length - CONCEPT_CHIP_LIMIT} 个概念`, `+${paper.concepts.length - CONCEPT_CHIP_LIMIT} concepts`)}
-            </span>
-          )}
-        </div>
-      )}
-
-
-      {/* —— TL;DR —— */}
-      {paper.tldr && (
-        <div
-          style={{
-            marginTop: 18,
-            padding: '12px 16px',
-            borderRadius: 10,
-            background: 'var(--accent-soft)',
-            fontSize: 13,
-            lineHeight: 1.65,
-            color: 'var(--text)',
-          }}
-        >
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
-            TL;DR
+      <PaperFacts>
+        <PaperFact label={tr('为什么在这里', 'Why it’s here')} testId="paper-why">
+          <span>
+            {relevance !== null && relevance !== undefined
+              ? tr(`${relevanceWords(relevance)}（${relevance.toFixed(2)}）`, `${relevanceWords(relevance)} (${relevance.toFixed(2)})`)
+              : tr('你自己加入的', 'You added it')}
           </span>
-          {plainSummary(paper.tldr)}
-        </div>
+          {added && <span className="pd-fact-note">{tr(`${added}加入`, `added ${added}`)}</span>}
+        </PaperFact>
+        <PaperFact label={tr('PDF 与全文', 'PDF & full text')}>
+          <PaperFulltextFact
+            libraryId={libraryId}
+            paperId={paper.id}
+            pdfAvailable={!!paper.pdf_available}
+            doi={paper.doi}
+          />
+        </PaperFact>
+        <PaperFact label={tr('阅读状态', 'Reading')}>
+          <div className="pd-seg" role="radiogroup" aria-label={tr('阅读状态', 'Reading status')}>
+            {READING_STATUS.map((m) => (
+              <button
+                key={m.v}
+                type="button"
+                role="radio"
+                aria-checked={readingStatus === m.v}
+                className={'pl-qtab' + (readingStatus === m.v ? ' is-on' : '')}
+                disabled={metaMutation.isPending}
+                onClick={() => metaMutation.mutate({ reading_status: m.v })}
+              >
+                {tr(m.label, m.en)}
+              </button>
+            ))}
+          </div>
+        </PaperFact>
+        <PaperFact label={tr('我的标签', 'My tags')}>
+          <PaperMyTagsRow
+            bare
+            paperId={paper.id}
+            myTags={paper.my_tags}
+            detailKey={['paper', scopeId, paper.id]}
+            invalidateKeys={[['papers', scopeId]]}
+          />
+        </PaperFact>
+      </PaperFacts>
+
+      {split.lead ? (
+        <PaperKeyPoints>
+          <Markdown source={split.lead} onWikiLink={onWikiLink} renderCitation={renderEvidenceCitation} />
+        </PaperKeyPoints>
+      ) : (
+        <PaperKeyPoints tldr={paper.tldr} />
       )}
 
-      {/* 摘要 + 元信息合成一块：元信息本来就是查证时才看的东西，单独一张卡
-          只是多一次点击。样式与「我的笔记」同款，默认收起。 */}
-      <MetaFold key={`abs-${paperId}`} label={tr('摘要', 'Abstract')}>
-        {paper.abstract ? (
-          <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>{paper.abstract}</div>
-        ) : (
-          <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
-            {tr('没有摘要', 'No abstract')}
-          </p>
-        )}
-        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '0.5px solid var(--border)' }}>
-        <MetaItem label={tr('arXiv 编号', 'arXiv ID')}>{paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}</MetaItem>
-        <MetaItem label="DOI">{paper.doi ? <span className="mono">{paper.doi}</span> : <span className="muted">—</span>}</MetaItem>
-        <MetaItem label={tr('发表日期', 'Published')}>
-          {paper.published_at ? <span className="mono">{paper.published_at.slice(0, 10)}</span> : <span className="muted">—</span>}
-        </MetaItem>
-        <MetaItem label={tr('相关度', 'Relevance')}>
-          {relevance !== null ? (
-            <RelevanceBar value={relevance} width={140} />
-          ) : (
-            <span className="muted">{tr('未评分', 'Not scored')}</span>
-          )}
-        </MetaItem>
-        <MetaItem label={tr('加入时间', 'Added')}>
-          <span className="mono">{fmtTime(paper.created_at)}</span>
-        </MetaItem>
-      
-        </div>
-      </MetaFold>
+      <PaperDetailTabs tabs={sections} value={current} onChange={setSection} />
 
-      {/* —— 我的笔记（只有自己看得到；与其余四处详情面板同一顺序） —— */}
-      <PaperNotesSection
-        paperId={paper.id}
-        noteCount={paper.note_count ?? 0}
-        invalidateKeys={[['papers'], ['paper', paper.id]]}
-      />
-
-      {/* —— 结构化摘要（骨架抽取，#661）：展开才拉数据的折叠卡 —— */}
-      <PaperExtractionsSection paperId={paper.id} />
-
-      {/* —— 引文（按意图分组，#639）：展开才拉数据的简单列表 —— */}
-      <PaperCitationsSection paperId={paper.id} />
-
-      {/* —— 重要图片画廊（有图显示；正文已嵌图时默认折叠，避免重复视觉） —— */}
-      <FiguresSection paper={paper} defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)} />
-
-      {/* —— Wiki 正文（markdown，含 ![[fig:N]] 嵌入图） —— */}
-      <div style={{ marginTop: 22 }}>
-        {paper.wiki_content ? (
-          <>
-            <div
-              className="row wrap"
-              style={{
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: 8,
-                paddingBottom: 10,
-                marginBottom: 16,
-                borderBottom: '0.5px solid var(--border)',
-              }}
-            >
-              <div className="row gap8" style={{ minWidth: 0 }}>
-                <span style={{ fontSize: 12, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
-                  {tr('AI 生成的解读', 'AI-generated summary')}
-                </span>
-                <CompileBadge model={paper.compiled_model} at={paper.compiled_at} />
-              </div>
-              <div className="row gap6">
-                <button
-                  className="btn btn-soft sm"
-                  title={tr('全屏阅读', 'Read full screen')}
-                  onClick={() => {
-                    setReaderPrint(false);
-                    setReaderOpen(true);
-                  }}
-                >
-                  <Icon name="book" size={13} />
-                  {tr('阅读模式', 'Reading mode')}
-                </button>
-                <button
-                  className="btn btn-ghost sm"
-                  title={tr('打印或另存为 PDF', 'Print or save as PDF')}
-                  onClick={() => {
-                    setReaderPrint(true);
-                    setReaderOpen(true);
-                  }}
-                >
-                  <Icon name="download" size={13} />
-                  {tr('导出 PDF', 'Export PDF')}
-                </button>
-              </div>
+      {current === 'summary' &&
+        (hasSummary ? (
+          <div className="pd-prose">
+            <div className="pd-byline">
+              <span className="row gap8" style={{ minWidth: 0 }}>
+                {compiling ? (
+                  <span className="row gap6" style={{ color: 'var(--accent-text)' }}>
+                    <Icon name="refresh" size={12} style={{ animation: 'spin 1s linear infinite' }} />
+                    {tr('正在重新生成，约 1 分钟…', 'Regenerating, about a minute…')}
+                  </span>
+                ) : (
+                  <>
+                    <span>{tr('AI 生成的解读', 'AI-generated summary')}</span>
+                    <CompileBadge model={paper.compiled_model} at={paper.compiled_at} />
+                  </>
+                )}
+              </span>
+              <button
+                type="button"
+                className="btn btn-plain xs"
+                onClick={() => {
+                  setReaderPrint(false);
+                  setReaderOpen(true);
+                }}
+              >
+                <Icon name="book" size={12} />
+                {tr('全屏阅读', 'Full screen')}
+              </button>
             </div>
             <Markdown
-              source={paper.wiki_content}
+              source={split.body || paper.wiki_content || ''}
               onWikiLink={onWikiLink}
               renderFigure={renderFigure}
               renderCitation={renderEvidenceCitation}
             />
-          </>
+          </div>
         ) : (
-          <EmptyState
-            compact
-            icon="pen"
-            title={tr('还没有解读', 'No summary yet')}
-            desc={tr('点击上方「生成解读」。', 'Select “Generate summary” above.')}
-          />
-        )}
-      </div>
+          <div className="pd-empty" data-testid="paper-no-summary">
+            <p>
+              {compiling
+                ? tr('正在生成解读，约 1 分钟…', 'Generating the summary, about a minute…')
+                : tr('还没有解读。解读会把这篇论文的问题、方法和结果写成几段话。', 'No summary yet. A summary explains the problem, method and results in a few paragraphs.')}
+            </p>
+            {!compiling && (
+              <button type="button" className="btn btn-soft sm" onClick={() => onRecompile(paperId)}>
+                <Icon name="sparkle" size={13} />
+                {tr('生成解读', 'Generate summary')}
+              </button>
+            )}
+          </div>
+        ))}
+
+      {current === 'abstract' && (
+        <div className="pd-abstract" data-testid="paper-abstract">
+          {paper.abstract ? paper.abstract : <span className="muted">{tr('没有摘要', 'No abstract')}</span>}
+        </div>
+      )}
+
+      {current === 'notes' && (
+        <PaperNotesSection
+          flat
+          paperId={paper.id}
+          noteCount={paper.note_count ?? 0}
+          invalidateKeys={[['papers'], ['paper', paper.id], ['paper', scopeId, paper.id]]}
+        />
+      )}
+
+      {current === 'more' && (
+        <div className="pd-more">
+          {paper.concepts.length > 0 && (
+            <section>
+              <div className="pd-more-label">{tr('涉及的概念', 'Concepts')}</div>
+              <div className="row gap6 wrap">
+                {(conceptsOpen ? paper.concepts : paper.concepts.slice(0, CONCEPT_CHIP_LIMIT)).map((c) => {
+                  const meta = categoryMeta(c.category);
+                  return (
+                    <span
+                      key={c.id}
+                      className="wikilink"
+                      style={{ background: meta.bg, color: meta.c, height: 24 }}
+                      onClick={() => onOpenConcept(c.id)}
+                    >
+                      {c.name}
+                      <span style={{ opacity: 0.6, marginLeft: 5, fontSize: '0.85em' }}>{tr(meta.zh, meta.en)}</span>
+                    </span>
+                  );
+                })}
+                {paper.concepts.length > CONCEPT_CHIP_LIMIT && (
+                  <button type="button" className="btn btn-plain xs" onClick={() => setConceptsOpen((o) => !o)}>
+                    {conceptsOpen
+                      ? tr('收起', 'Show fewer')
+                      : tr(`还有 ${paper.concepts.length - CONCEPT_CHIP_LIMIT} 个`, `${paper.concepts.length - CONCEPT_CHIP_LIMIT} more`)}
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
+          <section>
+            <div className="pd-more-label">{tr('编号与日期', 'Identifiers and dates')}</div>
+            <MetaItem label={tr('arXiv 编号', 'arXiv ID')}>
+              {paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}
+            </MetaItem>
+            <MetaItem label="DOI">{paper.doi ? <span className="mono">{paper.doi}</span> : <span className="muted">—</span>}</MetaItem>
+            <MetaItem label={tr('发表日期', 'Published')}>
+              {paper.published_at ? <span className="mono">{paper.published_at.slice(0, 10)}</span> : <span className="muted">—</span>}
+            </MetaItem>
+            <MetaItem label={tr('加入时间', 'Added')}>
+              <span className="mono">{fmtTime(paper.created_at)}</span>
+            </MetaItem>
+          </section>
+          <PaperExtractionsSection paperId={paper.id} />
+          <PaperCitationsSection paperId={paper.id} />
+          <FiguresSection paper={paper} defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)} />
+        </div>
+      )}
 
       {readerOpen && (
         <PaperReader
@@ -1288,7 +736,6 @@ function PaperDetailPane({
         />
       )}
 
-      {/* 覆盖确认：解读每篇一份，重编会顶掉现有那份，且没有历史版本 */}
       <ConfirmModal
         open={recompileConfirm}
         onClose={() => setRecompileConfirm(false)}
@@ -1305,21 +752,31 @@ function PaperDetailPane({
   );
 }
 
+function fmtDay(iso: string): string {
+  const d = parseApiDate(iso);
+  return tr(`${d.getMonth() + 1} 月 ${d.getDate()} 日`, d.toLocaleDateString('en', { month: 'short', day: 'numeric' }));
+}
+
 /* ---------------- Tab 主体 ---------------- */
 
-export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept, onWikiLink, advSeed }: PapersTabProps) {
+const SORTS: { v: PaperSort; zh: string; en: string }[] = [
+  { v: 'relevance', zh: '按相关度', en: 'By relevance' },
+  { v: '-published_at', zh: '按发表时间', en: 'By publication date' },
+  // 按加入时间：引擎的服务层支持 -created_at，但文献库列表接口的参数校验只放行前两种（会 422），先不提供
+];
+
+export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept, onWikiLink, advSeed, onFindPapers }: PapersTabProps) {
   const scopeId = libraryId ?? pid ?? '';
+  const narrow = useIsCompact();
   const [view, setView] = useState<ViewFilter>('all');
   const [sort, setSort] = useState<PaperSort>('relevance');
   const [mode, setMode] = useState<SearchMode>('keyword');
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
 
-  // —— 文献管理增强过滤器（库标签的界面入口已移除，只留我的标签 / 阅读状态） ——
   const [myTagFilter, setMyTagFilter] = useState('');
   const [readingFilter, setReadingFilter] = useState<'' | ReadingStatus>('');
-  const [addOpen, setAddOpen] = useState(false);
-  // 高级检索（作者/机构/发表时间/入库时间）
+  // 更多筛选（搜索方式 / 作者 / 机构 / 发表时间 / 加入时间 / 标签 / 阅读状态）
   const [advOpen, setAdvOpen] = useState(false);
   const [advAuthor, setAdvAuthor] = useState('');
   const [advAffiliation, setAdvAffiliation] = useState('');
@@ -1329,32 +786,52 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
   const [advCreatedTo, setAdvCreatedTo] = useState('');
   const author = useDebounced(advAuthor.trim());
   const affiliation = useDebounced(advAffiliation.trim());
-  const advActive = !!(author || affiliation || advPubFrom || advPubTo || advCreatedFrom || advCreatedTo);
+  const advActive = !!(
+    author ||
+    affiliation ||
+    advPubFrom ||
+    advPubTo ||
+    advCreatedFrom ||
+    advCreatedTo ||
+    myTagFilter ||
+    readingFilter ||
+    mode === 'semantic'
+  );
 
-  // 点击作者/机构 → 论文库只留匹配的论文（走已有的高级检索过滤）；
-  // 其余高级条件重置，面板展开让用户看到生效的条件
-  const applyAdvFilter = useCallback((patch: { author?: string; affiliation?: string }) => {
-    setMode('keyword');
-    setQInput('');
-    setAdvAuthor(patch.author ?? '');
-    setAdvAffiliation(patch.affiliation ?? '');
+  const clearAdv = () => {
+    setAdvAuthor('');
+    setAdvAffiliation('');
     setAdvPubFrom('');
     setAdvPubTo('');
     setAdvCreatedFrom('');
     setAdvCreatedTo('');
-    setAdvOpen(true);
-    onSelect('');
-    if (patch.author) {
-      toast(tr(`已筛选作者：${patch.author}`, `Showing papers by ${patch.author}`), 'info');
-    } else if (patch.affiliation) {
-      toast(tr(`已筛选机构：${patch.affiliation}`, `Showing papers from ${patch.affiliation}`), 'info');
-    }
-  }, [onSelect]);
+    setMyTagFilter('');
+    setReadingFilter('');
+    setMode('keyword');
+  };
+
+  // 点击作者/机构 → 只留匹配的论文；其余条件重置，面板展开让用户看到生效的条件
+  const applyAdvFilter = useCallback(
+    (patch: { author?: string; affiliation?: string }) => {
+      setMode('keyword');
+      setQInput('');
+      setAdvAuthor(patch.author ?? '');
+      setAdvAffiliation(patch.affiliation ?? '');
+      setAdvPubFrom('');
+      setAdvPubTo('');
+      setAdvCreatedFrom('');
+      setAdvCreatedTo('');
+      setAdvOpen(true);
+      onSelect('');
+      if (patch.author) toast(tr(`只看 ${patch.author} 的论文`, `Showing papers by ${patch.author}`), 'info');
+      else if (patch.affiliation) toast(tr(`只看 ${patch.affiliation} 的论文`, `Showing papers from ${patch.affiliation}`), 'info');
+    },
+    [onSelect],
+  );
 
   const filterByAuthor = useCallback((name: string) => applyAdvFilter({ author: name }), [applyAdvFilter]);
   const filterByAffiliation = useCallback((name: string) => applyAdvFilter({ affiliation: name }), [applyAdvFilter]);
 
-  // 深链 /wiki?author= / ?affiliation=（阅读页信息面板跳回）：进入后自动填入高级检索并应用
   const seedSeq = advSeed?.seq ?? 0;
   useEffect(() => {
     if (!advSeed || advSeed.seq === 0) return;
@@ -1362,23 +839,18 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedSeq]);
 
-  // 多选（批量删除/导出）：默认关闭，底部「多选」按钮开启后行首出现复选框
+  // 多选（批量删除 / 导出 / 对比）
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [trashOpen, setTrashOpen] = useState(false);
-  // 对比表（#669）：多选 2..10 篇后从底栏打开；paperIds 用勾选顺序（就是列序）
   const [compareOpen, setCompareOpen] = useState(false);
-  const [extensionHistoryOpen, setExtensionHistoryOpen] = useState(false);
   const queryClient = useQueryClient();
 
-  // 切换方向/视图/搜索时退出多选
   useEffect(() => {
     setSelected(new Set());
     setSelectMode(false);
   }, [scopeId, view, q, myTagFilter, readingFilter]);
 
-  // 重新编译：同步等着（约 1 分钟），用户很可能切走再切回来。
-  // 进行中状态按 paper id 记在列表页这一层：详情面板换论文不会丢，多篇同时编译也各记各的。
+  // 生成解读：同步等着（约 1 分钟），按 paper id 记在列表页这一层
   const compilePending = usePendingByPaper();
   const recompile = useCallback(
     (paperId: string) => {
@@ -1390,7 +862,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
           void queryClient.invalidateQueries({ queryKey: ['paper-figures', paperId] });
           void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
         } catch (e) {
-          toast(`${tr('无法生成解读：', 'Couldn’t generate the summary: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+          toast(`${tr('无法生成解读：', 'Couldn’t generate the summary: ')}${errorText(e)}`, 'error');
         }
       });
     },
@@ -1398,7 +870,8 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
   );
 
   const bulkDeleteMutation = useMutation({
-    mutationFn: () => (libraryId ? api.batchDeleteLibraryPapers(libraryId, [...selected]) : api.batchDeletePapers(scopeId, [...selected])),
+    mutationFn: () =>
+      libraryId ? api.batchDeleteLibraryPapers(libraryId, [...selected]) : api.batchDeletePapers(scopeId, [...selected]),
     onSuccess: (res) => {
       toast(tr(`已将 ${res.deleted} 篇移入回收站`, `Moved ${res.deleted} papers to trash`), 'ok');
       if (selectedId && selected.has(selectedId)) onSelect('');
@@ -1408,8 +881,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
       void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
       void queryClient.invalidateQueries({ queryKey: ['project-graph', scopeId] });
     },
-    onError: (e) =>
-      toast(`${tr('无法删除：', 'Couldn’t delete: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('无法删除：', 'Couldn’t delete: ')}${errorText(e)}`, 'error'),
   });
 
   const bulkExportMutation = useMutation({
@@ -1421,8 +893,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
       saveBlob(blob, format === 'bibtex' ? 'polaris-selected.bib' : 'polaris-selected.json');
       toast(tr(`已导出 ${selected.size} 篇`, `Exported ${selected.size} papers`), 'ok');
     },
-    onError: (e) =>
-      toast(`${tr('无法导出：', 'Couldn’t export: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('无法导出：', 'Couldn’t export: ')}${errorText(e)}`, 'error'),
   });
 
   const extensionBatchMutation = useMutation({
@@ -1448,19 +919,15 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
       setSelected(new Set());
       void queryClient.invalidateQueries({ queryKey: ['download-batches', libraryId] });
     },
-    onError: (error) => toast(
-      `${tr('无法发送到浏览器扩展：', 'Couldn’t send to the browser extension: ')}${error instanceof Error ? error.message : String(error)}`,
-      'error',
-    ),
+    onError: (error) =>
+      toast(`${tr('无法发送到浏览器扩展：', 'Couldn’t send to the browser extension: ')}${errorText(error)}`, 'error'),
   });
 
   const semanticActive = mode === 'semantic' && q.length > 0;
 
-  // —— 我的标签（过滤下拉用；跨库共用一份，所以 queryKey 不带 scopeId） ——
   const myTagsQuery = useQuery({ queryKey: ['my-tags'], queryFn: () => api.listMyTags(), retry: false });
   const myTags = myTagsQuery.data ?? [];
 
-  // —— 关键词/浏览：分页列表 ——
   const listQuery = useInfiniteQuery({
     queryKey: ['papers', scopeId, view, q, sort, myTagFilter, readingFilter, author, affiliation, advPubFrom, advPubTo, advCreatedFrom, advCreatedTo],
     queryFn: ({ pageParam }) => {
@@ -1475,7 +942,6 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
         affiliation: affiliation || undefined,
         published_from: advPubFrom ? `${advPubFrom}T00:00:00Z` : undefined,
         published_to: advPubTo ? `${advPubTo}T23:59:59Z` : undefined,
-        // 高级检索里显式选了入库日期就以它为准；没选则沿用视图自带的（今日新收录）
         created_from: advCreatedFrom ? `${advCreatedFrom}T00:00:00Z` : vq.created_from,
         created_to: advCreatedTo ? `${advCreatedTo}T23:59:59Z` : undefined,
         page: pageParam,
@@ -1489,7 +955,6 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
     enabled: !semanticActive,
   });
 
-  // —— 语义检索 ——
   const semQuery = useQuery({
     queryKey: ['wiki-search', scopeId, q],
     queryFn: () =>
@@ -1504,40 +969,24 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
     if (semanticActive) return semQuery.data?.papers ?? [];
     return listQuery.data?.pages.flatMap((p) => p.items) ?? [];
   }, [semanticActive, semQuery.data, listQuery.data]);
-
-  // 「今日新收录」的顶行说明：这批是什么时候进来的。取最早/最晚的入库时间，
-  // 一次同步的论文时间挨得很近，所以多数时候就是一个时刻。
-  const fmtClock = (ms: number) =>
-    new Date(ms).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  const todayRange = useMemo(() => {
-    if (view !== 'today' || papers.length === 0) return null;
-    const times = papers
-      .map((p) => (p.created_at ? parseApiDate(p.created_at).getTime() : 0))
-      .filter((t) => t > 0)
-      .sort((a, b) => a - b);
-    if (times.length === 0) return null;
-    return { first: times[0]!, last: times[times.length - 1]! };
-  }, [view, papers]);
+  const totalShown = semanticActive ? papers.length : (listQuery.data?.pages[0]?.total ?? papers.length);
 
   const isLoading = semanticActive ? semQuery.isLoading : listQuery.isLoading;
   const isError = semanticActive ? semQuery.isError : listQuery.isError;
   const fallbackNotice = semanticActive && semQuery.data && semQuery.data.mode_used === 'keyword';
+  const hasFilter = !!q || view !== 'all' || advActive;
 
-  const hasFilter = !!q || view !== 'all' || !!myTagFilter || !!readingFilter || advActive;
-
-  // 列表变化后自动选中第一篇
+  // 宽屏：列表变化后自动选中第一篇。窄屏一次只看一块，不替人选。
   const firstId = papers[0]?.id ?? null;
   useEffect(() => {
-    if (!selectedId && firstId) onSelect(firstId);
-  }, [selectedId, firstId, onSelect]);
-
-  const filterDisabled = semanticActive ? { opacity: 0.45, pointerEvents: 'none' as const } : undefined;
+    if (!narrow && !selectedId && firstId) onSelect(firstId);
+  }, [narrow, selectedId, firstId, onSelect]);
 
   return (
-    <div className="split">
+    <div className={'split lib-split' + (selectedId ? ' has-selection' : '')}>
       {/* —— 左：列表 —— */}
       <div className="split-list">
-        <div style={{ padding: '12px 14px 10px', borderBottom: '0.5px solid var(--border)' }}>
+        <div className="pl-tools">
           <div className="row gap8">
             <SearchInput
               value={qInput}
@@ -1545,223 +994,114 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
               placeholder={
                 mode === 'semantic'
                   ? tr('用一句话描述要找的内容…', 'Describe what you’re looking for…')
-                  : tr('搜索标题或关键词…', 'Search titles or keywords…')
+                  : tr('搜索标题、作者或关键词…', 'Search titles, authors or keywords…')
               }
             />
-            <Segmented<SearchMode>
-              options={[
-                { v: 'keyword', label: tr('关键词', 'Keyword') },
-                { v: 'semantic', label: tr('语义', 'Semantic') },
-              ]}
-              value={mode}
-              onChange={setMode}
-            />
             <button
-              className="icon-btn"
-              style={{
-                width: 28,
-                height: 28,
-                flexShrink: 0,
-                position: 'relative',
-                ...(advOpen || advActive ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : {}),
-              }}
+              type="button"
+              className={'icon-btn pl-filter-btn' + (advOpen || advActive ? ' is-on' : '')}
               title={tr('更多筛选', 'More filters')}
+              aria-label={tr('更多筛选', 'More filters')}
+              aria-expanded={advOpen}
+              data-testid="papers-more-filters"
               onClick={() => setAdvOpen((o) => !o)}
             >
               <Icon name="sliders" size={14} />
-              {advActive && (
-                <span
-                  style={{
-                    position: 'absolute',
-                    top: 3,
-                    right: 3,
-                    width: 6,
-                    height: 6,
-                    borderRadius: '50%',
-                    background: 'var(--accent)',
-                  }}
-                />
-              )}
+              {advActive && <span className="pl-filter-dot" />}
             </button>
           </div>
           {advOpen && (
-            <div
-              className="col gap8"
-              style={{
-                marginTop: 8,
-                padding: '10px 12px',
-                borderRadius: 10,
-                background: 'var(--surface-2)',
-                ...filterDisabled,
-              }}
-            >
-              <div className="row gap8">
-                <input
-                  className="input"
-                  style={{ flex: 1, minWidth: 0, height: 28, fontSize: 11.5 }}
-                  placeholder={tr('作者', 'Author')}
-                  value={advAuthor}
-                  onChange={(e) => setAdvAuthor(e.target.value)}
-                />
-                <input
-                  className="input"
-                  style={{ flex: 1, minWidth: 0, height: 28, fontSize: 11.5 }}
-                  placeholder={tr('机构', 'Affiliation')}
-                  title={tr('仅匹配列出机构的论文', 'Matches papers that list affiliations')}
-                  value={advAffiliation}
-                  onChange={(e) => setAdvAffiliation(e.target.value)}
-                />
+            <div className="pl-adv" data-testid="papers-filters">
+              <label className="pl-adv-row">
+                <span>{tr('搜索方式', 'Match')}</span>
+                <select className="input" value={mode} onChange={(e) => setMode(e.target.value as SearchMode)}>
+                  <option value="keyword">{tr('按字面', 'Exact words')}</option>
+                  <option value="semantic">{tr('按意思', 'By meaning')}</option>
+                </select>
+              </label>
+              <label className="pl-adv-row">
+                <span>{tr('作者', 'Author')}</span>
+                <input className="input" value={advAuthor} onChange={(e) => setAdvAuthor(e.target.value)} placeholder={tr('例如 Lewis', 'e.g. Lewis')} />
+              </label>
+              <label className="pl-adv-row">
+                <span>{tr('机构', 'Affiliation')}</span>
+                <input className="input" value={advAffiliation} onChange={(e) => setAdvAffiliation(e.target.value)} placeholder={tr('例如 Tsinghua', 'e.g. Tsinghua')} />
+              </label>
+              <div className="pl-adv-row">
+                <span>{tr('发表时间', 'Published')}</span>
+                <input className="input" type="date" value={advPubFrom} onChange={(e) => setAdvPubFrom(e.target.value)} aria-label={tr('发表时间起', 'Published from')} />
+                <span className="pl-adv-dash">–</span>
+                <input className="input" type="date" value={advPubTo} onChange={(e) => setAdvPubTo(e.target.value)} aria-label={tr('发表时间止', 'Published to')} />
               </div>
-              <div className="row gap6" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                <span style={{ width: 60, flexShrink: 0 }}>{tr('发表时间', 'Published')}</span>
-                <input className="input" type="date" style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11 }}
-                  value={advPubFrom} onChange={(e) => setAdvPubFrom(e.target.value)} />
-                <span>—</span>
-                <input className="input" type="date" style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11 }}
-                  value={advPubTo} onChange={(e) => setAdvPubTo(e.target.value)} />
+              <div className="pl-adv-row">
+                <span>{tr('加入时间', 'Added')}</span>
+                <input className="input" type="date" value={advCreatedFrom} onChange={(e) => setAdvCreatedFrom(e.target.value)} aria-label={tr('加入时间起', 'Added from')} />
+                <span className="pl-adv-dash">–</span>
+                <input className="input" type="date" value={advCreatedTo} onChange={(e) => setAdvCreatedTo(e.target.value)} aria-label={tr('加入时间止', 'Added to')} />
               </div>
-              <div className="row gap6" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                <span style={{ width: 60, flexShrink: 0 }}>{tr('加入时间', 'Added')}</span>
-                <input className="input" type="date" style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11 }}
-                  value={advCreatedFrom} onChange={(e) => setAdvCreatedFrom(e.target.value)} />
-                <span>—</span>
-                <input className="input" type="date" style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11 }}
-                  value={advCreatedTo} onChange={(e) => setAdvCreatedTo(e.target.value)} />
-              </div>
+              <label className="pl-adv-row">
+                <span>{tr('我的标签', 'My tag')}</span>
+                <select className="input" value={myTagFilter} onChange={(e) => setMyTagFilter(e.target.value)}>
+                  <option value="">{tr('不限', 'Any')}</option>
+                  {myTags.map((t) => (
+                    <option key={t.name} value={t.name}>
+                      {t.name}（{t.paper_count}）
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="pl-adv-row">
+                <span>{tr('阅读状态', 'Reading')}</span>
+                <select className="input" value={readingFilter} onChange={(e) => setReadingFilter(e.target.value as '' | ReadingStatus)}>
+                  <option value="">{tr('不限', 'Any')}</option>
+                  {READING_STATUS.map((m) => (
+                    <option key={m.v} value={m.v}>
+                      {tr(m.label, m.en)}
+                    </option>
+                  ))}
+                </select>
+              </label>
               {advActive && (
-                <button
-                  className="btn btn-ghost sm"
-                  style={{ alignSelf: 'flex-start', height: 22, fontSize: 10.5 }}
-                  onClick={() => {
-                    setAdvAuthor('');
-                    setAdvAffiliation('');
-                    setAdvPubFrom('');
-                    setAdvPubTo('');
-                    setAdvCreatedFrom('');
-                    setAdvCreatedTo('');
-                  }}
-                >
+                <button type="button" className="btn btn-plain xs" style={{ alignSelf: 'flex-start' }} onClick={clearAdv}>
                   {tr('清除筛选', 'Clear filters')}
                 </button>
               )}
             </div>
           )}
-          <div className="row gap6 wrap" style={{ marginTop: 10 }}>
-            {VIEW_FILTERS.map((f) => (
-              <span
-                key={f.v}
-                className={`chip${view === f.v ? ' on' : ''}`}
-                style={filterDisabled}
-                title={tr(f.hintZh, f.hintEn)}
-                onClick={() => setView(f.v)}
-              >
-                {tr(f.zh, f.en)}
-              </span>
-            ))}
-          </div>
-          {view === 'today' && (
-            <div
-              className="row gap6"
-              style={{
-                marginTop: 8, padding: '6px 9px', borderRadius: 6,
-                background: 'var(--bg-2)', fontSize: 11, color: 'var(--text-3)',
-                alignItems: 'baseline', flexWrap: 'wrap',
-              }}
-            >
-              <Icon name="refresh" size={11} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
-              {todayRange ? (
-                <span>
-                  {tr(
-                    `上次同步加入 ${papers.length} 篇 · ${fmtClock(todayRange.first)}${
-                      fmtClock(todayRange.last) === fmtClock(todayRange.first)
-                        ? ''
-                        : `–${fmtClock(todayRange.last)}`
-                    }`,
-                    `${papers.length} papers added by the last sync · ${fmtClock(
-                      todayRange.first,
-                    )}${
-                      fmtClock(todayRange.last) === fmtClock(todayRange.first)
-                        ? ''
-                        : `–${fmtClock(todayRange.last)}`
-                    }`,
-                  )}
-                </span>
-              ) : (
-                <span>
-                  {tr(
-                    '上次同步没有新增论文',
-                    'The last sync added no papers',
-                  )}
-                </span>
-              )}
+          <div className="pl-quiet" style={semanticActive ? { opacity: 0.45, pointerEvents: 'none' } : undefined}>
+            <div className="pl-quiet-tabs" role="tablist">
+              {VIEW_FILTERS.map((f) => (
+                <button
+                  key={f.v}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === f.v}
+                  className={'pl-qtab' + (view === f.v ? ' is-on' : '')}
+                  title={tr(f.hintZh, f.hintEn)}
+                  onClick={() => setView(f.v)}
+                >
+                  {tr(f.zh, f.en)}
+                </button>
+              ))}
             </div>
-          )}
-
-          {/* 我的标签 / 阅读状态过滤（库标签的界面入口已移除） */}
-          <div className="row gap6" style={{ marginTop: 8, ...filterDisabled }}>
-            <select
-              className="input"
-              style={{ height: 26, fontSize: 11.5, flex: 1, minWidth: 0, padding: '0 6px' }}
-              value={myTagFilter}
-              onChange={(e) => setMyTagFilter(e.target.value)}
-              title={tr('按我的标签筛选', 'Filter by my tags')}
-            >
-              <option value="">{tr('全部标签', 'All tags')}</option>
-              {myTags.map((t) => (
-                <option key={t.name} value={t.name}>
-                  {t.name}（{t.paper_count}）
+            <select className="pl-sort" value={sort} onChange={(e) => setSort(e.target.value as PaperSort)} aria-label={tr('排序', 'Sort')} data-testid="papers-sort">
+              {SORTS.map((s) => (
+                <option key={s.v} value={s.v}>
+                  {tr(s.zh, s.en)}
                 </option>
               ))}
             </select>
-            <select
-              className="input"
-              style={{ height: 26, fontSize: 11.5, width: 88, padding: '0 6px' }}
-              value={readingFilter}
-              onChange={(e) => setReadingFilter(e.target.value as '' | ReadingStatus)}
-              title={tr('按阅读状态筛选', 'Filter by reading status')}
-            >
-              <option value="">{tr('全部状态', 'Any status')}</option>
-              {READING_STATUS.map((m) => (
-                <option key={m.v} value={m.v}>
-                  {tr(m.label, m.en)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="row gap8" style={{ marginTop: 10 }}>
-            <Segmented<PaperSort>
-              options={[
-                { v: 'relevance', label: tr('按相关度', 'By relevance') },
-                { v: '-published_at', label: tr('按时间', 'By date') },
-              ]}
-              value={sort}
-              onChange={setSort}
-            />
-            <button className="btn btn-primary sm" style={{ height: 26, marginLeft: 'auto' }} onClick={() => setAddOpen(true)}>
-              <Icon name="plus" size={12} />
-              {tr('添加论文', 'Add papers')}
-            </button>
           </div>
           {fallbackNotice && (
-            <div
-              style={{
-                marginTop: 8,
-                fontSize: 11,
-                color: 'var(--warn-tx)',
-                background: 'var(--warn-bg)',
-                borderRadius: 7,
-                padding: '5px 9px',
-                lineHeight: 1.5,
-              }}
-            >
-              {tr('语义搜索暂不可用，已改用关键词搜索', 'Semantic search is unavailable, so keyword search was used')}
+            <div className="hint" style={{ marginTop: 6, color: 'var(--warn-tx)' }}>
+              {tr('按意思搜暂时不可用，已按字面搜', 'Search by meaning isn’t available, so exact words were used')}
             </div>
           )}
         </div>
 
-        <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
+        <div className="scroll" style={{ overflowY: 'auto', flex: 1 }} data-testid="papers-list">
           {isLoading ? (
-            <div className="empty">{tr('加载中…', 'Loading…')}</div>
+            <LoadingState rows={5} />
           ) : isError ? (
             <EmptyState
               compact
@@ -1773,20 +1113,26 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
             <EmptyState
               compact
               icon="book"
-              title={hasFilter ? tr('没有匹配的论文', 'No matching papers') : tr('还没有论文', 'No papers yet')}
-              desc={
+              title={
                 hasFilter
-                  ? tr('试试其他关键词或筛选条件。', 'Try other keywords or filters.')
-                  : tr(
-                      '在「检索与同步」中检索论文，或手动添加。',
-                      'Search for papers under “Search & sync”, or add them yourself.',
-                    )
+                  ? view === 'today' && !q && !advActive
+                    ? tr('上次更新没有新加入的论文', 'The last update added no papers')
+                    : tr('没有匹配的论文', 'No matching papers')
+                  : tr('还没有论文', 'No papers yet')
+              }
+              action={
+                !hasFilter && onFindPapers ? (
+                  <button type="button" className="btn btn-soft sm" onClick={onFindPapers}>
+                    <Icon name="search" size={13} />
+                    {tr('找论文', 'Find papers')}
+                  </button>
+                ) : undefined
               }
             />
           ) : (
             <>
               {papers.map((p) => (
-                <PaperRow
+                <LibraryPaperRow
                   key={p.id}
                   p={p}
                   active={p.id === selectedId}
@@ -1805,22 +1151,8 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
               ))}
               {!semanticActive && listQuery.hasNextPage && (
                 <div style={{ padding: 12, display: 'flex', justifyContent: 'center' }}>
-                  <button
-                    className="btn btn-soft sm"
-                    disabled={listQuery.isFetchingNextPage}
-                    onClick={() => void listQuery.fetchNextPage()}
-                  >
-                    {listQuery.isFetchingNextPage ? (
-                      <>
-                        <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-                        {tr('加载中…', 'Loading…')}
-                      </>
-                    ) : (
-                      <>
-                        <Icon name="chevDown" size={13} />
-                        {tr('加载更多', 'Load more')}
-                      </>
-                    )}
+                  <button className="btn btn-plain sm" disabled={listQuery.isFetchingNextPage} onClick={() => void listQuery.fetchNextPage()}>
+                    {listQuery.isFetchingNextPage ? tr('加载中…', 'Loading…') : tr('加载更多', 'Load more')}
                   </button>
                 </div>
               )}
@@ -1828,34 +1160,17 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
           )}
         </div>
 
-        {/* —— 底部固定操作栏 —— */}
-        <div
-          className="row gap8 wrap"
-          style={{ padding: '9px 14px', borderTop: '0.5px solid var(--border)', flexShrink: 0 }}
-        >
-          <button
-            className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
-            title={tr('选择多篇论文', 'Select several papers')}
-            onClick={() => {
-              setSelectMode((m) => !m);
-              setSelected(new Set());
-            }}
-          >
-            <Icon name="check" size={13} />
-            {selectMode
-              ? tr(`已选 ${selected.size} 篇`, `${selected.size} selected`)
-              : tr('多选', 'Select')}
-          </button>
-          {selectMode && (
+        {/* —— 底栏：数量 + 多选 —— */}
+        <div className="pl-foot">
+          {selectMode ? (
             <>
+              <span>{tr(`已选 ${selected.size} 篇`, `${selected.size} selected`)}</span>
               <button
-                className="btn btn-ghost sm"
-                style={{ color: 'var(--danger-tx)' }}
+                className="btn btn-danger-soft xs"
                 disabled={selected.size === 0 || bulkDeleteMutation.isPending}
                 onClick={() => bulkDeleteMutation.mutate()}
               >
-                <Icon name="x" size={12} />
-                {tr('删除', 'Delete')}
+                {tr('移入回收站', 'Move to trash')}
               </button>
               <ExportDropdown
                 sm
@@ -1867,7 +1182,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
               />
               {libraryId && selected.size >= 2 && (
                 <button
-                  className="btn btn-soft sm"
+                  className="btn btn-ghost xs"
                   disabled={selected.size > 10}
                   title={
                     selected.size > 10
@@ -1876,37 +1191,42 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                   }
                   onClick={() => setCompareOpen(true)}
                 >
-                  <Icon name="grid" size={12} />
                   {tr('对比', 'Compare')}
                 </button>
               )}
               {libraryId && extensionDeliveryAvailable() && (
                 <button
-                  className="btn btn-soft sm"
+                  className="btn btn-ghost xs"
                   disabled={selected.size === 0 || extensionBatchMutation.isPending}
                   onClick={() => extensionBatchMutation.mutate(papers.filter((paper) => selected.has(paper.id)))}
                 >
-                  <Icon name={extensionBatchMutation.isPending ? 'refresh' : 'share'} size={12} style={extensionBatchMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
-                  {tr('发送到浏览器扩展', 'Send to browser extension')}
+                  {tr('用浏览器扩展下载 PDF', 'Get PDFs via the extension')}
                 </button>
               )}
+              <button
+                className="btn btn-plain xs"
+                style={{ marginLeft: 'auto' }}
+                onClick={() => {
+                  setSelectMode(false);
+                  setSelected(new Set());
+                }}
+              >
+                {tr('完成', 'Done')}
+              </button>
+            </>
+          ) : (
+            <>
+              <span data-testid="papers-count">
+                {hasFilter
+                  ? tr(`${totalShown} 篇符合`, `${totalShown} ${totalShown === 1 ? 'match' : 'matches'}`)
+                  : tr(`共 ${totalShown} 篇`, `${totalShown} ${totalShown === 1 ? 'paper' : 'papers'}`)}
+              </span>
+              <button className="btn btn-plain xs" style={{ marginLeft: 'auto' }} onClick={() => setSelectMode(true)} disabled={papers.length === 0}>
+                <Icon name="check" size={12} />
+                {tr('多选', 'Select')}
+              </button>
             </>
           )}
-          {/* 桌面应用里批次到不了扩展（见 extensionDeliveryAvailable），发送与记录入口一并不摆 */}
-          {libraryId && extensionDeliveryAvailable() && (
-            <button className="btn btn-ghost sm" onClick={() => setExtensionHistoryOpen(true)}>
-              <Icon name="clock" size={13} />
-              {tr('扩展下载记录', 'Extension downloads')}
-            </button>
-          )}
-          <button
-            className="btn btn-ghost sm"
-            style={{ marginLeft: 'auto' }}
-            onClick={() => setTrashOpen(true)}
-          >
-            <Icon name="trash" size={13} />
-            {tr('回收站', 'Trash')}
-          </button>
         </div>
       </div>
 
@@ -1922,6 +1242,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
             onFilterAuthor={filterByAuthor}
             onFilterAffiliation={filterByAffiliation}
             onDeleted={() => onSelect('')}
+            onBack={() => onSelect('')}
             compiling={compilePending.has(selectedId)}
             onRecompile={recompile}
             sendingToExtension={extensionBatchMutation.isPending}
@@ -1934,27 +1255,8 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
         )}
       </div>
 
-      {/* —— 添加文献 Modal —— */}
-      <AddPaperModal pid={pid ?? ''} libraryId={libraryId} open={addOpen} onClose={() => setAddOpen(false)} onImported={onSelect} />
-
-      {/* —— 回收站 —— */}
-      <PapersTrashModal pid={pid ?? ''} libraryId={libraryId} open={trashOpen} onClose={() => setTrashOpen(false)} />
       {libraryId && (
-        <ExtensionBatchHistoryModal
-          libraryId={libraryId}
-          open={extensionHistoryOpen}
-          onClose={() => setExtensionHistoryOpen(false)}
-        />
-      )}
-
-      {/* —— 论文对比表（#669） —— */}
-      {libraryId && (
-        <ComparisonModal
-          libraryId={libraryId}
-          paperIds={[...selected]}
-          open={compareOpen}
-          onClose={() => setCompareOpen(false)}
-        />
+        <ComparisonModal libraryId={libraryId} paperIds={[...selected]} open={compareOpen} onClose={() => setCompareOpen(false)} />
       )}
     </div>
   );

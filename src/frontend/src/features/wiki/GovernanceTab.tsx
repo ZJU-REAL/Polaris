@@ -45,16 +45,15 @@ function SaveButton({ pending, disabled, onClick }: { pending: boolean; disabled
   );
 }
 
-export function GovernanceTab({ libraryId }: { libraryId: string }) {
+export function GovernanceTab({ libraryId, embedded }: { libraryId: string; /** 放在设置抽屉里：不自带滚动和外边距 */ embedded?: boolean }) {
   const { data: lib } = useQuery({
     queryKey: ['library', libraryId],
     queryFn: () => api.getLibrary(libraryId),
     retry: false,
   });
 
-  return (
-    <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
-      <div className="col" style={{ gap: 20, maxWidth: 760, margin: '0 auto', padding: '4px 24px 48px' }}>
+  const body = (
+      <div className="col" style={embedded ? { gap: 20, paddingBottom: 32 } : { gap: 20, maxWidth: 760, margin: '0 auto', padding: '4px 24px 48px' }}>
         {lib && <LibraryInfoSection lib={lib} />}
         {lib?.library_kind === 'interdisciplinary' && lib.project_id && (
           <InterdisciplinaryLibraryScope projectId={lib.project_id} library={lib} />
@@ -67,6 +66,11 @@ export function GovernanceTab({ libraryId }: { libraryId: string }) {
         <BudgetSection libraryId={libraryId} />
         <DuplicatesSection libraryId={libraryId} />
       </div>
+  );
+  if (embedded) return body;
+  return (
+    <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
+      {body}
     </div>
   );
 }

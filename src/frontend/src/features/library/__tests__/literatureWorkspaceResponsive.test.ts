@@ -17,10 +17,11 @@ const projectLibrary = readFileSync(
 
 describe('literature workspace responsive layout', () => {
   it('marks each literature workspace without changing shared split behavior', () => {
-    for (const source of [personalLibrary, projectLibrary]) {
-      expect(source).toContain('literature-workspace-tabs');
-      expect(source).toContain('literature-workspace-card');
-    }
+    // 我的文献库还用一排分段页签；文献库页的页签已换成和课题页头一样的下划线页签（.dn-tabs）
+    expect(personalLibrary).toContain('literature-workspace-tabs');
+    expect(personalLibrary).toContain('literature-workspace-card');
+    expect(projectLibrary).toContain('literature-workspace-card');
+    expect(projectLibrary).toContain('dn-tabs');
   });
 
   it('uses the main content container and preserves complete tab labels', () => {

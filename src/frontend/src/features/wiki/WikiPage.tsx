@@ -1,117 +1,126 @@
-import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { Segmented } from '../../components/ui/Segmented';
+import { Drawer } from '../../components/ui/Drawer';
+import { DotsMenu } from '../../components/ui/DotsMenu';
 import { toast } from '../../components/ui/Toast';
-import { api } from '../../lib/api';
+import { api, type DirectionLibraryDetail } from '../../lib/api';
+import { parseApiDate } from '../../lib/format';
 import { tr } from '../../lib/i18n';
-import { ExportMenu, PapersTab, type AdvSearchSeed } from './PapersTab';
-import { ConceptsTab } from './ConceptsTab';
+import { useDirections } from '../deepresearch/directions';
+import { useLibraryExport, PapersTab, PapersTrashModal, type AdvSearchSeed } from './PapersTab';
+import { AddPapersModal } from './AddPapersModal';
 import { pickConceptByName } from './shared';
-import { LibraryChatTab } from './LibraryChatTab';
-import { LibraryQaTab } from './LibraryQaTab';
-import { IngestTab } from './IngestTab';
-import { NotesTab } from './NotesTab';
-import { MethodsTab } from './MethodsTab';
 import { GovernanceTab } from './GovernanceTab';
-import { GapsTab } from './GapsTab';
-import { LiteratureDiscoveryPanel } from '../libraries/LiteratureDiscoveryPage';
+import { FindPapersTab } from './FindPapersTab';
+import { KnowledgeTab } from './KnowledgeTab';
+import { AskTab } from './AskTab';
+import { normalizeLibraryParams, readLibraryParams, type LibraryTab } from './libraryTabs';
+import { ExtensionBatchHistoryModal } from './ExtensionBatchHistoryModal';
+import { extensionDeliveryAvailable } from '../../lib/polaris-extension';
+import '../../app/DirectionNav.css';
+import './workbench.css';
 
-// 图谱与 PPT 弹窗体量大且非默认视图：按需加载
-const GraphTab = lazy(() => import('./GraphTab').then((m) => ({ default: m.GraphTab })));
-const DailyDigestTab = lazy(() =>
-  import('./DailyDigestTab').then((m) => ({ default: m.DailyDigestTab })),
-);
 const PresentationModal = lazy(() =>
   import('./PresentationModal').then((m) => ({ default: m.PresentationModal })),
 );
 
 /* ============================================================
-   文献库工作台（挂在 /libraries/:id；原 /wiki 页面主体）
-   Tab：论文库 / 概念库 / 图谱 / 文献对话 / 建库与同步 / 笔记，
-   传入 libraryId 时追加治理（P6：库信息与预算 / 重复论文）；
-   数据一律走 /libraries/{id}/* 端点。pid 只是这个库当初
-   从哪个课题建的，如今仅用来决定要不要显示课题域的 PPT。
+   文献库页（/libraries/:id）。四个页签，其余收进设置抽屉和「更多」：
+
+     论文   列表 + 详情（默认）
+     找论文 关键词检索 / 按编号或 BibTeX / Zotero / 参考文献扩展，一份记录
+     知识   概念 · 方法 · 图谱 · 研究缺口 · 每日简报 · 我的笔记
+     问答   快速对话 / 深入回答
+
+   页签和子视图都写在地址里（?tab=find、?tab=knowledge&view=graph、?tab=ask&mode=thorough），
+   刷新、后退都回到原处。旧地址（?tab=discover / ingest / concepts / chat / qa / govern …）
+   换成新的再显示，见 LEGACY_TABS。
    ============================================================ */
 
-/** 运行中状态点：8px 圆点 + 一个词，不用彩色胶囊。 */
 const RUN_DOT = { width: 8, height: 8, borderRadius: '50%', background: 'var(--ok)', display: 'inline-block', flexShrink: 0 } as const;
 
-type WikiTab = 'discover' | 'papers' | 'concepts' | 'methods' | 'graph' | 'gaps' | 'digest' | 'chat' | 'qa' | 'ingest' | 'notes' | 'govern';
-
-export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: string }) {
+export function WikiWorkbench({ lib }: { lib: DirectionLibraryDetail }) {
   const navigate = useNavigate();
+  const libraryId = lib.id;
+  const pid = lib.project_id ?? undefined;
+  const { byLibrary, byProject } = useDirections();
+  const direction = byLibrary(libraryId) ?? byProject(pid);
 
-  // 集合级数据与导出一律走 /libraries/{id}/* 端点——库已与课题解耦，pid 只是
-  // 这个库当初从哪个课题建的，不再决定数据口径。
-  const libScope = !!libraryId;
-  const scopeId = libraryId ?? pid!;
-  /** 传给各 Tab 的库作用域标识：有库就置位。 */
-  const tabLibraryId = libraryId;
-  /** PPT 仍是课题域功能（要课题的研究方案做叙事），只对有起源课题的库显示。 */
-  const hasTopic = !!pid;
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [tab, setTab] = useState<WikiTab>('papers');
-  const [presentOpen, setPresentOpen] = useState(false);
-  const [paperId, setPaperId] = useState<string | null>(null);
-  const [conceptId, setConceptId] = useState<string | null>(null);
-  /** [[概念名]] 双链点击后待解析的概念名 */
-  const [pendingConceptName, setPendingConceptName] = useState<string | null>(null);
-  /** 深链带入的作者/机构筛选（seq 递增，PapersTab 据此重新应用） */
-  const [advSeed, setAdvSeed] = useState<AdvSearchSeed | null>(null);
-
-  // 切换课题/库时重置选中态
+  // —— 旧地址换新地址 ——
   useEffect(() => {
-    setPaperId(null);
+    const next = normalizeLibraryParams(searchParams);
+    if (next) setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const { tab, view, mode: askMode, settings: settingsOpen, paper: paperId } = readLibraryParams(searchParams);
+
+  /** 改地址里的几项，其余原样留着。push=true 时进历史（换页签），否则替换（选中论文）。 */
+  const patchParams = useCallback(
+    (patch: Record<string, string | null>, push = false) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          for (const [k, v] of Object.entries(patch)) {
+            if (v === null || v === '') next.delete(k);
+            else next.set(k, v);
+          }
+          return next;
+        },
+        { replace: !push },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const setTab = (t: LibraryTab) =>
+    patchParams({ tab: t === 'papers' ? null : t, view: t === 'knowledge' ? view : null, mode: t === 'ask' ? askMode : null }, true);
+  const setPaperId = useCallback((id: string) => patchParams({ paper: id || null }), [patchParams]);
+  const openSettings = (open: boolean) => patchParams({ settings: open ? '1' : null }, open);
+
+  const [conceptId, setConceptId] = useState<string | null>(null);
+  const [pendingConceptName, setPendingConceptName] = useState<string | null>(null);
+  const [advSeed, setAdvSeed] = useState<AdvSearchSeed | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [extensionHistoryOpen, setExtensionHistoryOpen] = useState(false);
+  const [presentOpen, setPresentOpen] = useState(false);
+
+  useEffect(() => {
     setConceptId(null);
     setPendingConceptName(null);
-  }, [scopeId]);
+  }, [libraryId]);
 
-  // 深链 ?paper=<id>（idea 详情 / 阅读页返回）、?concept=<名称>
-  // （阅读页双链跳转，按名称解析）、?conceptId=<id>（实验室跨库图谱点概念直接进来）、
-  // ?author= / ?affiliation=（阅读页作者/机构点击 → 论文库按其过滤）与 ?tab=<tab>
-  // （工作台「下一步」直达建库面板）：处理后清掉参数
-  const [searchParams, setSearchParams] = useSearchParams();
+  // 一次性的深链：?concept=<名称>、?conceptId=、?author= / ?affiliation=。处理完从地址里拿掉。
   useEffect(() => {
-    const p = searchParams.get('paper');
     const c = searchParams.get('concept');
     const cid = searchParams.get('conceptId');
     const author = searchParams.get('author');
     const affiliation = searchParams.get('affiliation');
-    const tabParam = searchParams.get('tab');
-    if (!p && !c && !cid && !author && !affiliation && !tabParam) return;
-    if (p) {
-      setPaperId(p);
-      setTab('papers');
-    } else if (cid) {
+    if (!c && !cid && !author && !affiliation) return;
+    if (cid) {
       setConceptId(cid);
-      setTab('concepts');
-    } else if (c) {
-      setPendingConceptName(c);
-    } else if (author || affiliation) {
-      setAdvSeed((old) => ({
-        author: author ?? undefined,
-        affiliation: affiliation ?? undefined,
-        seq: (old?.seq ?? 0) + 1,
-      }));
-      setTab('papers');
-    } else if (tabParam && ['discover', 'papers', 'concepts', 'methods', 'graph', 'gaps', 'digest', 'chat', 'qa', 'ingest', 'notes', 'govern'].includes(tabParam)) {
-      setTab(tabParam as WikiTab);
+      patchParams({ conceptId: null, tab: 'knowledge', view: 'concepts' });
+      return;
     }
-    setSearchParams({}, { replace: true });
-  }, [searchParams, setSearchParams]);
+    if (c) setPendingConceptName(c);
+    if (author || affiliation) {
+      setAdvSeed((old) => ({ author: author ?? undefined, affiliation: affiliation ?? undefined, seq: (old?.seq ?? 0) + 1 }));
+    }
+    patchParams({ concept: null, author: null, affiliation: null, ...(author || affiliation ? { tab: null } : {}) });
+  }, [searchParams, patchParams]);
 
-  // —— ingest 状态（tab 计数 + Ingest 面板共用） ——
   const ingestQuery = useQuery({
-    queryKey: ['ingest-state', scopeId],
-    queryFn: () => (libScope ? api.getLibraryIngestState(libraryId!) : api.getIngestState(pid!)),
+    queryKey: ['ingest-state', libraryId],
+    queryFn: () => api.getLibraryIngestState(libraryId),
     retry: false,
     refetchInterval: (q) => (q.state.data?.running_voyage_id ? 5_000 : 60_000),
   });
 
-  // —— [[概念名]] → 概念 id 解析 ——
-  // 概念全平台一份，一律走平台级按名查（不限本库）；命中后仍留在当前库视角展示。
+  // [[概念名]] → 概念 id
   const resolveQuery = useQuery({
     queryKey: ['concept-resolve', pendingConceptName],
     queryFn: () => api.lookupConcept(pendingConceptName ?? ''),
@@ -129,168 +138,199 @@ export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: st
     const hit = pickConceptByName(resolveQuery.data, pendingConceptName);
     if (hit) {
       setConceptId(hit.id);
-      setTab('concepts');
+      patchParams({ tab: 'knowledge', view: 'concepts' }, true);
     } else {
-      toast(
-        tr(`还没有概念「${pendingConceptName}」`, `No concept named “${pendingConceptName}” yet`),
-        'info',
-      );
+      toast(tr(`还没有概念「${pendingConceptName}」`, `No concept named “${pendingConceptName}” yet`), 'info');
     }
     setPendingConceptName(null);
-  }, [pendingConceptName, resolveQuery.data, resolveQuery.isError]);
+  }, [pendingConceptName, resolveQuery.data, resolveQuery.isError, patchParams]);
 
-  const goPaper = useCallback((id: string) => {
-    setPaperId(id);
-    setTab('papers');
-  }, []);
-  const goConcept = useCallback((id: string) => {
-    setConceptId(id);
-    setTab('concepts');
-  }, []);
-  const onWikiLink = useCallback((name: string) => {
-    setPendingConceptName(name);
-  }, []);
+  const goPaper = useCallback((id: string) => patchParams({ tab: null, view: null, mode: null, paper: id }, true), [patchParams]);
+  const goConcept = useCallback(
+    (id: string) => {
+      setConceptId(id);
+      patchParams({ tab: 'knowledge', view: 'concepts' }, true);
+    },
+    [patchParams],
+  );
+  const onWikiLink = useCallback((name: string) => setPendingConceptName(name), []);
 
-  // 论文库计数口径 = 库内（相关性达标）；旧后端无 library 字段时退回 total
-  const total = ingestQuery.data?.paper_counts?.library ?? ingestQuery.data?.paper_counts?.total;
+  const counts = ingestQuery.data?.paper_counts;
+  const total = counts?.library ?? counts?.total ?? lib.paper_count;
+  const summarised = counts?.compiled;
+
+  const exportLib = useLibraryExport(libraryId);
+
+  const meta = useMemo(() => {
+    const parts: string[] = [];
+    if (total !== undefined) parts.push(tr(`${total} 篇论文`, total === 1 ? '1 paper' : `${total} papers`));
+    if (summarised) parts.push(tr(`${summarised} 篇有解读`, `${summarised} with a summary`));
+    const updated = lib.last_synced_at ?? lib.updated_at;
+    if (updated) {
+      const d = parseApiDate(updated);
+      parts.push(
+        tr(
+          `${d.getMonth() + 1} 月 ${d.getDate()} 日更新`,
+          `Updated ${d.toLocaleDateString('en', { month: 'short', day: 'numeric' })}`,
+        ),
+      );
+    }
+    return parts.join(' · ');
+  }, [total, summarised, lib.last_synced_at, lib.updated_at]);
+
+  const running = ingestQuery.data?.running_voyage_id;
+  const tabs: { key: LibraryTab; label: string; count?: number }[] = [
+    { key: 'papers', label: tr('论文', 'Papers'), count: total },
+    { key: 'find', label: tr('找论文', 'Find papers') },
+    { key: 'knowledge', label: tr('知识', 'Knowledge') },
+    { key: 'ask', label: tr('问答', 'Ask') },
+  ];
 
   return (
     <>
-      <div className="row literature-workspace-tabs" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
-        <Segmented<WikiTab>
-          options={[
-            ...(libraryId ? [{ v: 'discover' as const, label: tr('发现文献', 'Discover') }] : []),
-            { v: 'papers', label: `${tr('论文', 'Papers')}${total !== undefined ? ` · ${total}` : ''}` },
-            { v: 'concepts', label: tr('概念', 'Concepts') },
-            // 方法库走 /libraries/{id}/methods，只有库作用域有这个端点
-            ...(libraryId ? [{ v: 'methods' as const, label: tr('方法', 'Methods') }] : []),
-            { v: 'graph', label: tr('图谱', 'Graph') },
-            // 研究缺口台账（#665）走 /libraries/{id}/gaps，只有库作用域有这个端点
-            ...(libraryId ? [{ v: 'gaps' as const, label: tr('研究缺口', 'Research gaps') }] : []),
-            ...(libraryId ? [{ v: 'digest' as const, label: tr('每日简报', 'Daily digest') }] : []),
-            { v: 'chat', label: tr('对话', 'Chat') },
-            // 深度问答走 /libraries/{id}/qa，只有库作用域有这个端点
-            ...(libraryId ? [{ v: 'qa' as const, label: tr('深度问答', 'Deep Q&A') }] : []),
-            { v: 'notes', label: tr('笔记', 'Notes') },
-            ...(libraryId ? [{ v: 'govern' as const, label: tr('设置', 'Settings') }] : []),
-            // 建库与同步放到最后一个标签
-            { v: 'ingest', label: tr('检索与同步', 'Search & sync') },
-          ]}
-          value={tab}
-          onChange={setTab}
-        />
-        <div className="row gap8">
-          {/* 无权打开任务详情时只报状态、不给跳转（点了会 404） */}
-          {ingestQuery.data?.running_voyage_id && tab !== 'ingest' && (
-            ingestQuery.data.can_open_running_voyage ? (
-              <button
-                type="button"
-                className="btn btn-ghost sm"
-                onClick={() => navigate(`/voyages/${ingestQuery.data?.running_voyage_id ?? ''}`)}
-              >
-                <span className="pulse" style={RUN_DOT} />
-                {tr('任务运行中', 'Task running')}
-                <Icon name="arrow" size={12} />
-              </button>
-            ) : (
-              <span className="row gap6" style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                <span className="pulse" style={RUN_DOT} />
-                {tr('任务运行中', 'Task running')}
-              </span>
-            )
-          )}
-          {hasTopic && (
-            <button className="btn btn-ghost sm" onClick={() => setPresentOpen(true)}>
-              <Icon name="chart" size={13} />
-              {tr('论文分享 PPT', 'Paper slides')}
+      <header className="dn lw-head">
+        <div className="dn-top">
+          <h1 className="dn-title" title={lib.name}>
+            {lib.name}
+          </h1>
+          <div className="dn-actions lw-actions">
+            {running && (
+              ingestQuery.data?.can_open_running_voyage ? (
+                <button type="button" className="btn btn-plain sm" onClick={() => navigate(`/voyages/${running}`)}>
+                  <span className="pulse" style={RUN_DOT} />
+                  {tr('正在找论文', 'Finding papers')}
+                </button>
+              ) : (
+                <span className="lw-running">
+                  <span className="pulse" style={RUN_DOT} />
+                  {tr('正在找论文', 'Finding papers')}
+                </span>
+              )
+            )}
+            <button type="button" className="btn btn-ghost sm" onClick={() => setAddOpen(true)} data-testid="lib-add">
+              <Icon name="plus" size={13} />
+              <span className="lw-hide-narrow">{tr('添加论文', 'Add papers')}</span>
             </button>
-          )}
-          {/* 导出走库作用域端点；没有库时（理论上不会发生）回落课题端点 */}
-          <ExportMenu pid={pid} libraryId={tabLibraryId} />
+            <button
+              type="button"
+              className="btn btn-plain sm"
+              onClick={() => openSettings(true)}
+              title={tr('文献库设置', 'Library settings')}
+              data-testid="lib-settings"
+            >
+              <Icon name="settings" size={14} />
+              <span className="lw-hide-narrow">{tr('设置', 'Settings')}</span>
+            </button>
+            <DotsMenu
+              items={[
+                ...exportLib.items,
+                ...(pid
+                  ? [{ key: 'ppt', label: tr('做成论文分享 PPT', 'Make paper slides'), icon: 'chart' as const, separated: true, onSelect: () => setPresentOpen(true) }]
+                  : []),
+                ...(extensionDeliveryAvailable()
+                  ? [{ key: 'ext', label: tr('浏览器扩展下载记录', 'Browser extension downloads'), icon: 'clock' as const, onSelect: () => setExtensionHistoryOpen(true) }]
+                  : []),
+                { key: 'trash', label: tr('回收站', 'Trash'), icon: 'trash' as const, separated: !pid, onSelect: () => setTrashOpen(true) },
+              ]}
+            />
+          </div>
         </div>
-      </div>
+        <div className="lw-meta">
+          {meta}
+          {direction && (
+            <>
+              {meta && <span aria-hidden> · </span>}
+              <Link to={direction.href} className="lw-topic">
+                {tr('课题', 'Topic')}
+                {direction.name !== lib.name ? `「${direction.name}」` : ''}
+                <Icon name="arrow" size={11} />
+              </Link>
+            </>
+          )}
+        </div>
+        <nav className="dn-tabs" role="tablist" aria-label={tr('文献库', 'Library')}>
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={t.key === tab}
+              className={'dn-tab' + (t.key === tab ? ' is-active' : '')}
+              data-testid={`lib-tab-${t.key}`}
+              onClick={() => setTab(t.key)}
+            >
+              {t.label}
+              {t.count !== undefined && <span className="lw-count">{t.count}</span>}
+            </button>
+          ))}
+        </nav>
+      </header>
 
-      <div
-        className="card literature-workspace-card"
-        style={{
-          overflow: 'hidden',
-          display: 'flex',
-          flexDirection: 'column',
-          flex: 1,
-          minHeight: 480,
-        }}
-      >
-        {tab === 'discover' && libraryId ? (
-          <LiteratureDiscoveryPanel libraryId={libraryId} />
-        ) : tab === 'papers' ? (
+      <div className="card literature-workspace-card lw-body">
+        {tab === 'find' ? (
+          <FindPapersTab
+            lib={lib}
+            state={ingestQuery.data}
+            stateError={ingestQuery.isError}
+            direction={direction}
+            onOpenPaper={goPaper}
+            onOpenSettings={() => openSettings(true)}
+          />
+        ) : tab === 'knowledge' ? (
+          <KnowledgeTab
+            pid={pid}
+            libraryId={libraryId}
+            view={view}
+            onView={(v) => patchParams({ view: v }, true)}
+            conceptId={conceptId}
+            onSelectConcept={setConceptId}
+            onOpenPaper={goPaper}
+            onOpenConcept={goConcept}
+            onWikiLink={onWikiLink}
+            ingestRunning={!!running}
+            hasWatermark={!!ingestQuery.data?.watermark}
+          />
+        ) : tab === 'ask' ? (
+          <AskTab
+            pid={pid}
+            libraryId={libraryId}
+            mode={askMode}
+            onMode={(m) => patchParams({ mode: m })}
+            onOpenPaper={goPaper}
+            onWikiLink={onWikiLink}
+          />
+        ) : (
           <PapersTab
             pid={pid}
-            libraryId={tabLibraryId}
+            libraryId={libraryId}
             selectedId={paperId}
             onSelect={setPaperId}
             onOpenConcept={goConcept}
             onWikiLink={onWikiLink}
             advSeed={advSeed}
+            onFindPapers={() => setTab('find')}
           />
-        ) : tab === 'concepts' ? (
-          <ConceptsTab
-            pid={pid}
-            libraryId={tabLibraryId}
-            selectedId={conceptId}
-            onSelect={setConceptId}
-            onOpenPaper={goPaper}
-            onWikiLink={onWikiLink}
-          />
-        ) : tab === 'methods' && libraryId ? (
-          <MethodsTab libraryId={libraryId} onOpenPaper={goPaper} />
-        ) : tab === 'graph' ? (
-          <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
-            <GraphTab pid={pid} libraryId={tabLibraryId} onOpenPaper={goPaper} onOpenConcept={goConcept} />
-          </Suspense>
-        ) : tab === 'gaps' && libraryId ? (
-          <GapsTab libraryId={libraryId} onOpenPaper={goPaper} />
-        ) : tab === 'digest' && libraryId ? (
-          <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
-            <DailyDigestTab
-              libraryId={libraryId}
-              onOpenPaper={goPaper}
-              onWikiLink={onWikiLink}
-              ingestRunning={!!ingestQuery.data?.running_voyage_id}
-              hasWatermark={!!ingestQuery.data?.watermark}
-            />
-          </Suspense>
-        ) : tab === 'chat' ? (
-          <LibraryChatTab
-            pid={pid}
-            libraryId={tabLibraryId}
-            onOpenPaper={goPaper}
-            onWikiLink={onWikiLink}
-          />
-        ) : tab === 'qa' && libraryId ? (
-          <LibraryQaTab libraryId={libraryId} onOpenPaper={goPaper} />
-        ) : tab === 'ingest' ? (
-          <IngestTab
-            pid={pid}
-            libraryId={tabLibraryId}
-            state={ingestQuery.data}
-            stateError={ingestQuery.isError}
-            stateLoading={ingestQuery.isLoading}
-            onGoGovern={libraryId ? () => setTab('govern') : undefined}
-          />
-        ) : tab === 'govern' && libraryId ? (
-          <GovernanceTab libraryId={libraryId} />
-        ) : (
-          <NotesTab pid={pid} libraryId={tabLibraryId} />
         )}
       </div>
 
-      {hasTopic && presentOpen && (
+      <Drawer
+        open={settingsOpen}
+        onClose={() => openSettings(false)}
+        title={<span style={{ fontSize: 'var(--fs-title)', fontWeight: 600 }}>{tr('文献库设置', 'Library settings')}</span>}
+        sub={tr('名称、收录范围和重复论文', 'Name, what to collect, and duplicates')}
+        width={640}
+      >
+        <GovernanceTab libraryId={libraryId} embedded />
+      </Drawer>
+
+      <AddPapersModal libraryId={libraryId} open={addOpen} onClose={() => setAddOpen(false)} onImported={goPaper} />
+      <PapersTrashModal pid={pid ?? ''} libraryId={libraryId} open={trashOpen} onClose={() => setTrashOpen(false)} />
+      {extensionDeliveryAvailable() && (
+        <ExtensionBatchHistoryModal libraryId={libraryId} open={extensionHistoryOpen} onClose={() => setExtensionHistoryOpen(false)} />
+      )}
+      {pid && presentOpen && (
         <Suspense fallback={null}>
-          <PresentationModal
-            projectId={pid!}
-            initialPaperId={paperId ?? undefined}
-            onClose={() => setPresentOpen(false)}
-          />
+          <PresentationModal projectId={pid} initialPaperId={paperId ?? undefined} onClose={() => setPresentOpen(false)} />
         </Suspense>
       )}
     </>

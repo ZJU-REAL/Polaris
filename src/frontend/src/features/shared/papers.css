@@ -1,0 +1,139 @@
+/* ============================================================
+   论文的两个公共样子：列表里的一行（.pl-row）和详情的头部 / 事实行 / 要点（.pd-*）。
+   文献库、我的文献库、每日新论文、相关研究、找论文的结果都用这一份，
+   同一篇论文在哪里看都是同一个样子。
+   ============================================================ */
+
+/* ---------- 列表行 ---------- */
+.pl-row {
+  display: flex; align-items: flex-start; gap: var(--sp-2);
+  padding: 11px var(--sp-4) 11px 14px;
+  border-bottom: 0.5px solid var(--border);
+  border-left: 2px solid transparent;
+  cursor: pointer; text-decoration: none; color: inherit;
+  transition: background var(--dur-micro) var(--ease-out);
+}
+.pl-row:hover { background: var(--surface-2); }
+.pl-row.is-active { background: var(--accent-soft-row); border-left-color: var(--accent); }
+.pl-row.is-static { cursor: default; }
+.pl-row.is-static:hover { background: transparent; }
+.pl-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pl-lead { flex-shrink: 0; display: flex; align-items: center; height: 18px; }
+.pl-lead input[type='checkbox'] { width: 13px; height: 13px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.pl-main { flex: 1; min-width: 0; }
+.pl-title {
+  font-size: var(--fs-body); font-weight: 600; line-height: 18px; color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.pl-meta {
+  margin-top: 3px; font-size: var(--fs-sm); line-height: 16px; color: var(--text-3);
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+.pl-meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-meta-marks { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.pl-mark { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-caption); color: var(--text-3); }
+.pl-mark.is-star { color: var(--warn-tx); }
+.pl-sum {
+  margin-top: 4px; font-size: var(--fs-sm); line-height: 17px; color: var(--text-2);
+  display: -webkit-box; -webkit-line-clamp: var(--pl-sum-lines, 1); -webkit-box-orient: vertical; overflow: hidden;
+}
+.pl-sum.is-missing { color: var(--text-3); }
+.pl-trail { flex-shrink: 0; display: flex; align-items: center; gap: var(--sp-1); }
+
+/* ---------- 详情：头部 ---------- */
+.pd-kicker { font-size: var(--fs-sm); color: var(--text-3); line-height: 16px; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.pd-kicker a { color: inherit; text-decoration: none; }
+.pd-kicker a:hover { color: var(--accent-text); text-decoration: underline; }
+.pd-title { margin: 6px 0 6px; font-size: var(--fs-page); font-weight: 600; line-height: 1.3; letter-spacing: -0.01em; color: var(--text); overflow-wrap: anywhere; }
+.pd-affil { margin-top: 3px; font-size: var(--fs-sm); color: var(--text-3); line-height: 17px; }
+.pd-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: 14px; }
+
+/* ---------- 详情：事实行（为什么在这里 / PDF / 阅读状态 / 标签） ---------- */
+.pd-facts { margin-top: 16px; border-top: 0.5px solid var(--border); }
+.pd-fact {
+  display: flex; align-items: center; gap: var(--sp-3); min-height: 40px; padding: 6px 0;
+  border-bottom: 0.5px solid var(--border); font-size: var(--fs-body);
+}
+.pd-fact-label { width: 84px; flex-shrink: 0; color: var(--text-3); font-size: var(--fs-sm); }
+.pd-fact-body { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--sp-2); color: var(--text); }
+.pd-fact-note { color: var(--text-3); font-size: var(--fs-sm); }
+@media (max-width: 768px) {
+  .pd-fact { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .pd-fact-label { width: auto; }
+}
+
+/* ---------- 详情：要点（TL;DR，只出现一次） ---------- */
+.pd-key { margin-top: 18px; padding: 12px 16px; border-radius: var(--radius); background: var(--accent-soft-row); }
+.pd-key-label { font-size: var(--fs-caption); font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); margin-bottom: 4px; }
+.pd-key-body { font-size: 14px; line-height: 1.7; color: var(--text); }
+.pd-key-body .md > :first-child, .pd-key-body p:first-child { margin-top: 0; }
+.pd-key-body .md > :last-child, .pd-key-body p:last-child { margin-bottom: 0; }
+
+/* 详情里的小节切换（解读 / 摘要 / 笔记 / 更多） */
+.pd-tabs { display: flex; gap: var(--sp-5); margin-top: 20px; border-bottom: 0.5px solid var(--border-2); }
+.pd-tab {
+  height: 32px; padding: 0; border: 0; background: transparent; cursor: pointer; margin-bottom: -0.5px;
+  border-bottom: 2px solid transparent; font-family: var(--sans); font-size: var(--fs-body); font-weight: 500; color: var(--text-2);
+  white-space: nowrap;
+}
+.pd-tab:hover { color: var(--text); }
+.pd-tab.is-active { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+.pd-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.pd-tab-count { margin-left: 4px; color: var(--text-3); font-weight: 400; }
+.pd-byline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); margin: 14px 0 6px; font-size: var(--fs-sm); color: var(--text-3); }
+/* 解读正文：限制行长，读起来像文章而不是日志 */
+.pd-prose { max-width: 760px; }
+.pd-prose .md { font-size: 14px; line-height: 1.75; }
+.pd-abstract { margin-top: 14px; max-width: 760px; font-size: 14px; line-height: 1.75; color: var(--text); }
+
+/* ---------- 文献库页：窄屏时列表和详情一次只看一个 ---------- */
+.lib-back { display: none; }
+@media (max-width: 1024px) {
+  .literature-workspace-card .split.lib-split { flex-direction: column; }
+  .literature-workspace-card .split.lib-split.has-selection > .split-list { display: none; }
+  .literature-workspace-card .split.lib-split:not(.has-selection) > .split-detail { display: none; }
+  .literature-workspace-card .split.lib-split > .split-list { width: 100%; max-height: none; flex: 1; border-right: 0; border-bottom: 0; }
+  .lib-back { display: inline-flex; margin: 0 0 var(--sp-3) -8px; }
+}
+
+/* ---------- 详情面板 ---------- */
+.pd-pane { overflow-y: auto; flex: 1; padding: 24px 32px 60px; }
+@container mainarea (max-width: 900px) {
+  .pd-pane { padding: 18px 20px 48px; }
+}
+.pd-seg { display: inline-flex; gap: 2px; }
+.pd-fulltext { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.pd-empty { margin-top: 18px; max-width: 760px; }
+.pd-empty p { margin: 0 0 10px; font-size: var(--fs-body); color: var(--text-2); line-height: 1.6; }
+.pd-more { margin-top: 14px; max-width: 760px; display: flex; flex-direction: column; gap: 18px; }
+.pd-more-label { font-size: var(--fs-sm); font-weight: 500; color: var(--text-3); margin-bottom: 8px; }
+.pd-more > .card { margin-top: 0 !important; }
+
+/* 列表的更多筛选 */
+.pl-filter-btn { position: relative; width: 32px; height: 32px; flex-shrink: 0; }
+.pl-filter-btn.is-on { border-color: var(--accent); color: var(--accent-text); }
+.pl-filter-dot { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.pl-adv { margin-top: 8px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); display: flex; flex-direction: column; gap: 6px; }
+.pl-adv-row { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-3); min-width: 0; }
+.pl-adv-row > span:first-child { width: 64px; flex-shrink: 0; }
+.pl-adv-row .input { flex: 1; min-width: 0; height: 28px; font-size: var(--fs-sm); padding: 0 8px; }
+.pl-adv-dash { flex-shrink: 0; }
+
+/* 列表上方的工具条：搜索一行，筛选一行（安静的文字，不是一排胶囊） */
+.pl-tools { padding: 12px 14px 8px; border-bottom: 0.5px solid var(--border); }
+.pl-quiet { display: flex; align-items: center; gap: var(--sp-1); margin-top: 8px; min-width: 0; }
+.pl-quiet-tabs { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.pl-quiet-tabs::-webkit-scrollbar { display: none; }
+.pl-qtab {
+  height: 24px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; cursor: pointer;
+  font-family: var(--sans); font-size: var(--fs-sm); color: var(--text-2); white-space: nowrap;
+}
+.pl-qtab:hover { background: var(--surface-2); color: var(--text); }
+.pl-qtab.is-on { background: var(--surface-2); color: var(--text); font-weight: 600; }
+.pl-sort {
+  margin-left: auto; flex-shrink: 0; height: 24px; border: 0; background: transparent; cursor: pointer;
+  font-family: var(--sans); font-size: var(--fs-sm); color: var(--text-2); padding: 0 2px; max-width: 46%;
+}
+.pl-sort:hover { color: var(--text); }
+.pl-foot { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; padding: 8px 14px; border-top: 0.5px solid var(--border); flex-shrink: 0; font-size: var(--fs-sm); color: var(--text-3); }

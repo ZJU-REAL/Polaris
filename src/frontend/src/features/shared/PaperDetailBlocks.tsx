@@ -112,9 +112,12 @@ export function PaperMyTagsRow({
   invalidateKeys,
   style,
   trailing,
+  bare,
 }: {
   paperId: string;
   myTags: string[] | undefined;
+  /** 放在详情的事实行里：不要浅底卡和「我的标签」字样（行标签已经写了） */
+  bare?: boolean;
   /** 详情 queryKey：给了就直接改缓存，改完立刻变，不用等列表刷新 */
   detailKey?: QueryKey;
   /** 改完要刷新的列表 / 搜索 queryKey */
@@ -158,23 +161,29 @@ export function PaperMyTagsRow({
        会让它们看起来是两件事。收进一张浅底卡里，与上方的操作按钮区分开。 */
     <div
       className="row gap8 wrap"
-      style={{
-        marginTop: 12,
-        alignItems: 'center',
-        padding: '8px 12px',
-        borderRadius: 8,
-        background: 'var(--surface-2)',
-        border: '0.5px solid var(--border)',
-        ...style,
-      }}
+      style={
+        bare
+          ? { alignItems: 'center', ...style }
+          : {
+              marginTop: 12,
+              alignItems: 'center',
+              padding: '8px 12px',
+              borderRadius: 8,
+              background: 'var(--surface-2)',
+              border: '0.5px solid var(--border)',
+              ...style,
+            }
+      }
     >
-      <span
-        className="row gap6"
-        style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginRight: 2 }}
-      >
-        <Icon name="bookmark" size={12} style={{ color: 'var(--text-3)' }} />
-        {tr('我的标签', 'My tags')}
-      </span>
+      {!bare && (
+        <span
+          className="row gap6"
+          style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginRight: 2 }}
+        >
+          <Icon name="bookmark" size={12} style={{ color: 'var(--text-3)' }} />
+          {tr('我的标签', 'My tags')}
+        </span>
+      )}
       {tags.map((t) => (
         <span key={t} className="tag" style={myTagStyle}>
           {t}
@@ -274,14 +283,17 @@ export function PaperNotesSection({
   paperId,
   noteCount,
   invalidateKeys,
+  flat,
 }: {
   paperId: string;
   noteCount: number;
   /** 笔记增删改后要刷新的 queryKey（详情 note_count / 列表行 / 库笔记本…） */
   invalidateKeys?: readonly QueryKey[];
+  /** 平铺：不要折叠卡，直接展开（详情的「笔记」小节里用） */
+  flat?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!flat);
   const [draft, setDraft] = useState('');
 
   const notesQuery = useQuery({
@@ -313,27 +325,33 @@ export function PaperNotesSection({
   const count = notesQuery.data ? notes.length : noteCount;
 
   return (
-    <div className="card" style={{ marginTop: 18, overflow: 'hidden' }}>
-      <div
-        className="row"
-        onClick={() => setOpen((o) => !o)}
-        style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
-      >
-        <span className="row gap6" style={{ fontSize: 13, fontWeight: 600 }}>
-          <Icon name="pen" size={12} style={{ color: 'var(--text-3)' }} />
-          {tr('我的笔记', 'My notes')}
-          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 400 }}>
-            · {count}
+    <div
+      className={flat ? undefined : 'card'}
+      style={flat ? { marginTop: 14, maxWidth: 760 } : { marginTop: 18, overflow: 'hidden' }}
+      data-testid="paper-notes"
+    >
+      {!flat && (
+        <div
+          className="row"
+          onClick={() => setOpen((o) => !o)}
+          style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
+        >
+          <span className="row gap6" style={{ fontSize: 13, fontWeight: 600 }}>
+            <Icon name="pen" size={12} style={{ color: 'var(--text-3)' }} />
+            {tr('我的笔记', 'My notes')}
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 400 }}>
+              · {count}
+            </span>
           </span>
-        </span>
-        <Icon
-          name="chevDown"
-          size={14}
-          style={{ color: 'var(--text-3)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
-        />
-      </div>
+          <Icon
+            name="chevDown"
+            size={14}
+            style={{ color: 'var(--text-3)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
+          />
+        </div>
+      )}
       {open && (
-        <div style={{ padding: '0 16px 14px' }}>
+        <div style={flat ? undefined : { padding: '0 16px 14px' }}>
           {notesQuery.isLoading ? (
             <div className="empty" style={{ padding: 12 }}>
               {tr('加载中…', 'Loading…')}
