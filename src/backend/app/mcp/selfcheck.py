@@ -27,6 +27,7 @@ from sqlalchemy import false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.mcp.dispatch import call_tool
+from app.mcp.profiles import DEFAULT_PROFILE
 from app.models.experiment import Experiment
 from app.models.idea import Idea
 from app.models.library_direction import LibraryPaper
@@ -36,6 +37,10 @@ from app.models.voyage import VoyageRun
 from app.services.concepts import library_concept_ids
 from app.services.libraries import get_source_library_ids
 from app.tools import ToolSpec, list_tools
+
+# 外部 MCP 服务器的工具注册名前缀（mcp:<server>:<tool>，见 services/mcp_hub/bridge.py；
+# 不从那里 import：它会连带拉起可选的 MCP SDK）
+EXTERNAL_NAMESPACE = "mcp"
 
 # 单个工具的超时：卡死算失败，不拖垮整轮自检（联网工具也共用这个上限）
 TOOL_TIMEOUT = 60.0
@@ -310,6 +315,22 @@ async def check_tool(
     }
 
 
+def _not_served_reason(spec: ToolSpec) -> str | None:
+    """这个工具本来就不通过 MCP 接口对外提供时，返回跳过的原因；否则 None。
+
+    自检走的是 :func:`call_tool`，它按 MCP Profile 放行。注册表里还有两类工具不在
+    Profile 里：接进来的外部 MCP 服务器的工具（``mcp:<server>:<tool>``，按可写对待）
+    和只在对话里用的 / 写入类工具。以前它们被照常调用，然后因为「不在 MCP Profile
+    'default' 中」记成失败——接了一台外部 MCP 服务器的用户，自检就凭空多出一排红。
+    它们不是坏了，是不归这个接口管；外部工具还可能有副作用，更不该在自检里真调。
+    """
+    if DEFAULT_PROFILE.exposes(spec):
+        return None
+    if spec.name.startswith(f"{EXTERNAL_NAMESPACE}:"):
+        return "外部 MCP 服务器的工具，只在对话和任务里使用，不在自检范围内"
+    return "只在 Polaris 内部使用，不通过 MCP 接口对外提供"
+
+
 async def run_selfcheck(
     session: AsyncSession,
     *,
@@ -326,6 +347,18 @@ async def run_selfcheck(
     samples = await collect_samples(session, project_id=project_id)
     results: list[dict[str, Any]] = []
     for spec in list_tools(names):
+        not_served = _not_served_reason(spec)
+        if not_served is not None:
+            results.append(
+                {
+                    "name": spec.name,
+                    "network": spec.network,
+                    "status": "skipped",
+                    "arguments": None,
+                    "detail": not_served,
+                }
+            )
+            continue
         if spec.network and not include_network:
             results.append(
                 {

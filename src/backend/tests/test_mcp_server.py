@@ -297,3 +297,49 @@ async def test_unknown_method(client):
         headers=headers,
     )
     assert resp.json()["error"]["code"] == -32601
+
+
+async def test_selfcheck_does_not_fail_external_mcp_tools(client):
+    """接了外部 MCP 服务器的用户，自检不该凭空多出一排失败。
+
+    外部工具（mcp:<server>:<tool>）按可写登记，不在 MCP Profile 里——它们只在对话和
+    任务里用，不通过这个接口对外提供。以前自检照常去调，拿到「不在 MCP Profile
+    'default' 中」就记成 error。
+    """
+    from app.tools.registry import ToolSpec, register_spec, unregister_prefix
+
+    called: list[dict] = []
+
+    async def handler(_ctx, args):
+        called.append(args)
+        return {"ok": True}
+
+    register_spec(
+        ToolSpec(
+            name="mcp:cae:solve",
+            description="solve",
+            input_schema={"type": "object", "properties": {}},
+            handler=handler,
+            read_only=False,
+            scope="user",
+        ),
+        replace=True,
+    )
+    try:
+        project_id, headers = await _setup(client, email="selfcheck-ext@example.com")
+        resp = await client.post(
+            "/api/mcp/selfcheck", json={"project_id": project_id}, headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        by_name = {r["name"]: r for r in body["results"]}
+        external = by_name["mcp:cae:solve"]
+        assert external["status"] == "skipped", external
+        assert "外部 MCP 服务器" in external["detail"]
+        # 整轮自检没有任何失败，外部工具也没有被真的调用（它可能有副作用）
+        assert body["summary"]["error"] == 0, [r for r in body["results"] if r["status"] == "error"]
+        assert called == []
+        # 内置工具照常实测
+        assert by_name["search_papers"]["status"] == "ok"
+    finally:
+        unregister_prefix("mcp:cae:")
