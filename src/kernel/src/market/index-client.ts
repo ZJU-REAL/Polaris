@@ -9,7 +9,7 @@
    本文件必须保持 electron-free（tests/electron-free.test.ts 强制）。
    ============================================================ */
 
-import type { FetchImpl } from '../sources/contract.ts'
+import type { FetchImpl } from './contract.ts'
 import { MarketError, validateMarketIndex, type MarketIndexEntry } from './contract.ts'
 
 /** 官方索引的 raw URL（主仓 market/index.json）。 */

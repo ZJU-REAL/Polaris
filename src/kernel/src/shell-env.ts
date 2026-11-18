@@ -38,6 +38,27 @@ export const ENGINE_LLM_ENV = [
   'LITELLM_API_BASE',
 ] as const
 
+/**
+ * Network settings people export in their shell rc files and expect a GUI app
+ * to respect: proxies (read by uv during first-run setup and by the engine),
+ * uv's own index/mirror overrides, and the engine's outbound proxy.
+ * ensureShellEnv picks these up together with ENGINE_LLM_ENV.
+ */
+export const SHELL_NETWORK_ENV = [
+  'HTTPS_PROXY',
+  'HTTP_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+  'https_proxy',
+  'http_proxy',
+  'all_proxy',
+  'no_proxy',
+  'UV_DEFAULT_INDEX',
+  'UV_INDEX_URL',
+  'UV_PYTHON_INSTALL_MIRROR',
+  'POLARIS_OUTBOUND_PROXY',
+] as const
+
 /** Upper bound on how long a slow shell (heavy rc files) may hold up engine start. */
 export const SHELL_ENV_TIMEOUT_MS = 4_000
 
@@ -241,6 +262,6 @@ let pending: Promise<string[]> | null = null
  * the same promise and spawns nothing.
  */
 export function ensureShellEnv(): Promise<string[]> {
-  pending ??= applyShellEnv()
+  pending ??= applyShellEnv({ names: [...ENGINE_LLM_ENV, ...SHELL_NETWORK_ENV] })
   return pending
 }

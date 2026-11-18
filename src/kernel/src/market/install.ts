@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, rm, rmdir, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { gunzipSync } from 'node:zlib'
-import type { FetchImpl } from '../sources/contract.ts'
+import type { FetchImpl } from './contract.ts'
 import {
   MarketError,
   isValidPackageName,

@@ -11,6 +11,9 @@
    storage 插件，保持 electron-free 且可独立单测。
    ============================================================ */
 
+/** 出网的 fetch 形状。索引拉取与安装都可注入，单测用 fixture 替身不打真网。 */
+export type FetchImpl = typeof globalThis.fetch
+
 /** 七类扩展点（设计报告 §7.1 manifest.kind 的封闭枚举）。 */
 export const PLUGIN_KINDS = [
   'datasource',

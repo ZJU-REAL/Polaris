@@ -6,14 +6,23 @@
    进程——不需要 redis 容器、不需要 worker 容器、不需要共享卷。
 
    两种模式：
-   - docker：桌面端主用形态。容器名固定，disposer 里 `docker rm -f`
-     兜底：attached 的 docker 客户端死了容器未必跟着死，按名字删才是
-     可靠回收（Spike-1 的结论）。
-   - command：直接 spawn 给定 argv。单元测试用 node -e 起假引擎即可
-     全程不依赖 docker，也是未来裸进程发行形态的座位。
+   - command：直接 spawn 给定 argv。安装包走的就是这条（首启引导装出的
+     venv Python），单元测试用 node -e 起假引擎。
+   - docker：只在开发/测试用（壳级 E2E 的 A 组）。容器名固定，disposer 里
+     `docker rm -f` 兜底：attached 的 docker 客户端死了容器未必跟着死，
+     按名字删才是可靠回收（Spike-1 的结论）。
 
    健康轮询通过后以 ctx.provide('legacy') 挂出服务；失败则抛错让
    fiber 进 FAILED（cordis 失败路径会照跑 disposer，子进程不会孤儿）。
+
+   健康之后继续看着它：子进程退出、或连续几次健康探测都没有应答（卡死），
+   就按退避自动重启——默认十分钟内只重启一次，再挂就停在 failed，不无限
+   拉起一个注定起不来的进程。状态变化经 service.onState 通知宿主，宿主
+   再告诉界面。实例标识与会话口令在整个 fiber 生命期内不变，重启后界面
+   手里的口令照样有效。
+
+   引擎的 stdout/stderr 除了进内存里的环形缓冲，配置了 logFile 时还追加
+   到那个文件（按大小滚动、写入前抹掉密钥，见 log/rotating-log.ts）。
 
    安全（#850）：每次启动生成实例标识与本地会话口令、按 secretsFile 读出
    每份安装的密钥，全部经环境变量交给引擎；健康检查只认带着本次实例标识
@@ -30,10 +39,14 @@ import { dirname } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import Schema from '@deepseek-ai/schemastery'
 import type { Context } from '@deepseek-ai/cordis'
+import { RotatingLog, createSecretScrubber } from '../log/rotating-log.ts'
 import { ENGINE_LLM_ENV } from '../shell-env.ts'
 
 /** docker 模式的默认容器名：可预测的名字才能在 disposer 与冒烟里精确回收。 */
 export const ENGINE_CONTAINER = 'polaris-desktop-engine'
+
+/** uvicorn 对成功的健康检查打的访问日志行。 */
+const HEALTH_ACCESS_RE = /"GET \/api\/health[^"]*" 200\b/
 
 /** 环形日志缓冲的行数上限。取「一屏多一点」：够定位启动失败，不吃内存。 */
 const LOG_LIMIT = 200
@@ -61,6 +74,18 @@ export interface LegacyEngineConfig {
   /** 记录「本插件拉起的引擎」的 pid 与实例标识（#850）。上次异常退出留下的孤儿引擎
       占着端口时，凭它确认是自己的旧进程后再收掉；不设则从不杀任何进程。 */
   pidFile?: string
+  /** 引擎 stdout/stderr 追加到这个文件（滚动、抹密钥）。不设则只留内存里的尾巴。 */
+  logFile?: string
+  /** 健康之后的自动重启次数上限（在 restartWindowMs 之内）。默认 1；0 = 不重启。 */
+  maxRestarts?: number
+  /** 重启次数的统计窗口。稳定运行超过这么久，之前的重启不再计入。默认 10 分钟。 */
+  restartWindowMs?: number
+  /** 发现引擎没了之后，等多久再拉起。默认 1 秒。 */
+  restartBackoffMs?: number
+  /** 健康之后的探测间隔。默认 10 秒。 */
+  probeIntervalMs?: number
+  /** 连续多少次探测没有应答才判定卡死并重启。默认 3。 */
+  probeFailures?: number
 }
 
 export const LegacyEngineConfig = Schema.object({
@@ -73,7 +98,29 @@ export const LegacyEngineConfig = Schema.object({
   healthTimeoutMs: Schema.number().default(120_000),
   secretsFile: Schema.string(),
   pidFile: Schema.string(),
+  logFile: Schema.string(),
+  maxRestarts: Schema.number().default(1),
+  restartWindowMs: Schema.number().default(600_000),
+  restartBackoffMs: Schema.number().default(1_000),
+  probeIntervalMs: Schema.number().default(10_000),
+  probeFailures: Schema.number().default(3),
 })
+
+/**
+ * 引擎运行状态（健康之后才有意义）：
+ * running = 在跑且应答；restarting = 发现它没了，正在重新拉起；
+ * failed = 重启次数用完或重启没成功，需要用户重新打开应用。
+ */
+export type EngineState = 'running' | 'restarting' | 'failed'
+
+export interface EngineStateEvent {
+  state: EngineState
+  /** 进入这个状态的原因（退出码、探测失败等），给日志与诊断信息用。 */
+  reason?: string
+  /** 窗口内已经自动重启过几次。 */
+  restarts: number
+  at: number
+}
 
 export interface LegacyEngineService {
   /** 本地后端根地址，如 http://127.0.0.1:18080。 */
@@ -85,6 +132,12 @@ export interface LegacyEngineService {
   /** 本次启动的本地会话口令（POLARIS_LOCAL_SESSION_SECRET）：只交给宿主自己的界面，
       引擎的 /auth/local-session 只认带着它的请求（#850）。 */
   sessionSecret: string
+  /** 当前运行状态。failed / restarting 时 baseUrl 不可用，宿主不应把它交给界面。 */
+  state(): EngineState
+  /** 订阅状态变化（崩溃、重启中、恢复、放弃）；返回取消订阅函数。 */
+  onState(listener: (event: EngineStateEvent) => void): () => void
+  /** 最近一次崩溃/重启失败的原因；没出过事为 null。 */
+  lastError(): string | null
 }
 
 /** 插件交给引擎的环境变量。docker 模式按名字无值透传（值不出现在 argv / ps 里）。 */
@@ -413,84 +466,247 @@ export const legacyEngine = {
     await reclaimPort(port, baseUrl, config.pidFile)
 
     const lines: string[] = []
+    // 落盘前抹密钥：除了宿主环境里的，还有这次启动交给引擎的那几样
+    const logFile = config.logFile
+      ? new RotatingLog({
+          path: config.logFile,
+          scrub: createSecretScrubber(() => [process.env, engineEnv]),
+        })
+      : null
     const capture = (chunk: Buffer): void => {
-      for (const line of chunk.toString().split('\n')) {
-        if (line) lines.push(line)
-      }
+      // 健康探测每十秒一次、界面也在问：成功的那些访问日志不记，否则日志尾巴
+      // （出问题时最有用的那几行）全是它们
+      const kept = chunk
+        .toString()
+        .split('\n')
+        .filter((line) => line && !HEALTH_ACCESS_RE.test(line))
+      if (!kept.length) return
+      lines.push(...kept)
       if (lines.length > LOG_LIMIT) lines.splice(0, lines.length - LOG_LIMIT)
+      logFile?.write(kept.join('\n'))
+    }
+    const note = (message: string): void => {
+      lines.push(`[polaris] ${message}`)
+      if (lines.length > LOG_LIMIT) lines.splice(0, lines.length - LOG_LIMIT)
+      logFile?.write(`[polaris] ${message}`)
     }
 
+    const containerName = config.containerName ?? ENGINE_CONTAINER
+    const removeContainer = (): void => {
+      if (config.mode !== 'docker') return
+      // 按容器名强删：attached 客户端先死时容器可能残留，名字才是真锚点
+      try {
+        execFileSync('docker', ['rm', '-f', containerName], { stdio: 'ignore' })
+      } catch {
+        /* 容器已不在 */
+      }
+    }
+
+    let disposed = false
     let child!: ChildProcess
-    // spawn 放进 effect：fiber 被 dispose（kernel.stop / 插件卸载 / 启动失败）
-    // 时 disposer 必然执行，子进程不会变孤儿。
-    ctx.effect(() => {
+    /** spawn 本身失败（可执行文件不存在等）走 'error' 事件，exitCode 一直是 null。 */
+    let spawnError: Error | null = null
+
+    const spawnChild = (): ChildProcess => {
       const argv = buildEngineArgv(config, port)
-      child = spawn(argv[0]!, argv.slice(1), {
+      spawnError = null
+      const proc = spawn(argv[0]!, argv.slice(1), {
         stdio: ['ignore', 'pipe', 'pipe'],
         // fake LLM 回退是严格显式 opt-in（#717）：只随宿主 env 自然继承，插件不代设。
         env: { ...process.env, ...engineEnv },
       })
-      child.stdout!.on('data', capture)
-      child.stderr!.on('data', capture)
-      if (config.pidFile && child.pid !== undefined) {
-        const record: PidRecord = { pid: child.pid, instanceId }
-        if (config.mode === 'docker') record.containerName = config.containerName ?? ENGINE_CONTAINER
+      proc.stdout!.on('data', capture)
+      proc.stderr!.on('data', capture)
+      // 没有监听的 'error' 会变成未捕获异常把宿主带崩
+      proc.on('error', (err) => {
+        spawnError = err
+        note(`engine process error: ${err.message}`)
+      })
+      if (config.pidFile && proc.pid !== undefined) {
+        const record: PidRecord = { pid: proc.pid, instanceId }
+        if (config.mode === 'docker') record.containerName = containerName
         try {
           writePrivateFile(config.pidFile, `${JSON.stringify(record)}\n`)
         } catch {
           /* 记不下来只是少了下次收孤儿的依据，不影响这次启动 */
         }
       }
+      return proc
+    }
+
+    const killChild = async (proc: ChildProcess): Promise<void> => {
+      removeContainer()
+      if (proc.exitCode === null && proc.signalCode === null && proc.pid !== undefined) {
+        proc.kill('SIGTERM')
+        if (!(await exited(proc, 5_000))) {
+          proc.kill('SIGKILL')
+          await exited(proc, 5_000)
+        }
+      }
+    }
+
+    let probeTimer: NodeJS.Timeout | undefined
+    let backoff: AbortController | null = null
+
+    // spawn 放进 effect：fiber 被 dispose（kernel.stop / 启动失败 / 退出应用）时
+    // disposer 必然执行，子进程不会变孤儿。重启换过的子进程同样由它收。
+    ctx.effect(() => {
+      child = spawnChild()
       return async () => {
+        disposed = true
+        if (probeTimer) clearInterval(probeTimer)
+        backoff?.abort()
         if (config.pidFile) removePidFile(config.pidFile, instanceId)
-        if (config.mode === 'docker') {
-          // 按容器名强删：attached 客户端先死时容器可能残留，名字才是真锚点
-          try {
-            execFileSync('docker', ['rm', '-f', config.containerName ?? ENGINE_CONTAINER], { stdio: 'ignore' })
-          } catch {
-            /* 容器已不在 */
-          }
-        }
-        if (child.exitCode === null && child.signalCode === null) {
-          child.kill('SIGTERM')
-          if (!(await exited(child, 5_000))) {
-            child.kill('SIGKILL')
-            await exited(child, 5_000)
-          }
-        }
+        await killChild(child)
       }
     }, 'legacy-engine process')
 
-    const deadline = Date.now() + healthTimeoutMs
-    for (;;) {
-      // 进程先死了就别傻等到超时：把日志尾巴直接带进错误里，省一轮排错
-      if (child.exitCode !== null || child.signalCode !== null) {
-        // 起不来的常见原因是端口刚被别人抢走（绑定失败）：那就如实报端口问题
-        if (await portInUse(port)) {
-          const other = await probeHealth(baseUrl)
-          throw new EnginePortError(other?.polaris ? 'stale-engine' : 'port-in-use', port)
+    /** 等这个子进程应答健康检查；进程先死、超时、或 fiber 已被回收都抛错。 */
+    const waitHealthy = async (proc: ChildProcess): Promise<void> => {
+      const deadline = Date.now() + healthTimeoutMs
+      for (;;) {
+        // 退出应用/回收 fiber：别再等了，让调用方立刻收尾（否则退出要等满健康超时）。
+        // 首次启动时 apply 还没返回，cordis 要等它返回才跑 disposer——所以不能只看
+        // disposer 置的标记，还要看 fiber 自己有没有被回收（回收一开始 uid 就清空）。
+        if (disposed || ctx.fiber.uid === null) throw new Error('legacy engine start cancelled')
+        if (spawnError) {
+          throw new Error(`legacy engine could not be started: ${(spawnError as Error).message}`)
         }
-        throw new Error(
-          `legacy engine exited before becoming healthy (code=${child.exitCode}, signal=${child.signalCode})\n${lines.join('\n')}`,
-        )
+        // 进程先死了就别傻等到超时：把日志尾巴直接带进错误里，省一轮排错
+        if (proc.exitCode !== null || proc.signalCode !== null) {
+          // 起不来的常见原因是端口刚被别人抢走（绑定失败）：那就如实报端口问题
+          if (await portInUse(port)) {
+            const other = await probeHealth(baseUrl)
+            throw new EnginePortError(other?.polaris ? 'stale-engine' : 'port-in-use', port)
+          }
+          throw new Error(
+            `legacy engine exited before becoming healthy (code=${proc.exitCode}, signal=${proc.signalCode})\n${lines.join('\n')}`,
+          )
+        }
+        // 只认自己：应答里必须带着这次启动的实例标识（#850）。别的进程（残留的
+        // 旧引擎、恰好占了这个端口的程序）回 200 也不算健康。
+        const answer = await probeHealth(baseUrl)
+        if (answer?.instanceId === instanceId) return
+        if (Date.now() > deadline) {
+          throw new Error(
+            `legacy engine did not become healthy within ${healthTimeoutMs}ms\n${lines.join('\n')}`,
+          )
+        }
+        await delay(500)
       }
-      // 只认自己：应答里必须带着这次启动的实例标识（#850）。别的进程（残留的
-      // 旧引擎、恰好占了这个端口的程序）回 200 也不算健康。
-      const answer = await probeHealth(baseUrl)
-      if (answer?.instanceId === instanceId) break
-      if (Date.now() > deadline) {
-        throw new Error(
-          `legacy engine did not become healthy within ${healthTimeoutMs}ms\n${lines.join('\n')}`,
-        )
-      }
-      await delay(500)
     }
+
+    await waitHealthy(child)
+
+    /* ---- 健康之后的监督 ---- */
+
+    const maxRestarts = config.maxRestarts ?? 1
+    const restartWindowMs = config.restartWindowMs ?? 600_000
+    const restartBackoffMs = config.restartBackoffMs ?? 1_000
+    const probeIntervalMs = config.probeIntervalMs ?? 10_000
+    const probeFailures = Math.max(1, config.probeFailures ?? 3)
+
+    let state: EngineState = 'running'
+    let lastError: string | null = null
+    let restartTimes: number[] = []
+    const listeners = new Set<(event: EngineStateEvent) => void>()
+
+    const setState = (next: EngineState, reason?: string): void => {
+      state = next
+      if (next !== 'running' && reason) lastError = reason
+      note(`engine ${next}${reason ? `: ${reason.split('\n', 1)[0]}` : ''}`)
+      const event: EngineStateEvent = { state: next, reason, restarts: restartTimes.length, at: Date.now() }
+      for (const listener of [...listeners]) {
+        try {
+          listener(event)
+        } catch {
+          /* 监听方的错不该影响监督 */
+        }
+      }
+    }
+
+    const onDown = async (reason: string): Promise<void> => {
+      if (disposed || state !== 'running') return
+      const now = Date.now()
+      restartTimes = restartTimes.filter((at) => now - at < restartWindowMs)
+      if (restartTimes.length >= maxRestarts) {
+        if (config.pidFile) removePidFile(config.pidFile, instanceId)
+        setState('failed', `${reason}; not restarting again (${restartTimes.length} automatic restart(s) already)`)
+        return
+      }
+      restartTimes.push(now)
+      setState('restarting', reason)
+      try {
+        backoff = new AbortController()
+        await delay(restartBackoffMs, undefined, { signal: backoff.signal })
+        if (disposed) return
+        // 旧进程已退出，但内核释放监听端口可能慢一拍；docker 还要先清掉同名容器
+        removeContainer()
+        await waitPortFree(port, 5_000)
+        if (disposed) return
+        child = spawnChild()
+        await waitHealthy(child)
+        if (disposed) return
+        watch(child)
+        setState('running')
+      } catch (err) {
+        if (disposed) return
+        await killChild(child)
+        if (config.pidFile) removePidFile(config.pidFile, instanceId)
+        setState('failed', `restart failed: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+
+    function watch(proc: ChildProcess): void {
+      proc.once('exit', (code, signal) => {
+        if (disposed || proc !== child) return
+        void onDown(`engine process exited unexpectedly (code=${code}, signal=${signal})`)
+      })
+    }
+    watch(child)
+
+    // 进程还在但不应答（死锁、事件循环卡死）：exit 事件等不来，靠探测发现。
+    // 连续几次都失败才动手，杀掉后由上面的 exit 监听走同一条重启路径。
+    let misses = 0
+    let probing = false
+    probeTimer = setInterval(() => {
+      if (disposed || state !== 'running' || probing) return
+      probing = true
+      const watched = child
+      void probeHealth(baseUrl)
+        .then((answer) => {
+          if (disposed || state !== 'running' || watched !== child) return
+          if (answer?.instanceId === instanceId) {
+            misses = 0
+            return
+          }
+          misses += 1
+          if (misses < probeFailures) return
+          misses = 0
+          note(`engine stopped answering health checks (${probeFailures} in a row); restarting it`)
+          if (watched.exitCode === null && watched.signalCode === null) {
+            removeContainer()
+            watched.kill('SIGKILL')
+          }
+        })
+        .finally(() => {
+          probing = false
+        })
+    }, probeIntervalMs)
+    // 探测定时器不该拖住进程退出（裸 Node 下的测试/冒烟）
+    probeTimer.unref?.()
 
     const service: LegacyEngineService = {
       baseUrl,
       logTail: () => lines.join('\n'),
       instanceId,
       sessionSecret,
+      state: () => state,
+      onState: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      lastError: () => lastError,
     }
     ctx.provide('legacy', service)
   },

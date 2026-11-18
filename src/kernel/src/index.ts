@@ -1,10 +1,14 @@
 export { Kernel, createKernel, type KernelOptions } from './kernel.ts'
 export {
+  CONFIG_TREE_BACKUP_PREFIX,
   createPluginHost,
+  dropUnknownBuiltins,
   marketPluginsDir,
+  mountEngine,
   type CreatePluginHostOptions,
   type PluginHost,
   type PluginHostLog,
+  type TreeRepair,
 } from './host.ts'
 export {
   JsonRpcEndpoint,
@@ -47,7 +51,7 @@ export {
   type PluginValidationError,
   type PluginValidationResult,
 } from './config/sqlite-tree.ts'
-export { BUILTIN_PLUGINS, desktopProbe, registerBuiltins } from './plugins/builtins.ts'
+export { BUILTIN_PLUGINS, registerBuiltins } from './plugins/builtins.ts'
 export {
   ENGINE_CONTAINER,
   ENGINE_SECRET_ENV,
@@ -61,11 +65,22 @@ export {
   portInUse,
   type EnginePortProblem,
   type EngineSecrets,
+  type EngineState,
+  type EngineStateEvent,
   type LegacyEngineService,
 } from './plugins/legacy-engine.ts'
 export {
+  RotatingLog,
+  createSecretScrubber,
+  scrubProcessSecrets,
+  tailLogFile,
+  type RotatingLogOptions,
+  type Scrubber,
+} from './log/rotating-log.ts'
+export {
   ENGINE_LLM_ENV,
   SHELL_ENV_TIMEOUT_MS,
+  SHELL_NETWORK_ENV,
   applyShellEnv,
   ensureShellEnv,
   parseShellEnv,
@@ -90,23 +105,6 @@ export {
 export { PluginMetaStore, SqliteConfigTreeStore } from './storage/store.ts'
 export { StorageConfig, storage, type StorageService } from './plugins/storage.ts'
 export {
-  type FetchImpl,
-  type SourceAdapter,
-  type SourceAuthor,
-  type SourceRecord,
-  type SourceSearchOptions,
-} from './sources/contract.ts'
-export { OPENALEX_BASE, OpenAlexAdapter, openAlexRecord, type OpenAlexAdapterOptions } from './sources/openalex.ts'
-export {
-  CORDIS_BASE,
-  CordisProjectsAdapter,
-  buildCordisQuery,
-  cordisDetailRecord,
-  cordisSearchRecord,
-  type CordisProjectsAdapterOptions,
-} from './sources/cordis-projects.ts'
-export { SourcesConfig, sources, type SourcesService } from './plugins/sources.ts'
-export {
   MarketError,
   PLUGIN_KINDS,
   PLUGIN_RUNTIMES,
@@ -116,6 +114,7 @@ export {
   validateMarketIndex,
   validateMarketIndexEntry,
   validatePolarisManifest,
+  type FetchImpl,
   type InstallRecord,
   type ManifestPermissions,
   type MarketErrorCode,

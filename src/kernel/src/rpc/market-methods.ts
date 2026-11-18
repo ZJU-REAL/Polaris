@@ -16,7 +16,7 @@ import type { SqliteTree } from '../config/sqlite-tree.ts'
 import { MarketError } from '../market/contract.ts'
 import { OFFICIAL_INDEX_URL, fetchIndex } from '../market/index-client.ts'
 import { installAndRegister, uninstallAndRemove } from '../market/lifecycle.ts'
-import type { FetchImpl } from '../sources/contract.ts'
+import type { FetchImpl } from '../market/contract.ts'
 import type { PluginMetaStore } from '../storage/store.ts'
 import type { JobBus } from './jobs.ts'
 import {

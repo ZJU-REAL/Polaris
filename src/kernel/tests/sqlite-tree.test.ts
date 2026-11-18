@@ -87,7 +87,7 @@ describe.each(implementations)('SqliteTree over %s', (_name, make) => {
   it('roundtrip: seed → mutate → flush → reload restores the same set', async () => {
     const { store, close } = make()
     await store.save([
-      { id: 'probe', name: 'cordis:desktop-probe' },
+      { id: 'probe', name: 'cordis:fake' },
       {
         id: 'grp',
         name: 'cordis:group',

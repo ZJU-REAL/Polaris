@@ -11,6 +11,7 @@
    运行参数，这些留在调用方。
    ============================================================ */
 
+import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -20,9 +21,68 @@ import { MemoryConfigTreeStore, type ConfigEntry, type ConfigTreeStore } from '.
 import { SqliteTree } from './config/sqlite-tree.ts'
 import { createKernel, type Kernel } from './kernel.ts'
 import { createImportGuard, verifyInstalledEntries, type InstallVerifyIssue } from './market/lifecycle.ts'
-import { registerBuiltins } from './plugins/builtins.ts'
+import { BUILTIN_PLUGINS, GROUP_BUILTIN, registerBuiltins } from './plugins/builtins.ts'
+import { legacyEngine, type LegacyEngineConfig } from './plugins/legacy-engine.ts'
 import { storage, type StorageService } from './plugins/storage.ts'
 import type { PluginMetaStore } from './storage/store.ts'
+
+/** 配置树备份在 PluginMetaStore 里的键前缀（后面跟 <原因>:<时间戳>）。 */
+export const CONFIG_TREE_BACKUP_PREFIX = 'config-tree:backup:'
+
+/**
+ * 启动时对存下来的配置树动过的手脚。两种：
+ * - dropped-builtins：清掉了这个版本已经没有的内置条目（旧版本种的
+ *   legacy-engine / sources / desktop-probe），其余条目原样保留；
+ * - reset：存下来的树装不起来，备份后重置成种子树。
+ */
+export interface TreeRepair {
+  kind: 'dropped-builtins' | 'reset'
+  /** dropped-builtins：被清掉的条目 id。 */
+  dropped?: string[]
+  /** reset：当初装不起来的原因。 */
+  reason?: string
+  /** 备份在 PluginMetaStore 里的键（持久层不可用时没有）。 */
+  backupKey?: string
+  /** 备份文件的绝对路径（写不出来时没有）。 */
+  backupFile?: string
+}
+
+/**
+ * 去掉名字是 `cordis:<键>` 但 <键> 不在 known 里的条目（递归进组）。
+ *
+ * 为什么必须在装载前做：树装载是事务化的，一条未知内置条目就让整棵树
+ * 装不起来（SqliteTree.import 直接抛错）。旧版本把 legacy-engine / sources /
+ * desktop-probe 种进了树，这些内置插件现在都不在表里了。
+ * 非 cordis: 的条目（用户装的三方插件）一律不碰。
+ */
+export function dropUnknownBuiltins(
+  entries: ConfigEntry[],
+  known: ReadonlySet<string>,
+): { entries: ConfigEntry[]; dropped: string[] } {
+  const dropped: string[] = []
+  const walk = (list: ConfigEntry[]): ConfigEntry[] => {
+    const kept: ConfigEntry[] = []
+    for (const entry of list) {
+      const name = typeof entry?.name === 'string' ? entry.name : ''
+      if (name.startsWith('cordis:') && !known.has(name.slice(7))) {
+        dropped.push(String(entry.id))
+        continue
+      }
+      kept.push(Array.isArray(entry.children) ? { ...entry, children: walk(entry.children) } : entry)
+    }
+    return kept
+  }
+  return { entries: walk(entries), dropped }
+}
+
+/**
+ * 把本地引擎直接挂到内核上（不进配置树，理由见 plugins/builtins.ts）。
+ * resolve 时引擎已通过健康检查、`ctx.get('legacy')` 可用；起不来则抛错，
+ * 子进程已由插件自己的 disposer 回收。停机时随 kernel.stop() 级联回收。
+ */
+export async function mountEngine(kernel: Kernel, config: LegacyEngineConfig): Promise<void> {
+  await kernel.ctx.plugin(legacyEngine, config)
+}
 
 export interface PluginHostLog {
   warn(message: string): void
@@ -57,6 +117,8 @@ export interface PluginHost {
   installIssues: InstallVerifyIssue[]
   /** 市场安装物根目录，调用方要用它做 ctx.baseUrl 之外的路径推导时可取。 */
   pluginsDir: string
+  /** 启动时对存下来的树做过的修复（没有则为空数组），宿主据此记日志。 */
+  repairs: TreeRepair[]
 }
 
 /** 市场安装物的落盘根：<dataRoot>/plugins/<包名>/<版本>/。 */
@@ -108,11 +170,38 @@ export async function createPluginHost(options: CreatePluginHostOptions): Promis
     }
   }
 
-  let configTree: SqliteTree | undefined
-  try {
-    if ((await store.load()).length === 0) await store.save(options.seedEntries)
-    await kernel.ctx.plugin(Loader)
-    registerBuiltins(kernel.ctx.loader)
+  const repairs: TreeRepair[] = []
+  const backupDir = join(options.dataRoot, 'kernel', 'backups')
+  const stamp = (): string => new Date().toISOString().replace(/[:.]/g, '-')
+
+  /** 改树之前留底：KV 一份（跟着 storage.db 走）、文件一份（用户/支持人员找得到）。 */
+  const backupTree = (
+    label: string,
+    entries: ConfigEntry[],
+    reason: string,
+  ): Pick<TreeRepair, 'backupKey' | 'backupFile'> => {
+    const at = stamp()
+    const out: Pick<TreeRepair, 'backupKey' | 'backupFile'> = {}
+    const payload = { reason, savedAt: new Date().toISOString(), entries }
+    try {
+      const key = `${CONFIG_TREE_BACKUP_PREFIX}${label}:${at}`
+      pluginMeta?.set(key, payload)
+      if (pluginMeta) out.backupKey = key
+    } catch (err) {
+      log.error('[kernel] 配置树备份写入持久层失败：', err)
+    }
+    try {
+      mkdirSync(backupDir, { recursive: true })
+      const file = join(backupDir, `config-tree-${label}-${at}.json`)
+      writeFileSync(file, `${JSON.stringify(payload, null, 2)}\n`)
+      out.backupFile = file
+    } catch (err) {
+      log.error('[kernel] 配置树备份文件写入失败：', err)
+    }
+    return out
+  }
+
+  const mountTree = async (): Promise<SqliteTree | undefined> => {
     await kernel.ctx.plugin(SqliteTree, {
       store,
       // 第二道闸：会话运行中被篡改、用户再点启用时在 import 阶段拒绝
@@ -124,12 +213,75 @@ export async function createPluginHost(options: CreatePluginHostOptions): Promis
           })
         : undefined,
     })
-    configTree = kernel.ctx.get('configTree') as SqliteTree | undefined
-    // 扫描结论挂到条目注记上：被强制禁用的条目要在插件列表里说清原因
-    for (const issue of installIssues) configTree?.warnings.set(issue.entryId, issue.message)
-  } catch (err) {
-    log.error('[kernel] 配置树装载失败，本次会话无插件树：', err)
+    return kernel.ctx.get('configTree') as SqliteTree | undefined
   }
 
-  return { kernel, configTree, store, pluginMeta, installIssues, pluginsDir }
+  let configTree: SqliteTree | undefined
+  let loaderReady = false
+  try {
+    const stored = await store.load()
+    if (stored.length === 0) {
+      if (options.seedEntries.length) await store.save(options.seedEntries)
+    } else {
+      // 旧版本种下的内置条目（含可能带着绝对路径泄进树的引擎配置）在这里清掉
+      const known = new Set([...Object.keys(BUILTIN_PLUGINS), GROUP_BUILTIN])
+      const cleaned = dropUnknownBuiltins(stored, known)
+      if (cleaned.dropped.length) {
+        const backup = backupTree('dropped-builtins', stored, 'entries naming built-ins this version no longer has')
+        await store.save(cleaned.entries)
+        repairs.push({ kind: 'dropped-builtins', dropped: cleaned.dropped, ...backup })
+        log.warn(`[kernel] 配置树清掉了已不存在的内置条目：${cleaned.dropped.join(', ')}`)
+      }
+    }
+    await kernel.ctx.plugin(Loader)
+    registerBuiltins(kernel.ctx.loader)
+    loaderReady = true
+    configTree = await mountTree()
+  } catch (err) {
+    log.error('[kernel] 配置树装载失败，尝试备份后重置：', err)
+    // 修复：存下来的树装不起来（条目损坏、三方插件的入口没了、库里的行读不出来）。
+    // 以前的结果是这次会话没有树、之后每次启动都一样，而用户没有任何界面能改它。
+    // 现在把原样备份下来，重置成种子树再装一次。
+    const reason = err instanceof Error ? err.message : String(err)
+    try {
+      let broken: ConfigEntry[] = []
+      let readable = true
+      try {
+        broken = await store.load()
+      } catch {
+        readable = false
+      }
+      const backup = backupTree('unloadable', broken, reason)
+      if (!readable) {
+        // 连读都读不出来：条目备份是空的，把整个库文件另存一份
+        try {
+          mkdirSync(backupDir, { recursive: true })
+          copyFileSync(
+            join(options.dataRoot, 'kernel', 'storage.db'),
+            join(backupDir, `storage-unreadable-${stamp()}.db`),
+          )
+        } catch {
+          /* 内存 store（storage 没挂上）时没有文件可拷 */
+        }
+      }
+      await store.save(options.seedEntries)
+      if (!loaderReady) {
+        await kernel.ctx.plugin(Loader)
+        registerBuiltins(kernel.ctx.loader)
+        loaderReady = true
+      }
+      configTree = await mountTree()
+      repairs.push({ kind: 'reset', reason, ...backup })
+      log.warn(
+        `[kernel] 配置树已重置为默认；原内容备份在 ${backup.backupFile ?? backup.backupKey ?? '（备份失败）'}`,
+      )
+    } catch (repairErr) {
+      configTree = undefined
+      log.error('[kernel] 配置树重置后仍装不起来，本次会话无插件树：', repairErr)
+    }
+  }
+  // 扫描结论挂到条目注记上：被强制禁用的条目要在插件列表里说清原因
+  for (const issue of installIssues) configTree?.warnings.set(issue.entryId, issue.message)
+
+  return { kernel, configTree, store, pluginMeta, installIssues, pluginsDir, repairs }
 }
