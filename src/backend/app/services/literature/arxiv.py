@@ -136,7 +136,7 @@ def _parse_entry(entry: ET.Element) -> dict[str, Any]:
         ],
         "published": published,
         "updated": _text(entry, "atom:updated"),
-        "year": int(published[:4]) if published else None,
+        "year": int(published[:4]) if published and published[:4].isdigit() else None,
         "categories": categories,
         "primary_category": categories[0] if categories else None,
         "doi": doi,
@@ -280,8 +280,17 @@ class ArxivClient:
                 logger.warning("failed to persist arxiv query cooldown", exc_info=True)
         return seconds
 
-    async def _request(self, url: str, *, params: dict[str, Any] | None = None) -> httpx.Response:
+    async def _request(
+        self,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        max_attempts: int | None = None,
+    ) -> httpx.Response:
         """所有 arXiv 请求的唯一出口：限速 + 遇限流/超时退避重试。
+
+        ``max_attempts``：这次调用最多试几次（默认用客户端的设置）。调研检索给 1——
+        别的来源已经在同时查了，arXiv 被限流就让它这次缺席，不值得为它退避几分钟。
 
         重试覆盖两类失败，都是生产上实际见过的：``export.arxiv.org`` 返回 **429**
         （三个库同步任务因此停在第一步），以及 ``ReadTimeout``（一个建库任务因此中断）。
@@ -297,7 +306,8 @@ class ArxivClient:
         last_exc: Exception | None = None
         last_status: int | None = None
         last_retry_after: float | None = None
-        for attempt in range(self._max_retries):
+        max_retries = max(1, max_attempts or self._max_retries)
+        for attempt in range(max_retries):
             await self._limiter.acquire()
             retry_after: float | None = None
             try:
@@ -325,7 +335,7 @@ class ArxivClient:
                     resp.status_code,
                     url,
                     attempt + 1,
-                    self._max_retries,
+                    max_retries,
                     retry_after,
                     dict(resp.headers),
                     resp.text[:300],
@@ -339,11 +349,11 @@ class ArxivClient:
                 "arxiv retry in %.1fs (attempt %s/%s): %s",
                 delay,
                 attempt + 1,
-                self._max_retries,
+                max_retries,
                 url,
             )
             await self._limiter.penalize(delay)
-            if attempt + 1 < self._max_retries:
+            if attempt + 1 < max_retries:
                 await asyncio.sleep(delay)
         cooldown = None
         # 只有 429 才冻结全平台。403 一并算限流是过度反应：arXiv 的 403 更常见的原因
@@ -355,15 +365,17 @@ class ArxivClient:
         # 否则排查的人只看到一句 unavailable，得去翻 worker 日志
         why = f"HTTP {last_status}" if last_status is not None else type(last_exc).__name__
         raise ArxivRateLimitedError(
-            f"arXiv unavailable after {self._max_retries} attempts ({why}): {url}",
+            f"arXiv unavailable after {max_retries} attempts ({why}): {url}",
             retry_after=cooldown,
         ) from last_exc
 
-    async def _query(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+    async def _query(
+        self, params: dict[str, Any], *, max_attempts: int | None = None
+    ) -> list[dict[str, Any]]:
         key = cache_key("arxiv", "query", params)
         if (cached := await self._cache.get(key)) is not None:
             return cached
-        resp = await self._request(API_URL, params=params)
+        resp = await self._request(API_URL, params=params, max_attempts=max_attempts)
         root = ET.fromstring(resp.text)
         entries = [_parse_entry(e) for e in root.findall("atom:entry", _NS)]
         await self._cache.set(key, entries)
@@ -433,6 +445,36 @@ class ArxivClient:
                 break
             start += len(entries)
         return results[:limit]
+
+    async def search_relevance(
+        self,
+        expression: str,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 25,
+        max_attempts: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """按一条已经写好的 arXiv 检索式取**最相关**的若干篇（``sortBy=relevance``）。
+
+        建库检索的另外几个方法都按提交日期倒序——那是「最近有什么」的问法；做一个方向
+        的调研要的是「和这个问题最相关的是哪些」，按日期排只会拿到刚好含这些词的最新
+        几十篇。
+        """
+        if since or until:
+            lo = since.strftime("%Y%m%d%H%M") if since else "000001010000"
+            hi = until.strftime("%Y%m%d%H%M") if until else "999912312359"
+            expression = f"({expression}) AND submittedDate:[{lo} TO {hi}]"
+        return await self._query(
+            {
+                "search_query": expression,
+                "start": 0,
+                "max_results": max(1, min(self.page_size, limit)),
+                "sortBy": "relevance",
+                "sortOrder": "descending",
+            },
+            max_attempts=max_attempts,
+        )
 
     async def search_page(
         self,

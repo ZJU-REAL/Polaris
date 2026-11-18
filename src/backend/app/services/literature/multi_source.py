@@ -8,6 +8,7 @@ lookup), so its keyword-search method returns no candidates by design.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -20,6 +21,8 @@ from xml.etree import ElementTree
 import httpx
 
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 _KEY_INDEX: dict[str, count] = {}
 _KEY_LOCK = Lock()
@@ -76,8 +79,55 @@ def _doi(value: Any) -> str | None:
 
 
 def _year(value: Any) -> int | None:
-    match = re.search(r"\b(?:19|20)\d{2}\b", _text(value))
+    """从任意形状的值里取年份：整数、"2024-05-01"、[2024, 5]、{"date-parts": [[2024]]}……
+    取不出来返回 None，绝不抛错——一条记录的日期写得怪，不该让整个来源失败。"""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 1000 <= value <= 3000 else None
+    if isinstance(value, float):
+        return _year(int(value)) if value == value and abs(value) < 1e6 else None
+    if isinstance(value, Mapping):
+        return _year(value.get("date-parts") or value.get("date-time") or value.get("year"))
+    if isinstance(value, list | tuple):
+        return _year(value[0]) if value else None
+    match = re.search(r"\b(?:1[5-9]|20)\d{2}\b", _text(value))
     return int(match.group(0)) if match else None
+
+
+def date_parts_iso(value: Any) -> str | None:
+    """Crossref 式的日期（``{"date-parts": [[2024, 5, 1]]}``，月、日可缺，可能是 null
+    或字符串）→ ISO 日期字符串；缺的月、日按 1 补。认不出来返回 None。"""
+    parts = value.get("date-parts") if isinstance(value, Mapping) else value
+    if isinstance(parts, list | tuple) and parts and isinstance(parts[0], list | tuple):
+        parts = parts[0]
+    if not isinstance(parts, list | tuple) or not parts:
+        return None
+    numbers: list[int] = []
+    for part in list(parts)[:3]:
+        try:
+            numbers.append(int(str(part).strip()))
+        except (TypeError, ValueError):
+            break
+    if not numbers or not 1000 <= numbers[0] <= 3000:
+        return None
+    month = numbers[1] if len(numbers) > 1 and 1 <= numbers[1] <= 12 else 1
+    day = numbers[2] if len(numbers) > 2 and 1 <= numbers[2] <= 31 else 1
+    try:
+        return datetime(numbers[0], month, day, tzinfo=UTC).date().isoformat()
+    except ValueError:
+        return datetime(numbers[0], month, 1, tzinfo=UTC).date().isoformat()
+
+
+def _int_or_none(value: Any) -> int | None:
+    """计数类字段：不是非负整数就当没有（有的来源给字符串，有的给 null）。"""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
 
 
 def _authors(value: Any) -> list[dict[str, Any]]:
@@ -102,7 +152,30 @@ def _date_window(request: Any) -> tuple[int | None, int | None]:
 
 def _within_year(row: Mapping[str, Any], start: int | None, end: int | None) -> bool:
     year = row.get("year")
-    return year is None or ((start is None or year >= start) and (end is None or year <= end))
+    if not isinstance(year, int) or isinstance(year, bool):
+        return True
+    return (start is None or year >= start) and (end is None or year <= end)
+
+
+def _safe_rows(source: str, items: Any, convert: Any) -> list[dict[str, Any]]:
+    """逐条转换来源的原始记录；某一条转换出错就跳过那一条。
+
+    以前是一个列表推导：一条记录字段形状不对（作者是字符串、日期是 null……）就整批
+    抛错，这个来源这次一篇都拿不到。"""
+    rows: list[dict[str, Any]] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            row = convert(item)
+        except Exception:  # noqa: BLE001 — 单条记录坏了不拖累整个来源
+            logger.warning("skipped a malformed %s record", source, exc_info=True)
+            continue
+        row["year"] = _year(row.get("year"))
+        if "citation_count" in row:
+            row["citation_count"] = _int_or_none(row.get("citation_count"))
+        rows.append(row)
+    return rows
 
 
 def _pubmed_abstracts(xml_text: str) -> dict[str, str]:
@@ -362,9 +435,10 @@ class MultiSourceClient:
             item = result.get(str(pmid))
             if not isinstance(item, dict) or not item.get("title"):
                 continue
+            raw_ids = item.get("articleids")
             article_ids = {
                 str(article.get("idtype")): article.get("value")
-                for article in item.get("articleids") or []
+                for article in (raw_ids if isinstance(raw_ids, list) else [])
                 if isinstance(article, dict)
             }
             rows.append(
@@ -385,13 +459,17 @@ class MultiSourceClient:
 
     async def _search_crossref(self, request: Any) -> list[dict[str, Any]]:
         settings = get_settings()
-        filters = ["type:journal-article"]
+        # 期刊论文、会议论文、预印本都要：只留期刊论文的话，计算机方向的大半文献
+        # （会议、arXiv）一篇都搜不到。同一个键写多次是「任一」
+        filters = ["type:journal-article", "type:proceedings-article", "type:posted-content"]
         if request.start_year:
             filters.append(f"from-pub-date:{request.start_year}-01-01")
         if request.end_year:
             filters.append(f"until-pub-date:{request.end_year}-12-31")
         params = {
-            "query": request.query,
+            # query.bibliographic 只对标题、作者、刊名、年份做匹配，按相关度排；
+            # 笼统的 query 还会匹配基金、机构等字段，结果里混进大量不相干的记录
+            "query.bibliographic": request.query,
             "rows": min(request.limit, 1000),
             "filter": ",".join(filters),
             "sort": "relevance",
@@ -405,7 +483,7 @@ class MultiSourceClient:
             items = (payload.get("message") or {}).get("items") or []
         except ProviderRequestError:
             raise
-        return [self._crossref_item(item) for item in items if isinstance(item, dict)]
+        return _safe_rows("crossref", items, self._crossref_item)
 
     async def _search_europepmc(self, request: Any) -> list[dict[str, Any]]:
         start, end = _date_window(request)
@@ -427,7 +505,7 @@ class MultiSourceClient:
             items = (payload.get("resultList") or {}).get("result") or []
         except ProviderRequestError:
             raise
-        return [self._europepmc_item(item) for item in items if isinstance(item, dict)]
+        return _safe_rows("europepmc", items, self._europepmc_item)
 
     async def _search_hal(self, request: Any) -> list[dict[str, Any]]:
         start, end = _date_window(request)
@@ -449,7 +527,7 @@ class MultiSourceClient:
             items = (payload.get("response") or {}).get("docs") or []
         except ProviderRequestError:
             raise
-        return [self._hal_item(item) for item in items if isinstance(item, dict)]
+        return _safe_rows("hal", items, self._hal_item)
 
     async def _search_core(self, request: Any) -> list[dict[str, Any]]:
         settings = get_settings()
@@ -474,7 +552,7 @@ class MultiSourceClient:
             items = payload.get("results") or []
         except ProviderRequestError:
             raise
-        return [self._core_item(item) for item in items if isinstance(item, dict)]
+        return _safe_rows("core", items, self._core_item)
 
     async def _search_base(self, request: Any) -> list[dict[str, Any]]:
         start, end = _date_window(request)
@@ -494,7 +572,7 @@ class MultiSourceClient:
             items = (payload.get("response") or {}).get("docs") or payload.get("docs") or []
         except ProviderRequestError:
             raise
-        return [self._base_item(item) for item in items if isinstance(item, dict)]
+        return _safe_rows("base", items, self._base_item)
 
     async def _search_sciverse(self, request: Any) -> list[dict[str, Any]]:
         settings = get_settings()
@@ -516,30 +594,44 @@ class MultiSourceClient:
         except ProviderRequestError:
             raise
         items = payload.get("results") or payload.get("items") or payload.get("data") or []
-        return [self._sciverse_item(item) for item in items if isinstance(item, dict)]
+        return _safe_rows("sciverse", items, self._sciverse_item)
 
     @staticmethod
     def _crossref_item(item: Mapping[str, Any]) -> dict[str, Any]:
-        date_parts = (
-            item.get("published-print") or item.get("published-online") or item.get("issued") or {}
-        ).get("date-parts") or []
-        year = date_parts[0][0] if date_parts and date_parts[0] else _year(item.get("created"))
+        # 日期在这几个字段里任取一个有值的；每个都可能缺、是 null，或者只有年份
+        published = next(
+            (
+                iso
+                for key in ("published-print", "published-online", "published", "issued")
+                if (iso := date_parts_iso(item.get(key)))
+            ),
+            None,
+        )
+        year = int(published[:4]) if published else _year(item.get("created"))
         authors = []
-        for author in item.get("author") or []:
+        raw_authors = item.get("author")
+        for author in raw_authors if isinstance(raw_authors, list) else []:
+            if not isinstance(author, Mapping):
+                continue
             name = _text(
                 author.get("name")
-                or " ".join(filter(None, [author.get("given"), author.get("family")]))
+                or " ".join(str(p) for p in (author.get("given"), author.get("family")) if p)
             )
             if name:
                 authors.append({"name": name})
+        raw_links = item.get("link")
         pdf_url = next(
             (
                 _text(link.get("URL"))
-                for link in item.get("link") or []
+                for link in (raw_links if isinstance(raw_links, list) else [])
                 if isinstance(link, dict) and "pdf" in _text(link.get("content-type")).lower()
             ),
             None,
         )
+        metadata = dict(item)
+        # 下游按 metadata["published"] 取发表日期，要的是 ISO 字符串；Crossref 原始的
+        # published 是 {"date-parts": …}，原样留着会在解析日期时出错
+        metadata["published"] = published
         return {
             "source": "crossref",
             "title": _first(item.get("title")),
@@ -548,16 +640,18 @@ class MultiSourceClient:
             "year": year,
             "venue": _first(item.get("container-title")),
             "doi": _doi(item.get("DOI")),
-            "url": item.get("URL"),
+            "url": _text(item.get("URL")) or None,
             "pdf_url": pdf_url,
             "oa_status": "oa" if pdf_url else None,
             "citation_count": item.get("is-referenced-by-count"),
-            "metadata": dict(item),
+            "metadata": metadata,
         }
 
     @staticmethod
     def _europepmc_item(item: Mapping[str, Any]) -> dict[str, Any]:
-        links = (item.get("fullTextUrlList") or {}).get("fullTextUrl") or []
+        url_list = item.get("fullTextUrlList")
+        links = (url_list.get("fullTextUrl") if isinstance(url_list, Mapping) else None) or []
+        links = links if isinstance(links, list) else []
         pdf = next(
             (
                 _text(link.get("url"))

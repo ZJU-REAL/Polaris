@@ -23,7 +23,8 @@ resolve_priority），不再散落在 paper_import 的函数排布里。
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+import logging
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
@@ -38,7 +39,47 @@ from app.schemas.literature_discovery import (
 from app.services.literature.discovery import validate_candidate
 from app.services.literature.multi_source import MultiSourceClient
 
+logger = logging.getLogger(__name__)
+
 # ---- 适配器实现（原 runtime.py 的内置适配器，随注册表一起收拢到这里） ----
+
+
+def _candidates(
+    source: str, rows: Iterable[Any], convert: Callable[[Mapping[str, Any]], LiteratureCandidate]
+) -> list[LiteratureCandidate]:
+    """逐条把来源记录转成候选；某一条转不了（字段类型不对、日期写得怪）就跳过它。
+
+    以前是列表推导：一条坏记录让整页抛错，这个来源这次一篇都拿不到。"""
+    out: list[LiteratureCandidate] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        try:
+            out.append(convert(row))
+        except Exception:  # noqa: BLE001 — 单条记录坏了不拖累整个来源
+            logger.warning("skipped a malformed %s record", source, exc_info=True)
+    return out
+
+
+def _as_year(value: Any) -> int | None:
+    from app.services.literature.multi_source import _year
+
+    return _year(value)
+
+
+def _as_count(value: Any) -> int | None:
+    from app.services.literature.multi_source import _int_or_none
+
+    return _int_or_none(value)
+
+
+def _as_authors(value: Any) -> list[dict[str, Any]]:
+    return [dict(a) for a in value if isinstance(a, Mapping)] if isinstance(value, list) else []
+
+
+def _as_text(value: Any) -> str | None:
+    return value if isinstance(value, str) else (str(value) if value is not None else None)
+
 
 _ROTATION_LOCK = Lock()
 _ROTATION_INDEX: dict[str, int] = {}
@@ -77,7 +118,7 @@ class OpenAlexAdapter:
         )
         return SourceSearchPage(
             source=self.name,
-            items=[_candidate_from_openalex(row) for row in rows],
+            items=_candidates(self.name, rows, _candidate_from_openalex),
             fetched_count=len(rows),
         )
 
@@ -96,6 +137,16 @@ class OpenAlexAdapter:
     async def search_works(self, query: str, **kwargs: Any) -> list[dict[str, Any]]:
         return await self.client.search_works(query, **kwargs)
 
+    # 按引用关系扩展候选（调研检索用）
+    async def find_work(self, **kwargs: Any) -> dict[str, Any] | None:
+        return await self.client.find_work(**kwargs)
+
+    async def works_by_ids(self, openalex_ids: list[str]) -> list[dict[str, Any]]:
+        return await self.client.works_by_ids(openalex_ids)
+
+    async def citing_works(self, openalex_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+        return await self.client.citing_works(openalex_id, **kwargs)
+
 
 class SemanticScholarAdapter:
     name = "semantic"
@@ -105,15 +156,21 @@ class SemanticScholarAdapter:
         self.client = client
 
     async def search(self, request: SourceSearchRequest) -> SourceSearchPage:
+        kwargs: dict[str, Any] = {}
+        if getattr(self.client, "has_api_key", True) is False:
+            # 没有密钥时 Semantic Scholar 基本每次都回 429：只试一次、几秒就放弃，
+            # 不让四轮退避（合计半分钟）拖住整次检索
+            kwargs["quick"] = True
         rows = await self.client.search_papers(
             request.query,
             limit=request.limit,
             start_year=request.start_year,
             end_year=request.end_year,
+            **kwargs,
         )
         return SourceSearchPage(
             source=self.name,
-            items=[_candidate_from_semantic(row) for row in rows],
+            items=_candidates(self.name, rows, _candidate_from_semantic),
             fetched_count=len(rows),
         )
 
@@ -172,7 +229,7 @@ class ArxivAdapter:
             )
         return SourceSearchPage(
             source=self.name,
-            items=[_candidate_from_arxiv(row) for row in rows],
+            items=_candidates(self.name, rows, _candidate_from_arxiv),
             fetched_count=len(rows),
         )
 
@@ -197,6 +254,9 @@ class ArxivAdapter:
     async def search_page(self, **kwargs: Any) -> list[dict[str, Any]]:
         return await self.client.search_page(**kwargs)
 
+    async def search_relevance(self, expression: str, **kwargs: Any) -> list[dict[str, Any]]:
+        return await self.client.search_relevance(expression, **kwargs)
+
 
 class MultiSourceAdapter:
     """Adapter for providers that share the normalized YFR-compatible client."""
@@ -209,7 +269,11 @@ class MultiSourceAdapter:
         rows = await self.client.search_source(self.name, request)
         return SourceSearchPage(
             source=self.name,
-            items=[validate_candidate(_candidate_from_generic(self.name, row)) for row in rows],
+            items=_candidates(
+                self.name,
+                rows,
+                lambda row: validate_candidate(_candidate_from_generic(self.name, row)),
+            ),
             fetched_count=len(rows),
         )
 
@@ -235,34 +299,39 @@ def _candidate_from_openalex(row: Mapping[str, Any]) -> LiteratureCandidate:
         LiteratureCandidate(
             source="openalex",
             title=str(row.get("title") or "Untitled"),
-            abstract=row.get("abstract"),
-            authors=row.get("authors") or [],
-            year=row.get("year"),
-            venue=row.get("venue"),
-            doi=row.get("doi"),
-            url=row.get("url"),
-            citation_count=row.get("cited_by_count"),
+            abstract=_as_text(row.get("abstract")),
+            authors=_as_authors(row.get("authors")),
+            year=_as_year(row.get("year")),
+            venue=_as_text(row.get("venue")),
+            doi=_as_text(row.get("doi")),
+            arxiv_id=_as_text(row.get("arxiv_id")),
+            url=_as_text(row.get("url")),
+            citation_count=_as_count(row.get("cited_by_count")),
             metadata=dict(row),
         )
     )
 
 
 def _candidate_from_semantic(row: Mapping[str, Any]) -> LiteratureCandidate:
-    external = row.get("externalIds") or {}
+    external = row.get("externalIds")
+    external = external if isinstance(external, Mapping) else {}
+    metadata = dict(row)
+    # 下游按 metadata["published"] 取发表日期
+    metadata.setdefault("published", row.get("publicationDate"))
     return validate_candidate(
         LiteratureCandidate(
             source="semantic",
             title=str(row.get("title") or "Untitled"),
-            abstract=row.get("abstract"),
-            authors=[a for a in row.get("authors") or [] if isinstance(a, Mapping)],
-            year=row.get("year"),
-            venue=row.get("venue"),
-            doi=external.get("DOI"),
-            arxiv_id=external.get("ArXiv"),
-            semantic_scholar_id=row.get("paperId"),
-            url=row.get("url"),
-            citation_count=row.get("citationCount"),
-            metadata=dict(row),
+            abstract=_as_text(row.get("abstract")),
+            authors=_as_authors(row.get("authors")),
+            year=_as_year(row.get("year")),
+            venue=_as_text(row.get("venue")),
+            doi=_as_text(external.get("DOI")),
+            arxiv_id=_as_text(external.get("ArXiv")),
+            semantic_scholar_id=_as_text(row.get("paperId")),
+            url=_as_text(row.get("url")),
+            citation_count=_as_count(row.get("citationCount")),
+            metadata=metadata,
         )
     )
 
@@ -272,11 +341,11 @@ def _candidate_from_arxiv(row: Mapping[str, Any]) -> LiteratureCandidate:
         LiteratureCandidate(
             source="arxiv",
             title=str(row.get("title") or "Untitled"),
-            abstract=row.get("abstract"),
-            authors=row.get("authors") or [],
-            year=row.get("year"),
-            doi=row.get("doi"),
-            arxiv_id=row.get("arxiv_id"),
+            abstract=_as_text(row.get("abstract")),
+            authors=_as_authors(row.get("authors")),
+            year=_as_year(row.get("year")),
+            doi=_as_text(row.get("doi")),
+            arxiv_id=_as_text(row.get("arxiv_id")),
             url=row.get("url"),
             pdf_url=row.get("pdf_url"),
             oa_status="oa" if row.get("pdf_url") else None,
@@ -289,17 +358,17 @@ def _candidate_from_generic(source: str, row: Mapping[str, Any]) -> LiteratureCa
     return LiteratureCandidate(
         source=source,
         title=str(row.get("title") or "Untitled"),
-        abstract=row.get("abstract"),
-        authors=row.get("authors") or [],
-        year=row.get("year"),
-        venue=row.get("venue"),
-        doi=row.get("doi"),
-        pmid=row.get("pmid"),
-        url=row.get("url"),
-        pdf_url=row.get("pdf_url"),
-        oa_status=row.get("oa_status"),
-        citation_count=row.get("citation_count"),
-        metadata=dict(row.get("metadata") or row),
+        abstract=_as_text(row.get("abstract")),
+        authors=_as_authors(row.get("authors")),
+        year=_as_year(row.get("year")),
+        venue=_as_text(row.get("venue")),
+        doi=_as_text(row.get("doi")),
+        pmid=_as_text(row.get("pmid")),
+        url=_as_text(row.get("url")),
+        pdf_url=_as_text(row.get("pdf_url")),
+        oa_status=_as_text(row.get("oa_status")),
+        citation_count=_as_count(row.get("citation_count")),
+        metadata=dict(row.get("metadata") if isinstance(row.get("metadata"), Mapping) else row),
     )
 
 
@@ -426,6 +495,68 @@ def sources_with_capability(
         if adapter is not None and hasattr(adapter, capability):
             found.append((source_id, adapter))
     return found
+
+
+# ---- 哪些来源现在真的能用 ----
+
+#: 没有密钥就完全不能检索的来源（适配器在没有密钥时直接返回空）
+KEY_REQUIRED_SOURCES = frozenset({"core", "sciverse"})
+#: 没有密钥也能发请求、但实际上几乎每次都被限流的来源：没配密钥就不主动推荐；
+#: 用户自己选了也照查，只是试一次就放弃
+KEY_RECOMMENDED_SOURCES = frozenset({"semantic"})
+
+_ENV_KEY_FIELDS = {
+    "semantic": "s2_api_key",
+    "core": "core_api_key",
+    "sciverse": "sciverse_api_tokens",
+    "pubmed": "pubmed_api_key",
+}
+
+
+def source_has_key(source_id: str, runtime_settings: Mapping[str, Any] | None = None) -> bool:
+    """这个来源有没有可用的密钥：「设置 → 文献检索」里配的优先，否则看环境变量。
+
+    设置里登记了这个来源但密钥池是空的 = 用户停用了它，不回落到环境变量
+    （和 :func:`credential_pool` 同一个口径）。
+    """
+    field = _ENV_KEY_FIELDS.get(source_id)
+    fallback = str(getattr(get_settings(), field, "") or "") if field else ""
+    return bool(credential_pool(runtime_settings or {}, source_id, fallback))
+
+
+def usable_search_sources(runtime_settings: Mapping[str, Any] | None = None) -> list[str]:
+    """现在能拿来检索、值得默认推荐的来源（注册顺序）。
+
+    必须有密钥的来源（CORE、SciVerse）没配密钥就不在里面；Semantic Scholar 没有密钥时
+    基本每次 429，也不在里面。给研究简报和默认来源用：推荐一个注定失败的来源，只会
+    让检索白等、还占掉它那一份篇数。
+    """
+    out: list[str] = []
+    for source_id, _adapter in sources_with_capability("search"):
+        needs_key = source_id in KEY_REQUIRED_SOURCES or source_id in KEY_RECOMMENDED_SOURCES
+        if needs_key and not source_has_key(source_id, runtime_settings):
+            continue
+        out.append(source_id)
+    return out
+
+
+def search_adapter(source_id: str, runtime_settings: Mapping[str, Any] | None = None) -> Any | None:
+    """取一个来源的检索适配器：设置里给它配了密钥就用带密钥的，否则用免凭据的那个。
+
+    文献库的检索以前一律用免凭据适配器——在「设置 → 文献检索」里配的 Semantic
+    Scholar / CORE 密钥只对独立的文献发现生效，建库检索根本用不上。
+    """
+    key = source_id.strip().lower()
+    spec = _SPECS.get(key)
+    if spec is None:
+        return None
+    configured = (runtime_settings or {}).get("provider_keys")
+    if isinstance(configured, Mapping) and configured.get(key):
+        try:
+            return spec.build(build_context(runtime_settings or {}))
+        except Exception:  # noqa: BLE001 — 带密钥的建不出来就退回免凭据的
+            logger.warning("could not build keyed adapter for %s", key, exc_info=True)
+    return get_source(key)
 
 
 def resolvers_for(kind: str) -> tuple[str, ...]:
