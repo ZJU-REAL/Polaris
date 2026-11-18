@@ -64,7 +64,8 @@ async function errorFromResponse(
   return new ApiError(res.status, detail, body);
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** 导出给按业务域拆出去的客户端文件用（如 lib/researchApi.ts）；组件仍然不直接调。 */
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   const token = getToken();
   if (token && !headers.has('Authorization')) {
@@ -78,7 +79,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-function requestJson<T>(path: string, method: string, body: unknown): Promise<T> {
+export function requestJson<T>(path: string, method: string, body: unknown): Promise<T> {
   return request<T>(path, {
     method,
     headers: { 'Content-Type': 'application/json' },

@@ -74,6 +74,29 @@ function knownCode(code: string): string | null {
     case 'INTERDISCIPLINARY_SCOPE_REQUIRED':
     case 'INTERDISCIPLINARY_SCOPE_INVALID':
       return tr('请把研究范围填写完整', 'Complete the research scope first.');
+    // —— 研究（features/deepresearch）：一次研究卡住时的原因，也用于接口直接返回的同名错误码 ——
+    case 'RESEARCH_RUN_NOT_FOUND':
+      return tr('找不到这次研究，可能已被删除', 'This research no longer exists.');
+    case 'DIRECTION_INVALID':
+      return tr('研究方向不能为空，也不能超过 2000 字', 'Enter a research direction of up to 2,000 characters.');
+    case 'SURVEY_SOURCES_UNREACHABLE':
+      return tr('无法连接文献来源，请检查网络后重试', 'Couldn’t reach the paper sources. Check your network and try again.');
+    case 'SURVEY_NO_RESULTS':
+      return tr('没有检索到论文，请调整关键词', 'No papers found. Adjust the keywords.');
+    case 'SURVEY_TOO_FEW_RELEVANT':
+      return tr('相关的论文太少，请放宽范围', 'Too few relevant papers. Broaden the scope.');
+    case 'SURVEY_FAILED':
+    case 'HYPOTHESES_FAILED':
+      return tr('这一步没有完成，请重试', 'This step didn’t finish. Try again.');
+    case 'LIBRARY_TOO_SMALL':
+      return tr('文献库里的论文太少，至少需要 5 篇', 'The library needs at least 5 papers.');
+    case 'NO_HYPOTHESES_SURVIVED':
+      return tr('没有假设得到文献支持，可以添加论文后重试', 'No hypothesis was supported by the papers. Add papers and try again.');
+    case 'PLAN_FAILED':
+    case 'LLM_UNREACHABLE':
+      return tr('无法连接模型服务，请稍后重试', 'Couldn’t reach the model service. Try again shortly.');
+    case 'LLM_AUTH':
+      return tr('模型服务拒绝了请求，请在设置中检查密钥', 'The model service rejected the request. Check the key in Settings.');
     case 'INVALID_IDS':
       return tr('所选内容已变化，请刷新后重试', 'The selection changed. Refresh and try again.');
     // —— 生成想法的前置条件 ——
