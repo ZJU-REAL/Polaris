@@ -105,12 +105,18 @@ function EvidenceItem({ ev }: { ev: IdeaEvidence }) {
 }
 
 function EvidenceSection({ idea }: { idea: IdeaDetail }) {
-  const { support, refute } = groupEvidence(idea.evidence);
+  const grouped = groupEvidence(idea.evidence);
+  // 趋势信号不是论文对论断的表态（没有立场）：单独一组，不算「支持」
+  const isLead = (e: IdeaEvidence) => e.source === 'signal' && !e.stance;
+  const support = grouped.support.filter((e) => !isLead(e));
+  const leads = grouped.support.filter(isLead);
+  const refute = grouped.refute;
   const [allParents, setAllParents] = useState(false);
   const cited = new Set((idea.evidence ?? []).map((e) => e.paper_id).filter(Boolean));
   const parents = idea.parent_papers.filter((p) => !cited.has(p.id));
   const shownParents = allParents ? parents : parents.slice(0, 5);
-  const total = support.length + refute.length;
+  const stanced = support.length + refute.length;
+  const total = stanced + leads.length;
 
   const group = (label: string, tone: string, list: IdeaEvidence[]) =>
     list.length > 0 && (
@@ -129,9 +135,10 @@ function EvidenceSection({ idea }: { idea: IdeaDetail }) {
     );
 
   return (
-    <Section id="evidence" title={tr('文献依据', 'Evidence')} note={total > 0 ? tr('每条是一句论断和支持或反对它的论文。', 'Each line is a claim and the paper that supports or contradicts it.') : undefined}>
+    <Section id="evidence" title={tr('文献依据', 'Evidence')} note={stanced > 0 ? tr('每条是一句论断和支持或反对它的论文。', 'Each line is a claim and the paper that supports or contradicts it.') : undefined}>
       {group(tr('支持', 'Supporting'), 'is-ok', support)}
       {group(tr('反对', 'Against'), 'is-err', refute)}
+      {group(tr('提出它的线索', 'What prompted it'), '', leads)}
       {total === 0 && parents.length === 0 && <div className="idea-empty">{tr('这个想法没有记录文献依据。', 'No evidence from the papers is recorded for this idea.')}</div>}
       {parents.length > 0 && (
         <div className="idea-ev-group">

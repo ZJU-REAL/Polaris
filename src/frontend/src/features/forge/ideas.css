@@ -107,6 +107,8 @@
 
 /* ---------- 详情 ---------- */
 .idea-page { max-width: 860px; }
+/* 想法的标题就是它的主张：不截断 */
+.idea-page .task-title { display: block; overflow: visible; -webkit-line-clamp: unset; }
 .idea-summary { margin: var(--sp-3) 0 0; font-size: var(--fs-title); line-height: 1.65; color: var(--text); overflow-wrap: anywhere; max-width: 760px; }
 .idea-meta {
   display: flex; align-items: center; flex-wrap: wrap; gap: 4px var(--sp-4); margin-top: var(--sp-3);
