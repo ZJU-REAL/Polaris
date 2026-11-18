@@ -155,6 +155,7 @@ export const router = createBrowserRouter([
       // 研究：打开应用的第一站。一句方向开始，时间线上看进展；`/` 与旧的 `/start` 都到这里
       { index: true, element: <Navigate to="/research" replace /> },
       { path: 'research', element: page(() => import('../features/deepresearch/ResearchHomePage'), 'ResearchHomePage') },
+      { path: 'research/:id', element: page(() => import('../features/deepresearch/ResearchRunPage'), 'ResearchRunPage') },
       // 阅读页按论文 id 取数，文献库 / 每日新论文的论文都可读，与课题无关：
       // 放在守卫外，否则没有任何课题的用户点「阅读原文」会被重定向去建课题。
       { path: 'papers/:id/read', element: page(() => import('../features/reading/ReadingPage'), 'ReadingPage') },
