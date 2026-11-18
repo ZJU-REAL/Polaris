@@ -93,6 +93,47 @@ async def test_raw_json_text_rows_parse_like_decoded_lists():
     assert hits[1][1] == pytest.approx(_cos(QUERY, GOOD))
 
 
+async def test_raw_json_text_with_a_damaged_last_item_is_skipped():
+    """最后一项后面跟着别的东西：老版本 numpy 会返回截到这里的三项、只发一条告警。
+    不靠告警也得认出来——这一行不能混进结果里。"""
+    rows = [
+        ("good", "[2.0, 1.0, 0.0]"),
+        ("junk-after-last", "[2.0, 0.0, 0.0abc]"),
+        ("two-numbers-in-last", "[2.0, 0.0, 0.0 5.0]"),
+        ("trailing-comma", "[2.0, 0.0, 0.0,]"),
+        ("extra-item", "[2.0, 0.0, 0.0, 0.0]"),
+    ]
+    hits = vector_search.top_k_cosine(QUERY, rows, 10)
+    assert [key for key, _ in hits] == ["good"]
+
+
+async def test_parsing_rows_leaves_the_process_warning_filters_alone(monkeypatch):
+    """解析向量文本时不动告警过滤器。
+
+    过滤器是整个进程一份，而打分跑在工作线程里：以前这里用 catch_warnings +
+    simplefilter("error") 认截断，那一小段时间里事件循环线程上发出的任何告警都会
+    变成异常——会话校验（密钥偏短时 PyJWT 每次都告警）因此偶发 500。
+    """
+    import warnings
+
+    during: list[list] = []
+    real_fromstring = vector_search.np.fromstring
+
+    def spying_fromstring(*args, **kwargs):
+        during.append(list(warnings.filters))
+        return real_fromstring(*args, **kwargs)
+
+    monkeypatch.setattr(vector_search.np, "fromstring", spying_fromstring)
+    before = list(warnings.filters)
+    rows = [("good", "[2.0, 1.0, 0.0]"), ("garbage", "[1.0, abc, 0.0]"), ("far", "[1.0, 2.0, 0.0]")]
+    hits = vector_search.top_k_cosine(QUERY, rows, 10)
+
+    assert [key for key, _ in hits] == ["good", "far"]
+    assert len(during) == 3
+    assert all(filters == before for filters in during)
+    assert list(warnings.filters) == before
+
+
 async def test_top_k_empty_and_degenerate_inputs():
     assert vector_search.top_k_cosine(QUERY, [], 5) == []
     assert vector_search.top_k_cosine(QUERY, [("a", BEST)], 0) == []

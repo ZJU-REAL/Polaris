@@ -32,7 +32,6 @@ import heapq
 import json
 import math
 import uuid
-import warnings
 from collections.abc import Hashable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -143,6 +142,15 @@ class TopK:
 
         JSON 文本直接交给 numpy 的 C 解析器（``fromstring``），不经 json.loads 造
         上千个 Python float——SQLite 上这一步占了打分耗时的大头。
+
+        解析不完整（某一项不是数）时，老版本 numpy 只给一条 DeprecationWarning 并返回
+        截到出错处的结果，新版本直接抛 ValueError。这里**不能**用
+        ``warnings.catch_warnings()`` + ``simplefilter("error")`` 把那条告警变成异常：
+        告警过滤器是整个进程一份，而本函数跑在 ``asyncio.to_thread`` 的线程里——它生效
+        的那一小段时间里，事件循环线程上任何一条告警都会被当成异常抛出来。实际撞上的是
+        会话校验：签名密钥短于 32 字节时 PyJWT 每次校验都发 InsecureKeyLengthWarning，
+        语义检索进行中的请求于是偶发 500。所以改成不依赖告警的判法：逗号数先定下这一行
+        恰好 dim 项，再在末尾补一个哨兵项——只有前面每一项都完整解析了，哨兵才读得到。
         """
         try:
             if isinstance(embedding, bytes | bytearray):
@@ -151,10 +159,12 @@ class TopK:
                 text = embedding.strip()
                 if not (text.startswith("[") and text.endswith("]")):
                     return None
-                with warnings.catch_warnings():
-                    # 解析不完整时 numpy 只给 DeprecationWarning 并返回截断结果：当错误处理
-                    warnings.simplefilter("error")
-                    row = np.fromstring(text[1:-1], dtype=np.float64, sep=",")
+                if text.count(",") != self.dim - 1:
+                    return None
+                parsed = np.fromstring(text[1:-1] + ",0", dtype=np.float64, sep=",")
+                if parsed.shape != (self.dim + 1,):
+                    return None
+                row = parsed[:-1]
             elif isinstance(embedding, list | tuple):
                 row = np.asarray(embedding, dtype=np.float64)
             else:

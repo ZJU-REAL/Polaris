@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.db import get_session
+from app.core.session_key import session_signing_key
 from app.models.user import User
 from app.schemas.user import UserRead, UserUpdate
 from app.services.local_user import (  # noqa: F401  LOCAL_USER_EMAIL 供调用方从这里导入
@@ -30,7 +31,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
     def __init__(self, user_db: SQLAlchemyUserDatabase) -> None:
         super().__init__(user_db)
-        secret = get_settings().secret_key
+        secret = session_signing_key()
         self.reset_password_token_secret = secret
         self.verification_token_secret = secret
 
@@ -51,9 +52,11 @@ bearer_transport = BearerTransport(tokenUrl="api/auth/local-session")
 
 
 def get_jwt_strategy() -> JWTStrategy:
+    # 签名密钥不直接取 settings.secret_key：没配或配得太短时见 core/session_key.py
     settings = get_settings()
     return JWTStrategy(
-        secret=settings.secret_key, lifetime_seconds=settings.session_lifetime_seconds
+        secret=session_signing_key(settings),
+        lifetime_seconds=settings.session_lifetime_seconds,
     )
 
 

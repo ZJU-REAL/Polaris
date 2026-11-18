@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     # 以前的 server 档位（uvicorn + arq worker + 外部 Redis/Postgres）已删除。
     # JWT 签名 / 下载链接签名 / 扩展 key 摘要。桌面外壳为每份安装生成独立值经
     # POLARIS_SECRET_KEY 传入（#850）；默认值是公开的，只适合从源码跑的开发环境。
+    # 会话 JWT 的签名密钥不直接用这个值：没配（仍是默认值）时引擎自己生成一把存在
+    # <data_dir>/session-signing.key，配了但短于 32 字节时由它派生——见 core/session_key.py。
     secret_key: str = LEGACY_DEFAULT_SECRET_KEY
     # Fernet key；桌面外壳为每份安装生成（POLARIS_ENCRYPTION_KEY）。为空时 security.py
     # 从 secret_key 派生（仅限 dev）。
