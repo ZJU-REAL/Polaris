@@ -12,10 +12,8 @@ from app.core.queue import TaskQueue, get_task_queue
 from app.models.user import User
 from app.schemas.paper_assets import (
     AssetGrantRead,
-    AssetReuseRequest,
     PaperAssetPage,
     PaperAssetRead,
-    PaperContentChunkRead,
     PaperContentVersionRead,
 )
 from app.services import libraries as libraries_service
@@ -125,62 +123,6 @@ async def upload_paper_asset(
     return _asset_read(asset, blob)
 
 
-@router.post(
-    "/libraries/{library_id}/papers/{paper_id}/assets/reuse",
-    response_model=AssetGrantRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def reuse_paper_asset(
-    library_id: uuid.UUID,
-    paper_id: uuid.UUID,
-    body: AssetReuseRequest,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> AssetGrantRead:
-    library = await _library(session, library_id)
-    paper = await _paper_in_library(session, library_id, paper_id, user)
-    asset = await session.get(asset_service.PaperAsset, body.asset_id)
-    if asset is None or asset.paper_id != paper.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ASSET_NOT_FOUND")
-    try:
-        grant = await asset_service.grant_existing_asset(
-            session, asset_id=body.asset_id, target_library=library, user=user
-        )
-        await session.commit()
-    except asset_service.AssetError as exc:
-        await session.rollback()
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    return AssetGrantRead.model_validate(grant)
-
-
-@router.post(
-    "/libraries/{library_id}/papers/{paper_id}/assets/reuse-public",
-    response_model=AssetGrantRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def reuse_public_paper_asset(
-    library_id: uuid.UUID,
-    paper_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> AssetGrantRead:
-    """Link the existing public PDF for a DOI/identifier-resolved paper."""
-    library = await _library(session, library_id)
-    await _paper_in_library(session, library_id, paper_id, user)
-    try:
-        grant = await asset_service.grant_public_asset_for_paper(
-            session, paper_id=paper_id, target_library=library, user=user
-        )
-        await session.commit()
-    except asset_service.AssetNotFoundError as exc:
-        await session.rollback()
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except asset_service.AssetPermissionError as exc:
-        await session.rollback()
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    return AssetGrantRead.model_validate(grant)
-
-
 @router.get("/libraries/{library_id}/papers/{paper_id}/assets/{asset_id}/download")
 async def download_paper_asset(
     library_id: uuid.UUID,
@@ -262,20 +204,3 @@ async def get_current_paper_content_version(
     if readable is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONTENT_VERSION_NOT_FOUND")
     return PaperContentVersionRead.model_validate(version)
-
-
-@router.get(
-    "/libraries/{library_id}/papers/{paper_id}/content-version/chunks",
-    response_model=list[PaperContentChunkRead],
-)
-async def get_current_paper_content_chunks(
-    library_id: uuid.UUID,
-    paper_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> list[PaperContentChunkRead]:
-    version = await get_current_paper_content_version(
-        library_id=library_id, paper_id=paper_id, session=session, user=user
-    )
-    rows = await content_service.list_content_chunks(session, version_id=version.id)
-    return [PaperContentChunkRead.model_validate(row) for row in rows]

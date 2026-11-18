@@ -2,22 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import html
-import json
 import logging
 import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings as get_app_settings
 from app.models.user import User
 from app.services import owner_settings
 
@@ -38,8 +33,6 @@ _DEFAULT_ADMIN_SETTINGS: dict[str, Any] = {
     "default_speed": 1.0,
     "max_chars": 20_000,
 }
-_cache_locks: dict[str, asyncio.Lock] = {}
-_cache_lock_users: dict[str, int] = {}
 
 
 class InvalidTTSSettingError(ValueError):
@@ -367,61 +360,3 @@ async def open_speech_stream(
         sample_rate=sample_rate,
         playback_rate=effective["effective_speed"],
     )
-
-
-async def synthesize_to_cache(
-    session: AsyncSession,
-    *,
-    user: User,
-    source: str,
-    context: str,
-) -> Path:
-    admin, effective = await effective_settings(session, user)
-    if not effective["available"]:
-        raise TTSNotAvailableError("TTS_DISABLED")
-    text = text_for_speech(source)
-    if not text:
-        raise TTSNotAvailableError("TTS_EMPTY_TEXT")
-    if len(text) > admin["max_chars"]:
-        raise TTSNotAvailableError(f"TTS_TEXT_TOO_LONG:{admin['max_chars']}")
-
-    identity = json.dumps(
-        {
-            "v": 1,
-            "context": context,
-            "model": effective["effective_model"],
-            "voice": effective["effective_voice"],
-            "speed": effective["effective_speed"],
-            "text": text,
-        },
-        sort_keys=True,
-        ensure_ascii=False,
-    ).encode()
-    key = hashlib.sha256(identity).hexdigest()
-    cache_dir = Path(get_app_settings().data_dir) / "tts-cache"
-    path = cache_dir / f"{key}.wav"
-    if path.is_file():
-        return path
-
-    lock = _cache_locks.setdefault(key, asyncio.Lock())
-    _cache_lock_users[key] = _cache_lock_users.get(key, 0) + 1
-    try:
-        async with lock:
-            if path.is_file():
-                return path
-            audio = await _request_audio({**admin, **effective}, text)
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            temp = cache_dir / f".{key}.tmp"
-            temp.write_bytes(audio)
-            temp.replace(path)
-    finally:
-        # Reference counting keeps waiters on the same lock while ensuring
-        # failed upstream requests do not leak one entry per unique text.
-        remaining = _cache_lock_users[key] - 1
-        if remaining == 0:
-            _cache_lock_users.pop(key, None)
-            _cache_locks.pop(key, None)
-        else:
-            _cache_lock_users[key] = remaining
-    logger.info("cached %s TTS audio %s (%d bytes)", context, key[:12], path.stat().st_size)
-    return path

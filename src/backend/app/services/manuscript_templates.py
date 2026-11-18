@@ -417,16 +417,6 @@ async def build_config(session: AsyncSession, ident: str) -> tuple[str, str]:
 # ---- 下载（打回 zip） ----
 
 
-def zip_bytes(template: ManuscriptTemplate) -> bytes:
-    root = template_files_dir(template.id)
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(root.rglob("*")):
-            if path.is_file():
-                zf.write(path, arcname=path.relative_to(root).as_posix())
-    return buf.getvalue()
-
-
 async def delete_template(session: AsyncSession, template: ManuscriptTemplate) -> None:
     tid = template.id
     await session.delete(template)
@@ -643,30 +633,3 @@ def spawn_download(key: str, *, created_by: uuid.UUID | None) -> dict[str, Any]:
 
     task.add_done_callback(_done)
     return get_progress(key) or {}
-
-
-async def seed_one(
-    session: AsyncSession, entry: dict[str, Any], *, created_by: uuid.UUID | None
-) -> ManuscriptTemplate | None:
-    """拉取并入库一个种子模板；已存在同 key 则跳过（幂等）。失败抛异常由调用方汇总。"""
-    existing = await get_db_template(session, entry["key"])
-    if existing is not None:
-        return None
-    members = await _fetch_zip_members(_source_url(entry))
-    if entry.get("subdir"):
-        members = _select_subdir(members, entry["subdir"])
-    return await _persist(
-        session,
-        name=entry["name"],
-        description=entry.get("description"),
-        source="seeded",
-        scope="global",
-        project_id=None,
-        created_by=created_by,
-        members=members,
-        engine=entry.get("engine", "tectonic"),
-        sections=entry.get("sections") or [],
-        page_limit=entry.get("page_limit"),
-        meta={"origin": entry.get("git") or entry.get("zip")},
-        key=entry["key"],
-    )

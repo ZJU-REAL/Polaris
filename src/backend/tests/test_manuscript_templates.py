@@ -53,7 +53,7 @@ _PNG = bytes.fromhex(
 )
 
 
-async def test_upload_list_download_and_create(client):
+async def test_upload_list_and_create(client):
     project_id, headers = await _setup_project(client)
 
     tex = (
@@ -90,14 +90,6 @@ async def test_upload_list_download_and_create(client):
     resp = await client.get("/api/manuscripts/templates", headers=headers)
     assert tpl_id not in {t["id"] for t in resp.json()}
 
-    # 下载回 zip
-    resp = await client.get(f"/api/manuscripts/templates/{tpl_id}/download", headers=headers)
-    assert resp.status_code == 200
-    assert resp.headers["content-type"] == "application/zip"
-    dl = zipfile.ZipFile(io.BytesIO(resp.content))
-    assert set(dl.namelist()) == {"main.tex", "demo.sty", "logo.png"}
-    assert dl.read("logo.png") == _PNG
-
     # 用该模板建稿：标题注入 + 二进制文件 is_binary 落盘
     resp = await client.post(
         f"/api/projects/{project_id}/manuscripts",
@@ -125,8 +117,8 @@ async def test_upload_list_download_and_create(client):
     # 删除模板（创建者可删）
     resp = await client.delete(f"/api/manuscripts/templates/{tpl_id}", headers=headers)
     assert resp.status_code == 204
-    resp = await client.get(f"/api/manuscripts/templates/{tpl_id}/download", headers=headers)
-    assert resp.status_code == 404
+    resp = await client.get(f"/api/manuscripts/templates?project_id={project_id}", headers=headers)
+    assert tpl_id not in {t["id"] for t in resp.json()}
 
 
 async def test_upload_global_open_to_any_user(client):

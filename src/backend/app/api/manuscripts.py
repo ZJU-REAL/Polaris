@@ -46,7 +46,6 @@ from app.schemas.manuscript import (
     ReferencesRefreshResult,
     TemplateDownloadProgress,
     TemplateInfo,
-    TemplateSeedResult,
 )
 from app.schemas.review import PaperReviewRequest, PaperReviewSummary
 from app.schemas.voyage import VoyageRead
@@ -169,29 +168,6 @@ async def upload_template(
     return TemplateInfo.model_validate(templates_service._db_info(tmpl))
 
 
-@router.get("/manuscripts/templates/{template_id}/download")
-async def download_template(
-    template_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> Response:
-    tmpl = await templates_service.get_db_template(session, str(template_id))
-    if tmpl is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="TEMPLATE_NOT_FOUND")
-    if tmpl.scope == "project" and tmpl.project_id is not None:
-        project = await projects_service.get_project(
-            session, project_id=tmpl.project_id, user_id=user.id
-        )
-        if project is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="TEMPLATE_NOT_FOUND")
-    content = await asyncio.to_thread(templates_service.zip_bytes, tmpl)
-    return Response(
-        content=content,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{tmpl.key}.zip"'},
-    )
-
-
 @router.delete("/manuscripts/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_template(
     template_id: uuid.UUID,
@@ -202,37 +178,6 @@ async def delete_template(
     if tmpl is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="TEMPLATE_NOT_FOUND")
     await templates_service.delete_template(session, tmpl)
-
-
-@router.post("/manuscripts/templates/seed", response_model=list[TemplateSeedResult])
-async def seed_templates(
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> list[TemplateSeedResult]:
-    """拉取并入库官方模板（ACL/ICLR/NeurIPS/ICML），幂等。"""
-    results: list[TemplateSeedResult] = []
-    for entry in templates_service.SEED_MANIFEST:
-        try:
-            tmpl = await templates_service.seed_one(session, entry, created_by=user.id)
-            if tmpl is None:
-                results.append(
-                    TemplateSeedResult(key=entry["key"], name=entry["name"], status="skipped")
-                )
-            else:
-                results.append(
-                    TemplateSeedResult(key=entry["key"], name=entry["name"], status="seeded")
-                )
-        except Exception as e:  # noqa: BLE001 — 单个源失败不影响其余
-            logger.warning("template seed failed: %s", entry["key"], exc_info=True)
-            results.append(
-                TemplateSeedResult(
-                    key=entry["key"],
-                    name=entry["name"],
-                    status="failed",
-                    detail=f"{type(e).__name__}: {e}"[:300],
-                )
-            )
-    return results
 
 
 def _progress_model(key: str) -> TemplateDownloadProgress:
@@ -789,18 +734,6 @@ async def compile_manuscript(
     return CompileResult.model_validate(result)
 
 
-@router.get("/manuscripts/{manuscript_id}/compile/latest", response_model=CompileResult)
-async def latest_compile_result(
-    manuscript_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> CompileResult:
-    manuscript = await _member_manuscript(session, manuscript_id, user)
-    if not manuscript.latest_compile:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="NO_COMPILE_YET")
-    return CompileResult.model_validate(manuscript.latest_compile)
-
-
 @router.get("/manuscripts/{manuscript_id}/pdf")
 async def get_pdf(
     manuscript_id: uuid.UUID,
@@ -835,42 +768,6 @@ async def export_arxiv(
         # HTTP 头只允许 latin-1，而提示是中文：直接塞会在 starlette 编码时 500。
         # 百分号编码后回传，前端 decodeURIComponent 还原。
         headers["X-Export-Notes"] = quote(" | ".join(notes))
-    return Response(content=data, media_type="application/gzip", headers=headers)
-
-
-@router.get("/manuscripts/{manuscript_id}/source-digest")
-async def source_digest(
-    manuscript_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> dict[str, str]:
-    """稿件源码的内容指纹。
-
-    桌面端本地编译用它判断缓存的产物是否还新鲜——源变了 digest 就变，
-    不需要下载整个包就能知道要不要重编。
-    """
-    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
-    return {"digest": await latex_compile.build_source_digest(session, manuscript)}
-
-
-@router.get("/manuscripts/{manuscript_id}/source-bundle")
-async def source_bundle(
-    manuscript_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> Response:
-    """可编译的源码包（tar.gz），供桌面端本地编译。
-
-    与 arXiv 导出不同：不重编、不生成 .bbl，纯粹是当前源码的快照。
-    组装本身依赖 DB 与活跃 CRDT 房间，只能在服务端做——所以本地编译的形态是
-    「服务器组装 → 客户端下载 → 本地编译」，而不是客户端自己组装。
-
-    digest 放在文件名里，这样客户端从同一个响应里就能拿到，不需要读自定义响应头
-    （跨域时读自定义头还要额外配 expose_headers）。
-    """
-    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
-    data, digest = await latex_compile.build_source_bundle(session, manuscript)
-    headers = {"Content-Disposition": f'attachment; filename="source-{digest}.tar.gz"'}
     return Response(content=data, media_type="application/gzip", headers=headers)
 
 

@@ -105,8 +105,8 @@ async def test_compile_without_tectonic(client, monkeypatch):
     assert diag["rule"] == "other" and "编译器未安装" in diag["message"]
 
     # latest_compile 落库；PDF 不可用
-    resp = await client.get(f"/api/manuscripts/{ms_id}/compile/latest", headers=headers)
-    assert resp.json()["status"] == "error"
+    resp = await client.get(f"/api/manuscripts/{ms_id}", headers=headers)
+    assert resp.json()["latest_compile"]["status"] == "error"
     resp = await client.get(f"/api/manuscripts/{ms_id}/pdf", headers=headers)
     assert resp.status_code == 404
     # 状态不因失败编译变化

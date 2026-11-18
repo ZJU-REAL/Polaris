@@ -1,4 +1,4 @@
-"""源码包（桌面端本地编译的输入）与编译产物剔除规则。
+"""arXiv 源码包的编译产物剔除规则。
 
 同时覆盖一个既有隐患的回归：arXiv 导出原先按后缀剔除 ``.pdf``，会把插图 PDF
 一起删掉——而 PDF 是 LaTeX 最常见的插图格式。
@@ -54,56 +54,6 @@ class TestBuildArtifactRules:
 
     def test_no_main_stem_keeps_all_pdfs(self):
         assert _is_build_artifact("main.pdf", None) is False
-
-
-async def test_source_bundle_contains_sources_and_figures(client):
-    headers, ms_id = await _new_ms(client)
-    resp = await _upload(client, headers, ms_id, "img/plot.pdf", _PDF, "application/pdf")
-    assert resp.status_code == 201
-
-    resp = await client.get(f"/api/manuscripts/{ms_id}/source-bundle", headers=headers)
-    assert resp.status_code == 200, resp.text
-    assert resp.headers["content-type"] == "application/gzip"
-
-    names = _members(resp.content)
-    assert "main.tex" in names
-    # 回归点：插图 PDF 必须在包里
-    assert "img/plot.pdf" in names
-
-
-async def test_source_bundle_filename_carries_digest(client):
-    """digest 放在文件名里，客户端不必读自定义响应头（跨域读自定义头还要配 expose_headers）。"""
-    headers, ms_id = await _new_ms(client)
-
-    digest = (await client.get(f"/api/manuscripts/{ms_id}/source-digest", headers=headers)).json()[
-        "digest"
-    ]
-    assert len(digest) == 64
-
-    resp = await client.get(f"/api/manuscripts/{ms_id}/source-bundle", headers=headers)
-    assert f'filename="source-{digest}.tar.gz"' in resp.headers["content-disposition"]
-
-
-async def test_digest_is_stable_and_tracks_content(client):
-    headers, ms_id = await _new_ms(client)
-
-    async def digest() -> str:
-        resp = await client.get(f"/api/manuscripts/{ms_id}/source-digest", headers=headers)
-        assert resp.status_code == 200, resp.text
-        return resp.json()["digest"]
-
-    first = await digest()
-    assert await digest() == first  # 源没动，指纹必须稳定（否则缓存永远失效）
-
-    # 内容编辑走 CRDT，这里用「新增一个源文件」来改变源集合
-    resp = await client.post(
-        f"/api/manuscripts/{ms_id}/files",
-        json={"path": "sections/extra.tex", "content": "\\section{Extra}"},
-        headers=headers,
-    )
-    assert resp.status_code == 201, resp.text
-
-    assert await digest() != first  # 源变了指纹必须变（digest 就是缓存 key）
 
 
 async def test_arxiv_export_keeps_figure_pdfs(client, monkeypatch):

@@ -229,7 +229,7 @@ async def test_setters_update_columns(client):
 
 
 async def test_tree_read_api_and_visibility(client):
-    """GET 树 / 单节点：主人可读；跨 run 节点 404。"""
+    """GET 树：主人可读，只含本 run 的节点。"""
     owner = await _hdr(client, "hyptree-owner@example.com")
     owner_id = await _user_id("hyptree-owner@example.com")
     project_id = await _project(client, owner)
@@ -259,11 +259,5 @@ async def test_tree_read_api_and_visibility(client):
     assert by_id[str(root.id)]["parent_id"] is None
     assert by_id[str(child.id)]["parent_id"] == str(root.id)
     assert by_id[str(child.id)]["kind"] == "experiment"
-
-    resp = await client.get(f"/api/voyages/{run_id}/hypothesis-tree/{child.id}", headers=owner)
-    assert resp.status_code == 200
-    assert resp.json()["statement"] == "验证实验"
-
-    # 节点必须属于路径里的 run：跨 run 直取 404
-    resp = await client.get(f"/api/voyages/{run_id}/hypothesis-tree/{other_root.id}", headers=owner)
-    assert resp.status_code == 404
+    # 别的 run 的节点不混进来
+    assert str(other_root.id) not in by_id

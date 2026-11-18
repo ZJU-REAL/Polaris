@@ -424,15 +424,6 @@ class SearchResponse(BaseModel):
     reranked: bool = False  # semantic 模式下 rerank 是否成功（失败降级为纯向量分）
 
 
-class ResolvedPaperRead(BaseModel):
-    """按 arXiv id 解析出的论文元数据（锚点论文填表用，不入库）。"""
-
-    arxiv_id: str
-    title: str
-    year: int | None = None
-    authors: list[str] = Field(default_factory=list)
-
-
 class CollectingLibraryRead(BaseModel):
     """收录了某篇论文的文献库（带相关度分）。"""
 

@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
-from app.models.hypothesis import HypothesisNode
 from app.models.user import User
 from app.models.voyage import VoyageRun
 from app.schemas.hypothesis import HypothesisNodeRead
@@ -86,18 +85,3 @@ async def get_voyage_artifact(
     if raw is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ARTIFACT_NOT_FOUND")
     return {"name": name, "content": json.loads(raw) if isinstance(raw, str) else raw}
-
-
-@router.get("/{voyage_id}/hypothesis-tree/{node_id}", response_model=HypothesisNodeRead)
-async def get_hypothesis_node(
-    voyage_id: uuid.UUID,
-    node_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> HypothesisNodeRead:
-    run = await _viewable_run(session, voyage_id, user)
-    node = await session.get(HypothesisNode, node_id)
-    # 节点必须属于路径里的 run：跨 run 直取节点 id 视为不存在
-    if node is None or node.run_id != run.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="HYPOTHESIS_NODE_NOT_FOUND")
-    return HypothesisNodeRead.model_validate(node)

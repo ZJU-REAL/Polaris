@@ -52,7 +52,6 @@ from app.schemas.paper import (
     ResolvedPaperBatchCreate,
     ResolvedPaperBatchItem,
     ResolvedPaperBatchRead,
-    ResolvedPaperRead,
     TagRead,
 )
 from app.services import citation_graph as citation_graph_service
@@ -467,34 +466,6 @@ async def delete_project_paper(
         session, project_id=project_id, paper_id=paper_id, user=user
     )
     await papers_service.delete_paper(session, view)
-
-
-@router.get("/papers/resolve", response_model=ResolvedPaperRead)
-async def resolve_paper_meta(
-    arxiv_id: str = Query(min_length=1),
-    _: User = Depends(current_active_user),
-) -> ResolvedPaperRead:
-    """按 arXiv id 取论文题目等元数据（锚点论文填表用：填 id，题目自动补上）。
-
-    只读 arXiv，不入库、不建向量——纯粹是让人确认「填的这个 id 是不是想要的那篇」。
-    解析不出返回 422，前端保留 id、题目留空即可。
-    """
-    from app.services import paper_import as paper_import_service
-
-    try:
-        fields = await paper_import_service.resolve_fields(arxiv_id=arxiv_id)
-    except paper_import_service.ParseFailedError as e:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ARXIV_ID_NOT_RESOLVED"
-        ) from e
-    return ResolvedPaperRead(
-        arxiv_id=str(fields.get("arxiv_id") or arxiv_id),
-        title=str(fields.get("title") or ""),
-        year=fields.get("year"),
-        authors=[
-            str(a.get("name") if isinstance(a, dict) else a) for a in (fields.get("authors") or [])
-        ][:8],
-    )
 
 
 @router.post("/papers/resolve-batch", response_model=ResolvedPaperBatchRead)

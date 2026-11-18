@@ -26,13 +26,6 @@ class TemplateInfo(BaseModel):
     file_count: int = 0
 
 
-class TemplateSeedResult(BaseModel):
-    key: str
-    name: str
-    status: Literal["seeded", "skipped", "failed"]
-    detail: str | None = None
-
-
 class TemplateDownloadProgress(BaseModel):
     """官方模板按需下载进度（进度条 / SSE）。"""
 

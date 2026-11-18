@@ -40,10 +40,6 @@ class AssetGrantRead(BaseModel):
     updated_at: datetime
 
 
-class AssetReuseRequest(BaseModel):
-    asset_id: uuid.UUID
-
-
 class PaperAssetPage(BaseModel):
     items: list[PaperAssetRead]
     grants: list[AssetGrantRead]
@@ -69,17 +65,3 @@ class PaperContentVersionRead(BaseModel):
     is_current: bool
     created_at: datetime
     updated_at: datetime
-
-
-class PaperContentChunkRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    content_version_id: uuid.UUID
-    seq: int
-    text: str
-    page_start: int | None
-    page_end: int | None
-    rects: list | None
-    section_path: list[str] | None
-    anchor_meta: dict | None

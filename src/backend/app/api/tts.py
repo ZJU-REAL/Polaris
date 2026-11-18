@@ -1,7 +1,7 @@
 """Authenticated speech synthesis and personal playback settings."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
@@ -39,32 +39,6 @@ async def set_my_tts_settings(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"INVALID_TTS_SETTING:{exc.field}"
         ) from exc
     return _read_settings(effective)
-
-
-@router.post("/speech")
-async def synthesize_speech(
-    payload: TTSSpeechRequest,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> FileResponse:
-    try:
-        path = await tts_service.synthesize_to_cache(
-            session, user=user, source=payload.text, context=payload.context
-        )
-    except tts_service.TTSNotAvailableError as exc:
-        detail = str(exc)
-        code = (
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
-            if detail.startswith("TTS_TEXT_TOO_LONG")
-            else status.HTTP_503_SERVICE_UNAVAILABLE
-        )
-        raise HTTPException(code, detail=detail) from exc
-    return FileResponse(
-        path,
-        media_type="audio/wav",
-        filename=f"polaris-{payload.context}.wav",
-        headers={"Cache-Control": "private, max-age=86400"},
-    )
 
 
 @router.post("/speech/stream")
