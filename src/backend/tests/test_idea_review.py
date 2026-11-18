@@ -5,6 +5,7 @@ human 消息注入辩论上下文、promote → gate → approve 联动、权限
 """
 
 import uuid
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
@@ -13,8 +14,10 @@ from app.core.db import get_sessionmaker
 from app.core.llm.fake import FakeProvider
 from app.core.llm.router import LLMRouter
 from app.models.activity import Activity
+from app.models.base import utcnow
 from app.models.idea import Idea
 from app.models.review import ReviewMessage, ReviewSession
+from app.models.voyage import VoyageRun
 from tests.conftest import RecordingBus, register_and_login
 
 DEFAULT_PERSONA_NAMES = ["严谨方法论者", "务实工程师", "领域怀疑论者"]
@@ -28,9 +31,28 @@ async def _setup_project(client, email="alice@example.com", name="review-proj"):
     return resp.json()["id"], headers
 
 
+_last_seeded_at: datetime | None = None
+
+
+def _next_seed_time() -> datetime:
+    """造数据用的创建时间：严格递增，不跟着系统时钟往回跳。
+
+    配对在 Elo 相同时按创建时间排（review.pair），这里的用例都默认「先造的排前面」。
+    系统时钟会往回拨（这台机器的容器里每十来秒跳一次 ±1 秒）：四个想法造到一半时
+    跳一下，后造的反而排到前面，配出来的对局就不是用例设想的那几对了。
+    """
+    global _last_seeded_at
+    now = utcnow()
+    if _last_seeded_at is not None and now <= _last_seeded_at:
+        now = _last_seeded_at + timedelta(microseconds=1)
+    _last_seeded_at = now
+    return now
+
+
 async def _seed_idea(project_id: str, title: str, *, status="candidate") -> str:
     async with get_sessionmaker()() as session:
         idea = Idea(
+            created_at=_next_seed_time(),
             project_id=uuid.UUID(project_id),
             title=title,
             summary=f"{title} 的一句话概述",
@@ -162,6 +184,77 @@ async def test_partial_tournament_retries_only_failed_matches(client, queue_stub
     async with get_sessionmaker()() as session:
         ideas = [await session.get(Idea, uuid.UUID(idea_id)) for idea_id in idea_ids]
         assert all(idea is not None and idea.matches == 1 for idea in ideas)
+
+
+async def test_retry_is_the_latest_tournament_even_when_the_clock_stepped_back(client, queue_stub):
+    """补赛建在系统时钟往回拨之后：它的创建时间比原锦标赛还早，但它仍然是「最新一届」。
+
+    以前只按创建时间取最新：这种情况下取回的是原锦标赛——汇总里还是那场失败的对局、
+    看不出已经补过；再点一次「补赛」会把补赛已经打完的那场重打一遍，战绩多记一场。
+    """
+    project_id, headers = await _setup_project(client, name="retry-clock-step")
+    idea_ids = [
+        await _seed_idea(project_id, "想法 A"),
+        await _seed_idea(project_id, "想法 B"),
+        await _seed_idea(project_id, "FAIL_PAIR 想法 C"),
+        await _seed_idea(project_id, "FAIL_PAIR 想法 D"),
+    ]
+    resp = await client.post(
+        f"/api/projects/{project_id}/review/tournament", json={"rounds": 1}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    source_id = resp.json()["id"]
+    router = LLMRouter()
+    router.override_provider(_FailOnePairProvider())
+    await VoyageEngine(event_bus=RecordingBus(), llm_router=router).run(uuid.UUID(source_id))
+
+    retry = await client.post(
+        f"/api/projects/{project_id}/review/tournament/retry-failed", headers=headers
+    )
+    assert retry.status_code == 201, retry.text
+    retry_id = retry.json()["id"]
+    # 时钟在两次创建之间往回拨了一秒：补赛的创建时间落在原锦标赛之前
+    async with get_sessionmaker()() as session:
+        source_run = await session.get(VoyageRun, uuid.UUID(source_id))
+        retry_run = await session.get(VoyageRun, uuid.UUID(retry_id))
+        retry_run.created_at = source_run.created_at - timedelta(seconds=1)
+        await session.commit()
+
+    latest_url = f"/api/projects/{project_id}/review/tournament/latest"
+    summary = (await client.get(latest_url, headers=headers)).json()
+    assert summary["voyage_id"] == retry_id
+    assert summary["is_retry"] is True
+    assert summary["root_voyage_id"] == source_id
+
+    retry_engine, _ = _make_engine()
+    await retry_engine.run(uuid.UUID(retry_id))
+    summary = (await client.get(latest_url, headers=headers)).json()
+    assert summary["voyage_id"] == retry_id
+    assert (summary["planned"], summary["completed"], summary["failed"]) == (1, 1, 0)
+    assert summary["can_retry"] is False
+
+    # 补赛已经把那场补上了：不能再从原锦标赛起一届补赛把它重打一遍
+    again = await client.post(
+        f"/api/projects/{project_id}/review/tournament/retry-failed", headers=headers
+    )
+    assert again.status_code == 409, again.text
+    assert again.json()["detail"] == "TOURNAMENT_RETRY_UNAVAILABLE"
+    async with get_sessionmaker()() as session:
+        ideas = [await session.get(Idea, uuid.UUID(idea_id)) for idea_id in idea_ids]
+        assert [idea.matches for idea in ideas] == [1, 1, 1, 1]
+
+
+def test_seed_times_keep_increasing_when_the_clock_steps_back(monkeypatch):
+    """造数据的创建时间不跟系统时钟往回走：时钟拨回一秒，后造的仍然排在后面。"""
+    import tests.test_idea_review as this_module
+
+    before = _next_seed_time()
+    with monkeypatch.context() as patched:
+        patched.setattr(this_module, "utcnow", lambda: before - timedelta(seconds=1))
+        during = [_next_seed_time() for _ in range(3)]
+    after = _next_seed_time()
+    times = [before, *during, after]
+    assert times == sorted(set(times))
 
 
 async def test_failed_match_retry_rejects_trashed_participant(client, queue_stub):

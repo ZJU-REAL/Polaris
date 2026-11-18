@@ -275,16 +275,44 @@ def _failed_review_pairs(run: VoyageRun) -> list[list[str]]:
     ]
 
 
+#: How many recent tournament runs to look at when resolving the latest one.
+_LATEST_TOURNAMENT_SCAN = 50
+
+
 async def latest_review_tournament(
     session: AsyncSession, project_id: uuid.UUID
 ) -> VoyageRun | None:
+    """The project's most recent tournament run, with a retry always newer than its source.
+
+    ``created_at`` alone cannot order a run and its retry: it is the wall clock, and the
+    wall clock steps backwards (NTP corrections, VM clock sync). A retry created just after
+    such a step carries an earlier timestamp than the run it supplements, so the newest
+    timestamp pointed back at the source: the summary showed the old failed matches as if
+    no retry existed, and "retry failed matches" replayed pairs the retry had already
+    played. A retry records which run it was made from (``retry_source``), so that link
+    decides; ``created_at`` only picks where to start and orders unrelated tournaments.
+    """
     stmt = (
         select(VoyageRun)
         .where(VoyageRun.project_id == project_id, VoyageRun.kind == "idea_review")
         .order_by(VoyageRun.created_at.desc())
-        .limit(1)
+        .limit(_LATEST_TOURNAMENT_SCAN)
     )
-    return (await session.execute(stmt)).scalar_one_or_none()
+    runs = list((await session.execute(stmt)).scalars().all())
+    if not runs:
+        return None
+    retry_of_source: dict[str, VoyageRun] = {}
+    for run in runs:  # newest first: keep the newest retry of each source
+        source_id = ((run.checkpoint or {}).get("params") or {}).get("retry_source")
+        if source_id:
+            retry_of_source.setdefault(str(source_id), run)
+    latest = runs[0]
+    for _ in runs:  # bounded walk along the retry chain
+        retry = retry_of_source.get(str(latest.id))
+        if retry is None:
+            break
+        latest = retry
+    return latest
 
 
 def review_tournament_summary(run: VoyageRun | None) -> dict[str, Any] | None:
