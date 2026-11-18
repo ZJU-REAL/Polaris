@@ -7,6 +7,6 @@
 - experimenter: 实验计划/远程执行（asyncssh，写操作过 Gate）
 - writer: LaTeX 稿件撰写（Manuscript）
 
-约定：LLM 调用一律经 app.core.llm 抽象层；长任务跑在 ARQ worker；
+约定：LLM 调用一律经 app.core.llm 抽象层；长任务跑在进程内任务队列（app/core/queue.py）；
 需人工介入处创建 Gate 并暂停，审批后恢复。
 """

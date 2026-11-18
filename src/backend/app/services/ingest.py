@@ -321,7 +321,6 @@ async def paper_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str
     return await library_paper_counts(session, library.id)
 
 
-# 每日自动同步的触发时刻（UTC，与 worker/settings.py 的 cron 保持一致）
 #: 读不到每日抓取时刻时的兜底（与 daily_feed.DEFAULT_SYNC_UTC 一致）。
 DAILY_SYNC_UTC_HOUR = 1
 DAILY_SYNC_UTC_MINUTE = 30

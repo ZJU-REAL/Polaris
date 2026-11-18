@@ -44,15 +44,12 @@ def get_engine() -> AsyncEngine:
         settings = get_settings()
         kwargs: dict[str, object] = {"echo": False}
         if not _is_memory_sqlite(settings.database_url):
-            # 文件型 sqlite 与 postgres 都是 QueuePool；只有内存库是 StaticPool，
-            # 给它池参数会直接报错
+            # 文件型 sqlite 是 QueuePool；只有内存库是 StaticPool，给它池参数会直接报错
             kwargs |= {
                 "pool_size": settings.db_pool_size,
                 "max_overflow": settings.db_max_overflow,
                 "pool_timeout": settings.db_pool_timeout,
             }
-            if not settings.is_sqlite:
-                kwargs["pool_pre_ping"] = True  # 长跑连接可能被中间件掐掉，取用前探活一次
         _engine = create_async_engine(settings.database_url, **kwargs)
         if _engine.url.get_backend_name() == "sqlite":
             busy_timeout_ms = int(settings.sqlite_busy_timeout_ms)
@@ -60,7 +57,7 @@ def get_engine() -> AsyncEngine:
             @event.listens_for(_engine.sync_engine, "connect")
             def _sqlite_pragmas(dbapi_connection, _record):
                 cursor = dbapi_connection.cursor()
-                # 外键：sqlite 默认不强制，打开让 ON DELETE CASCADE 生效（对齐 postgres）
+                # 外键：sqlite 默认不强制，打开让 ON DELETE CASCADE 生效
                 cursor.execute("PRAGMA foreign_keys=ON")
                 # WAL：读写不互斥——HTTP 请求读库不必等后台任务的写事务提交；
                 # 持久化在库文件上，每条连接都设一次无害
@@ -153,7 +150,7 @@ async def dispose_engine() -> None:
 
 
 async def create_all() -> None:
-    """建表（仅 sqlite dev 环境在 startup 调用；postgres 走 alembic）。"""
+    """按模型建出还不存在的表（引擎启动时调用；已由 alembic 迁移过的库上是空操作）。"""
     import app.models  # noqa: F401  确保所有模型注册到 metadata
 
     async with get_engine().begin() as conn:

@@ -596,7 +596,7 @@ accounts on the same computer can connect too. A session on the engine is enough
 server with an arbitrary command, so the engine guards its door (#850):
 
 - **No wildcard CORS.** Cross-origin access is allowed only for `app://polaris` and the origins in
-  `POLARIS_CORS_ORIGINS`, whatever `POLARIS_ENV` is. Other pages cannot read any response.
+  `POLARIS_CORS_ORIGINS`. Other pages cannot read any response.
 - **Host header check.** Requests whose `Host` is not `127.0.0.1`, `localhost`, or `[::1]` (any
   port) get `400` — this is what stops DNS rebinding. `POLARIS_ALLOWED_HOSTS` adds names.
 - **A per-launch session secret.** Every time the `legacy-engine` plugin starts the engine it

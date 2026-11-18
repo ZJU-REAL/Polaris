@@ -1865,8 +1865,8 @@ async def record_probe(
 async def due_now(session: AsyncSession, *, now: dt.datetime, delay_minutes: int = 0) -> bool:
     """现在是否到了该跑的时刻（供每 15 分钟一次的检查点判断）。
 
-    arq 的 cron 时刻在 worker 启动时就固定了，改设置得重启才生效。所以改成让 cron 高频
-    空转、由这里判断是否真的该跑：``now`` 已过今天的目标时刻即为 True。调用方还要自己
+    定时器按固定间隔高频空转（core/scheduler.py），抓取时刻是个随时可改的设置，
+    所以由这里判断是否真的该跑：``now`` 已过今天的目标时刻即为 True。调用方还要自己
     确认今天没跑过（见 :func:`already_ran_today`），否则每个检查点都会重复触发。
     """
     hour, minute = await get_sync_time(session)

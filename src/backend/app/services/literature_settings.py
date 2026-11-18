@@ -10,11 +10,10 @@ from __future__ import annotations
 import math
 import time
 import uuid
-import zlib
 from collections.abc import Mapping
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decrypt_secret, encrypt_secret
@@ -22,11 +21,10 @@ from app.models.system_setting import SystemSetting
 from app.services.literature import sources as source_registry
 
 # 留在 system_settings（#737 分层，归属有争议、保守留原层）：这份文档里用户可调项
-# （sources/条数/年窗/权重）和加密的 provider 凭据池、健康度同住一个 key，靠行锁 +
-# advisory lock 做原子读改写；把可调项单拆到用户偏好会破坏原子性，且 worker 侧
+# （sources/条数/年窗/权重）和加密的 provider 凭据池、健康度同住一个 key，整份
+# 读改写；把可调项单拆到用户偏好会破坏原子性，且 worker 侧
 # （discovery_runs/runtime）在无用户上下文里整份消费它。真要拆等凭据独立建模再说。
 SETTING_KEY = "literature_search"
-_SETTING_LOCK_ID = zlib.crc32(SETTING_KEY.encode("utf-8"))
 
 
 def supported_sources() -> tuple[str, ...]:
@@ -70,16 +68,11 @@ class InvalidLiteratureSettingError(ValueError):
 
 
 async def _setting_for_update(session: AsyncSession) -> SystemSetting | None:
-    """Serialize read-modify-write updates to the shared settings document."""
+    """Load the shared settings document for a read-modify-write update.
 
-    if session.get_bind().dialect.name == "postgresql":
-        # A row lock cannot serialize the first write while the singleton row is absent.
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": _SETTING_LOCK_ID}
-        )
-    return await session.scalar(
-        select(SystemSetting).where(SystemSetting.key == SETTING_KEY).with_for_update()
-    )
+    SQLite has one writer at a time, so no extra lock is taken here.
+    """
+    return await session.scalar(select(SystemSetting).where(SystemSetting.key == SETTING_KEY))
 
 
 def _as_int(value: Any, field: str, *, minimum: int, maximum: int) -> int:

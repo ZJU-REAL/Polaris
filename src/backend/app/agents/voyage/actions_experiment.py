@@ -1533,10 +1533,8 @@ def _is_storable_number(value: Any) -> bool:
 
     实验算出 NaN 是家常便饭（某个条件下指标无定义、除零、空集求均值）。但 Python 的
     ``json.loads`` **默认接受裸 NaN/Infinity 词元**，``json.dumps`` 也照原样吐出来——
-    而它们都不是合法 JSON，写进 JSONB 时 Postgres 直接拒收：
-
-        asyncpg.exceptions.InvalidTextRepresentationError:
-        invalid input syntax for type json  DETAIL: Token "NaN" is invalid.
+    而它们都不是合法 JSON，前端与导出的严格 JSON 解析器会拒收（当年在 Postgres 的
+    JSONB 列上是直接写不进去）：
 
     实测（voyage 6c5df454 第 1 轮运行）：实验跑完了、指标也产出了，就因为其中一项是
     NaN，整条 UPDATE 失败，这一轮判死。一个无定义的指标点本来就不承载信息，丢掉它

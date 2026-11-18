@@ -2,8 +2,8 @@
 
 - ``voyage:{id}:events``：voyage 引擎发布，SSE 端点订阅转发
 - ``notify:user:{user_id}``：gate/voyage 状态变化，WS 端点订阅转发
-- ``crdt:stream``：worker（AI 起草）发布分节流式增量，API 进程订阅后代写活跃
-  CRDT 房间（跨进程直播 AI 撰写；worker 与 API 是独立容器，房间只在 API 进程）
+- ``crdt:stream``：AI 起草任务发布分节流式增量，订阅器（services/crdt_stream.py）
+  代写进活跃的 CRDT 房间
 """
 
 import json

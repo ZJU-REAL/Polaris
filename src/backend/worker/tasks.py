@@ -1,7 +1,7 @@
 """后台任务：由进程内任务队列（app/core/queue.py）在引擎进程里作为 asyncio 任务执行。
 
 - M1：Voyage 引擎驱动任务（run/resume）
-- M2：每日文献增量 ingest（cron，见 worker/settings.py）
+- M2：每日文献增量 ingest（定时触发，见 app/core/scheduler.py）
 - M3：Idea Forge / 评审锦标赛 voyage（kind=idea_forge / idea_review，仍走 run_voyage）
 - M4：Experiment Lab voyage（kind=experiment，仍走 run_voyage；SSH 执行与轮询
   在 actions_experiment 内部，命令白名单见 app/services/ssh_exec.py）
@@ -448,10 +448,10 @@ async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
     按库选而不是按课题选：独立库（project_id 为空）在按课题遍历的老写法里一个都进不来。
 
     每个库单独兜异常：一个库启动失败不能打断整个循环，否则排在它后面的库当天
-    全都不同步，而且只在 arq 日志里留个异常，界面上完全无感（月度预算硬限额
+    全都不同步，而且只在日志里留个异常，界面上完全无感（月度预算硬限额
     时代实测发生过；硬限额已随 #734 移除，这条纪律保留防其他异常复现同样的坑）。
 
-    返回本次入队的 voyage id 列表（arq 结果可查）。
+    返回本次入队的 voyage id 列表。
     """
     enqueued: list[str] = []
     async with get_sessionmaker()() as session:
@@ -533,8 +533,8 @@ async def daily_feed_sync(ctx: dict[str, Any]) -> str | None:
 
     先探再建任务，不是建了任务让它失败——否则从早到晚会攒一堆 paused_error。
 
-    arq 的 cron 时刻在 worker 启动时固定，改设置得重启才生效，所以让 cron 空转、
-    由设置决定是否动手。空转一次只是一条查询加一次 RSS 探测。
+    抓取时刻是随时可改的设置，所以定时器按固定间隔空转、由设置决定是否动手。
+    空转一次只是一条查询加一次 RSS 探测。
 
     返回入队的 voyage id；未到点 / 今天已跑过 / 今天那批还没出来，都返回 None。
     """
@@ -716,9 +716,9 @@ async def zotero_import(
 ) -> dict[str, int]:
     """Zotero 库导入（#638）：API 侧把上传暂存到 data_dir 后入队，这里逐条落库。
 
-    文件走共享数据卷（api 与 worker 同挂 /srv/data），进度与结果按 paper-task
+    上传的文件暂存在 data_dir，进度与结果按 paper-task
     事件口径发（任务归属在 API 入队前已注册），前端订阅
-    /paper-tasks/{task_id}/events。返回汇总计数（arq 结果可查）。
+    /paper-tasks/{task_id}/events。返回汇总计数。
     """
     from app.services.zotero_import import run_zotero_import
 

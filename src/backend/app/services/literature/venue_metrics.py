@@ -12,7 +12,6 @@ from typing import Any, Protocol
 
 import httpx
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -477,25 +476,10 @@ async def _upsert_cache(
     table = LiteratureVenueMetricCache.__table__
     immutable = {"provider", "identity_key", "created_at"}
     update_values = {key: value for key, value in values.items() if key not in immutable}
-    dialect = session.get_bind().dialect.name
-    if dialect == "postgresql":
-        statement = postgresql_insert(table).values(**values)
-        statement = statement.on_conflict_do_update(
-            index_elements=[table.c.provider, table.c.identity_key], set_=update_values
-        )
-    elif dialect == "sqlite":
-        statement = sqlite_insert(table).values(**values)
-        statement = statement.on_conflict_do_update(
-            index_elements=[table.c.provider, table.c.identity_key], set_=update_values
-        )
-    else:
-        existing = await session.get(LiteratureVenueMetricCache, (provider, identity.key))
-        if existing is None:
-            session.add(LiteratureVenueMetricCache(**values))
-        else:
-            for key, value in update_values.items():
-                setattr(existing, key, value)
-        return
+    statement = sqlite_insert(table).values(**values)
+    statement = statement.on_conflict_do_update(
+        index_elements=[table.c.provider, table.c.identity_key], set_=update_values
+    )
     await session.execute(statement)
 
 

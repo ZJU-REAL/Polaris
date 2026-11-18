@@ -44,8 +44,6 @@ def _primary_key() -> bytes:
     settings = get_settings()
     if settings.encryption_key:
         return settings.encryption_key.encode("utf-8")
-    if settings.env == "prod":
-        raise RuntimeError("POLARIS_ENCRYPTION_KEY must be set in prod")
     return _derive_key_from_secret(settings.secret_key)
 
 

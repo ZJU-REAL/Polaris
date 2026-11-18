@@ -13,7 +13,6 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 _TMPDIR = tempfile.mkdtemp(prefix="polaris-test-")
-os.environ["POLARIS_ENV"] = "dev"
 os.environ["POLARIS_DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMPDIR}/test.db"
 os.environ["POLARIS_SECRET_KEY"] = "test-secret-key-0123456789abcdef0123456789abcdef"
 os.environ["POLARIS_ENCRYPTION_KEY"] = ""
@@ -176,7 +175,7 @@ async def client(app):
 
 
 class StubQueue:
-    """记录 enqueue 调用的假任务队列（测试替代 ARQ/redis）。"""
+    """记录 enqueue 调用的假任务队列（测试替代进程内任务队列）。"""
 
     def __init__(self):
         self.jobs: list[tuple[str, tuple, dict]] = []

@@ -1,7 +1,7 @@
 """对话 agent 循环。
 
 与 ``VoyageEngine._loop()`` 是两种东西，别想着复用：那边遍历的是 Navigator 预先规划
-好的 ``voyage_steps`` 数据库行、跑在 ARQ worker 里、经 Redis 对外说话、失败语义是
+好的 ``voyage_steps`` 数据库行、跑在后台任务队列里、经事件总线对外说话、失败语义是
 ``paused_error`` 加重规划、取消粒度是"步"。这边没有预先计划（下一步由模型逐 token
 决定）、必须在 HTTP 连接上流式输出、失败语义是"告诉用户，会话继续活着"、取消要能切
 在流中途。硬套要么伪造单步计划，要么每个 token 绕一趟 Redis。

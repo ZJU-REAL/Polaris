@@ -1,16 +1,15 @@
-"""模型公共件：UUID 主键、时间戳 Mixin、跨方言 JSON 类型。"""
+"""模型公共件：UUID 主键、时间戳 Mixin、JSON 列类型。"""
 
 import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import JSON, DateTime
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
-# postgres 用 JSONB，sqlite 等回退通用 JSON
-JSONVariant = JSON().with_variant(JSONB(), "postgresql")
+# 历史名字：以前在 postgres 上是 JSONB 变体，现在只有 SQLite，就是普通 JSON 列
+JSONVariant = JSON()
 
 
 def utcnow() -> datetime:

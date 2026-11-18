@@ -10,7 +10,7 @@
   llm_call_logging_enabled（诊断开关）、managed_command_watchdog（管理员上限，
   用来约束用户偏好，本身不能是用户偏好）；
 - 部署级事实与密钥：experiment_env（实验机的路径/镜像约定）、literature_search 与
-  document_processing（用户可调项和加密凭据同住一份原子文档，advisory lock 串行化
+  document_processing（用户可调项和加密凭据同住一份原子文档，整份
   读改写；拆开迁移会破坏原子性，归属有争议——保守留原层，见 #737）。
 """
 

@@ -61,11 +61,11 @@ class TaskQueue(Protocol):
     async def enqueue(self, func: str, *args: Any, **kwargs: Any) -> None: ...
 
 
-class _InlineArqRedis:
-    """worker 任务 ctx["redis"] 的替身。
+class _TaskContextRedis:
+    """任务函数 ctx["redis"] 拿到的对象。
 
-    worker/tasks.py 里的任务把 ctx["redis"] 当 ArqRedis 用（历史接口）：既做普通 redis
-    操作（EventBus pubsub 等），又调 ``enqueue_job`` 派生新任务。这里把属性访问代理到
+    worker/tasks.py 里的任务用 ctx["redis"] 做两件事：普通 redis 操作（EventBus pubsub
+    等），以及调 ``enqueue_job`` 派生新任务。这里把属性访问代理到
     进程内 redis 客户端，把 ``enqueue_job`` 转回内联队列——派生任务同样内联执行。
     """
 
@@ -135,7 +135,7 @@ class InlineTaskQueue:
         from worker import tasks as worker_tasks  # 懒导入避免 app↔worker 环
 
         fn = getattr(worker_tasks, func)
-        ctx = {"redis": _InlineArqRedis(self)}
+        ctx = {"redis": _TaskContextRedis(self)}
         slots = self._voyage_slots if func in VOYAGE_FUNCTIONS else self._job_slots
 
         async def _run() -> Any:

@@ -7,14 +7,13 @@ reader anchors and embeddings never silently point at replaced text.
 import uuid
 from typing import Any
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, Boolean, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 
-VectorVariant = JSON().with_variant(Vector(), "postgresql")
+VectorVariant = JSON()
 
 
 class PaperContentVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):

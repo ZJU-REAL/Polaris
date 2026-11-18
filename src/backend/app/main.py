@@ -31,10 +31,9 @@ __all__ = ["DESKTOP_ORIGIN", "app", "create_app"]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings = get_settings()
-    # 仅 sqlite（无 docker 的本地 dev）在启动时建表；postgres 走 alembic migration
-    if settings.is_sqlite:
-        await create_all()
+    # 桌面启动器与 make backend-dev 都先跑 alembic upgrade head；这里对已迁移的库是
+    # 空操作，只给没走迁移就直接起 uvicorn 的场景（测试、临时库）兜底建表
+    await create_all()
     # 换上每份安装独立的加密密钥后，把仍用旧（公开默认值派生）密钥加密的凭据重新加密
     # （#850）。幂等、逐表提交；失败不阻断启动——旧密文照样解得开，下次启动再换。
     try:
@@ -122,7 +121,7 @@ def create_app() -> FastAPI:
 
     # 只读账号（游客）的写入闸门已随治理机制移除（#614）：单机档位登录即主人。
     app.include_router(api_router, prefix="/api")
-    # WS 不挂 /api 前缀：nginx 按 /ws 反代（Upgrade），见 docs/architecture.md §7
+    # WS 不挂 /api 前缀（vite 开发代理与桌面外壳都按 /ws 转发）
     app.include_router(ws_router)
     # MCP 工具服务：默认只读；受 scope 保护的 Profile 可显式开放写工具。
     app.include_router(mcp_router)

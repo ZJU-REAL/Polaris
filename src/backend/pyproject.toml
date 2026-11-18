@@ -22,6 +22,8 @@ dependencies = [
     "asyncssh>=2.18",
     "cryptography>=43",
     "python-multipart>=0.0.12",
+    # 运行时已不用（向量是 JSON 列）；六个历史迁移文件 import pgvector.sqlalchemy，
+    # 迁移压成单一基线之前这个依赖删不掉
     "pgvector>=0.5",
     "pymupdf>=1.26",
     "pillow>=10",
@@ -54,9 +56,6 @@ mcp = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
-    "httpx>=0.27",
-    "aiosqlite>=0.20",
-    "fakeredis>=2.26",
     "respx>=0.22",
     # 上界不是洁癖：ruff 进 CI 闸门后（#746），1.0 前的小版本会加新规则，
     # 不钉住就等于哪天 ruff 发版、所有不相干的 PR 一起变红。升版本是主动动作。
@@ -69,7 +68,7 @@ dev = [
 include = ["app*", "worker*"]
 
 [tool.setuptools.package-data]
-# 论文模板 pack（meta.json / main.tex / .sty）随包分发（docker 非 editable 安装用）
+# 论文模板 pack（meta.json / main.tex / .sty）随包分发（桌面安装包是非 editable 安装）
 # 流程包 YAML（app/packs/，#678）同样随包分发
 app = ["assets/templates/*/*", "packs/*.yaml"]
 

@@ -5,10 +5,9 @@
 设置就完成切换，不满意再切回去——旧向量一直都在。放在主表的一列里做不到这件事，
 一列只装得下一套向量，换模型必然经历一段「大部分论文没向量」的窗口期。
 
-``embedding`` 列**不带维度**（pgvector 允许 ``vector`` 不声明维度）。所以换一个
+``embedding`` 列是 JSON 数组，**不带维度**。所以换一个
 4096 维的模型不需要 ALTER TABLE，只需要新的 space 值——issue #191 要的就是这个。
-代价是这样的列建不了 HNSW/IVFFlat 索引；现状五处向量检索本来就全是顺序扫描，
-将来真要上 ANN，可以给激活空间单开一张定维表。
+检索在 SQL 里筛候选、Python 侧算余弦（services/vector_search.py）。
 
 检索一律带 ``WHERE space = <激活空间>``，所以参与同一次比较的行维度必然一致。
 """
@@ -16,15 +15,14 @@
 import uuid
 from datetime import datetime
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, ForeignKey, Index, SmallInteger, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.models.base import UTCDateTime, utcnow
 
-# postgres 用不带维度的 pgvector 列；sqlite 等回退 JSON（只存不查，与主表旧列同款）
-VectorVariant = JSON().with_variant(Vector(), "postgresql")
+# 历史名字：以前在 postgres 上是 pgvector 列，现在只有 SQLite，向量存成 JSON 数组
+VectorVariant = JSON()
 
 
 class _VectorColumns:

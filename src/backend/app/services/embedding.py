@@ -229,21 +229,7 @@ async def _upsert(
     }
     # 冲突键 = 完整主键（owner 外键 + 可选的附加主键段 + space）
     key_names = [key_column.key, *extra_key, "space"]
-    dialect = session.get_bind().dialect.name
-    if dialect == "postgresql":
-        from sqlalchemy.dialects.postgresql import insert as _insert
-    elif dialect == "sqlite":
-        from sqlalchemy.dialects.sqlite import insert as _insert
-    else:  # 其余方言没有 ON CONFLICT，退回先查后插（单机开发场景没有并发问题）
-        conditions = [key_column == key, model_class.space == space.key]
-        conditions += [getattr(model_class, name) == v for name, v in extra_key.items()]
-        row = (await session.execute(select(model_class).where(*conditions))).scalar_one_or_none()
-        if row is None:
-            row = model_class(**{key_column.key: key, **extra_key, "space": space.key})
-            session.add(row)
-        for field, value in values.items():
-            setattr(row, field, value)
-        return
+    from sqlalchemy.dialects.sqlite import insert as _insert
 
     stmt = _insert(model_class).values(**values)
     await session.execute(

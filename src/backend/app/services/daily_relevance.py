@@ -16,14 +16,13 @@
 确定性逻辑，不走 LLM；嵌入向量是既有产物（每日同步已无条件建论文级向量）。
 """
 
-import json
 import logging
 import math
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embedding_space import EmbeddingSpace, active_space
@@ -133,29 +132,7 @@ async def _library_centroid(
 async def _compute_centroid(
     session: AsyncSession, library_id: uuid.UUID, space: EmbeddingSpace
 ) -> list[float] | None:
-    """成员向量取均值。postgres 让数据库聚合（几千条向量不搬出来）；其余方言（测试的
-    sqlite，向量是 JSON 列）在 Python 里算——那种部署本来就没有大库。"""
-    dialect = session.get_bind().dialect.name
-    if dialect == "postgresql":
-        row = (
-            await session.execute(
-                text(
-                    "SELECT CAST(AVG(v.embedding) AS text) FROM paper_vectors v "
-                    "WHERE v.space = :space AND v.paper_id IN ("
-                    "SELECT lp.paper_id FROM library_papers lp "
-                    "WHERE lp.library_id = :library_id "
-                    "AND lp.status = ANY(CAST(:statuses AS varchar[])))"
-                ),
-                {
-                    "space": space.key,
-                    "library_id": str(library_id),
-                    "statuses": list(MEMBER_STATUSES),
-                },
-            )
-        ).scalar_one_or_none()
-        if not row:
-            return None
-        return [float(x) for x in json.loads(row)]  # pgvector 的文本形式就是 JSON 数组
+    """成员向量取均值：向量是 JSON 列，在 Python 里算。"""
     member_sq = select(LibraryPaper.paper_id).where(
         LibraryPaper.library_id == library_id, LibraryPaper.status.in_(MEMBER_STATUSES)
     )

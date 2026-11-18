@@ -19,7 +19,7 @@ voyage_steps 行，run.plan 只是派生快照），调度规则 = 按 rank 取�
   （无人值守 run 没人回答，降级保持旧 paused_error 语义）；
 - 重规划不再删行：旧尾部节点标 obsolete 留痕，新节点按 rank 间隙追加（seq 只增不改）；
 - 每次尝试完整归档进 step.attempts（SSE 事件不持久，审计留痕一律落库）；
-- requires_gate 步骤执行前创建 Gate 并暂停（结束本次 ARQ 任务），approve 后
+- requires_gate 步骤执行前创建 Gate 并暂停（结束本次后台任务），approve 后
   由 resume_voyage 续跑；resume 会把 paused_error 的失败节点复位重试；
 - cancel 协作式：每步开始前查 DB status，状态写入用条件 UPDATE 防覆盖 cancelled；
 - 全程向 Redis ``voyage:{id}:events`` 发布 status/step/log 事件；
@@ -450,7 +450,7 @@ class VoyageEngine:
         fallback_status: str = "paused_error",
     ) -> None:
         """插入一条 ask 消息并把任务转 paused_ask（与 paused_gate 同构：结束本次
-        ARQ 任务，回答后由 resume_voyage 续跑）。
+        后台任务，回答后由 resume_voyage 续跑）。
 
         - 幂等：同 run 同 (ask_kind, step_id) 已有 open 提问则不重复插
           （防 reconcile 重放 executing 状态时重复建）；

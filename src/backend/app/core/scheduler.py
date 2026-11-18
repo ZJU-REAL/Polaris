@@ -1,13 +1,10 @@
 """引擎进程里的定时任务（#842 第 1 步）。
 
-以前这些只挂在 ARQ worker 的 cron 上：每日论文抓取、文献发现的定时增量、发表匹配、
-僵死航程回收、无人回答的 GPU 命令看门狗，外加 worker 启动时认领无人执行的航程。
-桌面档位没有 ARQ worker，InlineTaskQueue 的注释说「桌面内核接管定时触发」——实际
-没有任何代码这么做，于是桌面上这些从来没跑过：每日论文永远不来，崩溃后在途的航程
-永远停在 executing。
+每日论文抓取、发表匹配、僵死航程回收、无人回答的 GPU 命令看门狗，外加启动时认领
+崩溃前没跑完的航程——都在引擎进程里跑，应用开着才会触发。
 
-这里用最朴素的方式补上：每个任务一个后台循环，按固定间隔调一次。任务自己判断
-「到点没有、今天跑过没有」（它们本来就是按「cron 每 15 分钟空转一次」写的），所以
+做法很朴素：每个任务一个后台循环，按固定间隔调一次。任务自己判断
+「到点没有、今天跑过没有」（它们就是按「每 15 分钟空转一次」写的），所以
 这里不需要 cron 表达式，间隔对齐原来的节奏即可。
 
 - 同一个任务上一次还没跑完就不再起新的——不叠跑。
@@ -39,7 +36,7 @@ class PeriodicJob:
 
 
 def default_jobs() -> list[PeriodicJob]:
-    """与原 ARQ cron 同一节奏（worker/settings.py）。懒导入：worker.tasks 依赖很重。"""
+    """各定时任务与它们的间隔。懒导入：worker.tasks 依赖很重。"""
     from worker import tasks
 
     return [
@@ -120,15 +117,15 @@ _scheduler: Scheduler | None = None
 
 
 async def start_engine_scheduler() -> Scheduler:
-    """桌面档位启动时调用：起定时循环，并在后台认领崩溃前没跑完的航程。"""
+    """引擎启动时调用：起定时循环，并在后台认领崩溃前没跑完的航程。"""
     global _scheduler
-    from app.core.queue import _InlineArqRedis, get_task_queue
+    from app.core.queue import _TaskContextRedis, get_task_queue
 
     queue = await get_task_queue()
 
     def ctx() -> dict[str, Any]:
         # 与 InlineTaskQueue 给任务的 ctx 同形：任务里 ctx["redis"].enqueue_job(...) 入队
-        return {"redis": _InlineArqRedis(queue)}
+        return {"redis": _TaskContextRedis(queue)}
 
     _scheduler = Scheduler(default_jobs(), ctx)
     _scheduler.start()

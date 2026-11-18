@@ -1,7 +1,7 @@
 """Policy and unattended checks for managed commands waiting on a user.
 
 The monitor which raised the question is no longer running once a voyage enters
-``paused_ask``.  This service is therefore called by a worker cron job.  It is
+``paused_ask``.  This service is therefore called by the engine scheduler.  It is
 command-name agnostic: attribution uses the durable attempt and its process
 group, not Docker/pip/training command patterns.
 """

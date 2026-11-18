@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import select, text
 
 from app.core.db import get_sessionmaker
-from app.core.queue import InlineTaskQueue, _InlineArqRedis, voyage_job_id
+from app.core.queue import InlineTaskQueue, _TaskContextRedis, voyage_job_id
 from app.models.base import utcnow
 from app.models.voyage import VoyageRun
 
@@ -80,7 +80,7 @@ async def test_stale_reconcile_skips_a_voyage_whose_driver_is_running(app, drive
     await asyncio.sleep(0)
     assert queue.is_running(voyage_job_id(vid))
 
-    ctx = {"redis": _InlineArqRedis(queue)}
+    ctx = {"redis": _TaskContextRedis(queue)}
     for _ in range(3):  # 跨多个旧分桶窗口反复对账
         await reconcile_stale_voyages(ctx, stale_minutes=30)
     await asyncio.sleep(0)
@@ -97,7 +97,7 @@ async def test_stale_reconcile_still_reclaims_an_orphaned_voyage(app, drivers):
 
     vid = await _seed_voyage()
     queue = InlineTaskQueue()
-    await reconcile_stale_voyages({"redis": _InlineArqRedis(queue)}, stale_minutes=30)
+    await reconcile_stale_voyages({"redis": _TaskContextRedis(queue)}, stale_minutes=30)
     await asyncio.sleep(0)
     assert drivers.started == [("resume", str(vid))]
     drivers.release.set()

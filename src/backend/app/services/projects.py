@@ -29,7 +29,7 @@ def in_my_projects(project_id_col, user_id: uuid.UUID):
     """「这条记录所属的课题我够得着吗」——课题作用域读取口的统一条件。
 
     够得着 = 课题是我建的（owner_id）。成员机制已随个人化定位移除（#625）：
-    单机档位只有一个用户，服务器档的多用户隔离只看归属，不再有「加人共享」。
+    只有一个本地用户，不再有「加人共享」。
     课题下的东西（想法/实验/稿件/闸门/书架论文……）一律用这一条判，口径必须一致。
     """
     return project_id_col.in_(select(Project.id).where(Project.owner_id == user_id))

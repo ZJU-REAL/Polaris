@@ -417,8 +417,6 @@ async def claim_download_item(
         .order_by(DownloadBatchItem.created_at)
         .limit(1)
     )
-    if session.get_bind().dialect.name == "postgresql":
-        stmt = stmt.with_for_update(skip_locked=True)
     item = (await session.execute(stmt)).scalar_one_or_none()
     if item is None:
         return None

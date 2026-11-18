@@ -278,7 +278,7 @@ async def run_zotero_import(
     """执行一次 Zotero 导入：逐条独立提交，一条失败不影响其它条目。
 
     进度与结果走 paper-task 事件通道（与批量手动添加同口径），API 侧已注册任务
-    归属，前端订阅 /paper-tasks/{task_id}/events 即可。返回汇总计数（arq 结果可查）：
+    归属，前端订阅 /paper-tasks/{task_id}/events 即可。返回汇总计数：
     created=导入、existing=重复（reason 标注 doi/arxiv/title/pool）、invalid=缺 title、
     failed=异常。
     """

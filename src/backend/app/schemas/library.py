@@ -53,7 +53,7 @@ class LibraryPage(BaseModel):
     total: int
     page: int
     size: int
-    # 语义检索不支持时（非 postgres / embedding provider 不支持）后端回退关键词，
+    # 语义检索不支持时（没有可用的 embedding 接口）后端回退关键词，
     # 在此说明实际使用的模式，供前端提示用户
     mode_used: str = "keyword"
 

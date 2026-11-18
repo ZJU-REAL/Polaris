@@ -3,7 +3,6 @@
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
@@ -50,7 +49,6 @@ class Settings(BaseSettings):
     )
 
     # ---- App ----
-    env: Literal["dev", "prod"] = "dev"
     # 只有一种运行形态（#842）：单进程本地引擎——SQLite + 进程内任务队列 + 进程内
     # redis 替身 + 进程内定时任务，由桌面内核拉起，机器上不需要任何外部服务。
     # 以前的 server 档位（uvicorn + arq worker + 外部 Redis/Postgres）已删除。
@@ -85,20 +83,12 @@ class Settings(BaseSettings):
     # 要求 env 值是 JSON 字面量（'["a","b"]'），与本仓库 .env 的朴素风格不兼容。
     cors_origins: str = ""
 
-    # ---- GitHub ----
-    # 上游仓库 owner/name（同 .github/ 里的 remote，不是机构品牌文案）。
-    # 反馈改为前端直开 GitHub new-issue 页（#617）后，后端不再代建 issue，
-    # PAT（github_token）随之删除；当前后端没有本字段的消费方，保留默认值
-    # 是给自建部署将来需要「服务端知道自己上游仓库」的功能留位。
-    # 注意：前端拼 new-issue 链接用的是自己写死的 REPO_URL 常量，不读这里。
-    github_repo: str = "ZJU-REAL/Polaris"
-
     # ---- Database / Cache ----
     # SQLite（桌面引导方会传入 userData 下的路径）
     database_url: str = "sqlite+aiosqlite:///./polaris_dev.db"
     # 连接池要装得下进程内任务的并发：最多 inline_max_voyages 条航程同时跑，每条航程的
     # 打分并发（_LLM_CONCURRENCY=5）每篇论文各开一个 session，再加上引擎自己记步骤/检查点
-    # 的那条，以及 HTTP 请求。SQLAlchemy 默认 5+10=15，在 ARQ 时代（max_jobs=10）实测被
+    # 的那条，以及 HTTP 请求。SQLAlchemy 默认 5+10=15，十条任务并发时实测被
     # 打满：多数协程等满 30s 超时、该篇打分失败、状态停在 candidate。SQLite 开了 WAL，
     # 多连接并发读不互斥，写入由 busy_timeout 排队（core/db.py）。
     db_pool_size: int = 20
@@ -304,13 +294,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("POLARIS_MINERU_URL", "MINERU_URL"),
     )
 
-    # ---- 文件卷（PDF/全文等产物；容器内挂 /srv/data）----
+    # ---- 数据目录（PDF/全文等产物）----
     data_dir: str = "./data"
     # 常驻文件投影（#719 file-over-app 一期）：在 <data_dir>/workspace/ 下维护一份
     # 用户可见的文件副本（PDF 别名 / 笔记 md / wiki vault）。DB 仍是唯一真源，
     # 关掉只是停止刷新文件，不影响任何业务功能（测试套件与 golden 环境关）。
     file_projection: bool = True
-    # 文献 API（arXiv/S2/OpenAlex）出站代理，如 http://host.docker.internal:7897；
+    # 文献 API（arXiv/S2/OpenAlex）出站代理，如 http://127.0.0.1:7897；
     # LLM/内网服务不走此代理
     outbound_proxy: str | None = None
     # 实验服务器 pip 镜像源（可选，如 https://pypi.tuna.tsinghua.edu.cn/simple）
@@ -365,7 +355,7 @@ class Settings(BaseSettings):
         （应用更新即被整体替换，用户文件全丢）。这里在 settings 加载时基于
         当时的 cwd resolve 一次，此后进程内任何 chdir 都不再影响落盘位置；
         桌面正常路径由引导器注入绝对的 POLARIS_DATA_DIR，本兜底只在 env
-        缺失时生效。docker/server 部署显式设 /srv/data（绝对路径），不受影响。"""
+        缺失时生效。"""
         path = Path(v)
         if not path.is_absolute():
             resolved = str(path.resolve())
@@ -389,10 +379,6 @@ class Settings(BaseSettings):
     def gateway_openai_base_url(self) -> str | None:
         """网关的 OpenAI 兼容根地址（.../v1），向量与重排用；没配网关地址时 None。"""
         return f"{self.claude_base_url}/v1" if self.claude_base_url else None
-
-    @property
-    def is_sqlite(self) -> bool:
-        return self.database_url.startswith("sqlite")
 
     @property
     def cors_origin_list(self) -> list[str]:

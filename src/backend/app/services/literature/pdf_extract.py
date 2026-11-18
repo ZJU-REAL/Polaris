@@ -1,6 +1,6 @@
 """PDF 落盘、全文抽取与嵌入图提取（PyMuPDF）。
 
-文件存 settings.data_dir（默认 ./data，容器内挂 /srv/data）：
+文件存 settings.data_dir（默认 ./data）：
     <data_dir>/papers/<paper_id>.pdf / <paper_id>.txt
     <data_dir>/papers/<paper_id>/figures/fig_<index>.png
 """

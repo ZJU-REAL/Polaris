@@ -8,13 +8,9 @@
 
 并发安全为什么这么做（而不是唯一约束或 BEGIN IMMEDIATE）：
 - capacity>1 的计数语义没法用唯一约束表达，必须「数活租约 + 插入」原子化；
-- postgres：SELECT … FOR UPDATE 锁资源行，两个并发 acquire 在行锁上串行，
-  计数+插入压进同一事务，天然跨进程正确；
-- sqlite（dev/测试）：没有行锁；async 引擎的连接池里对所有事务全局改
-  BEGIN IMMEDIATE 副作用太大（每个只读事务都抢写锁）。这里用进程内
-  asyncio.Lock 串行化临界区。**局限**：只护得住单进程——api 与 worker 两个
-  进程同时 acquire 同一资源时仍有 check-then-insert 竞窗，只能靠 sqlite 库级
-  单写者缩小窗口。生产环境是 postgres，不受此限。
+- sqlite 没有行锁；async 引擎的连接池里对所有事务全局改 BEGIN IMMEDIATE 副作用
+  太大（每个只读事务都抢写锁）。引擎是单进程，这里用进程内 asyncio.Lock 串行化
+  临界区就够了。
 """
 
 import asyncio
@@ -33,8 +29,8 @@ class ResourceBusyError(Exception):
     """资源没有空闲席位（wait=False 直接抛；wait=True 等到超时也抛它）。"""
 
 
-# sqlite 下串行化「数活租约 + 插入」的进程内锁（见模块 docstring 的 why 与局限）
-_sqlite_acquire_lock = asyncio.Lock()
+# 串行化「数活租约 + 插入」的进程内锁（见模块 docstring）
+_acquire_lock = asyncio.Lock()
 
 
 def effective_capacity(resource: Resource) -> int:
@@ -51,10 +47,6 @@ async def count_active_leases(session: AsyncSession, resource_id: uuid.UUID) -> 
     return int((await session.execute(stmt)).scalar_one())
 
 
-def _is_postgres(session: AsyncSession) -> bool:
-    return session.bind is not None and session.bind.dialect.name == "postgresql"
-
-
 async def _try_acquire(
     session: AsyncSession,
     *,
@@ -65,15 +57,10 @@ async def _try_acquire(
 ) -> ResourceLease | None:
     """一次获取尝试：事务内计数 + 插入；没有空位返回 None（不抛）。
 
-    只收标量不收 ORM 对象：失败路径要 rollback（释放行锁、别拖住别人），
+    只收标量不收 ORM 对象：失败路径要 rollback，
     rollback 会把会话里已加载的对象全部 expire，异步会话下再摸它们的属性会
     炸 MissingGreenlet——调用方在 rollback 前把要用的字段抄成标量最稳。
     """
-    if _is_postgres(session):
-        # 行锁串行化并发 acquire（锁到 commit/rollback 为止）
-        await session.execute(
-            select(Resource.id).where(Resource.id == resource_id).with_for_update()
-        )
     if await count_active_leases(session, resource_id) >= capacity:
         await session.rollback()
         return None
@@ -93,9 +80,7 @@ async def _guarded_try_acquire(
     note: str,
 ) -> ResourceLease | None:
     kwargs = {"resource_id": resource_id, "capacity": capacity, "run_id": run_id, "note": note}
-    if _is_postgres(session):
-        return await _try_acquire(session, **kwargs)
-    async with _sqlite_acquire_lock:
+    async with _acquire_lock:
         return await _try_acquire(session, **kwargs)
 
 

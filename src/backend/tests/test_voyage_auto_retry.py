@@ -14,7 +14,7 @@ from app.agents.voyage.failures import AUTO_RETRY_DELAYS_MINUTES, schedule_auto_
 from app.core import scheduler as sched
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
-from app.core.queue import InlineTaskQueue, _InlineArqRedis
+from app.core.queue import InlineTaskQueue, _TaskContextRedis
 from app.core.scheduler import PeriodicJob, Scheduler
 from app.models.base import utcnow
 from app.models.voyage import VoyageRun
@@ -246,7 +246,7 @@ async def test_schedule_survives_an_engine_restart(client, queue_stub, flaky):
     queue = InlineTaskQueue(max_voyages=1, max_jobs=1)
 
     def ctx() -> dict:
-        return {"redis": _InlineArqRedis(queue)}
+        return {"redis": _TaskContextRedis(queue)}
 
     # 定时器表里有这个任务，而且开机后很快就会先看一次（关机期间过点的在这时补上）
     job = next(j for j in sched.default_jobs() if j.name == "retry_paused_voyages")

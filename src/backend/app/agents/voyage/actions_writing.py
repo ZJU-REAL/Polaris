@@ -13,8 +13,7 @@
 - 每节一轮 self-reflection 精修（精修稿再过校验，不过则保留原稿）；
 - **流式直播**：撰写时把 LLM 增量经 redis ``crdt:stream`` 发布，API 进程订阅后
   写进活跃房间，编辑器实时看到 AI「打字」；相位（typing/revising/done/compiling）
-  经 ``manuscript.ai_writing`` 通知前端画 AI 光标（worker 与 API 独立容器，故经
-  redis 跨进程，见 services/crdt_stream.py）；
+  经 ``manuscript.ai_writing`` 通知前端画 AI 光标（见 services/crdt_stream.py）；
 - 权威落库经 crdt_rooms.apply_ai_edit：worker 侧无活跃房间直接写库（+ 版本快照），
   房间的防抖快照会把并发人工编辑合并落库；
 - Related Work 延后：候选集 = fact_pack.citations 全集 + S2 title 检索 top10，

@@ -8,13 +8,12 @@ from __future__ import annotations
 
 import time
 import uuid
-import zlib
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings as get_app_settings
@@ -26,7 +25,6 @@ from app.services.mineru import MineruRuntimeConfig
 # 值直接来自 env），且与加密凭据池同住一份原子文档——同 literature_search 的理由，
 # 不迁用户偏好。
 SETTING_KEY = "document_processing"
-_SETTING_LOCK_ID = zlib.crc32(SETTING_KEY.encode("utf-8"))
 
 
 class InvalidDocumentProcessingSettingError(ValueError):
@@ -51,13 +49,7 @@ def _environment_defaults() -> dict[str, Any]:
 
 
 async def _setting_for_update(session: AsyncSession) -> SystemSetting | None:
-    if session.get_bind().dialect.name == "postgresql":
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": _SETTING_LOCK_ID}
-        )
-    return await session.scalar(
-        select(SystemSetting).where(SystemSetting.key == SETTING_KEY).with_for_update()
-    )
+    return await session.scalar(select(SystemSetting).where(SystemSetting.key == SETTING_KEY))
 
 
 def _as_int(value: Any, field: str, *, minimum: int, maximum: int) -> int:
