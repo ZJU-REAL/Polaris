@@ -1,3 +1,22 @@
+import { isDesktop } from './endpoint';
+
+/**
+ * 这一页发出的下载批次，浏览器扩展收得到吗？
+ *
+ * 扩展只有一条取任务的路：它往「Polaris 网页」里注入一段脚本，监听页面上的
+ * `polaris:download-batch:v2` 事件。桌面应用的界面在 Electron 窗口里
+ * （app://polaris），不在装了扩展的那个浏览器里，那段脚本根本不存在——事件发出去
+ * 没有任何人听。扩展也没有主动来领任务的代码（引擎那边的领取接口一直空着）。
+ * 所以在桌面应用里，「发送到浏览器扩展」发出的东西永远到不了，之前那句
+ * 「浏览器扩展连接后会领取」是一句不会兑现的话。
+ *
+ * 在给扩展补上主动领取之前，桌面应用里不提供这些入口；浏览器里开发调试时
+ * （页面就在浏览器里，事件通路是通的）照旧。
+ */
+export function extensionDeliveryAvailable(): boolean {
+  return !isDesktop();
+}
+
 export interface PolarisExtensionPaper {
   libraryId: string;
   paperId: string;

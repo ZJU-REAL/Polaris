@@ -18,6 +18,7 @@ import { tr } from '../../lib/i18n';
 import {
   dispatchablePolarisExtensionPapers,
   dispatchPolarisExtensionBatch,
+  extensionDeliveryAvailable,
   type PolarisExtensionPaper,
 } from '../../lib/polaris-extension';
 
@@ -495,10 +496,13 @@ export function LiteratureDiscoveryPanel({
                 <Icon name="download" size={13} />
                 {tr(`下载 PDF · ${oaCandidateIds.length}`, `Download PDFs · ${oaCandidateIds.length}`)}
               </button>
-              <button className="btn btn-soft sm" disabled={!extensionHits.length || extensionMutation.isPending} title={!extensionHits.length && selected.size ? tr('只能发送已加入本库、且还没有 PDF 的论文', 'Only papers already added and without a PDF can be sent') : undefined} onClick={() => extensionMutation.mutate(extensionHits)}>
-                <Icon name="share" size={13} />
-                {tr(`发送到浏览器扩展 · ${extensionHits.length}`, `Send to browser extension · ${extensionHits.length}`)}
-              </button>
+              {/* 桌面应用里批次到不了扩展（见 extensionDeliveryAvailable），不摆一个发不出去的按钮 */}
+              {extensionDeliveryAvailable() && (
+                <button className="btn btn-soft sm" disabled={!extensionHits.length || extensionMutation.isPending} title={!extensionHits.length && selected.size ? tr('只能发送已加入本库、且还没有 PDF 的论文', 'Only papers already added and without a PDF can be sent') : undefined} onClick={() => extensionMutation.mutate(extensionHits)}>
+                  <Icon name="share" size={13} />
+                  {tr(`发送到浏览器扩展 · ${extensionHits.length}`, `Send to browser extension · ${extensionHits.length}`)}
+                </button>
+              )}
               <button className="btn btn-primary sm" disabled={!candidateIds.length || promoteMutation.isPending} onClick={() => promoteMutation.mutate(candidateIds)}>
                 <Icon name="plus" size={13} />
                 {tr(`加入本库 · ${candidateIds.length}`, `Add to library · ${candidateIds.length}`)}

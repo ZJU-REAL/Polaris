@@ -20,6 +20,7 @@ import { PaperAssetPanel } from '../shared/PaperAssetPanel';
 import { toast } from '../../components/ui/Toast';
 import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { canSendToExtension, sendLibraryPapersToExtension } from '../../lib/extension-download-batches';
+import { extensionDeliveryAvailable } from '../../lib/polaris-extension';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime, parseApiDate } from '../../lib/format';
 import {
@@ -1046,7 +1047,7 @@ function PaperDetailPane({
             {tr('原文链接', 'Source')}
           </a>
         )}
-        {libraryId && (
+        {libraryId && extensionDeliveryAvailable() && (
           <button
             className="btn btn-ghost sm"
             disabled={sendingToExtension || !canSendToExtension(paper.status)}
@@ -1879,7 +1880,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                   {tr('对比', 'Compare')}
                 </button>
               )}
-              {libraryId && (
+              {libraryId && extensionDeliveryAvailable() && (
                 <button
                   className="btn btn-soft sm"
                   disabled={selected.size === 0 || extensionBatchMutation.isPending}
@@ -1891,7 +1892,8 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
               )}
             </>
           )}
-          {libraryId && (
+          {/* 桌面应用里批次到不了扩展（见 extensionDeliveryAvailable），发送与记录入口一并不摆 */}
+          {libraryId && extensionDeliveryAvailable() && (
             <button className="btn btn-ghost sm" onClick={() => setExtensionHistoryOpen(true)}>
               <Icon name="clock" size={13} />
               {tr('扩展下载记录', 'Extension downloads')}

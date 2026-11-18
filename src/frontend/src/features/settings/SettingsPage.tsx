@@ -28,6 +28,7 @@ import { SettingsLayout, SettingsTabs } from './SettingsTabs';
 import { SettingsActions, SettingsGroup, SettingsStack, SettingsRow, SettingsSection, StatusDot } from './settingsUi';
 import { DailySubscriptionsSection } from './DailySubscriptionsSection';
 import { ExtensionApiKeySettings } from './ExtensionApiKeySettings';
+import { extensionDeliveryAvailable } from '../../lib/polaris-extension';
 import { ModelSettings } from './ModelSettings';
 import { FullExportSettings } from './FullExportSettings';
 import { PluginsSettings } from './PluginsSettings';
@@ -1326,7 +1327,9 @@ export function SettingsPage() {
     );
   };
 
-  // 「插件」tab 在 plugins.manage 能力可用时出现（看桌面主进程的能力清单）。能力
+  // 「插件」tab 在 plugins.manage 能力可用时出现（看桌面主进程的能力清单）。这项能力
+  // 目前在主进程里整体关着（desktop 的 capabilities.ts：PLUGINS_UI_ENABLED）——插件
+  // 还没有任何能接上的扩展点，这一页对用户只有风险；所以现在没有人看得到这个 tab。
   // 清单由 App.tsx 启动时异步拉取，本页可能先于它渲染完，这里再取一次并在拿到结果
   // 后重读，避免首次进设置页时 tab 闪失。浏览器里开发调试没有宿主，就没有这个 tab。
   const [pluginsAvailable, setPluginsAvailable] = useState(() => isCapabilityAvailable(CAPABILITY_PLUGINS_MANAGE));
@@ -1344,9 +1347,12 @@ export function SettingsPage() {
   // 清单稍后就绪且能力在，effectiveTab 自动切回 plugins。
   // 「关于」（检查更新）只在桌面端有意义（#812）
   const desktop = hasHost();
+  // 「浏览器扩展」：桌面应用里下载批次到不了扩展（见 lib/polaris-extension.ts），
+  // 让用户在这里生成一把用不上的密钥没有意义，入口一并收起
+  const extensionAvailable = extensionDeliveryAvailable();
   // 只有一个使用者，「用量总览」与「用量」是同一份数据：旧深链 ?tab=usage 落到「用量」
   const effectiveTab: Tab =
-    (tab === 'plugins' && !pluginsAvailable) || (tab === 'about' && !desktop)
+    (tab === 'plugins' && !pluginsAvailable) || (tab === 'about' && !desktop) || (tab === 'extension' && !extensionAvailable)
       ? 'personal'
       : tab === 'usage'
         ? 'myusage'
@@ -1379,7 +1385,7 @@ export function SettingsPage() {
   ];
   const connectionItems: { v: Tab; label: string }[] = [
     { v: 'bots', label: tr('群机器人', 'Group bots') },
-    { v: 'extension', label: tr('浏览器扩展', 'Browser extension') },
+    ...(extensionAvailable ? [{ v: 'extension' as Tab, label: tr('浏览器扩展', 'Browser extension') }] : []),
     { v: 'mcp', label: 'MCP' },
     ...(pluginsAvailable ? [{ v: 'plugins' as Tab, label: tr('插件', 'Plugins') }] : []),
   ];
