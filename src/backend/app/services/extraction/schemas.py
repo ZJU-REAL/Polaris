@@ -228,6 +228,13 @@ def register_schema(schema: ExtractionSchema) -> None:
 
 
 def get_schema(schema_id: str) -> ExtractionSchema:
+    """按 id 取 schema。先保证学科包装过：按 id 问的人和按学科问的人一样可能是第一个。
+
+    只有 ``schemas_for`` 触发惰性加载的话，一个没走过它的进程（回填 CLI 的
+    ``--schema structural.method``、只读方法卡的进程）会把磁盘上明明装着的学科
+    schema 报成 unknown——而测试里靠别的用例先装过才碰巧是绿的。
+    """
+    _ensure_disciplines_loaded()
     schema = _REGISTRY.get(schema_id)
     if schema is None:
         raise ValueError(f"unknown extraction schema: {schema_id!r}")
@@ -235,6 +242,7 @@ def get_schema(schema_id: str) -> ExtractionSchema:
 
 
 def list_schemas() -> list[ExtractionSchema]:
+    _ensure_disciplines_loaded()
     return list(_REGISTRY.values())
 
 

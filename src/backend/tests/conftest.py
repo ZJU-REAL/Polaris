@@ -3,6 +3,7 @@
 注意：必须在 import app 之前设置环境变量（Settings 是 lru_cache 的）。
 """
 
+import contextlib
 import os
 import tempfile
 
@@ -96,6 +97,49 @@ def _fresh_redis():
     redis_mod._client = None
     yield
     redis_mod._client = None
+
+
+@contextlib.contextmanager
+def preserved_extraction_registries():
+    """进出各拍一次快照：块内登记的抽取 schema / 插件环节，出块时全部还回去。
+
+    三样东西必须一起还：
+
+    - ``schemas._REGISTRY``：学科包登记的 schema；
+    - ``schemas._disciplines_loaded``：与注册表脱钩的「已装过」标志位。只还注册表的话，
+      标志位仍是 True，惰性加载从此不再重试——后面依赖学科 schema 的用例会莫名其妙
+      看不到它们；
+    - ``router._PLUGIN_STAGES``：``register_schema`` 遇到 ``plugin:<包>:<环节>`` 会顺手
+      往这里挂一条，只还 schema 的话这条就留在进程里了。
+    """
+    from app.core.llm import router as router_mod
+    from app.services.extraction import schemas as schemas_mod
+
+    schemas = dict(schemas_mod._REGISTRY)
+    loaded = schemas_mod._disciplines_loaded
+    stages = dict(router_mod._PLUGIN_STAGES)
+    try:
+        yield
+    finally:
+        schemas_mod._REGISTRY.clear()
+        schemas_mod._REGISTRY.update(schemas)
+        schemas_mod._disciplines_loaded = loaded
+        router_mod._PLUGIN_STAGES.clear()
+        router_mod._PLUGIN_STAGES.update(stages)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_extraction_registries():
+    """抽取注册表与插件环节表是模块级全局：每条用例结束都还原成它开始时的样子。
+
+    以前只有 test_discipline_packs 自己有这道还原，别的文件里随手
+    ``dp.register_pack(...)`` 的用例（test_comparison 给 structural 包挂了一张
+    ``structural.gaps``）就漏进了后面的用例：pytest-randomly 把它排到
+    test_backfill_extractions 前面时，那边断言的 schema 集合凭空多出一行。
+    单跑那个文件永远是绿的，全量跑才偶发——所以放在这里而不是靠每个作者记得清场。
+    """
+    with preserved_extraction_registries():
+        yield
 
 
 @pytest_asyncio.fixture

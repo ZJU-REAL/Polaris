@@ -14,35 +14,13 @@ import pytest
 import yaml
 
 from app.services import discipline_packs as dp
-from app.services.extraction import schemas as schemas_module
 from app.services.extraction.schemas import (
-    _REGISTRY,
     get_schema,
     list_schemas,
     schemas_for,
 )
 
 CIVIL = dp.BUILTIN_DISCIPLINES_DIR / "structural-engineering.yaml"
-
-
-@pytest.fixture(autouse=True)
-def _restore_schema_registry():
-    """抽取注册表是模块级全局：用例注册的 schema 必须还回去。
-
-    不还的后果很具体——test_paper_extraction 断言 enrich 抽出的 schema 集合，
-    本文件泄漏进去的学科 schema 会让那条用例莫名多出一行。
-
-    ``_disciplines_loaded`` 一起还原：它是与注册表脱钩的「已装过」标志位，只还注册表
-    的话，本文件把学科 schema 摘掉之后标志位仍是 True，惰性加载从此不再重试——后面
-    任何一条依赖学科 schema 的用例都会莫名其妙地看不到它们，而且报的是断言失败，
-    一点也不像「上一个文件没收拾干净」。
-    """
-    snapshot = dict(_REGISTRY)
-    loaded = schemas_module._disciplines_loaded
-    yield
-    _REGISTRY.clear()
-    _REGISTRY.update(snapshot)
-    schemas_module._disciplines_loaded = loaded
 
 
 def _minimal(name: str = "demo", schema_id: str = "method") -> dict:
@@ -353,3 +331,45 @@ def test_every_builtin_pack_method_card_routes_like_the_builtin_one():
             if schema.id != "method":
                 continue
             assert get_schema(f"{pack.name}.method").stage == "extract_method", pack.name
+
+
+def test_registrations_made_inside_a_test_do_not_outlive_it():
+    """conftest 的自动还原管的三样东西，一样都不能漏（漏了的表现是别的文件偶发变红）。"""
+    from app.core.llm.router import known_stages
+    from app.services.extraction import schemas as schemas_module
+    from tests.conftest import preserved_extraction_registries
+
+    data = _minimal(name="leaky")
+    data["schemas"][0]["stage"] = "plugin:leaky:extract"
+    before_ids = {s.id for s in list_schemas()}
+    before_loaded = schemas_module._disciplines_loaded
+
+    with preserved_extraction_registries():
+        dp.register_pack(dp.parse_pack(data, origin="t"))
+        schemas_module._disciplines_loaded = not before_loaded
+        assert get_schema("leaky.method").pack == "leaky"
+        assert "plugin:leaky:extract" in known_stages()
+
+    assert {s.id for s in list_schemas()} == before_ids
+    assert "plugin:leaky:extract" not in known_stages()
+    assert schemas_module._disciplines_loaded is before_loaded
+
+
+def _forget_the_packs(monkeypatch):
+    """回到「这个进程还没人问过学科 schema」的状态。"""
+    from app.services.extraction import schemas as schemas_module
+
+    for schema_id in [s.id for s in schemas_module._REGISTRY.values() if s.pack]:
+        monkeypatch.delitem(schemas_module._REGISTRY, schema_id)
+    monkeypatch.setattr(schemas_module, "_disciplines_loaded", False)
+
+
+def test_asking_for_a_discipline_schema_by_id_loads_the_packs_first(monkeypatch):
+    """冷进程里第一个问的人可能是按 id 问的（回填 CLI 的 --schema structural.method）。"""
+    _forget_the_packs(monkeypatch)
+    assert get_schema("structural.method").pack == "structural"
+
+
+def test_listing_schemas_loads_the_packs_first(monkeypatch):
+    _forget_the_packs(monkeypatch)
+    assert "structural.method" in {s.id for s in list_schemas()}
