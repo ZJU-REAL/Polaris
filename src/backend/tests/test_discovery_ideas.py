@@ -161,6 +161,10 @@ async def test_discovery_writes_surviving_hypotheses_as_ideas(client, queue_stub
     assert entry["snippet"] == supported["snippets"][0]
     assert entry["title"].startswith("Discovery Corpus Paper")
     assert entry["url"] is None
+    # 片段能回到原文：分段 id 与在分段原文里的起止
+    async with get_sessionmaker()() as session:
+        chunk = await session.get(PaperChunk, uuid.UUID(entry["chunk_id"]))
+    assert chunk.text[entry["match_start"] : entry["match_end"]] == entry["snippet"]
     assert [str(p) for p in idea.parent_paper_ids] == supported["paper_ids"]
     # 新颖性只对照文献库：理由里固定带这一句
     assert idea.scores == {"novelty": 6, "feasibility": 7, "operability": 6, "impact": 5}

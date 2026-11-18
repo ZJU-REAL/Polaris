@@ -145,12 +145,12 @@
       "accounting": {
         "node_usage": {
           "<uuid-10>": {
-            "completion_tokens": 112,
-            "prompt_tokens": 606
+            "completion_tokens": 113,
+            "prompt_tokens": 461
           },
           "<uuid-11>": {
-            "completion_tokens": 112,
-            "prompt_tokens": 608
+            "completion_tokens": 113,
+            "prompt_tokens": 462
           },
           "<uuid-8>": {
             "completion_tokens": 91,
@@ -158,8 +158,8 @@
           }
         },
         "total": {
-          "completion_tokens": 315,
-          "prompt_tokens": 1749
+          "completion_tokens": 317,
+          "prompt_tokens": 1458
         }
       },
       "branches": [
@@ -366,8 +366,17 @@
           "paper_ids": [
             "<uuid-4>"
           ],
+          "snippet_chunk_ids": [
+            "<uuid-16>"
+          ],
           "snippet_paper_ids": [
             "<uuid-4>"
+          ],
+          "snippet_spans": [
+            [
+              0,
+              159
+            ]
           ],
           "snippets": [
             "Structured Agent Planning Probe\nProbe, Golden\nSynthetic record one: structured agent planning with verifiable checkpoints for the deterministic golden harness."
@@ -431,8 +440,17 @@
           "paper_ids": [
             "<uuid-4>"
           ],
+          "snippet_chunk_ids": [
+            "<uuid-16>"
+          ],
           "snippet_paper_ids": [
             "<uuid-4>"
+          ],
+          "snippet_spans": [
+            [
+              0,
+              159
+            ]
           ],
           "snippets": [
             "Structured Agent Planning Probe\nProbe, Golden\nSynthetic record one: structured agent planning with verifiable checkpoints for the deterministic golden harness."
@@ -483,6 +501,9 @@
     "elo_rating": 1200.0,
     "evidence": [
       {
+        "chunk_id": "<uuid-16>",
+        "match_end": 159,
+        "match_start": 0,
         "paper_id": "<uuid-4>",
         "snippet": "Structured Agent Planning Probe\nProbe, Golden\nSynthetic record one: structured agent planning with verifiable checkpoints for the deterministic golden harness.",
         "source": "library",
@@ -842,14 +863,14 @@
               },
               "round": 1,
               "usage": {
-                "completion_tokens": 288,
-                "prompt_tokens": 1700
+                "completion_tokens": 290,
+                "prompt_tokens": 1409
               }
             },
             "started_at": "<ts>",
             "tokens": {
-              "completion_tokens": 288,
-              "prompt_tokens": 1700
+              "completion_tokens": 290,
+              "prompt_tokens": 1409
             },
             "verdict": {
               "passed": true,
@@ -872,8 +893,8 @@
           },
           "round": 1,
           "usage": {
-            "completion_tokens": 288,
-            "prompt_tokens": 1700
+            "completion_tokens": 290,
+            "prompt_tokens": 1409
           }
         },
         "params": {
@@ -889,8 +910,8 @@
         "status": "passed",
         "title": "第 1 轮扩展假设",
         "tokens": {
-          "completion_tokens": 288,
-          "prompt_tokens": 1700
+          "completion_tokens": 290,
+          "prompt_tokens": 1409
         },
         "verdict": {
           "passed": true,
@@ -1046,9 +1067,9 @@
     ],
     "updated_at": "<ts>",
     "usage": {
-      "completion_tokens": 579,
-      "prompt_tokens": 2781,
-      "total_tokens": 3360
+      "completion_tokens": 581,
+      "prompt_tokens": 2490,
+      "total_tokens": 3071
     }
   }
 }

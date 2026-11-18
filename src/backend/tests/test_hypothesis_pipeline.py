@@ -638,7 +638,7 @@ async def test_generate_and_ground_failures_are_typed_not_invalid_json(client, m
                 session, _router_with(fake), library_id=library_id, direction=DIRECTION
             )
         assert exc.value.transient is True
-        fake.fail_next(LLMSchemaError("bad shape"), schema=pipeline.JudgementOut)
+        fake.fail_next(LLMSchemaError("bad shape"), schema=pipeline.GroundJudgementOut)
         with pytest.raises(LLMSchemaError) as exc:
             await pipeline.ground(session, _router_with(fake), library_id=library_id, statement="s")
         assert exc.value.transient is False
@@ -683,6 +683,7 @@ def test_every_schema_is_accepted_by_structured_outputs():
         pipeline.GenerateOut,
         pipeline.SubclaimsOut,
         pipeline.JudgementOut,
+        pipeline.GroundJudgementOut,
         pipeline.RiskNoteOut,
         CompareOut,
     ):
@@ -759,10 +760,11 @@ async def test_each_snippet_is_sent_once_and_subclaims_only_list_ids(client):
         grounded = await pipeline.ground(
             session, _router_with(fake), library_id=library_id, statement=f"关于 {DIRECTION} 的假设"
         )
-    judge = next(c for c in fake.calls if c["schema"] is pipeline.JudgementOut)
+    judge = next(c for c in fake.calls if c["schema"] is pipeline.GroundJudgementOut)
     evidence = grounded["evidence"]
     pool_text, task = judge["user"].rsplit("</evidence>", 1)
-    assert judge["user"].startswith(evidence.pool.render())
+    assert judge["user"].startswith(evidence.own_block())
+    assert evidence.shared_block() is None  # 只有一条假设：没有同轮共用的片段
     assert pool_text.count("agent planning verification with tree") == 1
     # 四轮检索（2 条子命题 × 接地 / 查新）命中的片段位远多于去重后的池
     slots = sum(len(x) for x in evidence.ground + evidence.novelty)
@@ -793,7 +795,10 @@ async def test_grounding_and_novelty_are_judged_in_one_call(client):
             grounding=grounded["grounding"],
             evidence=grounded["evidence"],
         )
-    assert [c["schema"] for c in fake.calls] == [pipeline.SubclaimsOut, pipeline.JudgementOut]
+    assert [c["schema"] for c in fake.calls] == [
+        pipeline.SubclaimsOut,
+        pipeline.GroundJudgementOut,
+    ]
     assert len(fake.calls) == calls_after_ground
     assert nov["usage"] == {"prompt_tokens": 0, "completion_tokens": 0}
     report = nov["report"]["subclaims"]
@@ -844,18 +849,18 @@ async def test_candidates_are_evaluated_concurrently_within_the_limit(client):
     assert all(o["score"] == 0.25 for o in out)  # 替身的确定性中间态
     assert all(o["grounding"][0]["paper_ids"] == [str(ids["A"])] for o in out)
     assert all(o["novelty_report"]["subclaims"][0]["verdict"] == "novel" for o in out)
-    assert all(o["feasibility"]["risk_note"] for o in out)
+    assert all("fake 可行性" in o["feasibility"]["risk_note"] for o in out)
     assert all(o["usage"]["prompt_tokens"] > 0 for o in out)
     assert [q["phase"] for q in out[0]["queries"]] == ["ground", "ground", "novelty", "novelty"]
-    # 每条候选三次调用：拆子命题、判定（接地 + 查新）、风险论证
+    # 每条候选两次调用：拆子命题、判定（接地 + 查新 + 风险论证）
     schemas = [c["schema"] for c in fake.calls]
     assert schemas.count(pipeline.SubclaimsOut) == 4
-    assert schemas.count(pipeline.JudgementOut) == 4
-    assert schemas.count(pipeline.RiskNoteOut) == 4
+    assert schemas.count(pipeline.GroundJudgementOut) == 4
+    assert len(schemas) == 8
 
 
-async def test_a_candidate_that_will_be_pruned_gets_no_risk_note(client):
-    """分数低于保留线的候选一定被剪、不会写成想法：不再为它调风险论证。"""
+async def test_a_candidate_without_any_evidence_costs_one_call(client):
+    """检索不到任何片段的候选：不调判定，也不为它单独写风险论证。"""
     library_id, _ids = await _setup(client, indexed=False)  # 检索不到任何片段
     fake = _Recorder()
     async with get_sessionmaker()() as session:
@@ -865,7 +870,7 @@ async def test_a_candidate_that_will_be_pruned_gets_no_risk_note(client):
     assert out["score"] == 0.0
     assert [e["stance"] for e in out["grounding"]] == ["speculation", "speculation"]
     assert all(e["judged"] is False for e in out["novelty_report"]["subclaims"])
-    assert out["feasibility"]["risk_note"] == pipeline.RISK_NOTE_SKIPPED
+    assert out["feasibility"]["risk_note"] == pipeline.RISK_NOTE_NO_EVIDENCE
     assert out["feasibility"]["signals"]["grounded_paper_count"] == 0
     assert [c["schema"] for c in fake.calls] == [pipeline.SubclaimsOut]  # 只有拆子命题那一次
 
@@ -875,8 +880,8 @@ async def test_a_transient_failure_is_retried_before_the_round_fails(client, mon
     monkeypatch.setattr(pipeline, "TRANSIENT_RETRY_DELAYS", (0.0, 0.0))
     library_id, _ids = await _setup(client)
     fake = FakeProvider()
-    fake.fail_next(LLMOverloadedError("HTTP 503"), schema=pipeline.JudgementOut)
-    fake.fail_next(LLMRateLimitedError("HTTP 429"), schema=pipeline.JudgementOut)
+    fake.fail_next(LLMOverloadedError("HTTP 503"), schema=pipeline.GroundJudgementOut)
+    fake.fail_next(LLMRateLimitedError("HTTP 429"), schema=pipeline.GroundJudgementOut)
     async with get_sessionmaker()() as session:
         result = await pipeline.ground(
             session, _router_with(fake), library_id=library_id, statement=f"关于 {DIRECTION} 的假设"
@@ -884,8 +889,128 @@ async def test_a_transient_failure_is_retried_before_the_round_fails(client, mon
         assert result["grounding"][0]["stance"] == "support"
         # 用完重试次数仍然失败：原样抛出，交给上层
         for _ in range(3):
-            fake.fail_next(LLMOverloadedError("HTTP 503"), schema=pipeline.JudgementOut)
+            fake.fail_next(LLMOverloadedError("HTTP 503"), schema=pipeline.GroundJudgementOut)
         with pytest.raises(LLMOverloadedError):
             await pipeline.ground(
                 session, _router_with(fake), library_id=library_id, statement="另一条假设"
             )
+
+
+# ---- 同轮共用证据段：缓存前缀 + 先暖缓存再扇出 ----
+
+
+def _entry(pool: "pipeline.EvidencePool", chunk_id: int, text: str) -> dict:
+    chunk = PaperChunk(id=uuid.UUID(int=chunk_id), paper_id=uuid.UUID(int=1), seq=1, text=text)
+    return pool.add(chunk, {})
+
+
+def test_snippets_shared_by_siblings_form_one_identical_prefix():
+    """同轮两条以上假设都用到的片段单独成段（逐字节相同），其余的只给自己；一段共用
+    片段都没用到的假设不带这段前缀。"""
+    pool = pipeline.EvidencePool()
+    common = _entry(pool, 1, "shared snippet one.")
+    only_a = _entry(pool, 2, "only for a.")
+    only_b = _entry(pool, 3, "only for b.")
+    other = _entry(pool, 4, "nothing in common.")
+    a = pipeline.HypothesisEvidence(["a0"], pool)
+    a.ground, a.novelty = [[common, only_a]], [[common]]
+    b = pipeline.HypothesisEvidence(["b0"], pool)
+    b.ground, b.novelty = [[only_b]], [[common]]
+    c = pipeline.HypothesisEvidence(["c0"], pool)
+    c.ground, c.novelty = [[other]], [[]]
+    pipeline.mark_shared([a, b, c])
+    assert a.shared_block() == b.shared_block() == pipeline.EvidencePool.render([common])
+    assert c.shared_block() is None
+    assert "only for a." in a.own_block() and "shared snippet one." not in a.own_block()
+    assert "only for b." in b.own_block() and "only for a." not in b.own_block()
+    assert "nothing in common." in c.own_block()
+
+
+def test_snippets_end_on_a_sentence_and_skip_the_paper_header():
+    """片段在句末收尾，不停在半个词上；全文首段跳过标题、作者和单位，从摘要起；
+    只有头部的首段在有别的结果时不送。"""
+    body = "We train the retriever jointly. " * 60  # 约 1,900 字
+    chunk = PaperChunk(id=uuid.uuid4(), paper_id=uuid.uuid4(), seq=3, text=body)
+    start, end = pipeline.snippet_span(chunk)
+    assert start == 0 and end <= pipeline.SNIPPET_CHARS
+    assert body[:end].endswith("jointly.")
+    header = (
+        "Joint Training of Retrievers\nAlice Smith1, Bob Lee2\n1Department of CS, "
+        "Some University\nalice@example.edu\n"
+    )
+    first = PaperChunk(
+        id=uuid.uuid4(),
+        paper_id=uuid.uuid4(),
+        seq=0,
+        text=header + "Abstract\n" + "Retrieval-augmented models are trained in two ways. " * 6,
+    )
+    start, _end = pipeline.snippet_span(first)
+    assert first.text[start:].startswith("Retrieval-augmented models")
+    header_only = PaperChunk(id=uuid.uuid4(), paper_id=uuid.uuid4(), seq=0, text=header * 4)
+    assert pipeline._drop_front_matter([header_only, chunk], 12) == [chunk]
+    assert pipeline._drop_front_matter([header_only], 12) == [header_only]
+    # 只有标题 + 摘要的首段（没有作者单位）原样保留
+    plain = PaperChunk(
+        id=uuid.uuid4(), paper_id=uuid.uuid4(), seq=0, text="A title\n\nAn abstract body."
+    )
+    assert pipeline.snippet_span(plain) == (0, len(plain.text))
+
+
+async def test_grounding_records_where_each_snippet_sits_in_its_chunk(client):
+    """证据卡能回到原文：每段入选片段带着分段 id 和在分段原文里的起止。"""
+    library_id, ids = await _setup(client)
+    async with get_sessionmaker()() as session:
+        result = await pipeline.ground(
+            session, LLMRouter(), library_id=library_id, statement=f"关于 {DIRECTION} 的机制假设"
+        )
+        entry = result["grounding"][0]
+        (chunk_id,) = entry["snippet_chunk_ids"]
+        chunk = await session.get(PaperChunk, uuid.UUID(chunk_id))
+    ((start, end),) = entry["snippet_spans"]
+    assert chunk.paper_id == ids["A"]
+    assert chunk.text[start:end] == entry["snippets"][0]
+
+
+class _StreamingRecorder(FakeProvider):
+    """像真实 provider 一样响应「开始回传」的信号，并记下每次判定调用的时刻与前缀。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.judges: list[dict] = []
+        self.events: list[str] = []
+
+    async def complete_structured(self, messages, *, model, schema, **kwargs):
+        import asyncio
+
+        from app.core.llm.base import structured_stream_started
+
+        started = structured_stream_started.get()
+        if schema is pipeline.GroundJudgementOut:
+            self.judges.append({"prefix": kwargs.get("cache_prefix"), "lead": started is not None})
+            self.events.append("lead-sent" if started is not None else "sent")
+        if started is not None:
+            await asyncio.sleep(0.02)  # 服务端读提示、写缓存
+            started.set()
+            self.events.append("lead-streaming")
+            await asyncio.sleep(0.1)  # 回答还在往回流
+        result = await super().complete_structured(messages, model=model, schema=schema, **kwargs)
+        if started is not None:
+            self.events.append("lead-done")
+        return result
+
+
+async def test_sibling_judgements_read_one_cached_prefix_written_first(client):
+    """一轮三条假设：共用片段做成同一段缓存前缀；带它的第一条先发，等它开始回传（缓存
+    已写好）再发其余两条——不等它整个答完。"""
+    library_id, _ids = await _setup(client)
+    statements = [f"关于 {DIRECTION} 的假设 {i}" for i in range(3)]
+    fake = _StreamingRecorder()
+    async with get_sessionmaker()() as session:
+        out = await pipeline.evaluate_candidates(
+            session, _router_with(fake), library_id=library_id, statements=statements
+        )
+    assert len(out) == 3
+    prefixes = {j["prefix"] for j in fake.judges}
+    assert len(prefixes) == 1 and next(iter(prefixes)).startswith("<evidence>")
+    assert [j["lead"] for j in fake.judges] == [True, False, False]
+    assert fake.events == ["lead-sent", "lead-streaming", "sent", "sent", "lead-done"]

@@ -18,6 +18,7 @@ Polaris 的所有对话类调用都走这里（见 router.py）。几条针对�
 """
 
 import base64
+import contextlib
 import logging
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
@@ -45,6 +46,7 @@ from app.core.llm.base import (
     ToolUseStart,
     ToolUseStop,
     normalize_finish_reason,
+    structured_stream_started,
 )
 from app.core.llm.errors import LLMRefusalError, LLMTransportError
 
@@ -425,8 +427,18 @@ class AnthropicProvider(LLMProvider):
             cache_prefix=cache_prefix,
         )
         api, extra = self._api(model)
-        if limit > NONSTREAM_MAX_TOKENS:
+        started = structured_stream_started.get()
+        if limit > NONSTREAM_MAX_TOKENS or started is not None:
             async with api.stream(**request, **extra) as stream:
+                if started is not None:
+                    # 第一个事件到了 = 服务端已读完提示、缓存已写好：告诉等着扇出的调用方。
+                    # 迭代器要留着读完再取整条消息（半途丢掉的异步生成器被回收时会关流）
+                    events = stream.__aiter__()
+                    with contextlib.suppress(StopAsyncIteration):
+                        await events.__anext__()
+                    started.set()
+                    async for _event in events:
+                        pass
                 message = await _final_message(stream)
         else:
             message = await api.create(**request, **extra)

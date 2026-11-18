@@ -829,9 +829,19 @@ def _evidence_entries(node: HypothesisNode, titles: dict[str, str]) -> list[dict
         snippets = [str(x) for x in (entry.get("snippets") or [])]
         owners = [str(x) for x in (entry.get("snippet_paper_ids") or [])]
         by_paper: dict[str, str] = {}
+        # 片段在原文里的位置（较新的节点才有）：分段 id + 在分段原文里的 [起, 止)
+        chunk_ids = [str(x) for x in (entry.get("snippet_chunk_ids") or [])]
+        spans = list(entry.get("snippet_spans") or [])
+        located: dict[str, dict[str, Any]] = {}
         if len(owners) == len(snippets):
-            for owner, snippet in zip(owners, snippets, strict=True):
+            for i, (owner, snippet) in enumerate(zip(owners, snippets, strict=True)):
                 by_paper.setdefault(owner, snippet)
+                if len(chunk_ids) == len(snippets) == len(spans) and owner not in located:
+                    located[owner] = {
+                        "chunk_id": chunk_ids[i],
+                        "match_start": spans[i][0],
+                        "match_end": spans[i][1],
+                    }
         else:
             # 这个字段出现之前落库的节点：只能按位置对（一篇一段时是对的）
             for owner, snippet in zip(paper_ids, snippets, strict=False):
@@ -846,6 +856,7 @@ def _evidence_entries(node: HypothesisNode, titles: dict[str, str]) -> list[dict
                     "source": "library",
                     "stance": entry["stance"],
                     "snippet": by_paper.get(pid, ""),
+                    **located.get(pid, {}),
                 }
             )
     return out

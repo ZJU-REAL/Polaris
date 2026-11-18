@@ -31,14 +31,16 @@ LLM 只负责五件判断性的事——组合灵感成假设、拆子命题、�
    在**同一次**模型调用里做完，各看各的候选片段（见 ``EvidencePool`` 与
    ``JUDGE_SYSTEM_PROMPT``）；``hyp_novelty`` 环节只剩单独查新时用。
 4. **feasibility**：venue/年份分布、库内相关片段密度等可得性信号**确定性**
-   统计，``hyp_feasibility`` 只写风险论证段——资源匹配是查表不是发挥。
+   统计——资源匹配是查表不是发挥。风险论证段在一轮扩展里由接地判定那次调用顺带
+   写（它手里正好有全部证据）；``hyp_feasibility`` 只剩单独算可行性时用。
 
 score = novel 比例 × support 覆盖率。选这个最笨的公式是有意的：两个因子各自
 可解释、各自单调（新颖子命题越多越值得做，有文献支持的子命题越多越扎实），
 乘积天然惩罚偏科——全新颖但无接地是空中楼阁，全接地但不新颖是重复劳动。
 加权、校准、两两对比这些精细化留给 D4 锦标赛，先让分数「能解释给人听」。
 
-一轮扩展的若干候选由 ``evaluate_candidates`` 并发走完上面 2–4 步（限流）。
+一轮扩展的若干候选由 ``evaluate_candidates`` 并发走完上面 2–4 步（限流）；同轮假设
+共用的证据片段做成一段缓存前缀，先由一条判定写进缓存再并发其余的（``_judge_round``）。
 
 模型调用一律走 ``LLMRouter.complete_json``：每个环节一个 Pydantic schema，服务端按
 schema 约束输出；失败是带 ``transient`` 的类型化错误（core/llm/errors.py），不再有
@@ -49,6 +51,7 @@ schema 约束输出；失败是带 ``transient`` 的类型化错误（core/llm/e
 import asyncio
 import json
 import logging
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from difflib import SequenceMatcher
@@ -59,7 +62,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm import budgets
-from app.core.llm.base import EffortLevel, Message
+from app.core.llm.base import EffortLevel, Message, structured_stream_started
 from app.core.llm.errors import LLMError, LLMRefusalError, LLMSchemaError, LLMTruncatedError
 from app.core.llm.router import LLMRouter
 from app.models.library_direction import LibraryPaper
@@ -157,6 +160,12 @@ class JudgementOut(BaseModel):
     items: list[JudgementItemOut]
 
 
+class GroundJudgementOut(JudgementOut):
+    """接地那一次判定：除了逐条判定，再写一段风险论证（以前是每条假设单独一次调用）。"""
+
+    risk_note: NonEmptyStr
+
+
 class RiskNoteOut(BaseModel):
     risk_note: NonEmptyStr
 
@@ -186,13 +195,16 @@ POLARIS_HYP_GROUND
 # 接地与查新在一次调用里判完（各看各的候选片段，互不替代）。实测过另一种做法——两次
 # 调用共享一个缓存的证据池：查新那次 75% 的输入读自缓存，但证据池只被读一次，写缓存的
 # 1.25 倍加价吃掉了大半折扣（合计 1.35 份证据池的钱）；合成一次调用是 1.0 份。
+# 风险论证也在这一次里写：以前它是判定之后单独一次调用，一轮扩展要多等二三十秒，
+# 写的又只是「哪里证据薄」——判定这次手里正好拿着全部证据。
 JUDGE_SYSTEM_PROMPT = """\
 POLARIS_HYP_GROUND
-你对照文献片段判定研究假设的子命题。输入开头的 <evidence> 是为这条假设检索到的全部文献
-片段：每段以 [编号] 和所属论文标题开头，后面是原文。其后是一个 JSON：statement（假设
-陈述）和 items——每条是一个子命题（index、subclaim）以及两组候选片段编号：
-ground_candidates（按子命题本身检索到的）和 novelty_candidates（换成「已有研究」的问法
-再检索到的）。对 items 里的每一条分别做两项**互相独立**的判定，index 原样回传：
+你对照文献片段判定研究假设的子命题。输入开头是一段或两段 <evidence>：每段文献片段以
+[编号] 和所属论文标题开头，后面是原文。有两段时，第一段是这一轮几条假设共用的片段
+（其中有些只属于别的假设，与这条无关），第二段是只属于这条假设的。其后是一个 JSON：
+statement（假设陈述）和 items——每条是一个子命题（index、subclaim）以及两组候选片段
+编号：ground_candidates（按子命题本身检索到的）和 novelty_candidates（换成「已有研究」
+的问法再检索到的）。对 items 里的每一条分别做两项**互相独立**的判定，index 原样回传：
 
 一、文献接地（stance）——只看 ground_candidates 指向的片段：
 - support：有片段支持这条子命题，stance_evidence_ids 填这些片段；
@@ -209,14 +221,22 @@ ground_candidates（按子命题本身检索到的）和 novelty_candidates（�
 两项判定不要互相推导：有文献支持不等于已知（支持的可能只是它的前提），没有支持也不
 等于新颖。编号只能从该条对应的那一组候选里选，**禁止使用别的编号，禁止编造**。
 
+输出要求里有 risk_note 时，再写一段风险论证：用假设陈述的语言，三四句话说清验证这条
+假设前最薄弱的环节（哪些关键部分在文献里找不到支持或被反驳、依据是否偏少偏旧）和动手
+前要先补什么。这段话直接给研究者看：不要出现片段编号、字段名（stance、verdict、
+support、speculation 之类）或「输入」「片段池」这类说法。
+
 输出 JSON：{"items": [{"index": 0, "stance": "...", "stance_evidence_ids": ["c3"], \
-"verdict": "...", "verdict_evidence_ids": []}]}"""
+"verdict": "...", "verdict_evidence_ids": []}], "risk_note": "..."}"""
 
 FEASIBILITY_SYSTEM_PROMPT = """\
 POLARIS_HYP_FEASIBILITY
 你是可行性风险论证员。输入 JSON 里是假设陈述和已经确定性统计好的资源信号
 （接地文献数、venue/年份分布、库内相关片段密度）。**不要重新估计这些数字**，
-只基于它们写一段简短的风险论证（哪些信号偏弱、验证该假设前要补什么）。
+只基于它们写一段简短的风险论证（哪里依据偏弱、验证该假设前要补什么）。
+这段话直接给研究者看：用假设陈述的语言写，把数字说成自然的话（如「只有 2 篇文献
+支持」），不要出现输入里的字段名（signals、grounded_paper_count、related_chunk_hits、
+venues 之类），也不要写「信号显示」「signals 显示」这类说法。
 输出 JSON：{"risk_note": "..."}"""
 
 
@@ -262,11 +282,13 @@ async def _complete_json[T: BaseModel](
     payload: dict[str, Any] | None = None,
     user: str | None = None,
     effort: EffortLevel | None = None,
+    cache_prefix: str | None = None,
 ) -> T:
     """一次结构化调用：system 是环节提示，payload 序列化成 user 消息（或直接给 user）。
 
     ``effort`` 不给时用环节的默认档。token 并入 ``usage``（修复重问的那一次也在
-    ``result.usage`` 里）。
+    ``result.usage`` 里）。``cache_prefix`` 是几次调用共用、要读缓存的那段材料，排在
+    user 消息之前（见 ``LLMRouter.complete_json``）。
 
     可重试的失败在这里退避重试（见 :func:`retry_transient`）；其余失败抛
     ``LLMError``，不在这里吞。
@@ -279,6 +301,7 @@ async def _complete_json[T: BaseModel](
             [Message(role="system", content=system), Message(role="user", content=text)],
             schema=schema,
             effort=effort,
+            cache_prefix=cache_prefix,
             user_id=user_id,
             project_id=project_id,
             library_id=library_id,
@@ -308,11 +331,81 @@ async def _paper_titles(session: AsyncSession, paper_ids: list[uuid.UUID]) -> di
     return {pid: (title or "") for pid, title in rows}
 
 
+# ---- 片段：从哪里起、到哪里止 ----
+#
+# 全文的第一段常常是标题、作者、单位和邮箱，摘要排在后面。语义检索照样会把它捞上来
+# （标题里的词与查询很像），给模型看的却全是人名和机构——实测一次探索 1,824 个片段位
+# 里有 38 个是这种段落。片段按句子收尾：以前硬截 1,500 字，证据卡上常常停在半个词上。
+
+#: 摘要的起始标记（行首的 Abstract / 摘要）。
+_ABSTRACT_RE = re.compile(r"(?im)^[ \t]*(?:abstract|摘[ \t]*要)\b[ \t]*[:：.—-]?[ \t]*")
+#: 「这是论文头部」的迹象：邮箱、arXiv 编号、机构名。
+_HEADER_RE = re.compile(
+    r"@|arXiv:\d|Universit|Institut|Laborator|Department|School of|Research,|\bInc\.|"
+    r"大学|研究院|学院|研究所"
+)
+#: 句末：中文句号类，或英文句号 / 问号 / 叹号后跟空白。
+_SENTENCE_END_RE = re.compile(r"[。！？；]|[.!?;](?=\s)")
+#: 前置首段剩下的正文少于这么多字时，当它只有头部。
+_MIN_BODY_CHARS = 200
+#: 片段开头若落在半句话里，往后找句首最多找这么远（找不到就从头给）。
+_LEAD_IN_CHARS = 200
+
+
+def _front_matter_end(chunk: PaperChunk) -> int | None:
+    """全文首段的头部（标题、作者、单位）在哪里结束。
+
+    返回正文起点；不是这种段落时返回 0；整段只有头部（没有摘要可留）时返回 None。
+    只看 seq 0：后面的段落不会有作者单位。没有头部迹象的首段（只有标题 + 摘要的论文
+    就是这样建的段）原样保留。
+    """
+    if chunk.seq != 0 or not _HEADER_RE.search(chunk.text[:600]):
+        return 0
+    match = _ABSTRACT_RE.search(chunk.text)
+    if match is None or len(chunk.text) - match.end() < _MIN_BODY_CHARS:
+        return None
+    return match.end()
+
+
+def snippet_span(chunk: PaperChunk, limit: int = SNIPPET_CHARS) -> tuple[int, int]:
+    """给模型和证据卡看的那一段在 ``chunk.text`` 里的 [起, 止)。
+
+    起点跳过首段的头部；后续分段落在半句话里（小写字母开头）时挪到下一句句首。止点在上限内
+    最后一个句末之后；上限内一个句末都没有（或在前一半里）才退到最后一个空白、再
+    不行硬截。
+    """
+    text = chunk.text
+    start = _front_matter_end(chunk) or 0
+    if start == 0 and chunk.seq > 0 and text[:1].islower():
+        lead = _SENTENCE_END_RE.search(text, 0, _LEAD_IN_CHARS)
+        if lead is not None:
+            start = lead.end()
+    while start < len(text) and text[start].isspace():
+        start += 1
+    end = len(text)
+    if end - start > limit:
+        hard = start + limit
+        ends = [m.end() for m in _SENTENCE_END_RE.finditer(text, start, hard)]
+        if ends and ends[-1] - start >= limit // 2:
+            end = ends[-1]
+        else:
+            space = text.rfind(" ", start + limit // 2, hard)
+            end = space if space != -1 else hard
+    return start, end
+
+
+def _drop_front_matter(chunks: list[PaperChunk], limit: int) -> list[PaperChunk]:
+    """去掉只有论文头部的首段（有别的结果可用时），截到 ``limit`` 条。"""
+    useful = [c for c in chunks if _front_matter_end(c) is not None]
+    return (useful or chunks)[:limit]
+
+
 def _chunk_entry(chunk: PaperChunk, titles: dict[uuid.UUID, str]) -> dict[str, Any]:
+    start, end = snippet_span(chunk)
     return {
         "paper_id": str(chunk.paper_id),
         "title": titles.get(chunk.paper_id, ""),
-        "snippet": chunk.text[:SNIPPET_CHARS],
+        "snippet": chunk.text[start:end],
     }
 
 
@@ -673,16 +766,19 @@ async def generate(
     }
 
 
-# ---- 2) 证据池：一条假设检索到的全部片段，去重后编号 ----
+# ---- 2) 证据池：一轮扩展检索到的全部片段，去重后编号 ----
 
 
 class EvidencePool:
-    """一条假设的证据池：接地与查新两轮检索捞到的片段，按片段去重、按首次出现编号。
+    """证据池：接地与查新两轮检索捞到的片段，按片段去重、按首次出现编号。
 
     为什么要有它（实测，26 篇的库、4 轮探索）：一条假设 6 条子命题、每条 12 段、接地
     与查新各检索一轮，就是 144 个片段位；同一个库里它们大量重复，而以前每个位置都把
     1,500 字原文重发一遍——``hyp_ground`` 与 ``hyp_novelty`` 一次探索吃掉 140 万输入
     token，占假设阶段费用的四分之三。现在每段原文只出现一次，子命题只列编号。
+
+    一轮扩展的几条假设共用一个池（编号在这一轮里唯一），各自记下自己用到哪些条目，
+    见 :class:`HypothesisEvidence`。
 
     渲染结果（:meth:`render`）是**确定的**：同样的检索结果永远同样的字节。
     """
@@ -693,11 +789,24 @@ class EvidencePool:
         self._by_id: dict[str, dict[str, Any]] = {}
 
     def add(self, chunk: PaperChunk, titles: dict[uuid.UUID, str]) -> dict[str, Any]:
-        """登记一个片段，返回它的条目（已登记过就返回原条目，编号不变）。"""
+        """登记一个片段，返回它的条目（已登记过就返回原条目，编号不变）。
+
+        条目除了给模型看的标题与原文，还记着片段出自哪个分段、在分段原文里的起止
+        位置（``chunk_id`` / ``match_start`` / ``match_end``），证据卡据此定位原文。
+        """
         known = self._by_chunk.get(chunk.id)
         if known is not None:
             return self._by_id[known]
-        entry = {"id": f"c{len(self.entries) + 1}", **_chunk_entry(chunk, titles)}
+        start, end = snippet_span(chunk)
+        entry = {
+            "id": f"c{len(self.entries) + 1}",
+            "paper_id": str(chunk.paper_id),
+            "title": titles.get(chunk.paper_id, ""),
+            "snippet": chunk.text[start:end],
+            "chunk_id": str(chunk.id),
+            "match_start": start,
+            "match_end": end,
+        }
         self.entries.append(entry)
         self._by_chunk[chunk.id] = entry["id"]
         self._by_id[entry["id"]] = entry
@@ -706,34 +815,64 @@ class EvidencePool:
     def __len__(self) -> int:
         return len(self.entries)
 
-    def render(self) -> str:
+    @staticmethod
+    def render(entries: list[dict[str, Any]]) -> str:
         """给模型看的证据正文。只放编号、论文标题和原文——paper_id 是给代码用的，
         模型引用的是片段编号，由代码换回论文。"""
         parts = ["<evidence>"]
-        for entry in self.entries:
+        for entry in entries:
             parts.append(f"[{entry['id']}] {entry['title']}\n{entry['snippet']}")
         parts.append("</evidence>")
         return "\n\n".join(parts)
 
 
 class HypothesisEvidence:
-    """一条假设的检索结果：证据池 + 每条子命题在接地 / 查新两轮里各捞到哪些片段。"""
+    """一条假设的检索结果：每条子命题在接地 / 查新两轮里各捞到哪些片段。
 
-    def __init__(self, subclaims: list[str]) -> None:
+    ``pool`` 是这一轮共用的证据池；``shared_ids`` 是这条假设与同轮别的假设**都**用到
+    的片段——它们单独成一段、放在提示最前面并打缓存断点（见 :func:`retrieve_evidence`
+    的 why），其余的片段只给这条假设。
+    """
+
+    def __init__(self, subclaims: list[str], pool: EvidencePool | None = None) -> None:
         self.subclaims = subclaims
-        self.pool = EvidencePool()
+        self.pool = pool if pool is not None else EvidencePool()
         #: 与 subclaims 逐位对应；每条是该子命题检索到的池内条目
         self.ground: list[list[dict[str, Any]]] = []
         self.novelty: list[list[dict[str, Any]]] = []
         self.ground_trace: list[dict[str, Any]] = []
         self.novelty_trace: list[dict[str, Any]] = []
+        self.shared_ids: frozenset[str] = frozenset()
         #: 判定调用一并给出的查新结论（index → (verdict, paper_ids)）；None = 还没判过
         self.verdicts: dict[int, tuple[str, list[str]]] | None = None
+        #: 判定调用一并写的风险论证；None = 还没写过
+        self.risk_note: str | None = None
+
+    def entry_ids(self) -> set[str]:
+        return {e["id"] for rows in (*self.ground, *self.novelty) for e in rows}
+
+    def entries(self) -> list[dict[str, Any]]:
+        """这条假设用到的全部条目，按池内编号顺序。"""
+        mine = self.entry_ids()
+        return [e for e in self.pool.entries if e["id"] in mine]
+
+    def shared_block(self) -> str | None:
+        """同轮共用的那一段（没有共用片段时为 None）。同一轮里逐字节相同。"""
+        if not self.shared_ids:
+            return None
+        return EvidencePool.render([e for e in self.pool.entries if e["id"] in self.shared_ids])
+
+    def own_block(self) -> str:
+        """只属于这条假设的片段（可能为空串）。"""
+        own = [e for e in self.entries() if e["id"] not in self.shared_ids]
+        return EvidencePool.render(own) if own else ""
 
 
 # 换措辞的确定性前缀：目的不是「更好的查询」，而是**换一个角度**再捞一轮——
 # 同一措辞查两遍只会复读接地结果，查新就成了自证
 _NOVELTY_QUERY_PREFIX = "已有研究 prior work on"
+#: 多取几条，给去掉「只有论文头部」的首段留余量（见 _drop_front_matter）
+_RETRIEVE_SLACK = 2
 
 
 def _novelty_query(subclaim: str) -> str:
@@ -749,12 +888,19 @@ async def retrieve_evidence(
     project_id: uuid.UUID | None,
     include_ground: bool = True,
 ) -> list[HypothesisEvidence]:
-    """为若干条假设的子命题做完全部检索（接地一轮 + 查新换措辞一轮）。
+    """为一轮里若干条假设的子命题做完全部检索（接地一轮 + 查新换措辞一轮）。
 
     所有查询**一次**向量化：一轮扩展 4 条假设 × 6 条子命题 × 2 轮 = 48 条查询，逐条
     请求向量模型就是 48 次往返。检索本身是确定性的，结果与逐条查完全一样。
+
+    几条假设共用一个池，并标出**同轮至少两条假设都用到**的片段（``shared_ids``）。
+    实测（25 篇的库、一次探索 13 条假设）：同一轮兄弟假设围绕同一个父假设展开，一轮
+    四条假设各自约 70 段，合起来去重后约 190 段——三成的原文被重复发送。把共用的那
+    部分做成同一段前缀并打缓存断点，第一条判定写缓存、其余三条按一成的价钱读，判定
+    输入的费用降到原来的约八成；每条假设独有的片段仍然只发一次。
     """
-    bundles = [HypothesisEvidence(list(subclaims)) for subclaims in subclaim_sets]
+    pool = EvidencePool()
+    bundles = [HypothesisEvidence(list(subclaims), pool) for subclaims in subclaim_sets]
     queries: list[str] = []
     for bundle in bundles:
         if include_ground:
@@ -766,8 +912,9 @@ async def retrieve_evidence(
         queries=queries,
         user_id=user_id,
         project_id=project_id,
-        limit=GROUND_TOP_K,
+        limit=GROUND_TOP_K + _RETRIEVE_SLACK,
     )
+    hits = [_drop_front_matter(rows, GROUND_TOP_K) for rows in hits]
     all_chunks = [chunk for rows in hits for chunk in rows]
     titles = await _paper_titles(session, list({c.paper_id for c in all_chunks}))
     cursor = 0
@@ -779,7 +926,7 @@ async def retrieve_evidence(
             for query in phase_queries:
                 chunks = hits[cursor]
                 cursor += 1
-                entries = [bundle.pool.add(c, titles) for c in chunks]
+                entries = [pool.add(c, titles) for c in chunks]
                 # 检索留痕（D6 披露 #655）：接地的查询是子命题本身，查新是换措辞后的
                 trace = {"query": query, "paper_ids": _ordered_paper_ids(chunks)}
                 if phase == "ground":
@@ -788,7 +935,26 @@ async def retrieve_evidence(
                 else:
                     bundle.novelty.append(entries)
                     bundle.novelty_trace.append(trace)
+    mark_shared(bundles)
     return bundles
+
+
+def mark_shared(bundles: list[HypothesisEvidence]) -> None:
+    """标出同轮至少两条假设都用到的片段（各条假设的 ``shared_ids``）。
+
+    一段共用片段都没用到的假设不带这段前缀：读缓存也要花钱。只有一条假设时没有
+    「共用」可言。
+    """
+    if len(bundles) < 2:
+        return
+    seen: dict[str, int] = {}
+    for bundle in bundles:
+        for entry_id in bundle.entry_ids():
+            seen[entry_id] = seen.get(entry_id, 0) + 1
+    shared = frozenset(entry_id for entry_id, n in seen.items() if n > 1)
+    for bundle in bundles:
+        if bundle.entry_ids() & shared:
+            bundle.shared_ids = shared
 
 
 # ---- 3) 文献接地：拆子命题 → 确定性检索 → 只许从检索集内选 ----
@@ -807,7 +973,9 @@ def sanitize_grounding(
       「有立场没证据」和编造引文一样不可信；
     - snippets 回填**被选中的那几段**原文，证据卡（D5）直接可用；
       snippet_paper_ids 与 snippets 等长、逐位对应，说明每段出自哪篇论文
-      （一篇论文可能有多段入选）；paper_ids 是它们去重保序的论文集合。
+      （一篇论文可能有多段入选）；paper_ids 是它们去重保序的论文集合；
+      snippet_chunk_ids / snippet_spans 同样逐位对应：片段出自哪个分段、在分段原文
+      里的 [起, 止)（没有入选片段、或检索条目没带这些信息时不写这两个键）。
     """
     by_index: dict[int, dict[str, Any]] = {}
     for item in items:
@@ -823,20 +991,24 @@ def sanitize_grounding(
         picked = [entry for entry in pool if entry["id"] in chosen]
         if stance not in ("support", "refute") or not picked:
             stance, picked = "speculation", []
-        out.append(
-            {
-                "subclaim": subclaim,
-                "stance": stance,
-                "paper_ids": list(dict.fromkeys(entry["paper_id"] for entry in picked)),
-                "snippets": [entry["snippet"] for entry in picked],
-                "snippet_paper_ids": [entry["paper_id"] for entry in picked],
-            }
-        )
+        row: dict[str, Any] = {
+            "subclaim": subclaim,
+            "stance": stance,
+            "paper_ids": list(dict.fromkeys(entry["paper_id"] for entry in picked)),
+            "snippets": [entry["snippet"] for entry in picked],
+            "snippet_paper_ids": [entry["paper_id"] for entry in picked],
+        }
+        if picked and all("chunk_id" in entry for entry in picked):
+            row["snippet_chunk_ids"] = [entry["chunk_id"] for entry in picked]
+            row["snippet_spans"] = [[entry["match_start"], entry["match_end"]] for entry in picked]
+        out.append(row)
     return out
 
 
 def _judge_message(statement: str, evidence: HypothesisEvidence, *, ground: bool) -> str:
-    """判定调用的 user 消息：证据池在前，随后是假设与每条子命题的候选片段编号。
+    """判定调用的 user 消息：这条假设独有的证据在前，随后是假设与每条子命题的候选
+    片段编号。同轮共用的那段证据不在这里，它作为缓存前缀排在这条消息之前
+    （:meth:`HypothesisEvidence.shared_block`）。
 
     ``ground=False``：只做查新（接地已经判过），不给 ground_candidates。
     """
@@ -847,7 +1019,9 @@ def _judge_message(statement: str, evidence: HypothesisEvidence, *, ground: bool
         item["novelty_candidates"] = [e["id"] for e in evidence.novelty[i]]
         items.append(item)
     payload = {"statement": statement, "items": items}
-    return f"{evidence.pool.render()}\n\n{json.dumps(payload, ensure_ascii=False)}"
+    body = json.dumps(payload, ensure_ascii=False)
+    own = evidence.own_block()
+    return f"{own}\n\n{body}" if own else body
 
 
 async def _judge(
@@ -859,18 +1033,19 @@ async def _judge(
     ground: bool,
     usage: dict[str, int],
     identity: dict[str, Any],
-) -> list[JudgementItemOut]:
-    judged = await _complete_json(
+) -> JudgementOut:
+    """一次判定调用。``ground=True`` 时一并写风险论证（schema 多一个 risk_note）。"""
+    return await _complete_json(
         llm,
         stage,
         system=JUDGE_SYSTEM_PROMPT,
         user=_judge_message(statement, evidence, ground=ground),
-        schema=JudgementOut,
+        cache_prefix=evidence.shared_block(),
+        schema=GroundJudgementOut if ground else JudgementOut,
         usage=usage,
         effort=JUDGE_EFFORT,
         **identity,
     )
-    return list(judged.items)
 
 
 def _collect_verdicts(
@@ -928,15 +1103,16 @@ async def judge_grounding(
     library_id: uuid.UUID,
     voyage_id: uuid.UUID | None,
 ) -> list[dict[str, Any]]:
-    """接地 + 查新判定（一次模型调用）→ grounding JSON；查新结论记在 ``evidence`` 上，
-    :func:`judge_novelty` 直接取用。
+    """接地 + 查新判定 + 风险论证（一次模型调用）→ grounding JSON；查新结论与风险论证
+    记在 ``evidence`` 上，:func:`judge_novelty` 与可行性直接取用。
 
     一段都没检索到（库里没有可检索的片段）时不调模型：没有可选的证据，全部
-    speculation 就是唯一诚实的答案。
+    speculation 就是唯一诚实的答案（风险论证也就没有可写的依据）。
     """
     subclaims = evidence.subclaims
-    if not len(evidence.pool):
+    if not evidence.entries():
         evidence.verdicts = {}
+        evidence.risk_note = RISK_NOTE_NO_EVIDENCE
         return sanitize_grounding(subclaims, evidence.ground, [])
     identity: dict[str, Any] = dict(
         user_id=user_id, project_id=project_id, library_id=library_id, voyage_id=voyage_id
@@ -950,10 +1126,12 @@ async def judge_grounding(
         usage=usage,
         identity=identity,
     )
-    evidence.verdicts = _collect_verdicts(evidence, judged)
+    evidence.verdicts = _collect_verdicts(evidence, judged.items)
+    if isinstance(judged, GroundJudgementOut):
+        evidence.risk_note = judged.risk_note
     items = [
         {"index": item.index, "stance": item.stance, "evidence_ids": item.stance_evidence_ids}
-        for item in judged
+        for item in judged.items
     ]
     return sanitize_grounding(subclaims, evidence.ground, items)
 
@@ -1046,7 +1224,7 @@ async def judge_novelty(
                         voyage_id=voyage_id,
                     ),
                 )
-                verdicts = _collect_verdicts(evidence, judged)
+                verdicts = _collect_verdicts(evidence, judged.items)
             except _NO_JUDGEMENT:
                 logger.warning(
                     "novelty judgement unavailable; marking all uncertain", exc_info=True
@@ -1122,7 +1300,7 @@ async def novelty(
 # ---- 5) 可行性：确定性资源信号 + LLM 只写风险论证 ----
 
 RISK_NOTE_UNAVAILABLE = "（风险论证生成失败，仅供确定性信号参考。）"
-RISK_NOTE_SKIPPED = "（这条假设的分数低于保留线，已被剪掉，未写风险论证。）"
+RISK_NOTE_NO_EVIDENCE = "（库里检索不到与这条假设相关的片段，没有可以论证风险的依据。）"
 
 
 async def feasibility_signals(
@@ -1236,7 +1414,58 @@ async def feasibility(
     return {"feasibility": {"signals": signals, "risk_note": note}, "usage": usage}
 
 
-# ---- 6) 一轮扩展：若干候选并发走完 接地 → 查新 ∥ 可行性 ----
+# ---- 6) 一轮扩展：若干候选并发走完 接地 + 查新 + 风险论证 ----
+
+
+async def _judge_round(
+    llm: LLMRouter,
+    *,
+    statements: list[str],
+    bundles: list[HypothesisEvidence],
+    usages: list[dict[str, int]],
+    identity: dict[str, Any],
+    limited: Callable[[Any], Awaitable[Any]],
+) -> list[list[dict[str, Any]]]:
+    """一轮的判定调用：**先暖缓存、再扇出**。
+
+    同轮共用的证据段（:meth:`HypothesisEvidence.shared_block`）要等第一次调用开始回传
+    之后才读得到缓存；几次同时发出去就都按原价读。所以先发一条带共用段的，等它开始
+    回传（provider 支持时）或干脆跑完，再发其余的。等的只是服务端读完提示那几秒。
+    """
+
+    def judge_one(i: int) -> Awaitable[list[dict[str, Any]]]:
+        return judge_grounding(
+            llm, statement=statements[i], evidence=bundles[i], usage=usages[i], **identity
+        )
+
+    order = list(range(len(statements)))
+    results: list[Any] = [None] * len(statements)
+    lead = next((i for i in order if bundles[i].shared_ids), None)
+    lead_task: asyncio.Future[Any] | None = None
+    if lead is not None and len(order) > 1:
+        started = asyncio.Event()
+        lead_index: int = lead
+
+        async def lead_call() -> list[dict[str, Any]]:
+            structured_stream_started.set(started)  # 只在这个任务的上下文里生效
+            return await judge_one(lead_index)
+
+        lead_task = asyncio.ensure_future(limited(lead_call()))
+        waiter = asyncio.ensure_future(started.wait())
+        try:
+            await asyncio.wait({lead_task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            waiter.cancel()
+        order.remove(lead)
+    rest = await asyncio.gather(*(limited(judge_one(i)) for i in order), return_exceptions=True)
+    for i, outcome in zip(order, rest, strict=True):
+        results[i] = outcome
+    if lead_task is not None and lead is not None:
+        (results[lead],) = await asyncio.gather(lead_task, return_exceptions=True)
+    for outcome in results:
+        if isinstance(outcome, BaseException):
+            raise outcome
+    return results
 
 
 async def evaluate_candidates(
@@ -1250,17 +1479,16 @@ async def evaluate_candidates(
     voyage_id: uuid.UUID | None = None,
     concurrency: int = EVALUATE_CONCURRENCY,
 ) -> list[dict[str, Any]]:
-    """一轮扩展的全部候选：拆子命题 → 检索 → 接地 + 查新 → 打分 → 风险论证。
+    """一轮扩展的全部候选：拆子命题 → 检索 → 接地 + 查新 + 风险论证 → 打分。
 
     以前是逐候选、逐调用串行（一轮 4 条 × 4 次调用排队，实测每轮 3–4 分钟）。模型调用
     之间没有依赖的部分现在并发，用一个信号量限流（网关会 503，并发不能无界）：
 
     1. 各候选**并发**拆子命题；
     2. 全部检索一次做完（数据库会话不能并发用，检索本身也不慢）；
-    3. 各候选**并发**做判定——接地与查新在同一次调用里；
-    4. 打分，并顺序算确定性的可行性信号（查库）；
-    5. 没被剪掉的候选**并发**写风险论证。分数低于剪枝线的一定被剪、不会写成想法：
-       不再为它调模型，信号照常入库。
+    3. 各候选做判定——接地、查新和风险论证在同一次调用里；同轮共用的证据段先由一条
+       调用写进缓存，其余的再并发（见 :func:`_judge_round`）；
+    4. 打分，并顺序算确定性的可行性信号（查库）。
 
     返回与 ``statements`` 逐位对应的 {statement, grounding, novelty_report,
     feasibility, score, usage, queries}。任何一次调用的不可重试失败都会让整轮失败——
@@ -1297,13 +1525,13 @@ async def evaluate_candidates(
         user_id=user_id,
         project_id=project_id,
     )
-    groundings = await run_all(
-        [
-            judge_grounding(
-                llm, statement=statement, evidence=bundles[i], usage=usages[i], **identity
-            )
-            for i, statement in enumerate(statements)
-        ]
+    groundings = await _judge_round(
+        llm,
+        statements=statements,
+        bundles=bundles,
+        usages=usages,
+        identity=identity,
+        limited=limited,
     )
     reports = [
         await judge_novelty(
@@ -1323,31 +1551,15 @@ async def evaluate_candidates(
         )
         for i, statement in enumerate(statements)
     ]
-    viable = [i for i, score in enumerate(scores) if score >= MIN_VIABLE_SCORE]
-    notes = dict(
-        zip(
-            viable,
-            await run_all(
-                [
-                    risk_note(
-                        llm,
-                        statement=statements[i],
-                        signals=signals[i],
-                        usage=usages[i],
-                        **identity,
-                    )
-                    for i in viable
-                ]
-            ),
-            strict=True,
-        )
-    )
     return [
         {
             "statement": statement,
             "grounding": groundings[i],
             "novelty_report": reports[i],
-            "feasibility": {"signals": signals[i], "risk_note": notes.get(i, RISK_NOTE_SKIPPED)},
+            "feasibility": {
+                "signals": signals[i],
+                "risk_note": bundles[i].risk_note or RISK_NOTE_UNAVAILABLE,
+            },
             "score": scores[i],
             "usage": usages[i],
             "queries": [{"phase": "ground", **q} for q in bundles[i].ground_trace]

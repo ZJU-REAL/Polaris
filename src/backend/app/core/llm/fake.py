@@ -1420,7 +1420,8 @@ class FakeProvider(LLMProvider):
         """接地：拆分调用（payload 无 "items"）固定拆 2 条回显 statement 的子命题；
         判定调用（items 每条带 ground_candidates / novelty_candidates——检索到的片段
         编号；接地与查新一次判完）第一条选首个候选表 support 且 novel、其余一律
-        speculation / uncertain——保证 score=0.25 的确定性中间态（novel½ × support½）。"""
+        speculation / uncertain——保证 score=0.25 的确定性中间态（novel½ × support½）；
+        风险论证固定一段（与单独的可行性环节同一句）。"""
         # 判定调用的消息是「<evidence> 证据池 </evidence> + JSON」：原文里可能有花括号，
         # 只解析证据池之后的那段
         payload = FakeProvider._payload_of(last_user.rsplit("</evidence>", 1)[-1])
@@ -1451,7 +1452,10 @@ class FakeProvider(LLMProvider):
                     "verdict_evidence_ids": novelty[:1] if first else [],
                 }
             )
-        return json.dumps({"items": out}, ensure_ascii=False)
+        # 接地那次判定一并写风险论证（只查新的那次 schema 没有这个字段，多给的会被忽略）
+        return json.dumps(
+            {"items": out, "risk_note": FakeProvider._FAKE_RISK_NOTE}, ensure_ascii=False
+        )
 
     @staticmethod
     def _respond_research_brief(last_user: str) -> str:
@@ -1540,13 +1544,12 @@ class FakeProvider(LLMProvider):
             ensure_ascii=False,
         )
 
+    _FAKE_RISK_NOTE = "（fake 可行性）库内证据规模有限，验证前需扩充语料复核（fake）。"
+
     @staticmethod
     def _respond_hyp_feasibility() -> str:
         """可行性：固定风险论证段（信号本身由代码确定性统计，fake 不碰）。"""
-        return json.dumps(
-            {"risk_note": "（fake 可行性）库内证据规模有限，验证前需扩充语料复核（fake）。"},
-            ensure_ascii=False,
-        )
+        return json.dumps({"risk_note": FakeProvider._FAKE_RISK_NOTE}, ensure_ascii=False)
 
     @staticmethod
     def _respond_goal_explore(full_text: str) -> str:

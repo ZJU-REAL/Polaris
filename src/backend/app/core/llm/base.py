@@ -17,9 +17,11 @@
 "tool"``），反过来则要往回看相邻消息做归并，脆得多。
 """
 
+import asyncio
 import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
@@ -168,6 +170,21 @@ def with_cache_prefix(messages: Sequence["Message"], cache_prefix: str | None) -
             out[i] = Message(role="user", content=f"{cache_prefix}\n\n{m.text}")
             return out
     return [*out, Message(role="user", content=cache_prefix)]
+
+
+#: 「这次结构化调用的回答已经开始回来了」的信号，用来**先暖缓存、再扇出**。
+#:
+#: 一批调用共享一段带缓存断点的前缀时，缓存要等第一次调用的回答开始回传（服务端读完
+#: 提示、写好缓存）之后才读得到；同时发出去的几次都按原价读那段前缀。调用方在第一次
+#: 调用所在的任务里 ``set`` 一个 ``asyncio.Event``，支持的 provider 就改走流式，在收到
+#: 第一个事件时 ``set`` 它——调用方等到它（或等到这次调用干脆结束）再发其余的。
+#: 不支持的 provider 不理它，调用方等的是调用结束，行为只是慢一点。
+#:
+#: 用 ContextVar 而不是参数：信号只对「第一次调用」有意义，又要穿过路由器、重试和修复
+#: 重问几层；每个 asyncio 任务有自己的上下文副本，所以只影响设置它的那个任务。
+structured_stream_started: ContextVar[asyncio.Event | None] = ContextVar(
+    "structured_stream_started", default=None
+)
 
 
 # ---- 流式事件 ----
