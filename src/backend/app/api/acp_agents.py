@@ -1,6 +1,7 @@
-"""外部 agent（ACP 后端）的管理面（#836）。
+"""本机智能体（经 ACP 接入的 Claude Code、Codex、pi……）的管理面（#836）。
 
-登记一个 agent 等于声明「本地引擎可以拉起这条命令」。门槛是登录（本地会话）。
+登记一个智能体等于声明「本机引擎可以拉起这条命令」。它只在用户为一场助手对话
+明确选了它时才被拉起；Polaris 自己的模型调用不经过它。
 
 env 只进不出：写入时加密落库，读取时只回键名。
 """
@@ -45,6 +46,10 @@ class AcpAgentRead(BaseModel):
     env_keys: list[str] = []
     #: 命令此刻能不能在 PATH 里找到（不拉起进程，只查文件）
     command_found: bool = False
+    #: 上次检查失败属于哪一种：not_installed / needs_login / timeout / crashed / failed
+    error_kind: str | None = None
+    #: 它会不会在动手前征求同意（pi 不会：权限策略对它不起作用）
+    permission_prompts: bool = True
 
 
 class AcpAgentCreate(BaseModel):
@@ -78,6 +83,9 @@ def _read(row: AcpAgent) -> AcpAgentRead:
     out = AcpAgentRead.model_validate(row)
     out.env_keys = sorted(decrypt_env(row.env_encrypted))
     out.command_found = acp_registry.command_found(row)
+    out.error_kind = acp_registry.error_kind(row.last_error)
+    template = get_template(row.template)
+    out.permission_prompts = template.permission_prompts if template else True
     return out
 
 
@@ -95,12 +103,10 @@ def _check_env(env: dict[str, str] | None) -> None:
 
 
 async def _agents_changed(agent_id: uuid.UUID) -> None:
-    """agent 增删改之后：路由缓存（含「没配模型时谁来接管」）作废，模型调用用的进程池换新。"""
-    from app.core.llm.acp import forget_agent
-    from app.core.llm.router import get_llm_router
+    """agent 改了或删了：它名下开着的会话用的是旧命令/旧策略，全部关掉。"""
+    from app.services.acp.pool import get_pool
 
-    get_llm_router().invalidate_cache()
-    await forget_agent(str(agent_id))
+    await get_pool().forget_agent(agent_id)
 
 
 @router.get("/templates")
@@ -188,10 +194,6 @@ async def update_agent(
         row.last_probed_at = None
     await session.commit()
     await session.refresh(row)
-    from app.services.acp.pool import get_pool
-
-    # 配置变了：已经开着的会话用的是旧命令/旧策略，必须关掉
-    await get_pool().forget_agent(row.id)
     await _agents_changed(row.id)
     return _read(row)
 
@@ -217,9 +219,6 @@ async def delete_agent(
     _user: User = Depends(current_active_user),
 ) -> None:
     row = await _get(session, agent_id)
-    from app.services.acp.pool import get_pool
-
-    await get_pool().forget_agent(row.id)
     agent_id = row.id
     await session.delete(row)
     await session.commit()

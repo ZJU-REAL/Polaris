@@ -82,6 +82,10 @@ async def lifespan(app: FastAPI):
     await asyncio.gather(shutdown_task_queue(), cancel_all_tasks())
     # 转到后台的记账/日志写入：落完盘再关库
     await drain_side_writes()
+    # 本机智能体的子进程：随引擎一起收掉，别留孤儿进程继续烧额度
+    from app.services.acp.pool import shutdown_pool
+
+    await shutdown_pool()
     await stop_crdt_stream_subscriber()
     await reset_crdt_rooms()  # 关停 CRDT 房间服务器（先冲刷不了的防抖任务直接取消）
     await dispose_engine()

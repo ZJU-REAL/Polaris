@@ -1,4 +1,8 @@
-"""全局助手：多轮工具循环，走 SSE。回答方只有一个——Claude（见 core/llm/router.py）。
+"""全局助手：多轮工具循环，走 SSE。
+
+回答方默认是 Polaris 自己的 Claude 循环（见 core/llm/router.py）；用户也可以把一场对话
+交给一个接在本机上的智能体（Claude Code、Codex、pi……经 ACP，见 services/acp）。两条
+路吐同一套事件，落库、回放、渲染都不分家。
 
 **新路径，六个老对话端点一行不动。** 助手成熟之前两套并存，出问题随时关掉开关退回去。
 
@@ -12,8 +16,9 @@ from collections.abc import AsyncIterator
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.chat.events import (
@@ -23,6 +28,8 @@ from app.agents.chat.events import (
     DoneEvent,
     ErrorEvent,
     MetaEvent,
+    PermissionRequestEvent,
+    PermissionResolvedEvent,
     PlanEvent,
     SourcesEvent,
     ThinkingEvent,
@@ -53,6 +60,7 @@ from app.schemas.chat_agent import (
 from app.services import buddy
 from app.services import conversations as store
 from app.services import projects as projects_service
+from app.services.acp import chat as acp_chat
 from app.tools.context import ToolContext
 from app.tools.memory import MEMORY_TOOL_NAMES
 from app.tools.scope import all_library_ids
@@ -75,6 +83,8 @@ _EVENT_NAMES: dict[type, str] = {
     VerifyEvent: "verify",
     ToolCallEvent: "tool_call",
     ToolResultEvent: "tool_result",
+    PermissionRequestEvent: "permission_request",
+    PermissionResolvedEvent: "permission_resolved",
     UsageEvent: "usage",
     CompactionEvent: "compaction",
     DoneEvent: "done",
@@ -99,8 +109,11 @@ def _require_enabled() -> None:
 
 
 def _conv_read(conv: Conversation) -> ConversationRead:
-    """会话 → 接口形状。"""
-    return ConversationRead.model_validate(conv, from_attributes=True)
+    """会话 → 接口形状；回答方存在 settings 里，单独取出来给前端。"""
+    read = ConversationRead.model_validate(conv, from_attributes=True)
+    backend = (conv.settings or {}).get("backend")
+    read.backend = str(backend) if backend else None
+    return read
 
 
 @router.post("/conversations", response_model=ConversationRead, status_code=201)
@@ -330,10 +343,32 @@ async def buddy_greeting(
     }
 
 
+@router.get("/backends")
+async def list_backends(
+    session: AsyncSession = Depends(get_session),
+    _user: User = Depends(current_active_user),
+) -> list[dict[str, object]]:
+    """助手能交给谁来答：Polaris 自己（Claude），加上接在本机上、启用着的智能体。"""
+    _require_enabled()
+    out: list[dict[str, object]] = [{"id": "polaris", "name": "Polaris", "kind": "polaris"}]
+    for row in await acp_chat.usable_agents(session):
+        out.append(
+            {
+                "id": str(row.id),
+                "name": row.name or row.slug,
+                "kind": "acp",
+                "template": row.template,
+                "permission_policy": row.permission_policy,
+            }
+        )
+    return out
+
+
 @router.post("/conversations/{conversation_id}/turn")
 async def run_turn(
     conversation_id: uuid.UUID,
     payload: ConversationTurnRequest,
+    request: Request,
     lang: str | None = None,
     accept_language: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
@@ -372,9 +407,53 @@ async def run_turn(
     goal = str(settings.get("goal") or "")
     if payload.mode != settings.get("mode"):
         settings["mode"] = payload.mode
+    if payload.backend is not None and payload.backend != settings.get("backend"):
+        settings["backend"] = payload.backend
     if settings != (conv.settings or {}):
         conv.settings = settings
         await session.commit()
+
+    # 这场对话交给了本机智能体：换一个大脑，事件、落库、渲染都不变
+    backend = str(settings.get("backend") or "polaris")
+    if backend != "polaris":
+        agent = await acp_chat.resolve_agent(session, backend)
+        if agent is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="ACP_AGENT_NOT_AVAILABLE")
+        acp_history = await store.replay(session, conversation_id=conv.id, limit=40)
+        same_agent = settings.get("acp_agent_id") == str(agent.id)
+        # agent 那个会话上次答完之后、Polaris 自己答的那几轮：会话还活着也得补给它
+        seen = settings.get("acp_seen_seq")
+        unseen = (
+            await store.replay(session, conversation_id=conv.id, after_seq=seen, limit=40)
+            if same_agent and isinstance(seen, int)
+            else []
+        )
+        await store.append_message(session, conversation=conv, role="user", text=payload.question)
+        await session.commit()
+        # 模式、目标、长期记忆：原生循环放在系统提示里，agent 没有系统提示，随这一轮带上
+        instructions = "\n\n".join(
+            x
+            for x in (memories, mode_instructions(payload.mode, goal=goal, external_agent=True))
+            if x
+        )
+        return _stream_turn(
+            acp_chat.run_turn(
+                agent=agent,
+                user=user,
+                conversation_id=conv.id,
+                question=payload.question,
+                history=acp_history,
+                unseen=unseen,
+                instructions=instructions,
+                page_context=buddy.render_page_context(payload.page_kind, payload.page_id),
+                resume_session_id=settings.get("acp_session_id") if same_agent else None,
+                server_port=_server_port(request),
+            ),
+            conv_id=conv.id,
+            user_id=user.id,
+            first_question=payload.question,
+            agent_turn=True,
+        )
 
     mode_note = mode_instructions(payload.mode, goal=goal)
     await store.append_message(session, conversation=conv, role="user", text=payload.question)
@@ -431,18 +510,55 @@ async def run_turn(
     )
 
 
+class PermissionAnswer(BaseModel):
+    option_id: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/conversations/{conversation_id}/permissions/{request_id}", status_code=204)
+async def answer_permission(
+    conversation_id: uuid.UUID,
+    request_id: str,
+    payload: PermissionAnswer,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    """回答本机智能体的一次权限请求（「每次询问」策略）。
+
+    请求号必须属于这个对话里**此刻还在等**的那个 agent 会话。别的对话的请求号、
+    答过的、超时的，一律 404。
+    """
+    _require_enabled()
+    conv = await store.get_owned(session, conversation_id=conversation_id, user_id=user.id)
+    if conv is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONVERSATION_NOT_FOUND")
+    live = acp_chat.live_session(conversation_id)
+    if live is None or request_id not in live.client.pending_asks(live.session_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PERMISSION_REQUEST_NOT_FOUND")
+    if not live.client.answer_permission(request_id, payload.option_id):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="BAD_PERMISSION_OPTION")
+
+
+def _server_port(request: Request) -> int | None:
+    """本进程实际监听的端口：智能体跑在同一台机器上，经 127.0.0.1 回连 /mcp。"""
+    server = request.scope.get("server")
+    if isinstance(server, tuple | list) and len(server) >= 2 and isinstance(server[1], int):
+        return server[1]
+    return None
+
+
 def _stream_turn(
     events: AsyncIterator[ChatEvent],
     *,
     conv_id: uuid.UUID,
     user_id: uuid.UUID,
     first_question: str,
+    agent_turn: bool = False,
 ) -> StreamingResponse:
     async def event_stream() -> AsyncIterator[str]:
         # 落库的是**整条时间线**，不只是最终文本。只存文本的后果用户一眼就能看见：
         # 切到别的对话再切回来，思考过程和工具调用全没了，只剩一段结论——而那段结论
         # 之所以可信，正是因为下面那些调用。
-        timeline = _TurnTimeline()
+        timeline = _TurnTimeline(grouped=agent_turn)
         stop_reason, usage = "stop", {}
         finished = False
         try:
@@ -470,6 +586,7 @@ def _stream_turn(
                         timeline.text,
                         stop_reason,
                         usage,
+                        agent_saw=agent_turn,
                     )
                 )
                 await asyncio.shield(
@@ -717,17 +834,24 @@ async def _persist_answer(
     text: str,
     stop_reason: str,
     usage: dict[str, Any],
+    *,
+    agent_saw: bool = False,
 ) -> None:
-    """把这一轮的回答落库。用独立 session：请求那个可能已经随连接一起没了。"""
+    """把这一轮的回答落库。用独立 session：请求那个可能已经随连接一起没了。
+
+    ``agent_saw``：这一轮是本机智能体答的——它的会话见过到这里为止的全部消息，记下
+    最后一条的序号（``acp_seen_seq``）。之后 Polaris 自己答的轮次，下次交回智能体时
+    据此补给它。"""
     from app.core.db import get_sessionmaker
 
     async with get_sessionmaker()() as session:
         conv = await store.get_or_create(
             session, user_id=user_id, scope_kind="global", conversation_id=conversation_id
         )
+        row = None
         for index, (role, blocks) in enumerate(parts):
             last = index == len(parts) - 1
-            await store.append_message(
+            row = await store.append_message(
                 session,
                 conversation=conv,
                 # 工具结果按 Anthropic 的形状装在 role="user" 里；kind 标出来，
@@ -743,4 +867,6 @@ async def _persist_answer(
                 if last
                 else "complete",
             )
+        if agent_saw and row is not None:
+            conv.settings = {**(conv.settings or {}), "acp_seen_seq": int(row.seq)}
         await session.commit()

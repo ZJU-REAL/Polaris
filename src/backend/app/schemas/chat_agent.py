@@ -27,6 +27,8 @@ class ConversationRead(BaseModel):
     title: str
     usage: dict[str, Any] = Field(default_factory=dict)
     last_message_at: datetime | None = None
+    #: 这场对话选的回答方：``polaris``，或一个本机智能体的 id；没选过为 None
+    backend: str | None = None
 
 
 class MemoryToggle(BaseModel):
@@ -57,6 +59,9 @@ class ConversationTurnRequest(BaseModel):
     #: 用户此刻在看的页面（前端声明）。paper|idea|experiment|library|project|manuscript|daily
     page_kind: str | None = Field(default=None, max_length=32)
     page_id: str | None = Field(default=None, max_length=64)
+    #: 谁来答这轮：``polaris``（Polaris 自己的 Claude 循环）或一个本机智能体的 id。
+    #: 不传就沿用会话上存着的那个；存在会话设置里，选一次之后每轮都生效。
+    backend: str | None = Field(default=None, max_length=64)
 
 
 class MessageRead(BaseModel):
