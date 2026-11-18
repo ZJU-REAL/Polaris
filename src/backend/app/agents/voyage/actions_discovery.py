@@ -382,15 +382,17 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                     "project_id": ctx.run.project_id,
                     "voyage_id": ctx.run.id,
                 }
-                # 方向语境 = run 方向 + 被扩展节点的陈述：候选要围绕这个分支细化。
-                # 树上已有的假设一并交给模型，要求新候选与它们有实质区别——否则细化
-                # 一个父假设拿回来的常常只是它的几种改写
+                # 方向语境 = run 方向（灵感按它取材，每轮相同、读缓存）+ 被扩展节点的
+                # 陈述（focus：候选要围绕这个分支细化）。树上已有的假设一并交给模型，
+                # 要求新候选与它们有实质区别——否则细化一个父假设拿回来的常常只是它的
+                # 几种改写
                 tree_now = await tree_service.tree_for_run(session, ctx.run.id)
                 gen = await pipeline.generate(
                     session,
                     ctx.llm,
                     library_id=library_id,
-                    direction=f"{_direction(ctx)}；父假设：{target.statement}",
+                    direction=_direction(ctx),
+                    focus=target.statement,
                     n_candidates=_MAX_CHILDREN,
                     existing=[n.statement for n in tree_now if n.kind == "hypothesis"],
                     **identity,

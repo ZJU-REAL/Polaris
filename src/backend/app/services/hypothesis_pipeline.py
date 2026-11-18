@@ -180,6 +180,9 @@ citation_far=引文图远端、diverse=多样窗口片段）。输入可能还�
 - open_gaps：文献指出的未解问题（gap/矛盾/负结果的原文归纳）。
 请把方向与灵感/燃料**组合**成 n 个彼此不同、可检验的研究假设（鼓励跨片段、
 跨燃料组合，而不是逐条改写；有燃料时优先消费燃料——它们是库里最值得下注的线索）。
+材料可能分两段 JSON 给出：前一段是方向、灵感与燃料，后一段带 focus（这一轮要细化
+的父假设）——有 focus 时，候选都要是对它的细化、推进或替代检验，而不是泛泛地回到
+方向本身。
 输入若带 existing 节，那是这次探索里已经提出过的假设（包括正在细化的父假设）：
 每个新候选都要和它们、也和彼此有实质区别——换一个机制、对象、条件或检验方式，
 不要改写、缩写或拼接已有的陈述。尽量给满 n 个；确实想不出实质不同的再少给。
@@ -675,6 +678,7 @@ async def generate(
     *,
     library_id: uuid.UUID,
     direction: str,
+    focus: str | None = None,
     n_candidates: int = DEFAULT_CANDIDATES,
     existing: list[str] | None = None,
     user_id: uuid.UUID | None = None,
@@ -686,6 +690,13 @@ async def generate(
     ``existing``：这次探索里已经提出过的假设陈述。给了就随输入交给模型，要求新候选
     与它们有实质区别——不给的时候，细化一个父假设常常只拿回它的几种改写，去重折叠
     之后一轮只剩一个子假设（真实模型实测）。
+
+    ``focus``：这一轮要细化的父假设。给了它时，灵感与燃料只按 ``direction``（整次探索
+    的研究方向）取材，原样作为一段**缓存前缀**发送，``focus`` / ``existing`` / ``n``
+    放在后面：同一次探索的每一轮前缀逐字节相同，后几轮按一成的价钱读。以前每轮用
+    「方向；父假设：…」去检索，前缀从第一个字段起就不同；实测（25 篇的库、4 轮）四轮
+    取到的灵感论文完全相同（19/19），换查询什么也没换来，只让 2 万 token 的灵感每轮
+    全价重读。
 
     返回 {"candidates": [{statement, rationale}], "usage": {...}, "trace": {...}}；
     candidates 已去重，数量 ≤ n_candidates（可能因折叠更少）。trace 是确定性
@@ -718,19 +729,25 @@ async def generate(
     fuel_sections, fuel_trace = await _gather_fuels(
         session, library_id=library_id, direction=direction, user_id=user_id
     )
-    payload = {
-        "direction": direction,
-        "n": n_candidates,
-        "inspirations": {
-            "semantic": [_chunk_entry(c, titles) for c in semantic_chunks],
-            "citation_far": [_chunk_entry(c, titles) for c in far_chunks],
-            "diverse": [_chunk_entry(c, titles) for c in diverse_chunks],
-        },
+    inspirations = {
+        "semantic": [_chunk_entry(c, titles) for c in semantic_chunks],
+        "citation_far": [_chunk_entry(c, titles) for c in far_chunks],
+        "diverse": [_chunk_entry(c, titles) for c in diverse_chunks],
     }
-    if fuel_sections:
-        # 全空时不加键：无燃料的 payload 与纯检索路逐字节一致（行为等价判据）
-        payload["fuels"] = fuel_sections
     known = [str(x).strip() for x in (existing or []) if str(x).strip()]
+    cache_prefix: str | None = None
+    if focus:
+        # 整次探索不变的材料在前（缓存前缀），每轮变的在后
+        stable: dict[str, Any] = {"direction": direction, "inspirations": inspirations}
+        if fuel_sections:
+            stable["fuels"] = fuel_sections
+        cache_prefix = json.dumps(stable, ensure_ascii=False)
+        payload: dict[str, Any] = {"focus": focus, "n": n_candidates}
+    else:
+        payload = {"direction": direction, "n": n_candidates, "inspirations": inspirations}
+        if fuel_sections:
+            # 全空时不加键：无燃料的 payload 与纯检索路逐字节一致（行为等价判据）
+            payload["fuels"] = fuel_sections
     if known:
         payload["existing"] = known
     out = await _complete_json(
@@ -738,6 +755,7 @@ async def generate(
         GENERATE_STAGE,
         system=GENERATE_SYSTEM_PROMPT,
         payload=payload,
+        cache_prefix=cache_prefix,
         schema=GenerateOut,
         usage=usage,
         effort=GENERATE_EFFORT,

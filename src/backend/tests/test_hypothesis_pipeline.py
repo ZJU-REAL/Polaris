@@ -740,6 +740,7 @@ class _Recorder(FakeProvider):
                 "schema": schema,
                 "user": next(m.text for m in reversed(messages) if m.role == "user"),
                 "effort": kwargs.get("effort"),
+                "cache_prefix": kwargs.get("cache_prefix"),
             }
         )
         self.in_flight += 1
@@ -1014,3 +1015,38 @@ async def test_sibling_judgements_read_one_cached_prefix_written_first(client):
     assert len(prefixes) == 1 and next(iter(prefixes)).startswith("<evidence>")
     assert [j["lead"] for j in fake.judges] == [True, False, False]
     assert fake.events == ["lead-sent", "lead-streaming", "sent", "sent", "lead-done"]
+
+
+async def test_each_round_of_generation_reads_the_same_cached_material(client):
+    """细化父假设的几轮生成：灵感与燃料按研究方向取材，作为逐字节相同的缓存前缀；
+    父假设、已有假设与 n 在后面——每轮只有后面那段不同。"""
+    library_id, _ids = await _setup(client, with_citations=True)
+    fake = _Recorder()
+    async with get_sessionmaker()() as session:
+        first = await pipeline.generate(
+            session,
+            _router_with(fake),
+            library_id=library_id,
+            direction=DIRECTION,
+            focus="父假设一",
+            existing=["父假设一"],
+        )
+        await pipeline.generate(
+            session,
+            _router_with(fake),
+            library_id=library_id,
+            direction=DIRECTION,
+            focus="父假设二：换一个机制",
+            existing=["父假设一", "父假设二：换一个机制"],
+        )
+    one, two = (c for c in fake.calls if c["schema"] is pipeline.GenerateOut)
+    assert one["cache_prefix"] and one["cache_prefix"] == two["cache_prefix"]
+    assert "父假设" not in one["cache_prefix"]
+    assert json.loads(one["cache_prefix"])["direction"] == DIRECTION
+    assert json.loads(two["user"]) == {
+        "focus": "父假设二：换一个机制",
+        "n": pipeline.DEFAULT_CANDIDATES,
+        "existing": ["父假设一", "父假设二：换一个机制"],
+    }
+    # 替身照样看到父假设：候选与以前把父假设拼进方向时一样
+    assert all("父假设" in c["statement"] for c in first["candidates"])

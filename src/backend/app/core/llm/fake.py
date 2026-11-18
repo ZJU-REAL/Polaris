@@ -330,18 +330,31 @@ class FakeProvider(LLMProvider):
         schema: type[BaseModel],
         max_tokens: int | None = None,
         effort: EffortLevel | None = None,
-        cache_prefix: str | None = None,  # noqa: ARG002 — 替身不做缓存
+        cache_prefix: str | None = None,
     ) -> CompletionResult:
         """结构化输出的替身：沿用按标记路由的既有回答，并拿 schema 校验它。
 
         - 有专门的回答：必须符合 schema，不符合直接抛 :class:`LLMSchemaError`——
           替身的回答和真实 schema 对不上时，测试应该红，而不是悄悄走修复重问；
         - 没有专门的回答（落到通用回显）：按 schema 造一个最小的合法实例。
+
+        替身不做缓存，``cache_prefix`` 一般不看；只有假设生成把材料拆成「缓存前缀 +
+        每轮的那段」两段 JSON，回答要看全，这里把两段并成一个对象交给它。
         """
         for index, (wanted, error) in enumerate(self._failures):
             if wanted is None or wanted is schema:
                 del self._failures[index]
                 raise error
+        system = "\n".join(m.text for m in messages if m.role == "system")
+        if cache_prefix and _HYP_GENERATE_MARKER in system:
+            merged = {**FakeProvider._payload_of(cache_prefix)}
+            user_at = max(i for i, m in enumerate(messages) if m.role == "user")
+            merged.update(FakeProvider._payload_of(messages[user_at].text))
+            messages = [
+                *messages[:user_at],
+                Message(role="user", content=json.dumps(merged, ensure_ascii=False)),
+                *messages[user_at + 1 :],
+            ]
         result = await self.complete(messages, model=model, max_tokens=max_tokens, effort=effort)
         if result.content.startswith(f"[fake:{model}] "):
             content = minimal_instance(schema).model_dump_json()
@@ -1392,7 +1405,11 @@ class FakeProvider(LLMProvider):
         各几条」的候选：确定性、且让「燃料存在与否改变候选」在 fake 路径上
         可直接断言——这正是 P2.5 F6 的出口判据。无燃料时输出与从前逐字节一致。"""
         payload = FakeProvider._payload_of(last_user)
-        direction = str(payload.get("direction") or "")[:40]
+        direction = str(payload.get("direction") or "")
+        if payload.get("focus"):
+            # 细化一个父假设：回显「方向；父假设：…」，与以前把父假设拼进方向时同样的候选
+            direction = f"{direction}；父假设：{payload['focus']}"
+        direction = direction[:40]
         candidates = [
             {
                 "statement": f"机制假设（fake A）：{direction} 依赖显式规划机制",

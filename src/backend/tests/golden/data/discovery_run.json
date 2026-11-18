@@ -154,12 +154,12 @@
           },
           "<uuid-8>": {
             "completion_tokens": 91,
-            "prompt_tokens": 535
+            "prompt_tokens": 562
           }
         },
         "total": {
           "completion_tokens": 317,
-          "prompt_tokens": 1458
+          "prompt_tokens": 1485
         }
       },
       "branches": [
@@ -237,7 +237,7 @@
             "<uuid-5>"
           ],
           "phase": "generate",
-          "query": "structured agent planning；父假设：围绕「structured agent planning」的核心假设（fake root）",
+          "query": "structured agent planning",
           "round": 1
         },
         {
@@ -870,13 +870,13 @@
               "round": 1,
               "usage": {
                 "completion_tokens": 290,
-                "prompt_tokens": 1409
+                "prompt_tokens": 1436
               }
             },
             "started_at": "<ts>",
             "tokens": {
               "completion_tokens": 290,
-              "prompt_tokens": 1409
+              "prompt_tokens": 1436
             },
             "verdict": {
               "passed": true,
@@ -900,7 +900,7 @@
           "round": 1,
           "usage": {
             "completion_tokens": 290,
-            "prompt_tokens": 1409
+            "prompt_tokens": 1436
           }
         },
         "params": {
@@ -917,7 +917,7 @@
         "title": "第 1 轮扩展假设",
         "tokens": {
           "completion_tokens": 290,
-          "prompt_tokens": 1409
+          "prompt_tokens": 1436
         },
         "verdict": {
           "passed": true,
@@ -1074,8 +1074,8 @@
     "updated_at": "<ts>",
     "usage": {
       "completion_tokens": 581,
-      "prompt_tokens": 2592,
-      "total_tokens": 3173
+      "prompt_tokens": 2619,
+      "total_tokens": 3200
     }
   }
 }
