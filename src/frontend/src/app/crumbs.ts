@@ -80,7 +80,8 @@ export function crumbsFor(pathname: string, ctx: CrumbContext): Crumb[] {
         : inTopic(tab('tasks'), { label: tr('任务详情', 'Task') });
     }
 
-    if (pathname === '/libraries') return [papers, { label: tr('文献库', 'Libraries') }];
+    // 论文首页本身就是「论文」：只有一段
+    if (pathname === '/libraries') return [papers];
     if (pathname.startsWith('/libraries/')) return [papers, { label: ctx.libraryName || tr('文献库', 'Library') }];
     if (pathname === '/library') return [papers, { label: tr('我的文献库', 'My library') }];
     if (pathname.startsWith('/papers/')) return [papers, { label: tr('阅读', 'Reading') }];

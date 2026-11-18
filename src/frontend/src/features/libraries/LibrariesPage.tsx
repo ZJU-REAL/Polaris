@@ -1,200 +1,40 @@
-import { useState } from 'react';
-import { PapersTabs } from './PapersTabs';
-import { useNavigate } from 'react-router-dom';
+import { useMemo, useState, type ReactNode } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { EmptyState } from '../../components/ui/EmptyState';
+import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { DotsMenu } from '../../components/ui/DotsMenu';
 import { toast } from '../../components/ui/Toast';
-import { fmtTime } from '../../lib/format';
-import { api, ApiError, type DirectionLibrarySummary } from '../../lib/api';
+import { parseApiDate } from '../../lib/format';
+import { errorText } from '../../lib/errors';
+import { api, ApiError, type DirectionLibrarySummary, type LibraryEntry } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { useDirections } from '../deepresearch/directions';
+import { PaperRow, shortAuthors } from '../shared/PaperRow';
 import { StatementInterview } from './StatementInterview';
 import { useLibraries, libraryPath } from './hooks';
 import { DisciplineSelect } from './DisciplineSelect';
+import { AddPapersEntry } from './AddPapersEntry';
 import {
   InclusionSettingsForm,
   hasInclusionKeywords,
   keywordsFromInclusion,
   type InclusionValue,
 } from './InclusionSettingsForm';
+import './papersHome.css';
 
 /* ============================================================
-   /libraries — 文献库列表（实验室区，P5c）
-   卡片流：库名 / 方向陈述 / 论文·概念数 / 最近更新；点击进 /libraries/:id 详情。
-   可在此新建独立文献库（与任何课题解耦）。
+   /libraries — 论文首页。侧栏「论文」进来就是这一页：
+
+     课题的文献库   研究课题各自收集的文献库（名称 · 篇数 · 更新时间 · 课题）
+     其他文献库     自己新建、不属于课题的
+     我的文献库     收藏和最近读过的几篇，「全部打开」进 /library
+
+   只有一个主按钮「添加论文」：先选加到哪里，再用那里原有的添加方式。
    ============================================================ */
-
-/** 圆角小勾选框（体系内样式，替代原生 checkbox）。与论文撰写/实验搭建一致。 */
-function CheckBox({ checked, onToggle, title }: { checked: boolean; onToggle: () => void; title?: string }) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={(e) => {
-        e.stopPropagation();
-        onToggle();
-      }}
-      style={{
-        width: 18,
-        height: 18,
-        flexShrink: 0,
-        borderRadius: 5,
-        border: `1.5px solid ${checked ? 'var(--accent)' : 'var(--border-2)'}`,
-        background: checked ? 'var(--accent)' : 'transparent',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        padding: 0,
-        color: '#fff',
-        transition: 'all .12s',
-      }}
-    >
-      {checked && <Icon name="check" size={12} sw={2.4} />}
-    </button>
-  );
-}
-
-function LibraryCard({
-  lib,
-  admin,
-  selectMode,
-  selected,
-  onOpen,
-  onToggleSelect,
-  onDelete,
-}: {
-  lib: DirectionLibrarySummary;
-  admin: boolean;
-  selectMode: boolean;
-  selected: boolean;
-  onOpen: () => void;
-  onToggleSelect: () => void;
-  onDelete: () => void;
-}) {
-  const updated = lib.last_compiled_at ?? lib.last_synced_at;
-  const activate = selectMode ? onToggleSelect : onOpen;
-  return (
-    <div
-      className="card hoverable"
-      role="button"
-      tabIndex={0}
-      onClick={activate}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          activate();
-        }
-      }}
-      style={{
-        padding: '18px 20px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 10,
-        cursor: 'pointer',
-        borderColor: selectMode && selected ? 'var(--accent)' : undefined,
-      }}
-    >
-      <div className="row gap8" style={{ alignItems: 'flex-start' }}>
-        {/* 占位常驻（仅 admin）：切换多选时卡片尺寸/位置不变 */}
-        {admin && (
-          <div
-            style={{ paddingTop: 3, visibility: selectMode ? 'visible' : 'hidden' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <CheckBox
-              checked={selected}
-              onToggle={onToggleSelect}
-              title={selected ? tr('取消选择', 'Deselect') : tr('选择', 'Select')}
-            />
-          </div>
-        )}
-        <span
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: 10,
-            background: 'var(--accent-soft)',
-            color: 'var(--accent)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-          }}
-        >
-          <Icon name="book" size={17} />
-        </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-            <span
-              // 长库名限两行：撑高的是整行卡片（grid 行高取最高者），不只是它自己
-              style={{
-                fontSize: 14.5,
-                fontWeight: 680,
-                lineHeight: 1.3,
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-                overflowWrap: 'anywhere',
-              }}
-              title={lib.name}
-            >
-              {lib.name}
-            </span>
-          </div>
-        </div>
-        <button
-          className="icon-btn"
-          title={tr('删除文献库', 'Delete library')}
-          aria-label={tr('删除文献库', 'Delete library')}
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          style={{ flexShrink: 0, marginTop: -2, color: 'var(--text-3)', border: 'none', background: 'transparent', boxShadow: 'none' }}
-        >
-          <Icon name="trash" size={14} />
-        </button>
-      </div>
-      <div
-        style={{
-          fontSize: 12.5,
-          lineHeight: 1.55,
-          color: 'var(--text-3)',
-          display: '-webkit-box',
-          WebkitLineClamp: 2,
-          WebkitBoxOrient: 'vertical',
-          overflow: 'hidden',
-          minHeight: 38,
-        }}
-      >
-        {lib.statement ?? tr('还没有方向说明', 'No scope yet')}
-      </div>
-      <div
-        className="row gap10"
-        // marginTop:auto —— 同一行的卡片高度由最高的那张决定，不钉底的话矮内容的卡片
-        // 会把统计行留在半空中（截图里 SWE 那张底下空一大块）
-        style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 'auto' }}
-      >
-        <span className="row gap6">
-          <Icon name="file" size={12} />
-          {tr(`${lib.paper_count} 篇论文`, `${lib.paper_count} papers`)}
-        </span>
-        <span className="row gap6">
-          <Icon name="layers" size={12} />
-          {tr(`${lib.concept_count} 个概念`, `${lib.concept_count} concepts`)}
-        </span>
-        <span className="mono" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-4)' }}>
-          {updated ? `${tr('更新于', 'Updated')} ${fmtTime(updated)}` : tr('还没有论文', 'No papers yet')}
-        </span>
-      </div>
-    </div>
-  );
-}
 
 const EMPTY_INCLUSION: InclusionValue = {
   sources: [],
@@ -357,259 +197,239 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
   );
 }
 
-export function LibrariesPage() {
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const { data, isLoading, isError, refetch } = useLibraries();
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
-  const canCreate = !!me;
-  const admin = !!me;
-  const [createOpen, setCreateOpen] = useState(false);
-  // 待确认删除的文献库（单个或批量）
-  const [pendingDelete, setPendingDelete] = useState<DirectionLibrarySummary[] | null>(null);
-  // 多选态（仅 admin 可用）：selectMode 打开后每张卡可勾选，顶部出现批量操作栏
-  const [selectMode, setSelectMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const libraries = data ?? [];
-  const sorted = [...libraries].sort((a, b) => a.name.localeCompare(b.name));
+/* ---------------- 论文首页 ---------------- */
 
-  function toggleSelect(id: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-  function exitSelect() {
-    setSelectMode(false);
-    setSelectedIds(new Set());
-  }
-  function clearSelection() {
-    setSelectedIds(new Set());
-  }
-  const allSelected = sorted.length > 0 && sorted.every((l) => selectedIds.has(l.id));
-  function toggleSelectAll() {
-    setSelectedIds(allSelected ? new Set() : new Set(sorted.map((l) => l.id)));
-  }
+function fmtDay(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = parseApiDate(iso);
+  return tr(`${d.getMonth() + 1} 月 ${d.getDate()} 日更新`, `updated ${d.toLocaleDateString('en', { month: 'short', day: 'numeric' })}`);
+}
 
-  // 删除单个库：409 LIBRARY_HAS_TOPICS 时二次确认后带 force 重删。
-  // 返回 true = 已删除，false = 用户在二次确认里放弃。
-  async function deleteOne(lib: DirectionLibrarySummary): Promise<boolean> {
-    try {
-      await api.deleteLibrary(lib.id);
-      return true;
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409 && e.message.includes('LIBRARY_HAS_TOPICS')) {
-        const ok = window.confirm(
-          tr(
-            `文献库「${lib.name}」已关联课题，仍要删除吗？关联会一并解除。`,
-            `“${lib.name}” is linked to topics. Delete it anyway? The links will be removed.`,
-          ),
-        );
-        if (!ok) return false;
-        await api.deleteLibrary(lib.id, true);
-        return true;
-      }
-      throw e;
-    }
-  }
-
-  // 单删 / 批量删都走这个 mutation（批量按选中项串行处理，逐个弹 409 确认）。
-  const deleteMutation = useMutation({
-    mutationFn: async (targets: DirectionLibrarySummary[]) => {
-      let deleted = 0;
-      let skipped = 0;
-      const failed: string[] = [];
-      for (const lib of targets) {
-        try {
-          if (await deleteOne(lib)) deleted += 1;
-          else skipped += 1;
-        } catch (e) {
-          failed.push(e instanceof Error ? e.message : String(e));
-        }
-      }
-      return { deleted, skipped, failed };
-    },
-    onSuccess: ({ deleted, skipped, failed }) => {
-      void queryClient.invalidateQueries({ queryKey: ['libraries'] });
-      clearSelection();
-      if (failed.length > 0) {
-        toast(
-          tr(`已删除 ${deleted} 个，${failed.length} 个未能删除：${failed[0]}`, `Deleted ${deleted}. Couldn’t delete ${failed.length}: ${failed[0]}`),
-          'error',
-        );
-      } else if (deleted > 0) {
-        toast(
-          tr(`已删除 ${deleted} 个文献库${skipped ? `，跳过 ${skipped} 个` : ''}`, `Deleted ${deleted} librar${deleted === 1 ? 'y' : 'ies'}${skipped ? `, skipped ${skipped}` : ''}`),
-          'ok',
-        );
-      } else {
-        toast(tr('已取消删除', 'Deletion cancelled'), 'info');
-      }
-    },
-    onError: (err) => toast(`${tr('无法删除：', 'Couldn’t delete: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
-  });
-
+/** 一个文献库一行：名称；课题 · 篇数 · 更新时间；右边更多菜单（删除）。 */
+function LibraryRow({
+  lib,
+  topic,
+  onOpen,
+  onDelete,
+}: {
+  lib: DirectionLibrarySummary;
+  topic: { name: string; href: string } | null;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
   return (
-    <div className="page fadeup" style={{ maxWidth: 1200 }}>
-      <PapersTabs active="libraries" />
-      {/* —— 筛选行：操作并在同一行右侧 —— */}
-      <div className="row gap12" style={{ margin: '0 0 16px', flexWrap: 'wrap', alignItems: 'center' }}>
-        {canCreate && (
-          <button
-            className="btn btn-primary sm"
-            style={{ marginLeft: 'auto' }}
-            onClick={() => setCreateOpen(true)}
-          >
-            <Icon name="plus" size={13} />
-            {tr('新建文献库', 'New library')}
-          </button>
-        )}
-        {admin && sorted.length > 0 && (
-          <button
-            className={`btn sm ${selectMode ? 'btn-primary' : 'btn-soft'}`}
-            onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
-            title={tr('选择多个文献库', 'Select several libraries')}
-          >
-            <Icon name="check" size={13} />
-            {tr('多选', 'Select')}
-          </button>
-        )}
-        {/* 全选放工具栏：不再插入额外行导致卡片下移 */}
-        {admin && selectMode && sorted.length > 0 && (
-          <div className="row gap8" style={{ alignItems: 'center' }}>
-            <CheckBox checked={allSelected} onToggle={toggleSelectAll} title={tr('全选', 'Select all')} />
-            <span className="muted" style={{ fontSize: 12 }}>
-              {selectedIds.size > 0
-                ? tr(`已选 ${selectedIds.size} 个`, `${selectedIds.size} selected`)
-                : tr('全选', 'Select all')}
-            </span>
-          </div>
-        )}
+    <div className="ph-lib" data-testid="home-library">
+      <button type="button" className="ph-lib-main" onClick={onOpen}>
+        <span className="ph-lib-name" title={lib.name}>
+          {lib.name}
+        </span>
+        <span className="ph-lib-meta">
+          {[
+            tr(`${lib.paper_count} 篇论文`, lib.paper_count === 1 ? '1 paper' : `${lib.paper_count} papers`),
+            lib.concept_count ? tr(`${lib.concept_count} 个概念`, `${lib.concept_count} concepts`) : null,
+            fmtDay(lib.last_synced_at ?? lib.updated_at),
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </span>
+      </button>
+      {topic && topic.name !== lib.name && (
+        <Link className="ph-lib-topic" to={topic.href} title={topic.name}>
+          {tr('课题', 'Topic')}「{topic.name}」
+        </Link>
+      )}
+      {topic && topic.name === lib.name && (
+        <Link className="ph-lib-topic" to={topic.href}>
+          {tr('打开课题', 'Open topic')}
+        </Link>
+      )}
+      <DotsMenu
+        plain
+        label={tr('这个文献库的更多操作', 'More for this library')}
+        items={[
+          { key: 'open', label: tr('打开', 'Open'), icon: 'book', onSelect: onOpen },
+          { key: 'del', label: tr('删除文献库', 'Delete library'), icon: 'trash', danger: true, separated: true, onSelect: onDelete },
+        ]}
+      />
+    </div>
+  );
+}
+
+/** 我的文献库的一小段预览：最近几篇。 */
+function MinePreview({ tab, title, empty }: { tab: 'saved' | 'history'; title: string; empty: string }) {
+  const navigate = useNavigate();
+  const q = useQuery({
+    queryKey: ['library-entries', tab, 'home'],
+    queryFn: () => api.listLibrary({ tab, sort: 'recent', page: 1, size: 4 }),
+    retry: false,
+  });
+  const items: LibraryEntry[] = q.data?.items ?? [];
+  return (
+    <div className="ph-mine-col" data-testid={`home-mine-${tab}`}>
+      <div className="ph-mine-h">
+        {title}
+        {q.data && <span className="ph-count">{q.data.total}</span>}
       </div>
-
-      {canCreate && <NewLibraryModal open={createOpen} onClose={() => setCreateOpen(false)} />}
-
-      {isLoading ? (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))',
-            gap: 14,
-          }}
-        >
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="skel" style={{ height: 150, borderRadius: 14 }} />
-          ))}
-        </div>
-      ) : isError ? (
-        <EmptyState
-          icon="x"
-          title={tr('无法加载文献库', 'Couldn’t load libraries')}
-          desc={tr('请确认本机引擎正在运行。', 'Check that the local engine is running.')}
-          action={
-            <button className="btn btn-soft sm" onClick={() => void refetch()}>
-              {tr('重试', 'Retry')}
-            </button>
-          }
-        />
-      ) : sorted.length === 0 ? (
-        <EmptyState
-          icon="book"
-          title={tr('还没有文献库', 'No libraries yet')}
-          desc={
-            canCreate
-              ? undefined
-              : tr('开始一次研究时会一并创建文献库。', 'A library is created when you start a research.')
-          }
-          action={
-            canCreate ? (
-              <button className="btn btn-primary sm" onClick={() => setCreateOpen(true)}>
-                <Icon name="plus" size={13} />
-                {tr('新建文献库', 'New library')}
-              </button>
-            ) : (
-              <button className="btn btn-primary sm" onClick={() => navigate('/research')}>
-                {tr('开始研究', 'Start a research')}
-              </button>
-            )
-          }
-        />
+      {q.isLoading ? (
+        <LoadingState rows={2} compact />
+      ) : items.length === 0 ? (
+        <p className="ph-empty">{empty}</p>
       ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))',
-            gap: 14,
-          }}
-        >
-          {sorted.map((lib) => (
-            <LibraryCard
-              key={lib.id}
-              lib={lib}
-              admin={admin}
-              selectMode={selectMode}
-              selected={selectedIds.has(lib.id)}
-              onOpen={() => navigate(libraryPath(lib.id))}
-              onToggleSelect={() => toggleSelect(lib.id)}
-              onDelete={() => setPendingDelete([lib])}
+        <div className="ph-mine-list">
+          {items.map((e) => (
+            <PaperRow
+              key={e.id}
+              title={e.title}
+              meta={[shortAuthors(e.authors), e.year]}
+              summary={e.tldr}
+              onClick={() => {
+                if (e.last_paper_id) navigate(`/papers/${e.last_paper_id}/read`);
+                else navigate(`/library?tab=${tab}`);
+              }}
             />
           ))}
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* 批量操作栏（多选模式下有选中时浮出底部，与论文撰写/实验搭建一致） */}
-      {admin && selectMode && selectedIds.size > 0 && (
-        <div
-          className="card card-pad"
-          style={{
-            position: 'sticky',
-            bottom: 16,
-            marginTop: 16,
-            boxShadow: 'var(--shadow-pop)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-          }}
-        >
-          <span style={{ fontSize: 12.5, fontWeight: 600 }}>
-            {tr(`已选 ${selectedIds.size} 个`, `${selectedIds.size} selected`)}
-          </span>
-          <div className="row gap8" style={{ marginLeft: 'auto' }}>
-            <button
-              className="btn btn-danger sm"
-              disabled={deleteMutation.isPending}
-              onClick={() => {
-                const targets = sorted.filter((l) => selectedIds.has(l.id));
-                if (targets.length === 0) return;
-                setPendingDelete(targets);
-              }}
-            >
-              <Icon name="trash" size={13} />
-              {deleteMutation.isPending ? tr('删除中…', 'Deleting…') : tr('删除', 'Delete')}
-            </button>
-            <button className="btn btn-ghost sm" disabled={deleteMutation.isPending} onClick={clearSelection}>
-              {tr('取消选择', 'Clear selection')}
-            </button>
-          </div>
+export function LibrariesPage() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError, refetch } = useLibraries();
+  const { byLibrary, byProject } = useDirections();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<DirectionLibrarySummary | null>(null);
+  const libraries = useMemo(
+    () => [...(data ?? [])].sort((a, b) => (b.last_synced_at ?? b.updated_at).localeCompare(a.last_synced_at ?? a.updated_at)),
+    [data],
+  );
+
+  const topicOf = (lib: DirectionLibrarySummary) => {
+    const d = byLibrary(lib.id) ?? byProject(lib.project_id);
+    return d ? { name: d.name, href: d.href } : null;
+  };
+  const withTopic = libraries.filter((l) => topicOf(l));
+  const others = libraries.filter((l) => !topicOf(l));
+
+  // 删除：409 LIBRARY_HAS_TOPICS 时说明后果再确认一次，带 force 重删
+  const [forceFor, setForceFor] = useState<DirectionLibrarySummary | null>(null);
+  const deleteMutation = useMutation({
+    mutationFn: async ({ lib, force }: { lib: DirectionLibrarySummary; force: boolean }) => api.deleteLibrary(lib.id, force),
+    onSuccess: (_r, { lib }) => {
+      toast(tr(`已删除「${lib.name}」`, `Deleted “${lib.name}”`), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['libraries'] });
+    },
+    onError: (e, { lib, force }) => {
+      if (!force && e instanceof ApiError && e.status === 409 && e.message.includes('LIBRARY_HAS_TOPICS')) {
+        setForceFor(lib);
+        return;
+      }
+      toast(`${tr('无法删除：', 'Couldn’t delete: ')}${errorText(e)}`, 'error');
+    },
+  });
+
+  const section = (title: string, list: DirectionLibrarySummary[], testId: string, empty?: ReactNode) => (
+    <section className="ph-section" data-testid={testId}>
+      <h2 className="ph-h">{title}</h2>
+      {list.length === 0 ? (
+        empty
+      ) : (
+        <div className="ph-libs">
+          {list.map((lib) => (
+            <LibraryRow
+              key={lib.id}
+              lib={lib}
+              topic={topicOf(lib)}
+              onOpen={() => navigate(libraryPath(lib.id))}
+              onDelete={() => setPendingDelete(lib)}
+            />
+          ))}
         </div>
       )}
+    </section>
+  );
 
+  return (
+    <div className="page fadeup ph-page">
+      <header className="ph-head">
+        <div>
+          <h1 className="ph-title">{tr('论文', 'Papers')}</h1>
+          <p className="ph-sub">{tr('课题收集的文献库，和你自己收藏、读过的论文。', 'Libraries your topics collected, plus papers you saved and read.')}</p>
+        </div>
+        <div className="ph-actions">
+          <button type="button" className="btn btn-ghost sm" onClick={() => setCreateOpen(true)} data-testid="home-new-library">
+            {tr('新建文献库', 'New library')}
+          </button>
+          <button type="button" className="btn btn-primary sm" onClick={() => setAddOpen(true)} data-testid="home-add">
+            <Icon name="plus" size={13} />
+            {tr('添加论文', 'Add papers')}
+          </button>
+        </div>
+      </header>
+
+      {isLoading ? (
+        <LoadingState rows={3} />
+      ) : isError ? (
+        <ErrorState title={tr('无法加载文献库，请确认本机引擎正在运行', 'Couldn’t load libraries. Check that the local engine is running.')} onRetry={() => void refetch()} />
+      ) : (
+        <>
+          {section(
+            tr('课题的文献库', 'Topic libraries'),
+            withTopic,
+            'home-topic-libraries',
+            <p className="ph-empty">
+              {tr('开始一次研究时，会为课题建一个文献库。', 'Starting a research builds a library for its topic.')}{' '}
+              <Link to="/research">{tr('开始研究', 'Start a research')}</Link>
+            </p>,
+          )}
+          {others.length > 0 && section(tr('其他文献库', 'Other libraries'), others, 'home-other-libraries')}
+        </>
+      )}
+
+      <section className="ph-section" data-testid="home-mine">
+        <div className="ph-h-row">
+          <h2 className="ph-h">{tr('我的文献库', 'My library')}</h2>
+          <Link className="ph-link" to="/library" data-testid="home-open-mine">
+            {tr('全部打开', 'Open')}
+            <Icon name="arrow" size={11} />
+          </Link>
+        </div>
+        <div className="ph-mine">
+          <MinePreview tab="saved" title={tr('收藏', 'Saved')} empty={tr('还没有收藏。在论文详情里点「保存到…」就会出现在这里。', 'Nothing saved yet. Use “Save to…” on a paper.')} />
+          <MinePreview tab="history" title={tr('最近读过', 'Recently read')} empty={tr('还没有读过的论文。', 'No papers read yet.')} />
+        </div>
+      </section>
+
+      <NewLibraryModal open={createOpen} onClose={() => setCreateOpen(false)} />
+      <AddPapersEntry open={addOpen} onClose={() => setAddOpen(false)} libraries={libraries} />
       <ConfirmModal
         open={!!pendingDelete}
         onClose={() => setPendingDelete(null)}
-        title={
-          pendingDelete?.length === 1
-            ? tr(`删除文献库「${pendingDelete[0]!.name}」？`, `Delete library “${pendingDelete[0]!.name}”?`)
-            : tr(`删除 ${pendingDelete?.length ?? 0} 个文献库？`, `Delete ${pendingDelete?.length ?? 0} libraries?`)
-        }
-        message={tr('删除后无法恢复。', 'This can’t be undone.')}
+        title={tr(`删除文献库「${pendingDelete?.name ?? ''}」？`, `Delete library “${pendingDelete?.name ?? ''}”?`)}
+        message={tr(
+          `这个文献库和它收录的 ${pendingDelete?.paper_count ?? 0} 篇论文一起删除，无法恢复。`,
+          `The library and the ${pendingDelete?.paper_count ?? 0} papers it holds are deleted. This can’t be undone.`,
+        )}
         confirmText={tr('删除', 'Delete')}
         danger
         onConfirm={() => {
-          if (pendingDelete) deleteMutation.mutate(pendingDelete);
+          if (pendingDelete) deleteMutation.mutate({ lib: pendingDelete, force: false });
           setPendingDelete(null);
+        }}
+      />
+      <ConfirmModal
+        open={!!forceFor}
+        onClose={() => setForceFor(null)}
+        title={tr(`「${forceFor?.name ?? ''}」属于一个课题，仍要删除？`, `“${forceFor?.name ?? ''}” belongs to a topic. Delete it anyway?`)}
+        message={tr('课题还在，只是不再有这个文献库。', 'The topic stays; it just loses this library.')}
+        confirmText={tr('仍然删除', 'Delete anyway')}
+        danger
+        onConfirm={() => {
+          if (forceFor) deleteMutation.mutate({ lib: forceFor, force: true });
+          setForceFor(null);
         }}
       />
     </div>

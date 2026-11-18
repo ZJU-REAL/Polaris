@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { PapersTabs } from '../libraries/PapersTabs';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { Segmented } from '../../components/ui/Segmented';
@@ -18,6 +17,7 @@ import {
 } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import '../libraries/papersHome.css';
 import {
   AdvancedPanel,
   AdvancedToggle,
@@ -592,14 +592,14 @@ export function LibraryPage() {
       className="page fadeup page-fill"
       style={{ maxWidth: 1360, paddingBottom: 24 }}
     >
-      <PapersTabs active="mine" />
+      <h1 className="ph-title" style={{ margin: '0 0 14px' }}>{tr('我的文献库', 'My library')}</h1>
       {/* —— tab 行：操作并在同一行右侧，顶部不再单占一行 —— */}
       <div className="row page-tabs literature-workspace-tabs" style={{ marginBottom: 14 }}>
         <Segmented<PageTab>
           options={[
             { v: 'saved', label: tr('我的收藏', 'Saved') },
             { v: 'history', label: tr('浏览记录', 'History') },
-            { v: 'liked', label: tr('我赞过的', 'Liked') },
+            { v: 'liked', label: tr('来自每日新论文', 'From daily papers') },
             { v: 'chat', label: tr('文献对话', 'Chat') },
             {
               v: 'publications',
@@ -640,7 +640,7 @@ export function LibraryPage() {
             onClick={() => setAddOpen(true)}
           >
             <Icon name="plus" size={13} />
-            {tr('添加论文', 'Add paper')}
+            {tr('添加论文', 'Add papers')}
           </button>
         )}
       </div>
@@ -869,7 +869,7 @@ export function LibraryPage() {
                       tab === 'saved' && !q && !advActive ? (
                         <button className="btn btn-soft sm" onClick={() => setAddOpen(true)}>
                           <Icon name="plus" size={13} />
-                          {tr('添加论文', 'Add paper')}
+                          {tr('添加论文', 'Add papers')}
                         </button>
                       ) : undefined
                     }

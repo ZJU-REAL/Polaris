@@ -94,7 +94,7 @@ describe('breadcrumbs follow the sidebar', () => {
   });
 
   it('puts libraries, my library and reading under Papers', () => {
-    expect(crumbsFor('/libraries', { topic: null }).map((c) => c.label)).toEqual(['论文', '文献库']);
+    expect(crumbsFor('/libraries', { topic: null }).map((c) => c.label)).toEqual(['论文']);
     expect(crumbsFor('/libraries/x', { topic: null, libraryName: 'RAG' }).map((c) => c.label)).toEqual(['论文', 'RAG']);
     expect(crumbsFor('/library', { topic: null }).map((c) => c.label)).toEqual(['论文', '我的文献库']);
     expect(crumbsFor('/papers/p/read', { topic: null }).map((c) => c.label)).toEqual(['论文', '阅读']);
