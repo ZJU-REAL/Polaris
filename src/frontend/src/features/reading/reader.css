@@ -1,0 +1,8 @@
+/* 阅读页：主区窄（820 窗口、或助手占了一半）时 PDF 和侧栏并排都太挤——
+   PDF 一页看不清，侧栏的输入框只剩两个字宽。改成一次只看一个：
+   侧栏开着就占满，收起就是 PDF；页头的侧栏按钮在两者之间切换。 */
+@container mainarea (max-width: 900px) {
+  .reader-split:has(> .reader-side) > .reader-pdf { display: none; }
+  .reader-split > .reader-drag { display: none; }
+  .reader-split > .reader-side { width: 100% !important; max-width: none !important; }
+}

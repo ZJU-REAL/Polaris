@@ -1,36 +1,37 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Icon } from '../../components/ui/Icon';
 import { CompileBadge } from '../../components/ui/CompileBadge';
-import { PaperStatusPill } from '../../components/ui/StatusPill';
-import { RelevanceBar } from '../../components/ui/RelevanceBar';
-import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
-import { fmtTime, plainSummary } from '../../lib/format';
+import { fmtTime } from '../../lib/format';
 import { clickable } from '../../lib/a11y';
 import { type PaperConceptRef, type PaperDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { libraryPath } from '../libraries/hooks';
 import { PaperMyTagsRow } from '../shared/PaperDetailBlocks';
-import { PdfUploadButton } from '../shared/PdfUploadButton';
+import { PaperFact, PaperFacts, PaperKeyPoints, PaperKicker, splitSummary } from '../shared/PaperDetail';
+import { PaperFulltextFact } from '../shared/PaperFulltext';
+import { relevanceWords } from '../shared/PaperRow';
 import { MetaFold } from '../wiki/shared';
+import { evidenceCitationRenderer, evidenceRefs } from './evidenceArtifact';
+import '../shared/papers.css';
 
 /* ============================================================
-   阅读工作台 · 论文信息面板（PaperDetailPane 的精简版）：
-   元数据卡 + 摘要折叠 + 概念/标签 chips + wiki 正文 markdown。
+   阅读页 · 「论文信息」：和文献库里的论文详情同一个顺序，只是更窄。
+
+     出处 · 标题 · 作者
+     事实行（为什么在这里 / PDF 与全文 / 我的标签）
+     要点（只出现一次）
+     解读正文（出处可点，跳到原文那一句）
+     概念 · 摘要 · 编号与日期（折叠）
    ============================================================ */
 
 function MetaItem({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="row" style={{ gap: 10, padding: '3px 0', alignItems: 'flex-start' }}>
-      <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', width: 78, flexShrink: 0 }}>
-        {label}
-      </span>
-      <span style={{ fontSize: 12, color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>
-        {children}
-      </span>
+      <span style={{ fontSize: 12, color: 'var(--text-3)', width: 78, flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>{children}</span>
     </div>
   );
 }
@@ -43,17 +44,13 @@ export function InfoPanel({
   paper: PaperDetail;
   /** 正文里的 [[概念]] 双链 → 按名称打开概念页 */
   onWikiLink: WikiLinkHandler;
-  /** 概念 chip 自带 id，直接按 id 打开概念页（不用再按名字查一次） */
+  /** 概念 chip 自带 id，直接按 id 打开概念页 */
   onOpenConcept: (concept: PaperConceptRef) => void;
 }) {
   const navigate = useNavigate();
-  const [abstractOpen, setAbstractOpen] = useState(false);
-  // 作者 / 机构点了去这篇论文所在的文献库按它过滤；论文不在任何文献库里时就只是文字
+  // 作者点了去这篇论文所在的文献库按作者过滤；不在任何文献库里时就只是文字
   const libHref = paper.library_id ? libraryPath(paper.library_id) : null;
-  const arxivUrl = paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : null;
-  const extUrl = arxivUrl ?? paper.url;
 
-  // 正文 ![[fig:N]] 嵌入图（docs/task-system.md §7（原 api-lit.md §6.6））
   const figures = usePaperFigures(paper);
   const paperId = paper.id;
   const renderFigure = useCallback(
@@ -63,202 +60,74 @@ export function InfoPanel({
     },
     [figures, paperId],
   );
+  const refs = useMemo(() => evidenceRefs(paper.wiki_evidence), [paper.wiki_evidence]);
+  const renderCitation = useMemo(
+    () => evidenceCitationRenderer({ libraryId: paper.library_id, fallbackPaperId: paper.id, title: paper.title, refs }),
+    [refs, paper.library_id, paper.id, paper.title],
+  );
+  const split = useMemo(() => splitSummary(paper.wiki_content), [paper.wiki_content]);
+  const relevance = paper.relevance_score;
 
   return (
-    <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 40px' }}>
-      {/* —— 头部 —— */}
-      <div className="row gap8 wrap" style={{ marginBottom: 8 }}>
-        <PaperStatusPill status={paper.status} hasWiki={paper.has_wiki} sm />
-        {paper.venue && (
-          <span className="pill sm" style={{ background: 'var(--surface-3)' }}>
-            {paper.venue}
-          </span>
-        )}
-        {typeof paper.note_count === 'number' && paper.note_count > 0 && (
-          <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-            <Icon name="pen" size={10} />
-            {tr(`${paper.note_count} 条笔记`, `${paper.note_count} ${paper.note_count === 1 ? 'note' : 'notes'}`)}
-          </span>
-        )}
-        {/* 向量索引状态跟着徽章走；不带重建按钮——这一行是速览，不是操作区 */}
-        <PaperIndexStatusRow paperId={paper.id} showRebuild={false} />
-      </div>
-      <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.4, marginBottom: 5 }}>{paper.title}</div>
+    <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 40px' }} data-testid="reader-info">
+      <PaperKicker year={paper.year} venue={paper.venue && !/^[a-z-]+(\.[A-Za-z-]{2,})?$/.test(paper.venue) ? paper.venue : null} arxivId={paper.arxiv_id} doi={paper.doi} url={paper.url} />
+      <div style={{ fontSize: 'var(--fs-title)', fontWeight: 600, lineHeight: 1.4, margin: '6px 0 5px' }}>{paper.title}</div>
       {paper.authors.length > 0 && (
         <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6 }}>
           {paper.authors.map((a, i) => {
             const affil = a.affiliations?.filter(Boolean) ?? [];
             return (
               <span key={`${a.name}-${i}`}>
-                {i > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
+                {i > 0 && ' · '}
                 <span
                   className={libHref ? 'author-link' : undefined}
-                  title={
-                    affil.length > 0
-                      ? `${a.name} — ${affil.join('; ')}`
-                      : libHref
-                        ? tr(`在文献库中查看 ${a.name} 的论文`, `See papers by ${a.name} in the library`)
-                        : undefined
-                  }
+                  title={affil.length > 0 ? `${a.name} — ${affil.join('; ')}` : undefined}
                   {...(libHref ? clickable(() => navigate(`${libHref}?author=${encodeURIComponent(a.name)}`)) : {})}
                 >
                   {a.name}
                 </span>
-                {affil.length > 0 && (
-                  <span style={{ color: 'var(--text-3)', fontSize: 11 }}> ({affil[0]}{affil.length > 1 ? ` +${affil.length - 1}` : ''})</span>
-                )}
               </span>
             );
           })}
         </div>
       )}
-      {(paper.affiliations?.length ?? 0) > 0 && (
-        <div className="row gap6 wrap" style={{ marginTop: 8 }}>
-          <Icon name="pin" size={10} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
-          {paper.affiliations!.map((name) => (
-            <span
-              key={name}
-              className="chip"
-              style={{ fontSize: 11, height: 20 }}
-              title={libHref ? tr(`在文献库中查看 ${name} 的论文`, `See papers from ${name} in the library`) : undefined}
-              {...(libHref ? clickable(() => navigate(`${libHref}?affiliation=${encodeURIComponent(name)}`)) : {})}
-            >
-              {name}
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="row gap8 wrap" style={{ marginTop: 10 }}>
-        {extUrl && (
-          <a
-            className="btn btn-ghost sm"
-            href={extUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            style={{ textDecoration: 'none' }}
-          >
-            <Icon name="link" size={12} />
-            {arxivUrl ? tr('在 arXiv 查看', 'View on arXiv') : tr('原文链接', 'Original link')}
-          </a>
+
+      <PaperFacts>
+        {relevance !== null && relevance !== undefined && (
+          <PaperFact label={tr('为什么在这里', 'Why it’s here')}>
+            {tr(`${relevanceWords(relevance)}（${relevance.toFixed(2)}）`, `${relevanceWords(relevance)} (${relevance.toFixed(2)})`)}
+          </PaperFact>
         )}
-        <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />
-      </div>
+        <PaperFact label={tr('PDF 与全文', 'PDF & full text')}>
+          <PaperFulltextFact libraryId={paper.library_id ?? undefined} paperId={paper.id} pdfAvailable={!!paper.pdf_available} doi={paper.doi} />
+        </PaperFact>
+        <PaperFact label={tr('我的标签', 'My tags')}>
+          <PaperMyTagsRow bare paperId={paper.id} myTags={paper.my_tags} detailKey={['paper', paper.id]} />
+        </PaperFact>
+      </PaperFacts>
 
-      {/* —— 元信息（默认折叠） —— */}
-      <MetaFold style={{ margin: '14px 0 0' }}>
-        <MetaItem label={tr('arXiv 编号', 'arXiv ID')}>
-          {paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}
-        </MetaItem>
-        <MetaItem label="DOI">
-          {paper.doi ? <span className="mono">{paper.doi}</span> : <span className="muted">—</span>}
-        </MetaItem>
-        <MetaItem label={tr('发布日期', 'Published')}>
-          {paper.published_at ? <span className="mono">{paper.published_at.slice(0, 10)}</span> : <span className="muted">—</span>}
-        </MetaItem>
-        <MetaItem label={tr('相关度', 'Relevance')}>
-          {paper.relevance_score !== null ? (
-            <RelevanceBar value={paper.relevance_score} width={120} />
-          ) : (
-            <span className="muted">{tr('暂无', 'None')}</span>
-          )}
-        </MetaItem>
-        <MetaItem label={tr('添加时间', 'Added')}>
-          <span className="mono">{fmtTime(paper.created_at)}</span>
-        </MetaItem>
-      </MetaFold>
-
-      {/* —— 我的标签：边读边打，只有自己看得到 —— */}
-      {/* 库标签的界面入口已移除，个人标签取代了它；后端端点与数据保留。 */}
-      <PaperMyTagsRow
-        paperId={paper.id}
-        myTags={paper.my_tags}
-        detailKey={['paper', paper.id]}
-        style={{ marginTop: 12 }}
-      />
-
-      {/* —— 概念 chips —— */}
-      {paper.concepts.length > 0 && (
-        <div className="row gap6 wrap" style={{ marginTop: 12 }}>
-          {paper.concepts.map((c) => (
-            <span key={c.id} className="wikilink" style={{ height: 22 }} {...clickable(() => onOpenConcept(c))}>
-              {c.name}
-            </span>
-          ))}
-        </div>
+      {split.lead ? (
+        <PaperKeyPoints>
+          <Markdown source={split.lead} onWikiLink={onWikiLink} renderCitation={renderCitation} style={{ fontSize: 13 }} />
+        </PaperKeyPoints>
+      ) : (
+        <PaperKeyPoints tldr={paper.tldr} />
       )}
 
-      {/* —— 摘要（折叠） —— */}
-      {paper.abstract && (
-        <div className="card" style={{ marginTop: 14, overflow: 'hidden' }}>
-          <div
-            className="row"
-            onClick={() => setAbstractOpen((o) => !o)}
-            style={{ padding: '9px 13px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
-          >
-            <span style={{ fontSize: 12, fontWeight: 600 }}>
-              {tr('摘要', 'Abstract')}
-            </span>
-            <Icon
-              name="chevDown"
-              size={13}
-              style={{
-                color: 'var(--text-3)',
-                transform: abstractOpen ? 'rotate(180deg)' : 'none',
-                transition: 'transform .15s',
-              }}
-            />
-          </div>
-          {abstractOpen && (
-            <div style={{ padding: '0 13px 12px', fontSize: 12, lineHeight: 1.7, color: 'var(--text-2)' }}>
-              {paper.abstract}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* —— TL;DR —— */}
-      {paper.tldr && (
-        <div
-          style={{
-            marginTop: 14,
-            padding: '10px 13px',
-            borderRadius: 10,
-            background: 'var(--accent-soft)',
-            fontSize: 13,
-            lineHeight: 1.65,
-          }}
-        >
-          <span className="mono" style={{ fontSize: 10, color: 'var(--accent-text)', display: 'block', marginBottom: 3 }}>
-            TL;DR
-          </span>
-          {plainSummary(paper.tldr)}
-        </div>
-      )}
-
-      {/* —— 重要图片画廊（正文已嵌图时默认折叠，避免重复视觉） —— */}
-      <FiguresSection
-        paper={paper}
-        style={{ marginTop: 14 }}
-        defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)}
-      />
-
-      {/* —— Wiki 正文（含 ![[fig:N]] 嵌入图）：解读每篇一份，接口直接给 —— */}
-      <div style={{ marginTop: 18 }}>
+      <div style={{ marginTop: 18 }} data-testid="reader-summary">
         {paper.wiki_content ? (
           <>
-            <div
-              className="row gap8"
-              style={{ paddingBottom: 8, marginBottom: 12, borderBottom: '0.5px solid var(--border)' }}
-            >
-              <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
-                {tr('AI 解读', 'AI summary')}
+            <div className="pd-byline" style={{ marginTop: 0 }}>
+              <span className="row gap8">
+                {tr('AI 生成的解读', 'AI-generated summary')}
+                <CompileBadge model={paper.compiled_model} at={paper.compiled_at} />
               </span>
-              <CompileBadge model={paper.compiled_model} at={paper.compiled_at} />
             </div>
             <Markdown
-              source={paper.wiki_content}
+              source={split.body || paper.wiki_content}
               onWikiLink={onWikiLink}
               renderFigure={renderFigure}
+              renderCitation={renderCitation}
               style={{ fontSize: 13 }}
             />
           </>
@@ -267,10 +136,43 @@ export function InfoPanel({
             compact
             icon="pen"
             title={tr('还没有解读', 'No summary yet')}
-            desc={tr('文献库只为相关度较高的论文生成解读。', 'Libraries generate summaries only for highly relevant papers.')}
+            desc={tr('可以在文献库里为它生成解读。', 'You can generate one from its library.')}
           />
         )}
       </div>
+
+      <FiguresSection paper={paper} style={{ marginTop: 14 }} defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)} />
+
+      {paper.concepts.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div className="pd-more-label">{tr('涉及的概念', 'Concepts')}</div>
+          <div className="row gap6 wrap">
+            {paper.concepts.map((c) => (
+              <span key={c.id} className="wikilink" style={{ height: 22 }} {...clickable(() => onOpenConcept(c))}>
+                {c.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {paper.abstract && (
+        <MetaFold label={tr('摘要', 'Abstract')} style={{ margin: '14px 0 0' }}>
+          <div style={{ fontSize: 12.5, lineHeight: 1.7, color: 'var(--text-2)' }}>{paper.abstract}</div>
+        </MetaFold>
+      )}
+      <MetaFold label={tr('编号与日期', 'Identifiers and dates')} style={{ margin: '10px 0 0' }}>
+        <MetaItem label={tr('arXiv 编号', 'arXiv ID')}>
+          {paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}
+        </MetaItem>
+        <MetaItem label="DOI">{paper.doi ? <span className="mono">{paper.doi}</span> : <span className="muted">—</span>}</MetaItem>
+        <MetaItem label={tr('发表日期', 'Published')}>
+          {paper.published_at ? <span className="mono">{paper.published_at.slice(0, 10)}</span> : <span className="muted">—</span>}
+        </MetaItem>
+        <MetaItem label={tr('加入时间', 'Added')}>
+          <span className="mono">{fmtTime(paper.created_at)}</span>
+        </MetaItem>
+      </MetaFold>
     </div>
   );
 }

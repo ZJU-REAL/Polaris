@@ -117,3 +117,9 @@ export function ReadingDot({ status }: { status: string | undefined }) {
     />
   );
 }
+
+/** 阅读页地址；给了原文片段就带上 ?quote=，阅读页会在 PDF 里找到那一段并标出来。 */
+export function readerHref(paperId: string, quote?: string | null): string {
+  const q = (quote ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
+  return `/papers/${paperId}/read${q.length >= 12 ? `?quote=${encodeURIComponent(q)}` : ''}`;
+}

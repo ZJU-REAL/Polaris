@@ -426,6 +426,8 @@ function parseBlocks(
     if (RE_UL.test(line) || RE_OL.test(line)) {
       const ordered = RE_OL.test(line);
       const re = ordered ? RE_OL : RE_UL;
+      // 有序列表按原文的起始编号：「1. … - … 2. …」中间夹了无序列表时，第二段要从 2 接着数
+      const start = ordered ? Number(/^\s*(\d+)/.exec(line)?.[1] ?? '1') : 1;
       const items: string[] = [];
       while (i < lines.length) {
         const it = re.exec(lines[i] ?? '');
@@ -434,7 +436,7 @@ function parseBlocks(
         i++;
       }
       const children = items.map((it, ii) => <li key={ii}>{renderInline(it, onWikiLink, renderPaperRef, renderCitation, renderLibraryFigure)}</li>);
-      out.push(ordered ? <ol key={key++}>{children}</ol> : <ul key={key++}>{children}</ul>);
+      out.push(ordered ? <ol key={key++} start={start !== 1 ? start : undefined}>{children}</ol> : <ul key={key++}>{children}</ul>);
       continue;
     }
 

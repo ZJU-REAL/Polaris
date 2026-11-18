@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { Link } from 'react-router-dom';
 import type { IdeaEvidence } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { readerHref } from '../reading/shared';
 import { Markdown, type PaperRefRenderer } from '../../lib/markdown';
 import { boldLeadLabels, cleanSnippet, splitBodySections, splitInlineEnumerations, type BodySection } from './ideaText';
 
@@ -174,7 +175,7 @@ function PaperSource({ ev }: { ev: IdeaEvidence }) {
     <li className="idea-ev-paperrow">
       <div className="idea-ev-src">
         {ev.paper_id ? (
-          <Link to={`/papers/${ev.paper_id}/read`} className="idea-ev-paper" title={ev.title}>
+          <Link to={readerHref(ev.paper_id, snippet)} className="idea-ev-paper" title={snippet ? tr('打开论文，跳到这段原文', 'Open the paper at this passage') : ev.title}>
             {ev.title}
           </Link>
         ) : ev.url ? (

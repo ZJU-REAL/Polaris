@@ -4,6 +4,7 @@ import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
 import { api, type IdeaEvidence as IdeaEvidenceItem } from '../../lib/api';
 import { errorText } from '../../lib/errors';
 import { tr } from '../../lib/i18n';
+import { readerHref } from '../reading/shared';
 import { groupByClaim } from '../forge/IdeaBody';
 
 /* ============================================================
@@ -50,7 +51,7 @@ export function IdeaEvidence({ ideaId, unsupported }: { ideaId: string; unsuppor
               <span className="dr-ev-why">{g.claim}</span>
               {g.items.map((e, j) =>
                 e.paper_id ? (
-                  <Link key={j} to={`/papers/${e.paper_id}/read`} className="dr-ev-paper" title={e.title}>
+                  <Link key={j} to={readerHref(e.paper_id, e.snippet)} className="dr-ev-paper" title={e.title}>
                     {e.title}
                   </Link>
                 ) : (

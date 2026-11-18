@@ -34,7 +34,7 @@ import { Markdown } from '../../lib/markdown';
 import { HIGHLIGHT_COLORS, HIGHLIGHT_STYLES, highlightColorMeta } from './shared';
 import { PdfUploadButton } from '../shared/PdfUploadButton';
 import { resolveStructuredResourceUrls } from './structuredContent';
-import { findNormalizedTextRanges, findPreciseNormalizedTextRange } from './evidenceText';
+import { findNormalizedTextRanges, findPreciseNormalizedTextRange, findQuotePage } from './evidenceText';
 import './evidence.css';
 
 /* ============================================================
@@ -94,6 +94,9 @@ interface PdfReaderProps {
   onCreateHighlight: (input: HighlightCreateInput) => void;
   onHighlightClick: (id: string) => void;
   jumpTarget: JumpTarget | null;
+  /** 只知道原文、不知道页码时（想法里的文献依据）：读完 PDF 后逐页找，找到就回调页码，找不到回调 null */
+  quoteSearch?: string | null;
+  onQuoteLocated?: (page: number | null) => void;
 }
 
 /** 待确认的选区（等用户点配色条）。coords 为视口坐标，给浮动条定位。 */
@@ -255,6 +258,8 @@ export function PdfReader({
   onCreateHighlight,
   onHighlightClick,
   jumpTarget,
+  quoteSearch,
+  onQuoteLocated,
 }: PdfReaderProps) {
   const queryClient = useQueryClient();
   // 用回调 ref 而不是裸 useRef：滚动容器不是一挂载就存在的（论文原本没有 PDF、
@@ -268,6 +273,28 @@ export function PdfReader({
   }, []);
   const pageWrapRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [numPages, setNumPages] = useState(0);
+  // 读完的 PDF 文档（逐页取文字找原文用）
+  const [pdfDoc, setPdfDoc] = useState<{ numPages: number; getPage: (n: number) => Promise<{ getTextContent: () => Promise<{ items: unknown[] }> }> } | null>(null);
+  useEffect(() => {
+    if (!pdfDoc || !quoteSearch || !onQuoteLocated) return;
+    let cancelled = false;
+    void (async () => {
+      const pages: string[][] = [];
+      try {
+        for (let i = 1; i <= pdfDoc.numPages; i++) {
+          const content = await (await pdfDoc.getPage(i)).getTextContent();
+          pages.push(content.items.map((it) => (it && typeof it === 'object' && 'str' in it ? String((it as { str: unknown }).str) : '')));
+          if (cancelled) return;
+        }
+      } catch {
+        /* 取不到文字就当没找到 */
+      }
+      if (!cancelled) onQuoteLocated(findQuotePage(pages, quoteSearch));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfDoc, quoteSearch, onQuoteLocated]);
   const [pageWidth, setPageWidth] = useState(0);
   const [scale, setScale] = useState(1); // 缩放倍率（1 = 适应宽度）
   const [mode, setMode] = useState<ReaderMode>('annotate'); // 标注阅读器 / 标准浏览器
@@ -593,7 +620,14 @@ export function PdfReader({
       if (rects.length) {
         setEvidenceRects(rects);
         setEvidencePage(jumpTarget.page);
-        pageElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // 滚到那一句本身（页很高，只把整页居中时那句话常在屏幕外）
+        const top = Math.min(...rects.map((r) => r.y0));
+        if (pageElement && scrollEl) {
+          const pageTop = pageElement.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top + scrollEl.scrollTop;
+          scrollEl.scrollTo({ top: Math.max(0, pageTop + top * pageElement.offsetHeight - scrollEl.clientHeight / 3), behavior: 'smooth' });
+        } else {
+          pageElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
         return;
       }
       attempts += 1;
@@ -622,7 +656,7 @@ export function PdfReader({
       cancelled = true;
       cancelAnimationFrame(frame);
     };
-  }, [hasStructuredContent, jumpTarget, mode, pageRenderTick]);
+  }, [hasStructuredContent, jumpTarget, mode, pageRenderTick, scrollEl]);
 
   useEffect(() => {
     if (!jumpTarget?.quote || mode !== 'structured' || !structuredQuery.data) return;
@@ -691,13 +725,13 @@ export function PdfReader({
   if (!hasPdf && !assetsQuery.isLoading) {
     const canFetch = !!paper.arxiv_id;
     return (
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="scroll" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '48px 24px' }} data-testid="reader-no-pdf">
         <EmptyState
           icon="file"
-          title={tr('还没有 PDF', 'No PDF yet')}
+          title={tr('这篇论文还没有 PDF', 'This paper has no PDF yet')}
           desc={
             canFetch
-              ? undefined
+              ? tr('从 arXiv 下载后就能在这里读、划线、跳到原句。', 'Download it from arXiv to read, highlight and jump to quoted sentences here.')
               : tr('只有 arXiv 论文能自动下载 PDF，你可以打开原文链接或上传 PDF。', 'Only arXiv papers can be downloaded automatically. Open the original link or upload a PDF.')
           }
           action={(
@@ -736,6 +770,12 @@ export function PdfReader({
             </div>
           )}
         />
+        {paper.abstract && (
+          <div style={{ maxWidth: 640, marginTop: 28, width: '100%' }}>
+            <div style={{ fontSize: 'var(--fs-sm)', fontWeight: 500, color: 'var(--text-3)', marginBottom: 6 }}>{tr('摘要', 'Abstract')}</div>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.75, color: 'var(--text)' }}>{paper.abstract}</p>
+          </div>
+        )}
       </div>
     );
   }
@@ -869,7 +909,10 @@ export function PdfReader({
       <Document
         file={pdfSource}
         options={PDF_OPTIONS}
-        onLoadSuccess={({ numPages: n }) => setNumPages(n)}
+        onLoadSuccess={(doc) => {
+          setNumPages(doc.numPages);
+          setPdfDoc(doc as unknown as NonNullable<typeof pdfDoc>);
+        }}
         onLoadProgress={({ loaded, total }) =>
           setLoadPct(total > 0 ? Math.min(99, Math.floor((loaded / total) * 100)) : null)
         }

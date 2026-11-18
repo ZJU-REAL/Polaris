@@ -1,4 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { Markdown } from '../../../lib/markdown';
+import { findQuotePage } from '../../reading/evidenceText';
+import { readerHref } from '../../reading/shared';
 import { LEGACY_TABS, normalizeLibraryParams, readLibraryParams } from '../libraryTabs';
 import { fulltextState } from '../../shared/PaperFulltext';
 import { splitSummary } from '../../shared/PaperDetail';
@@ -89,5 +94,21 @@ describe('plain one-line summaries', () => {
   it('drops markdown italics around journal names but keeps multiplication', () => {
     expect(plainSummary('这篇 2021 年发表在 *Nature Communications* 上的工作')).toBe('这篇 2021 年发表在 Nature Communications 上的工作');
     expect(plainSummary('a * b = c')).toBe('a * b = c');
+  });
+});
+
+describe('reader passages', () => {
+  it('keeps the second ordered item numbered 2 after a bullet list in between', () => {
+    const html = renderToStaticMarkup(createElement(Markdown, { source: '1. VRAG\n- a\n- b\n2. JSA' }));
+    expect(html).toContain('<ol start="2">');
+  });
+  it('finds the page a passage is on, despite hyphenation and ligatures', () => {
+    const pages = [['Introduction text here'], ['We demonstrat-', 'ing the e\uFB03cacy of joint training on open domain QA']];
+    expect(findQuotePage(pages, 'We demonstrating the efficacy of joint training')).toBe(2);
+    expect(findQuotePage(pages, 'something that is not in the paper at all')).toBeNull();
+  });
+  it('links a passage to the reader with ?quote=, short ones without', () => {
+    expect(readerHref('p1', 'short')).toBe('/papers/p1/read');
+    expect(readerHref('p1', 'a  long   enough passage to look for')).toBe('/papers/p1/read?quote=a%20long%20enough%20passage%20to%20look%20for');
   });
 });

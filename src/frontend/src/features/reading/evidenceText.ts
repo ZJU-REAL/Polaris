@@ -115,3 +115,25 @@ export function findPreciseNormalizedTextRange(
   );
   return sectionMatches.length === 1 ? rangeFor(nodes, sectionMatches[0]!) : null;
 }
+
+/**
+ * 一段原文在哪一页：pages[i] 是第 i+1 页文本层的各个片段。先用开头一段找，找不到再用中间一段
+ * （开头常是半个词或页眉）。找不到返回 null。
+ */
+export function findQuotePage(pages: string[][], quote: string): number | null {
+  const text = compactString(quote);
+  if (text.length < 12) return null;
+  const probes = [text.slice(0, 80), text.slice(Math.floor(text.length / 2), Math.floor(text.length / 2) + 50)].filter((p) => p.length >= 12);
+  for (const probe of probes) {
+    for (let i = 0; i < pages.length; i++) {
+      if (findAllNormalizedTextMatches(pages[i]!, probe).length > 0) return i + 1;
+    }
+  }
+  return null;
+}
+
+/** 在页里能高亮的那一段：和 findQuotePage 用的同一个开头。 */
+export function quoteProbe(quote: string): string {
+  const flat = quote.replace(/\s+/g, ' ').trim();
+  return flat.slice(0, 120);
+}

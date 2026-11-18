@@ -3,6 +3,8 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { Segmented } from '../../components/ui/Segmented';
+import './reader.css';
+import { quoteProbe } from './evidenceText';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import {
@@ -54,6 +56,8 @@ export function ReadingPage() {
   const evidenceParams = new URLSearchParams(location.search);
   const evidenceLibraryId = evidenceParams.get('library_id');
   const evidenceAnchorId = evidenceParams.get('evidence');
+  // ?quote=：想法里的文献依据只带原文，没有定位；PDF 读完后逐页找这段话
+  const quoteParam = evidenceParams.get('quote');
   const evidenceQuery = useQuery({
     queryKey: ['library-evidence', evidenceLibraryId, id, evidenceAnchorId],
     queryFn: () => api.resolveLibraryEvidence(evidenceLibraryId!, id, evidenceAnchorId!),
@@ -118,9 +122,16 @@ export function ReadingPage() {
     const v = Number(localStorage.getItem(LS_WIDTH));
     return v >= RIGHT_MIN ? v : RIGHT_DEFAULT;
   });
-  const [rightCollapsed, setRightCollapsed] = useState<boolean>(
-    () => localStorage.getItem(LS_COLLAPSED) === '1',
-  );
+  // 窄窗口里 PDF 和侧栏一次只看一个（见 reader.css）；没记过偏好时先看 PDF
+  const [rightCollapsed, setRightCollapsed] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem(LS_COLLAPSED);
+      if (v !== null) return v === '1';
+    } catch {
+      /* 读不到就按默认 */
+    }
+    return typeof window !== 'undefined' && window.innerWidth <= 1024;
+  });
   useEffect(() => {
     localStorage.setItem(LS_WIDTH, String(Math.round(rightWidth)));
   }, [rightWidth]);
@@ -280,6 +291,25 @@ export function ReadingPage() {
   // 阅读页按论文 id 取数、与课题无关，是池级上下文：概念一律进不限库的概念页
   const { openConcept, openConceptByName } = usePoolConceptNav();
 
+  // 没有 PDF 时没法划线：先给论文信息（要点和解读），别停在一个只能说「还没有划线」的面板上
+  const paperIdLoaded = paper?.id;
+  const noPdf = paper ? !paper.pdf_available : false;
+  useEffect(() => {
+    if (paperIdLoaded && noPdf) setPanel((p) => (p === 'highlights' ? 'info' : p));
+  }, [paperIdLoaded, noPdf]);
+
+  const onQuoteLocated = useCallback(
+    (page: number | null) => {
+      if (!quoteParam) return;
+      if (page) {
+        setJump({ id: 'quote', page, nonce: performance.now(), quote: quoteProbe(quoteParam) });
+      } else {
+        toast(tr('没在 PDF 里找到这段原文，已打开论文开头', 'Couldn’t find that passage in the PDF, so the paper opens at the start'), 'info');
+      }
+    },
+    [quoteParam],
+  );
+
   const onHighlightClick = useCallback((hlId: string) => {
     setActiveHl(hlId);
     setPanel('highlights');
@@ -418,10 +448,10 @@ export function ReadingPage() {
           放不下，整体改横向平移而不是撑破外壳（拖拽仍是鼠标事件，触屏无效，
           待后续批次补手势）。 */}
       <div className="workbench-panx" style={{ flex: 1, minHeight: 0 }}>
-        <div ref={splitRef} className="workbench-panx-inner" style={{ height: '100%', display: 'flex' }}>
+        <div ref={splitRef} className="workbench-panx-inner reader-split" style={{ height: '100%', display: 'flex' }}>
           {/* 左：PDF 阅读器（可划线） */}
           <div
-            className="card"
+            className="card reader-pdf"
             style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
           >
             <PdfReader
@@ -433,6 +463,8 @@ export function ReadingPage() {
               onCreateHighlight={(input) => createHlMutation.mutate(input)}
               onHighlightClick={onHighlightClick}
               jumpTarget={jump}
+              quoteSearch={quoteParam}
+              onQuoteLocated={onQuoteLocated}
             />
           </div>
 
@@ -440,6 +472,7 @@ export function ReadingPage() {
             <>
               {/* 拖拽分隔条：拖动调宽，双击复位 */}
               <div
+                className="reader-drag"
                 onMouseDown={onDragStart}
                 onDoubleClick={() => setRightWidth(RIGHT_DEFAULT)}
                 title={tr('拖动调整宽度，双击还原', 'Drag to resize. Double-click to reset.')}
@@ -457,22 +490,32 @@ export function ReadingPage() {
 
               {/* 右：四面板 */}
               <div
-                className="card"
+                className="card reader-side"
                 style={{ width: rightWidth, maxWidth: '50%', flexShrink: 0, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
               >
-                <div className="scroll" style={{ padding: '10px 14px 0', flexShrink: 0, overflowX: 'auto' }}>
-                  {/* max-content：窄面板里标签不折行，放不下就横向滚动 */}
-                  <div style={{ width: 'max-content' }}>
-                    <Segmented<PanelTab>
-                      options={[
-                        { v: 'highlights', label: `${tr('标注', 'Highlights')}${highlights.length ? ` · ${highlights.length}` : ''}` },
-                        { v: 'notes', label: `${tr('笔记', 'Notes')}${paper.note_count ? ` · ${paper.note_count}` : ''}` },
-                        { v: 'chat', label: tr('AI 问答', 'Ask AI') },
+                <div className="scroll" style={{ padding: '8px 12px', flexShrink: 0, overflowX: 'auto', borderBottom: '0.5px solid var(--border)' }}>
+                  {/* 安静的文字页签，和文献库页的子视图切换一样；窄面板里放不下就横向滚动 */}
+                  <div className="pl-quiet-tabs" role="tablist" style={{ width: 'max-content' }}>
+                    {(
+                      [
+                        { v: 'highlights', label: `${tr('划线', 'Highlights')}${highlights.length ? ` ${highlights.length}` : ''}` },
+                        { v: 'notes', label: `${tr('笔记', 'Notes')}${paper.note_count ? ` ${paper.note_count}` : ''}` },
+                        { v: 'chat', label: tr('问 AI', 'Ask AI') },
                         { v: 'info', label: tr('论文信息', 'Paper info') },
-                      ]}
-                      value={panel}
-                      onChange={setPanel}
-                    />
+                      ] as { v: PanelTab; label: string }[]
+                    ).map((t) => (
+                      <button
+                        key={t.v}
+                        type="button"
+                        role="tab"
+                        aria-selected={panel === t.v}
+                        className={'pl-qtab' + (panel === t.v ? ' is-on' : '')}
+                        data-testid={`reader-tab-${t.v}`}
+                        onClick={() => setPanel(t.v)}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
                   </div>
             </div>
             {panel === 'highlights' ? (
