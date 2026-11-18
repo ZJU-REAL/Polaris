@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { splitEnumeratedLine, splitInlineEnumerations } from '../ideaText';
+import {
+  boldLeadLabels,
+  cleanSnippet,
+  humanizeFieldNames,
+  splitBodySections,
+  splitEnumeratedLine,
+  splitInlineEnumerations,
+} from '../ideaText';
+import { plainSummary } from '../../../lib/format';
 
 /**
  * 想法的「方法概述 / 风险」等小节常是一整段「……：1) …；2) …；3) …」。
@@ -125,5 +133,74 @@ describe('idea text: inline enumerations become lists', () => {
     const source = '## 动机\n\n现有方法在跨域场景下召回率低。\n\n\n\n## 风险\n\n无。\n';
     expect(splitInlineEnumerations(source)).toBe(source);
     expect(splitInlineEnumerations('')).toBe('');
+  });
+});
+
+/* 下面这些都来自真实模型跑出来的想法和论文片段。 */
+describe('idea text: what real runs look like', () => {
+  it('splits upper-case lettered enumerations too', () => {
+    const line = '对照系统：(A) 完全冻结文档侧的基线；(B) 端到端联合训练并周期性重建索引；(C) 本文提出的离线流程。';
+    expect(splitEnumeratedLine(line)).toEqual(['对照系统：', '', '- (A) 完全冻结文档侧的基线', '- (B) 端到端联合训练并周期性重建索引', '- (C) 本文提出的离线流程。']);
+    // 句子里提到 A/B/C 不是列举
+    expect(splitEnumeratedLine('在每个域上跑 A/B/C 五个系统，C 相对 A 的增益能否覆盖 B 相对 A 增益的 85%。')).toBeNull();
+  });
+
+  it('bolds the label that leads a long paragraph, and nothing else', () => {
+    const long = '用适配后的文档编码器对全库重编码一次，之后索引完全冻结，不再刷新，随后只微调查询侧与生成器。';
+    expect(boldLeadLabels(`阶段二（一次性索引重建）。${long}`)).toBe(`**阶段二（一次性索引重建）。**${long}`);
+    expect(boldLeadLabels(`实验 1（主对比）：${long}`)).toBe(`**实验 1（主对比）：**${long}`);
+    expect(boldLeadLabels(`缓解：${long}`)).toBe(`**缓解：**${long}`);
+    // 十几个字带冒号的是一句话，不是标签；短段落、列表、标题不动
+    const sentence = `这两条线索共同提示一个尚未被检验的可能：${long}`;
+    expect(boldLeadLabels(sentence)).toBe(sentence);
+    expect(boldLeadLabels('核心假设：文档侧更新是领域适配。')).toBe('核心假设：文档侧更新是领域适配。');
+    expect(boldLeadLabels(`- 缓解：${long}`)).toBe(`- 缓解：${long}`);
+    expect(boldLeadLabels(`## 风险：${long}`)).toBe(`## 风险：${long}`);
+    // 只看段首：段落中间的行不动
+    expect(boldLeadLabels(`第一行。\n缓解：${long}`)).toBe(`第一行。\n缓解：${long}`);
+  });
+
+  it('cuts the body into sections by its top-level headings', () => {
+    const md = ['开头一段。', '', '## 动机', '', '甲。', '', '### 小标题', '', '乙。', '', '## 风险', '', '丙。'].join('\n');
+    const secs = splitBodySections(md);
+    expect(secs.map((s) => s.title)).toEqual(['', '动机', '风险']);
+    expect(secs[1]!.body).toContain('### 小标题');
+    expect(secs[2]!.chars).toBe(2);
+    expect(new Set(secs.map((s) => s.id)).size).toBe(3);
+    expect(splitBodySections('只有一段，没有标题。')).toHaveLength(1);
+    expect(splitBodySections('   ')).toEqual([]);
+    // 代码块里的 # 不是标题
+    expect(splitBodySections(['## 方法', '```', '## not a heading', '```'].join('\n'))).toHaveLength(1);
+  });
+
+  it('turns a raw PDF passage into readable text with honest ellipses', () => {
+    const raw =
+      'inations of retrievers and\nLMs. For code retrieval tasks, larger LMs can yield greater gains in retriever performance.\n•\nRevela learns efficiently, demonstrat-\ning strong generalization. As we will see, the impact of\nﬁxing the documents encoder varies greatly for diﬀerent tasks when a large training dataset is avail';
+    const s = cleanSnippet(raw);
+    expect(s.cutStart).toBe(true);
+    expect(s.cutEnd).toBe(true);
+    expect(s.text.startsWith('…of retrievers and LMs.')).toBe(true);
+    expect(s.text).toContain('demonstrating strong generalization');
+    expect(s.text).toContain('fixing the documents encoder varies greatly for different tasks');
+    expect(s.text).toContain('• Revela learns');
+    expect(s.text.endsWith('dataset is…')).toBe(true);
+    expect(s.text).not.toContain('\n');
+    // 完整的句子不加省略号；真连字符保留
+    expect(cleanSnippet('Query-side fine-tuning decouples the encoders.')).toEqual({ text: 'Query-side fine-tuning decouples the encoders.', cutStart: false, cutEnd: false });
+    expect(cleanSnippet('  ').text).toBe('');
+  });
+
+  it('replaces leaked field names in score reasons', () => {
+    expect(humanizeFieldNames('novel_ratio 为 0.5，support_ratio 仅 0.5；risk_note 另指出')).toBe('新颖论断比例 为 0.5，文献支持比例 仅 0.5；风险说明 另指出');
+    expect(humanizeFieldNames('support_ratio is 0.5')).toBe('share of supported claims is 0.5');
+    expect(humanizeFieldNames('没有字段名的句子')).toBe('没有字段名的句子');
+  });
+
+  it('strips citation markers and wiki links from a one-line summary', () => {
+    expect(plainSummary('重新表述为无监督学习问题。[EVIDENCE p=1·s=5] 在五个数据集上超过基线')).toBe('重新表述为无监督学习问题。在五个数据集上超过基线');
+    expect(plainSummary('端到端反向传播训练出来的 [文1·句3][文1·句4]。在三个榜单上')).toBe('端到端反向传播训练出来的。在三个榜单上');
+    expect(plainSummary('把 [[检索增强语言模型]] 用于 **少样本** 学习')).toBe('把 检索增强语言模型 用于 少样本 学习');
+    expect(plainSummary('BLEU [1] 提升，区间 [0, 1]')).toBe('BLEU [1] 提升，区间 [0, 1]');
+    expect(plainSummary(null)).toBe('');
   });
 });

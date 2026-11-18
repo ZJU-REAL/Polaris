@@ -77,3 +77,60 @@
 @media (max-width: 768px) {
   .task-head { flex-wrap: wrap; }
 }
+
+/* ---------- 假设树：一行最多两行字，放弃的写明原因 ---------- */
+.hyp-tree { display: flex; flex-direction: column; }
+.hyp-note { margin: 0 0 var(--sp-3); max-width: 720px; font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--text-3); }
+.hyp-note-lead { color: var(--text); font-weight: 500; }
+.hyp-cols, .hyp-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) 64px 48px; column-gap: 6px; align-items: start; }
+.hyp-cols { padding: 0 6px 4px; border-bottom: 0.5px solid var(--border); font-size: var(--fs-caption); color: var(--text-3); }
+.hyp-cols > span:first-child { grid-column: 1 / 3; }
+.hyp-cols > span:not(:first-child) { text-align: right; }
+.hyp-row { padding: 7px 6px; border-radius: var(--radius-sm); cursor: pointer; }
+.hyp-row:hover { background: var(--surface-2); }
+.hyp-node.is-selected > .hyp-row { background: var(--surface-2); }
+.hyp-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.hyp-caret { width: 20px; height: 20px; padding: 0; border: 0; background: none; display: inline-flex; align-items: center; justify-content: center; color: var(--text-3); cursor: pointer; }
+span.hyp-caret { cursor: default; }
+.hyp-text { min-width: 0; }
+.hyp-statement {
+  font-size: var(--fs-body); line-height: 20px; color: var(--text); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.hyp-statement.is-full { display: block; overflow: visible; }
+.hyp-node.is-pruned .hyp-statement { color: var(--text-3); }
+.hyp-sub { display: flex; align-items: baseline; gap: var(--sp-2); margin-top: 2px; min-width: 0; font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--text-3); }
+.hyp-sub > :first-child { flex-shrink: 0; }
+.hyp-reason { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hyp-node.is-selected .hyp-reason { white-space: normal; }
+.hyp-idea { text-decoration: none; }
+.hyp-idea:hover { text-decoration: underline; text-underline-offset: 2px; }
+.hyp-num { padding-top: 1px; text-align: right; font-size: var(--fs-sm); line-height: 20px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 768px) {
+  .hyp-cols, .hyp-row { grid-template-columns: 20px minmax(0, 1fr) 44px; }
+  .hyp-cols > span:nth-child(2), .hyp-row > .hyp-num.is-support { display: none; }
+}
+
+/* 假设的依据卡：论断 → 论文 → 原文，一列排下来（真实数据一条论断带三篇论文、八段原文） */
+.hyp-detail { padding: 2px 0 6px 12px; border-left: 2px solid var(--border-2); min-width: 0; max-width: 720px; }
+.hyp-ev-group { margin-top: var(--sp-3); }
+.hyp-ev-label { display: flex; align-items: baseline; gap: 6px; font-size: var(--fs-sm); font-weight: 500; color: var(--text-2); margin-bottom: 4px; }
+.hyp-ev-label .task-dot { margin: 0; align-self: center; }
+.hyp-ev-label > span:last-child { font-weight: 400; color: var(--text-3); }
+.hyp-ev-list { margin: 0; padding: 0; list-style: none; border-top: 0.5px solid var(--border); }
+.hyp-ev-list > li { padding: 8px 0; border-bottom: 0.5px solid var(--border); min-width: 0; }
+.hyp-claim { font-size: var(--fs-body); line-height: 1.6; color: var(--text); overflow-wrap: anywhere; }
+.hyp-verdict { margin-right: 8px; font-size: var(--fs-sm); font-weight: 500; white-space: nowrap; }
+.hyp-unjudged { font-size: var(--fs-sm); color: var(--text-3); }
+.hyp-papers { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; min-width: 0; }
+.hyp-paper { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--accent-text); text-decoration: none; }
+.hyp-paper:hover { text-decoration: underline; text-underline-offset: 2px; }
+.hyp-passages { margin-top: 4px; }
+.hyp-passage { margin: 4px 0 0; padding: 0 0 0 10px; border-left: 2px solid var(--border-2); font-size: var(--fs-sm); line-height: 1.55; color: var(--text-3); overflow-wrap: anywhere; }
+.hyp-passage.is-clamped { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hyp-signals { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px var(--sp-4); font-size: var(--fs-sm); line-height: var(--lh-body); }
+.hyp-signals dt { color: var(--text-3); }
+.hyp-signals dd { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.hyp-risk { margin-top: 6px; font-size: var(--fs-sm); line-height: 1.6; color: var(--text-2); overflow-wrap: anywhere; }
+.hyp-risk-label { color: var(--text-3); }
+.hyp-risk .is-clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }

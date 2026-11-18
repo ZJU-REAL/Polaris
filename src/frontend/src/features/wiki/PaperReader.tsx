@@ -1,4 +1,5 @@
 import { useEffect, useMemo, type ReactNode } from 'react';
+import { plainSummary } from '../../lib/format';
 import { createPortal } from 'react-dom';
 import { Icon } from '../../components/ui/Icon';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
@@ -133,7 +134,7 @@ export function PaperReader({
           {paper.tldr && (
             <div className="paper-reader-tldr">
               <span className="mono">TL;DR</span>
-              <p>{paper.tldr}</p>
+              <p>{plainSummary(paper.tldr)}</p>
             </div>
           )}
 

@@ -8,7 +8,7 @@ import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
-import { fmtTime } from '../../lib/format';
+import { fmtTime, plainSummary } from '../../lib/format';
 import { clickable } from '../../lib/a11y';
 import { type PaperConceptRef, type PaperDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
@@ -231,7 +231,7 @@ export function InfoPanel({
           <span className="mono" style={{ fontSize: 10, color: 'var(--accent-text)', display: 'block', marginBottom: 3 }}>
             TL;DR
           </span>
-          {paper.tldr}
+          {plainSummary(paper.tldr)}
         </div>
       )}
 

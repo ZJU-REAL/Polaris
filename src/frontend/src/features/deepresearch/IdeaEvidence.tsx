@@ -4,6 +4,7 @@ import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
 import { api, type IdeaEvidence as IdeaEvidenceItem } from '../../lib/api';
 import { errorText } from '../../lib/errors';
 import { tr } from '../../lib/i18n';
+import { groupByClaim } from '../forge/IdeaBody';
 
 /* ============================================================
    一个想法的文献依据，按立场分两组：支持 / 反对。每条是「哪句论断 + 哪篇论文」，
@@ -38,22 +39,25 @@ export function IdeaEvidence({ ideaId, unsupported }: { ideaId: string; unsuppor
   const support = items.filter((e) => e.stance !== 'refute');
   const refute = items.filter((e) => e.stance === 'refute');
 
+  // 同一句论断被几篇论文支持：论断只写一遍，下面列论文
   const group = (label: string, list: StancedEvidence[]) =>
     list.length > 0 && (
       <div className="dr-ev-group">
         <div className="dr-ev-label">{label}</div>
         <ul>
-          {list.map((e, i) => (
-            <li key={`${e.paper_id ?? e.title}-${i}`}>
-              <span className="dr-ev-why">{e.why}</span>
-              {e.paper_id ? (
-                <Link to={`/papers/${e.paper_id}/read`} className="dr-ev-paper" title={e.title}>
-                  {e.title}
-                </Link>
-              ) : (
-                <span className="dr-ev-paper" title={e.title}>
-                  {e.title}
-                </span>
+          {groupByClaim(list).map((g, i) => (
+            <li key={i}>
+              <span className="dr-ev-why">{g.claim}</span>
+              {g.items.map((e, j) =>
+                e.paper_id ? (
+                  <Link key={j} to={`/papers/${e.paper_id}/read`} className="dr-ev-paper" title={e.title}>
+                    {e.title}
+                  </Link>
+                ) : (
+                  <span key={j} className="dr-ev-paper" title={e.title}>
+                    {e.title}
+                  </span>
+                ),
               )}
             </li>
           ))}

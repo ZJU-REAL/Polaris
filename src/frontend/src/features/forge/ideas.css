@@ -106,7 +106,35 @@
 .ideas-modal-label { margin: var(--sp-3) 0 var(--sp-2); font-size: var(--fs-body); font-weight: 500; color: var(--text); }
 
 /* ---------- 详情 ---------- */
-.idea-page { max-width: 860px; }
+.idea-page { max-width: 1040px; }
+/* 正文一栏（限宽，中文一行 50 字上下）+ 右侧目录；窄屏目录收到正文上方 */
+.idea-layout { display: grid; grid-template-columns: minmax(0, 720px) 176px; gap: var(--sp-8); align-items: start; }
+.idea-main { min-width: 0; }
+.idea-aside { position: sticky; top: var(--sp-5); padding-top: 34px; }
+.idea-outline-inline { display: none; }
+.idea-outline-title { font-size: var(--fs-caption); font-weight: 500; color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: var(--sp-2); }
+.idea-outline ul { margin: 0; padding: 0; list-style: none; border-left: 1px solid var(--border); }
+.idea-outline li button {
+  display: flex; align-items: baseline; gap: 6px; width: 100%; margin-left: -1px; padding: 4px 0 4px 12px; text-align: left;
+  border: 0; border-left: 1px solid transparent; background: transparent; cursor: pointer;
+  font-family: var(--sans); font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--text-3);
+}
+.idea-outline li button > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.idea-outline li.is-sub button { padding-left: 24px; }
+.idea-outline li button:hover { color: var(--text); }
+.idea-outline li.is-on button { color: var(--text); font-weight: 500; border-left-color: var(--accent); }
+.idea-outline li button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+.idea-outline-n { font-size: var(--fs-caption); font-weight: 400; color: var(--text-3); font-variant-numeric: tabular-nums; }
+@media (max-width: 1180px) {
+  .idea-layout { grid-template-columns: minmax(0, 720px); }
+  .idea-aside { display: none; }
+  .idea-outline-inline { display: block; margin-top: var(--sp-5); }
+  .idea-outline-inline .idea-outline-title { display: none; }
+  .idea-outline-inline .idea-outline ul { display: flex; flex-wrap: wrap; gap: 2px var(--sp-4); border-left: 0; }
+  .idea-outline-inline .idea-outline li.is-sub { display: none; }
+  .idea-outline-inline .idea-outline li button { width: auto; margin: 0; padding: 2px 0; border-left: 0; color: var(--accent-text); }
+  .idea-outline-inline .idea-outline li.is-on button { font-weight: 400; }
+}
 /* 想法的标题就是它的主张：不截断 */
 .idea-page .task-title { display: block; overflow: visible; -webkit-line-clamp: unset; }
 .idea-summary { margin: var(--sp-3) 0 0; font-size: var(--fs-title); line-height: 1.65; color: var(--text); overflow-wrap: anywhere; max-width: 760px; }
@@ -134,7 +162,11 @@
 .idea-ev-label { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 500; color: var(--text-2); margin-bottom: 2px; }
 .idea-ev-label .task-dot { margin: 0; align-self: center; }
 .idea-ev-list { margin: 0; padding: 0; list-style: none; border-top: 0.5px solid var(--border); }
-.idea-ev-item { padding: 10px 0; border-bottom: 0.5px solid var(--border); min-width: 0; }
+.idea-ev-item { padding: 12px 0; border-bottom: 0.5px solid var(--border); min-width: 0; }
+.idea-ev-papers { margin: 6px 0 0; padding: 0; list-style: none; }
+.idea-ev-paperrow { min-width: 0; }
+.idea-ev-paperrow + .idea-ev-paperrow { margin-top: 10px; }
+.idea-ev-more { margin: 0 0 0 6px; display: inline; }
 .idea-ev-why { font-size: var(--fs-body); line-height: 1.6; color: var(--text); overflow-wrap: anywhere; }
 .idea-ev-src { display: flex; align-items: baseline; gap: var(--sp-3); margin-top: 2px; min-width: 0; font-size: var(--fs-sm); color: var(--text-3); }
 .idea-ev-paper { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); }
@@ -142,9 +174,14 @@ a.idea-ev-paper { color: var(--accent-text); text-decoration: none; }
 a.idea-ev-paper:hover { text-decoration: underline; text-underline-offset: 2px; }
 .idea-ev-tag { flex-shrink: 0; }
 .idea-ev-snippet {
-  margin: 8px 0 0; padding: 8px 12px; border-left: 2px solid var(--border-2);
-  font-size: var(--fs-sm); line-height: 1.6; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere;
-  max-height: 180px; overflow-y: auto;
+  margin: 4px 0 0; padding: 2px 0 2px 12px; border-left: 2px solid var(--border-2);
+  font-size: var(--fs-sm); line-height: 1.6; color: var(--text-2); overflow-wrap: anywhere;
+}
+/* 收起时三行：看得出这段原文在说什么，要读全再展开 */
+.idea-ev-snippet.is-clamped { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; position: relative; padding-right: 0; }
+.idea-ev-snippet.is-clamped .idea-ev-more {
+  position: absolute; right: 0; bottom: 2px; margin: 0; padding-left: 28px;
+  background: linear-gradient(90deg, transparent, var(--app-bg) 24px);
 }
 .idea-plain-list { margin: 0; padding: 0; list-style: none; border-top: 0.5px solid var(--border); }
 .idea-plain-list li { padding: 9px 0; border-bottom: 0.5px solid var(--border); font-size: var(--fs-body); line-height: 1.6; color: var(--text); overflow-wrap: anywhere; min-width: 0; }
@@ -153,7 +190,20 @@ a.idea-ev-paper:hover { text-decoration: underline; text-underline-offset: 2px; 
 .idea-empty { font-size: var(--fs-body); color: var(--text-3); line-height: var(--lh-body); }
 
 /* 正文：模型写的 markdown。标题降到和页面小节一个量级，长段落限宽 */
-.idea-body { max-width: 760px; overflow-wrap: anywhere; }
+.idea-body { max-width: 720px; overflow-wrap: anywhere; position: relative; }
+.idea-body-all { position: absolute; right: 0; top: -34px; margin: 0; }
+.idea-sub + .idea-sub { margin-top: var(--sp-5); }
+.idea-sub { scroll-margin-top: var(--sp-4); }
+.idea-sec { scroll-margin-top: var(--sp-4); }
+.idea-sub-title { margin: 0 0 var(--sp-2); font-size: var(--fs-body); font-weight: 600; color: var(--text); line-height: var(--lh-body); }
+.idea-body strong { font-weight: 600; color: var(--text); }
+.idea-body ol, .idea-body ul { padding-left: 20px; margin: var(--sp-2) 0; }
+.idea-body li + li { margin-top: 2px; }
+.idea-fold-body.is-clamped { overflow: hidden; -webkit-mask-image: linear-gradient(#000 62%, transparent); mask-image: linear-gradient(#000 62%, transparent); }
+.idea-fold-body > div > :first-child { margin-top: 0; }
+.idea-fold-body > div > :last-child { margin-bottom: 0; }
+.idea-fold-toggle { margin-top: 6px; }
+.idea-score-of { margin-left: 1px; font-weight: 400; font-size: var(--fs-caption); color: var(--text-3); }
 .idea-body h1, .idea-body h2, .idea-body h3, .idea-body h4 {
   margin: var(--sp-5) 0 var(--sp-2); padding: 0; border: 0;
   font-size: var(--fs-body); font-weight: 600; color: var(--text); line-height: var(--lh-body);
@@ -172,7 +222,7 @@ a.idea-ev-paper:hover { text-decoration: underline; text-underline-offset: 2px; 
 .idea-goal-sub:first-child { margin-top: 0; }
 
 /* 评分：四行，分数 + 一句理由 */
-.idea-scores { margin: 0; display: grid; grid-template-columns: 104px 40px minmax(0, 1fr); border-top: 0.5px solid var(--border); }
+.idea-scores { margin: 0; display: grid; grid-template-columns: 88px 48px minmax(0, 1fr); border-top: 0.5px solid var(--border); }
 .idea-scores dt, .idea-scores dd { padding: 9px 0; border-bottom: 0.5px solid var(--border); font-size: var(--fs-body); line-height: 1.6; margin: 0; }
 .idea-scores dt { color: var(--text-3); }
 .idea-scores .idea-score-n { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
@@ -216,6 +266,6 @@ a.idea-ev-paper:hover { text-decoration: underline; text-underline-offset: 2px; 
   .ideas-row-act { justify-content: flex-start; }
   .ideas-sort { margin-left: 0; }
   .idea-goal, .idea-scores { grid-template-columns: 84px minmax(0, 1fr); }
-  .idea-scores { grid-template-columns: 84px 36px minmax(0, 1fr); }
+  .idea-scores { grid-template-columns: 72px 44px minmax(0, 1fr); }
   .idea-match-when { display: none; }
 }

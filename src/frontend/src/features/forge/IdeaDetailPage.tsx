@@ -6,7 +6,6 @@ import { DotsMenu, type DotsMenuItem } from '../../components/ui/DotsMenu';
 import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
 import { Timeline, TimelineItem } from '../../components/ui/Timeline';
 import { toast } from '../../components/ui/Toast';
-import { Markdown } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import {
   api,
@@ -24,7 +23,8 @@ import { DiscussionBubble } from '../review/messages';
 import { researchKeys } from '../deepresearch/hooks';
 import { IdeaComparisons, matchInfo } from './IdeaComparisons';
 import { researchTypeLabel, SCORE_DIMS } from './ideaShared';
-import { splitInlineEnumerations } from './ideaText';
+import { ClaimList, IdeaOutline, PlanSections, useBodySections, type OutlineItem } from './IdeaBody';
+import { humanizeFieldNames } from './ideaText';
 import {
   groupEvidence,
   localizeHeadings,
@@ -72,38 +72,6 @@ function Section({ title, note, aside, children, id }: { title: string; note?: R
 
 /* ---------------- 文献依据 ---------------- */
 
-function EvidenceItem({ ev }: { ev: IdeaEvidence }) {
-  const [open, setOpen] = useState(false);
-  const snippet = typeof ev.snippet === 'string' ? ev.snippet.trim() : '';
-  return (
-    <li className="idea-ev-item">
-      {ev.why && <div className="idea-ev-why">{ev.why}</div>}
-      <div className="idea-ev-src">
-        {ev.paper_id ? (
-          <Link to={`/papers/${ev.paper_id}/read`} className="idea-ev-paper" title={ev.title}>
-            {ev.title}
-          </Link>
-        ) : ev.url ? (
-          <a href={ev.url} target="_blank" rel="noreferrer noopener" className="idea-ev-paper" title={ev.title}>
-            {ev.title}
-          </a>
-        ) : (
-          <span className="idea-ev-paper" title={ev.title}>
-            {ev.title}
-          </span>
-        )}
-        {!ev.paper_id && <span className="idea-ev-tag">{ev.source === 'external' ? tr('不在文献库里', 'Not in your library') : tr('趋势信号', 'Trend signal')}</span>}
-        {snippet && (
-          <button type="button" className="step-toggle idea-ev-tag" style={{ marginTop: 0 }} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-            {open ? tr('收起原文', 'Hide excerpt') : tr('原文片段', 'Excerpt')}
-          </button>
-        )}
-      </div>
-      {open && snippet && <blockquote className="idea-ev-snippet">{snippet}</blockquote>}
-    </li>
-  );
-}
-
 function EvidenceSection({ idea }: { idea: IdeaDetail }) {
   const grouped = groupEvidence(idea.evidence);
   // 趋势信号不是论文对论断的表态（没有立场）：单独一组，不算「支持」
@@ -124,18 +92,14 @@ function EvidenceSection({ idea }: { idea: IdeaDetail }) {
         <div className="idea-ev-label">
           <span className={'task-dot ' + tone} />
           {label}
-          <span className="idea-sec-note">{list.length}</span>
+          <span className="idea-sec-note">{tr(`${list.length} 篇`, list.length === 1 ? '1 paper' : `${list.length} papers`)}</span>
         </div>
-        <ul className="idea-ev-list">
-          {list.map((ev, i) => (
-            <EvidenceItem key={`${ev.paper_id ?? ev.title}-${i}`} ev={ev} />
-          ))}
-        </ul>
+        <ClaimList list={list} />
       </div>
     );
 
   return (
-    <Section id="evidence" title={tr('文献依据', 'Evidence')} note={stanced > 0 ? tr('每条是一句论断和支持或反对它的论文。', 'Each line is a claim and the paper that supports or contradicts it.') : undefined}>
+    <Section id="evidence" title={tr('文献依据', 'Evidence')} note={stanced > 0 ? tr('每条是一句论断，下面是支持或反对它的论文和原文。', 'Each item is a claim, then the papers for or against it with the passage.') : undefined}>
       {group(tr('支持', 'Supporting'), 'is-ok', support)}
       {group(tr('反对', 'Against'), 'is-err', refute)}
       {group(tr('提出它的线索', 'What prompted it'), '', leads)}
@@ -422,8 +386,9 @@ export function IdeaDetailPage() {
   const body = useMemo(() => {
     if (!idea?.content) return { text: '', unsupported: [] as string[] };
     const split = splitUnsupportedSection(idea.content);
-    return { text: splitInlineEnumerations(localizeHeadings(split.body)), unsupported: split.unsupported };
+    return { text: localizeHeadings(split.body), unsupported: split.unsupported };
   }, [idea?.content]);
+  const sections = useBodySections(body.text);
 
   if (ideaQuery.isLoading) {
     return (
@@ -467,8 +432,22 @@ export function IdeaDetailPage() {
     { key: 'trash', label: tr('移入回收站', 'Move to trash'), icon: 'trash', danger: true, separated: true, onSelect: () => setConfirmTrash(true) },
   ];
 
+  const evidenceCount = (idea.evidence ?? []).length;
+  const outline: OutlineItem[] = [
+    { id: 'evidence', label: tr('文献依据', 'Evidence'), count: evidenceCount },
+    ...(unsupported.length > 0 ? [{ id: 'unsupported', label: tr('尚无依据', 'Not yet supported'), count: unsupported.length }] : []),
+    ...(idea.goal ? [{ id: 'goal', label: tr('研究目标', 'Research goal') }] : []),
+    { id: 'plan', label: proposal ? tr('研究方案', 'Proposal') : tr('方法与实验', 'Method and experiments') },
+    ...sections.filter((x) => x.title).map((x) => ({ id: `plan-${x.id}`, label: x.title, sub: true })),
+    { id: 'scores', label: tr('评分', 'Scores') },
+    { id: 'comparisons', label: tr('对比记录', 'Comparisons'), count: matches.length },
+    { id: 'discussion', label: tr('讨论', 'Discussion') },
+  ];
+
   return (
     <div className="page fadeup idea-page">
+      <div className="idea-layout">
+      <div className="idea-main">
       <Link className="task-back" to={topicPath(idea.project_id, 'forge')}>
         ← {topicName ? tr(`${topicName} · 想法`, `${topicName} · Ideas`) : tr('想法', 'Ideas')}
       </Link>
@@ -490,6 +469,11 @@ export function IdeaDetailPage() {
           </a>
         )}
         {origin !== 'manual' && <span>{originSentence(origin)}</span>}
+        {idea.source_voyage_id && (
+          <Link to={`/voyages/${idea.source_voyage_id}`} data-testid="idea-source-task">
+            {tr('查看生成过程', 'How it was generated')}
+          </Link>
+        )}
         {idea.seed_idea && (
           <span>
             {tr('由想法展开：', 'Expanded from: ')}
@@ -533,6 +517,10 @@ export function IdeaDetailPage() {
         </span>
       </div>
 
+      <div className="idea-outline-inline">
+        <IdeaOutline items={outline} />
+      </div>
+
       <EvidenceSection idea={idea} />
 
       {unsupported.length > 0 && (
@@ -548,10 +536,8 @@ export function IdeaDetailPage() {
       {idea.goal && <GoalSection goal={idea.goal} />}
 
       <Section id="plan" title={proposal ? tr('研究方案', 'Proposal') : tr('方法与实验', 'Method and experiments')}>
-        {body.text ? (
-          <div className="idea-body">
-            <Markdown source={body.text} renderPaperRef={renderPaperRef} />
-          </div>
+        {sections.length > 0 ? (
+          <PlanSections sections={sections} renderPaperRef={renderPaperRef} anchorPrefix="plan-" />
         ) : (
           <div className="idea-empty">{tr('还没有写方法和实验。', 'No method or experiments written yet.')}</div>
         )}
@@ -590,8 +576,11 @@ export function IdeaDetailPage() {
             {SCORE_DIMS.map((d) => (
               <div key={d.key} style={{ display: 'contents' }}>
                 <dt>{tr(d.zh, d.en)}</dt>
-                <dd className="idea-score-n">{Number.isInteger(idea.scores![d.key]) ? idea.scores![d.key] : idea.scores![d.key].toFixed(1)}</dd>
-                <dd className="idea-score-why">{idea.score_rationale?.[d.key] ?? ''}</dd>
+                <dd className="idea-score-n">
+                  {Number.isInteger(idea.scores![d.key]) ? idea.scores![d.key] : idea.scores![d.key].toFixed(1)}
+                  <span className="idea-score-of">/10</span>
+                </dd>
+                <dd className="idea-score-why">{humanizeFieldNames(idea.score_rationale?.[d.key] ?? '')}</dd>
               </div>
             ))}
           </dl>
@@ -623,6 +612,12 @@ export function IdeaDetailPage() {
       <Section id="discussion" title={tr('讨论', 'Discussion')} note={tr('下次对比时，AI 审稿人会看到这里的评论。', 'AI reviewers read these comments in the next comparison.')}>
         <DiscussionPanel ideaId={idea.id} />
       </Section>
+
+      </div>
+      <aside className="idea-aside">
+        <IdeaOutline items={outline} />
+      </aside>
+      </div>
 
       <ConfirmModal
         open={confirmTrash}

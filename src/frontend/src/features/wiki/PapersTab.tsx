@@ -22,7 +22,7 @@ import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { canSendToExtension, sendLibraryPapersToExtension } from '../../lib/extension-download-batches';
 import { extensionDeliveryAvailable } from '../../lib/polaris-extension';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
-import { fmtTime, parseApiDate } from '../../lib/format';
+import { fmtTime, parseApiDate, plainSummary } from '../../lib/format';
 import {
   api,
   ApiError,
@@ -798,7 +798,7 @@ const PaperRow = memo(function PaperRow({
               textOverflow: 'ellipsis',
             }}
           >
-            {p.tldr}
+            {plainSummary(p.tldr)}
           </span>
         )}
       </div>
@@ -1160,7 +1160,7 @@ function PaperDetailPane({
           <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
             TL;DR
           </span>
-          {paper.tldr}
+          {plainSummary(paper.tldr)}
         </div>
       )}
 

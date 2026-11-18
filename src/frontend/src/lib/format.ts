@@ -84,3 +84,21 @@ export function fmtTokens(n: number | null | undefined): string {
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
   return `${(n / 1_000_000).toFixed(2)}M`;
 }
+
+/**
+ * 解读里的一句话摘要（tldr）当纯文本显示前过一遍：模型写的摘要带着给解读页用的记号——
+ * 出处标记「[文1·句3]」「[EVIDENCE p=1·s=5]」、概念双链「[[开放域问答]]」、markdown 加粗。
+ * 解读页会把它们渲染成链接；列表行、时间线、搜索结果里是纯文本，原样露出来就是乱码。
+ */
+export function plainSummary(text: string | null | undefined): string {
+  if (!text) return '';
+  return text
+    .replace(/\s*\[(?:文\s*\d+[^\]]{0,24}|EVIDENCE[^\]]{0,40}|(?:p|s|页|句)\s*[=＝]?\s*\d+[^\]]{0,24})\]/gi, '')
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
+    .replace(/\[\[([^\]]+)\]\]/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\s+([，。；：、,.;:])/g, '$1')
+    .replace(/([，。；：、！？])[ \t]+/g, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
