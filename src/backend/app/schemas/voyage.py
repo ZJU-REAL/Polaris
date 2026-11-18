@@ -99,6 +99,47 @@ class VoyageErrorRead(BaseModel):
     step_title: str | None = None
 
 
+class IdeaTaskResult(BaseModel):
+    """一次写想法的任务（想法生成 / 假设探索）最后交了什么。"""
+
+    ideas_written: int  # 这次任务写进课题的想法数
+    dropped_as_duplicates: int  # 因为和已有想法（或同批里更早的候选）重复而没写的数
+
+
+def _idea_task_result(kind: str, checkpoint: dict[str, Any]) -> IdeaTaskResult | None:
+    """从任务自己的账本里读出「写了几个、因重复丢了几个」。
+
+    写想法那一步没跑过（账本不在）一律 None——0 只表示「跑了，一个也没写」。
+
+    - idea_forge：入库步骤记下的 ``forge_inserted_ids``；丢弃数是去重步骤在
+      ``forge_candidates`` 上标了 ``duplicate`` 的候选（和已有想法重复，或和同批里
+      排在前面的候选重复）。
+    - discovery：``discovery.ideas`` 是按假设节点记的账，一个节点要么写成了想法、
+      要么判成与这次探索之外的想法重复。关了 emit_ideas 的探索没有这本账。
+    """
+    if kind == "idea_forge":
+        inserted = checkpoint.get("forge_inserted_ids")
+        if not isinstance(inserted, list):
+            return None
+        candidates = checkpoint.get("forge_candidates")
+        dropped = sum(
+            1
+            for c in (candidates if isinstance(candidates, list) else [])
+            if isinstance(c, dict) and c.get("duplicate")
+        )
+        return IdeaTaskResult(ideas_written=len(inserted), dropped_as_duplicates=dropped)
+    if kind == "discovery":
+        state = checkpoint.get("discovery")
+        ledger = state.get("ideas") if isinstance(state, dict) else None
+        if not isinstance(ledger, dict):
+            return None
+        entries = [e for e in ledger.values() if isinstance(e, dict)]
+        dropped = sum(1 for e in entries if e.get("duplicate"))
+        written = sum(1 for e in entries if not e.get("duplicate") and e.get("idea_id"))
+        return IdeaTaskResult(ideas_written=written, dropped_as_duplicates=dropped)
+    return None
+
+
 class VoyageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -126,6 +167,9 @@ class VoyageRead(BaseModel):
     # 已经排到第几次自动重试（1..3；0 = 没有自动重试过）。retry_at 非空时它就是
     # 即将进行的那一次；retry_at 为空且等于 3 说明自动重试已用完，要人来处理。
     retry_attempt: int = 0
+    # 仅写想法的任务（idea_forge / discovery）且 status == done 时非空：写了几个想法、
+    # 因重复丢了几个。界面不用再拿任务前后的想法列表去比。
+    result: IdeaTaskResult | None = None
 
     @model_validator(mode="wrap")
     @classmethod
@@ -148,6 +192,8 @@ class VoyageRead(BaseModel):
 
         if self.status not in TERMINAL_STATUSES:
             self.retry_attempt = auto_retry_attempt(checkpoint)
+        if self.status == "done":
+            self.result = _idea_task_result(self.kind, checkpoint)
         if self.status != "paused_error":
             return
         self.retry_at = auto_retry_due_at(checkpoint)

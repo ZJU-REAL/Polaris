@@ -93,6 +93,7 @@
     "plan": null,
     "plan_iteration": 0,
     "project_id": "<uuid-3>",
+    "result": null,
     "retry_at": null,
     "retry_attempt": 0,
     "status": "planning",
@@ -734,6 +735,10 @@
     ],
     "plan_iteration": 2,
     "project_id": "<uuid-3>",
+    "result": {
+      "dropped_as_duplicates": 0,
+      "ideas_written": 2
+    },
     "retry_at": null,
     "retry_attempt": 0,
     "status": "done",

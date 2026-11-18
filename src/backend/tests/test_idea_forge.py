@@ -106,6 +106,9 @@ async def test_forge_full_pipeline(client, queue_stub):
     # forge/state：running_voyage_id 指向进行中的航程
     resp = await client.get(f"/api/projects/{project_id}/forge/state", headers=headers)
     assert resp.json()["running_voyage_id"] == run_id
+    # 没跑完的任务没有结果
+    assert voyage["result"] is None
+    assert (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()["result"] is None
 
     engine, _bus = _make_engine()
     await engine.run(uuid.UUID(run_id))
@@ -114,6 +117,10 @@ async def test_forge_full_pipeline(client, queue_stub):
     detail = resp.json()
     assert detail["status"] == "done", detail
     assert [s["status"] for s in detail["steps"]] == ["passed"] * 7
+    # 跑完的任务自己说写了几个、丢了几个，页面不用比对前后两份想法列表
+    assert detail["result"] == {"ideas_written": 2, "dropped_as_duplicates": 0}
+    listed = (await client.get(f"/api/voyages?project_id={project_id}", headers=headers)).json()
+    assert next(v for v in listed if v["id"] == run_id)["result"] == detail["result"]
     assert detail["steps"][0]["observation"]["papers"] == 3  # 上下文读到 3 篇 compiled
     assert detail["steps"][1]["observation"]["enabled"] == [
         "survey_gap",
@@ -283,6 +290,7 @@ async def test_forge_dedup_drops_duplicates(client, queue_stub):
     assert dropped["title"] == FAKE_IDEA_1_TITLE
     assert dropped["cosine"] > 0.9 and dropped["rerank_score"] >= 0.5
     assert detail["steps"][6]["observation"]["inserted"] == 1  # 只入库存活的候选 2
+    assert detail["result"] == {"ideas_written": 1, "dropped_as_duplicates": 1}
 
     async with get_sessionmaker()() as session:
         titles = (

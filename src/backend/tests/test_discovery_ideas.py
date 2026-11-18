@@ -23,6 +23,7 @@ from app.core.llm.fake import FakeProvider
 from app.models.idea import Idea
 from app.models.paper import PaperChunk
 from app.models.voyage import VoyageRun, VoyageStep
+from app.schemas.voyage import VoyageRead
 from app.services import hypothesis_pipeline as pipeline
 from app.services import voyages as voyages_service
 from tests.conftest import add_paper, make_project_with_library, register_and_login
@@ -205,6 +206,9 @@ async def test_discovery_writes_surviving_hypotheses_as_ideas(client, queue_stub
             )
         ).scalar_one()
         assert step.observation["ideas"] == 2 and step.observation["duplicates"] == 0
+    # 任务读模型自己报结果
+    voyage = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()
+    assert voyage["result"] == {"ideas_written": 2, "dropped_as_duplicates": 0}
 
 
 async def test_emit_ideas_false_keeps_the_tree_only(client, queue_stub):
@@ -233,6 +237,8 @@ async def test_emit_ideas_false_keeps_the_tree_only(client, queue_stub):
         )
     assert "discovery.write_ideas" not in actions
     assert await _ideas(project_id) == []
+    # 写想法那一步没跑：没有结果可报（不是「写了 0 个」）
+    assert VoyageRead.model_validate(run).result is None
 
 
 async def _replay_write_ideas(run_id: uuid.UUID) -> dict:
@@ -291,6 +297,9 @@ async def test_write_ideas_skips_duplicates_of_existing_ideas(client, queue_stub
     assert len(ledger) == 2
     assert all(entry["duplicate"] is True for entry in ledger.values())
     assert {entry["idea_id"] for entry in ledger.values()} == {str(i.id) for i in first}
+    result = VoyageRead.model_validate(run).result
+    assert result is not None
+    assert result.model_dump() == {"ideas_written": 0, "dropped_as_duplicates": 2}
 
     # 用户把这些想法扔进回收站后再探索：它们不再挡住同样的想法
     async with get_sessionmaker()() as session:
