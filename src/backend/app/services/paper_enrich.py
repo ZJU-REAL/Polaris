@@ -74,6 +74,27 @@ def paper_task_owner_key(task_id: str) -> str:
 
 # 已启动的后台任务引用（防止 asyncio 任务被 GC；也供测试 await 到完成）
 _TASKS: dict[str, asyncio.Task] = {}
+#: 正在后台补全（下载 PDF、抽全文、建索引……）的论文 → 在跑的任务数
+_ENRICHING: dict[uuid.UUID, int] = {}
+
+
+def enriching_paper_ids() -> set[uuid.UUID]:
+    """此刻正在后台补全的论文（论文读接口的 fulltext.extracting 用）。"""
+    return set(_ENRICHING)
+
+
+def _track_enrichment(paper_id: uuid.UUID, task: asyncio.Task) -> None:
+    _ENRICHING[paper_id] = _ENRICHING.get(paper_id, 0) + 1
+
+    def done(_task: asyncio.Task) -> None:
+        left = _ENRICHING.get(paper_id, 1) - 1
+        if left > 0:
+            _ENRICHING[paper_id] = left
+        else:
+            _ENRICHING.pop(paper_id, None)
+
+    task.add_done_callback(done)
+
 
 Emit = Callable[..., Awaitable[None]]
 
@@ -797,6 +818,7 @@ async def launch_paper_enrichment(
     )
     _TASKS[task_id] = task
     task.add_done_callback(lambda t: _TASKS.pop(task_id, None))
+    _track_enrichment(paper_id, task)
     return task_id
 
 

@@ -29,6 +29,7 @@ from app.models.library_direction import LibraryPaper
 from app.models.paper import (
     Concept,
     Paper,
+    PaperChunk,
     PaperNote,
     PaperTag,
     PaperUserMeta,
@@ -604,7 +605,79 @@ async def paper_extras_map(
     for meta in meta_rows.scalars():
         extras[meta.paper_id]["starred"] = meta.starred
         extras[meta.paper_id]["reading_status"] = meta.reading_status
+    for pid, state in (await fulltext_states(session, ids)).items():
+        extras[pid]["fulltext"] = state
     return extras
+
+
+#: 内容版本已经抽出正文的状态 / 还在路上的状态（services/paper_content.py）
+_CONTENT_READY = frozenset({"ready", "ready_fallback", "vector_ready"})
+_CONTENT_DONE = _CONTENT_READY | {"failed"}
+
+
+async def fulltext_states(
+    session: AsyncSession, paper_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, Any]:
+    """每篇论文的 :class:`~app.schemas.paper.PaperFulltext`（批量查询，见那里的口径）。"""
+    from app.models.paper_assets import PaperAsset
+    from app.models.paper_content import PaperContentVersion
+    from app.schemas.paper import PaperFulltext
+    from app.services.paper_enrich import enriching_paper_ids
+
+    ids = list(paper_ids)
+    if not ids:
+        return {}
+    papers = (
+        await session.execute(
+            select(Paper.id, Paper.pdf_path, Paper.full_text_path, Paper.abstract).where(
+                Paper.id.in_(ids)
+            )
+        )
+    ).all()
+    assets = set(
+        (
+            await session.execute(
+                select(PaperAsset.paper_id).where(
+                    PaperAsset.paper_id.in_(ids), PaperAsset.state == "ready"
+                )
+            )
+        ).scalars()
+    )
+    statuses: dict[uuid.UUID, set[str]] = {}
+    for pid, version_status in (
+        await session.execute(
+            select(PaperContentVersion.paper_id, PaperContentVersion.status).where(
+                PaperContentVersion.paper_id.in_(ids)
+            )
+        )
+    ).all():
+        statuses.setdefault(pid, set()).add(version_status)
+    sources: dict[uuid.UUID, set[str]] = {}
+    for pid, source in (
+        await session.execute(
+            select(PaperChunk.paper_id, PaperChunk.source)
+            .where(PaperChunk.paper_id.in_(ids))
+            .distinct()
+        )
+    ).all():
+        sources.setdefault(pid, set()).add(str(source or ""))
+    enriching = enriching_paper_ids()
+    out: dict[uuid.UUID, Any] = {}
+    for pid, pdf_path, full_text_path, abstract in papers:
+        versions = statuses.get(pid, set())
+        chunk_sources = sources.get(pid, set())
+        if full_text_path or versions & _CONTENT_READY or "fulltext" in chunk_sources:
+            text = "full"
+        elif (abstract or "").strip() or "abstract" in chunk_sources:
+            text = "abstract"
+        else:
+            text = "none"
+        out[pid] = PaperFulltext(
+            pdf=bool(pdf_path) or pid in assets,
+            text=text,
+            extracting=bool(versions - _CONTENT_DONE) or pid in enriching,
+        )
+    return out
 
 
 async def set_paper_tags(session: AsyncSession, view: PaperView, names: list[str]) -> list[str]:

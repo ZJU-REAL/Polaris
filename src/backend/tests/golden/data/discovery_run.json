@@ -16,6 +16,11 @@
     "created_at": "<ts>",
     "doi": null,
     "figures": [],
+    "fulltext": {
+      "extracting": false,
+      "pdf": false,
+      "text": "abstract"
+    },
     "has_wiki": false,
     "id": "<uuid-4>",
     "library_id": "<uuid-2>",
@@ -56,6 +61,11 @@
     "created_at": "<ts>",
     "doi": null,
     "figures": [],
+    "fulltext": {
+      "extracting": false,
+      "pdf": false,
+      "text": "abstract"
+    },
     "has_wiki": false,
     "id": "<uuid-5>",
     "library_id": "<uuid-2>",

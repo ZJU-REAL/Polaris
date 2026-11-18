@@ -32,6 +32,23 @@ def _normalize_authors(value: Any) -> list[dict[str, Any]]:
     return normalized
 
 
+class PaperFulltext(BaseModel):
+    """这篇论文手里有什么：PDF、哪种正文、是不是正在抽取。
+
+    以前这件事分在两处、口径不同：``pdf_available`` / 索引状态看论文行上的路径与分段，
+    PDF 资产与内容版本表看另一套。这里把两边合成一个答案。
+
+    - ``pdf``：论文行上有 PDF，或者有一份就绪的 PDF 资产；
+    - ``text``：``full`` = 有抽取出的全文（论文行上的全文、就绪的内容版本或按全文切的
+      分段）；``abstract`` = 只有标题 + 摘要；``none`` = 连摘要都没有；
+    - ``extracting``：有内容版本还在排队 / 解析，或者这篇论文的后台补全正在跑。
+    """
+
+    pdf: bool = False
+    text: Literal["none", "abstract", "full"] = "none"
+    extracting: bool = False
+
+
 class PaperRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -66,6 +83,7 @@ class PaperRead(BaseModel):
     starred: bool = False  # 当前用户视角
     reading_status: str = "unread"  # 当前用户视角：unread | reading | read
     note_count: int = 0
+    fulltext: PaperFulltext = PaperFulltext()  # 由 papers.paper_extras_map 回填
 
     @field_validator("authors", mode="before")
     @classmethod
