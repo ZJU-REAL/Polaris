@@ -38,8 +38,28 @@ class IdeaCounts(BaseModel):
     total: int = 0
 
 
+class ForgeParkedRun(BaseModel):
+    """停下来等人处理的 idea 类任务（出错暂停 / 等回答 / 等确认）。
+
+    这类任务不再算「进行中」（不挡新任务），所以 running_voyage_id 里看不到它；
+    单独报出来，想法页才能提醒用户去重试或取消。
+    """
+
+    voyage_id: uuid.UUID
+    kind: str  # idea_forge | idea_review | idea_proposal ...
+    status: str  # paused_error | paused_ask | paused_gate
+    # 仅 paused_error：为什么停下（同 VoyageRead.last_error 的 code / message / detail）
+    error_code: str | None = None
+    error_message: str | None = None
+    error_detail: str | None = None
+    retry_at: datetime | None = None
+    retry_attempt: int = 0
+
+
 class ForgeStateRead(BaseModel):
     running_voyage_id: uuid.UUID | None
+    # 最近一条停着等人的 idea 类任务；没有为 None
+    parked_run: ForgeParkedRun | None = None
     last_run: ForgeLastRun | None
     idea_counts: IdeaCounts
 

@@ -23,6 +23,7 @@ from app.models.voyage import VoyageRun
 from app.schemas.gate import GateDecision, GateRead
 from app.services import experiments as experiments_service
 from app.services import gates as gates_service
+from app.services import ideas as ideas_service
 from app.services import voyage_messages as messages_service
 
 router = APIRouter(prefix="/gates", tags=["gates"])
@@ -62,6 +63,25 @@ async def _decide(
     bus: EventBus,
 ) -> GateRead:
     gate = await _get_decidable_gate(session, gate_id, user)
+
+    if approved:
+        # 批准 = 恢复这条任务。停着的 idea 类任务不再挡住同课题的新任务，所以这期间
+        # 可能已经有另一条在跑了：和「重试」一样先查互斥，撞上就 409，闸门保持待审批
+        # （先查后决定：否则闸门已经记成批准，任务却没法恢复）。
+        pending_voyage_id = gates_service.gate_voyage_id(gate)
+        pending_run = (
+            await session.get(VoyageRun, pending_voyage_id)
+            if pending_voyage_id is not None
+            else None
+        )
+        if pending_run is not None and gate.status == "pending":
+            try:
+                await ideas_service.ensure_no_other_idea_voyage(session, pending_run)
+            except ideas_service.IdeaVoyageConflictError as e:
+                await session.rollback()
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, detail="IDEA_VOYAGE_ALREADY_RUNNING"
+                ) from e
 
     try:
         gate = await gates_service.decide_gate(

@@ -28,6 +28,7 @@ import {
 import { tr } from '../../lib/i18n';
 import { DepthBadge, researchTypeLabel, ResearchTypeBadge, ScoreRingGroup } from './ideaShared';
 import { DeepDiveDrawer } from './DeepDiveDrawer';
+import { ParkedIdeaRunBanner } from './ParkedIdeaRunBanner';
 
 /* ============================================================
    /forge — Stage 01 · Idea Forge（M3）
@@ -407,9 +408,13 @@ export function ForgePage() {
     queryFn: () => api.getForgeState(pid!),
     enabled: !!pid,
     retry: false,
-    refetchInterval: (q) => (q.state.data?.running_voyage_id ? 5_000 : 60_000),
+    // 停着的任务排了自动重试时也勤一点刷：它随时可能自己跑起来
+    refetchInterval: (q) =>
+      q.state.data?.running_voyage_id || q.state.data?.parked_run?.retry_at ? 5_000 : 60_000,
   });
   const state = stateQuery.data;
+  // 停着等人处理的想法类任务（出错暂停 / 等回答 / 等确认）：不算进行中，单独提醒
+  const parked = state?.parked_run ?? null;
 
   // —— 深度生成状态（进行中任务 / 待确认研究目标） ——
   const deepQuery = useQuery({
@@ -421,7 +426,10 @@ export function ForgePage() {
       q.state.data?.running_voyage_id || q.state.data?.pending_gate_id ? 5_000 : 60_000,
   });
   const deep = deepQuery.data;
-  const deepRunningId = deep?.running_voyage_id ?? null;
+  // 深度生成接口把「没结束」都算进行中，停着的那条也在里面；停着的不挡新任务，
+  // 也不该显示成「正在深度生成」——它归上面的 parked 提醒
+  const deepRunningId =
+    deep?.running_voyage_id && deep.running_voyage_id !== parked?.voyage_id ? deep.running_voyage_id : null;
   // forge / 深度生成同项目互斥（后端共用 409）
   const running = !!state?.running_voyage_id || !!deepRunningId;
 
@@ -603,6 +611,11 @@ export function ForgePage() {
           </div>
         </div>
       </div>
+
+      {/* 停着等人处理的任务。等确认研究目标的那种下面有专门的提示，不重复出 */}
+      {parked && pid && !(parked.status === 'paused_gate' && deep?.pending_gate_id) && (
+        <ParkedIdeaRunBanner run={parked} pid={pid} />
+      )}
 
       {/* 待确认研究目标提示 */}
       {deep?.pending_gate_id && (

@@ -685,7 +685,26 @@ export function ObservationBlock({ observation, compact }: { observation: unknow
   );
 }
 
+/** 失败记录里的命令行：只有真跑过命令才有。引擎对「不是命令引起的失败」填的是占位
+    的 "unknown command"，以前照样显示成「命令: unknown command」。 */
+export function realCommand(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!text || text.toLowerCase() === 'unknown command' || text.toLowerCase() === 'unknown') return null;
+  return text;
+}
+
 function FailureEvidenceCard({ failure }: { failure: Record<string, unknown> }) {
+  const command = realCommand(failure.command_display);
+  const meta = [
+    command ? `${tr('命令', 'Command')}: ${command}` : null,
+    failure.exit_status !== null && failure.exit_status !== undefined
+      ? `${tr('退出码', 'exit code')} ${String(failure.exit_status)}`
+      : null,
+    failure.elapsed_seconds !== null && failure.elapsed_seconds !== undefined
+      ? `${Number(failure.elapsed_seconds).toFixed(1)}s`
+      : null,
+  ].filter(Boolean);
   const stdout = typeof failure.stdout_tail === 'string' ? failure.stdout_tail : '';
   const stderr = typeof failure.stderr_tail === 'string' ? failure.stderr_tail : '';
   const raw = [stderr && `stderr:\n${stderr}`, stdout && `stdout:\n${stdout}`].filter(Boolean).join('\n\n');
@@ -695,15 +714,11 @@ function FailureEvidenceCard({ failure }: { failure: Record<string, unknown> }) 
         {failure.phase && failure.phase !== 'unknown' ? `${String(failure.phase)} · ` : ''}
         {String(failure.message ?? failure.exception_type ?? tr('命令执行失败', 'Command failed'))}
       </div>
-      <div className="mono" style={{ marginTop: 5, fontSize: 11, overflowWrap: 'anywhere' }}>
-        {failure.command_display ? `${tr('命令', 'Command')}: ${String(failure.command_display)}` : ''}
-        {failure.exit_status !== null && failure.exit_status !== undefined
-          ? ` · ${tr('退出码', 'exit code')} ${String(failure.exit_status)}`
-          : ''}
-        {failure.elapsed_seconds !== null && failure.elapsed_seconds !== undefined
-          ? ` · ${Number(failure.elapsed_seconds).toFixed(1)}s`
-          : ''}
-      </div>
+      {meta.length > 0 && (
+        <div className="mono" style={{ marginTop: 5, fontSize: 11, overflowWrap: 'anywhere' }}>
+          {meta.join(' · ')}
+        </div>
+      )}
       {raw && (
         <details style={{ marginTop: 8 }}>
           <summary style={{ cursor: 'pointer', fontSize: 12 }}>

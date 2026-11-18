@@ -76,9 +76,92 @@ function knownCode(code: string): string | null {
       return tr('请把研究范围填写完整', 'Complete the research scope first.');
     case 'INVALID_IDS':
       return tr('所选内容已变化，请刷新后重试', 'The selection changed. Refresh and try again.');
+    // —— 生成想法的前置条件 ——
+    case 'IDEA_CONTEXT_EMPTY':
+      return tr(
+        '没有可用的论文，无法生成想法。请为课题关联有论文的文献库，或先添加论文',
+        'There are no papers to work from, so no ideas were generated. Link a library that has papers, or add papers first.',
+      );
+    case 'LIBRARY_TOO_SMALL':
+      return tr(
+        '文献库里的论文太少，无法生成想法。请再添加一些论文后重试',
+        'The library has too few papers to generate ideas from. Add more papers, then retry.',
+      );
+    case 'RETRIEVAL_UNAVAILABLE':
+      return tr(
+        '语义检索暂时不可用，请稍后重试；如果一直不行，请在「设置 → 模型」中查看状态',
+        'Semantic search isn’t available right now. Retry shortly, or check Settings → Model if it keeps failing.',
+      );
+    // —— 任务因出错暂停的原因（voyage 的 last_error.code，见后端 agents/voyage/failures.py）——
+    case 'NETWORK':
+    case 'LLM_UNREACHABLE':
+      return tr('网络连接失败，请检查网络后重试', 'The network connection failed. Check your connection, then retry.');
+    case 'TIMEOUT':
+      return tr('请求超时，请稍后重试', 'The request timed out. Retry shortly.');
+    case 'RATE_LIMITED':
+    case 'LLM_RATE_LIMITED':
+      return tr('请求太频繁，被暂时限流，请稍后重试', 'Too many requests, so the service rate-limited this one. Retry shortly.');
+    case 'UPSTREAM_UNAVAILABLE':
+    case 'LLM_OVERLOADED':
+      return tr('对方服务暂时不可用，请稍后重试', 'The service is temporarily unavailable. Retry shortly.');
+    case 'DB_BUSY':
+      return tr('本地数据正忙，请稍后重试', 'Local data is busy. Retry shortly.');
+    case 'AUTH':
+    case 'LLM_AUTH':
+      return tr(
+        '对方服务拒绝了访问，请检查密钥或登录状态后重试',
+        'The service refused access. Check the key or sign-in, then retry.',
+      );
+    case 'BAD_REQUEST':
+    case 'LLM_BAD_REQUEST':
+      return tr(
+        '对方服务不接受这次请求，重试多半没有用，请查看原始报错',
+        'The service rejected this request. Retrying is unlikely to help. See the raw error.',
+      );
+    case 'NOT_CONFIGURED':
+      return llmNotConfiguredText();
+    case 'REFUSAL':
+    case 'LLM_REFUSED':
+      return tr('模型拒绝了这次请求，请调整内容后重试', 'The model declined this request. Change the content, then retry.');
+    case 'INVALID_OUTPUT':
+    case 'LLM_SCHEMA':
+      return tr('拿到的结果不符合要求，重试通常可以解决', 'The result wasn’t in the expected form. Retrying usually fixes it.');
+    case 'LLM_TRUNCATED':
+      return tr('模型的回答太长，没有写完，请重试', 'The model’s answer was cut off before it finished. Retry.');
+    case 'LLM_ERROR':
+      return tr('模型调用失败，请稍后重试', 'The model call failed. Retry shortly.');
+    case 'MISSING_PREREQUISITE':
+      return tr(
+        '缺少运行所需的文件或组件，请查看原始报错',
+        'A file or component this task needs is missing. See the raw error.',
+      );
+    case 'INTERNAL':
+      return tr(
+        '程序内部出错，请重试；反复出现时请带上原始报错反馈',
+        'Polaris hit an internal error. Retry, and report the raw error if it keeps happening.',
+      );
+    case 'STEP_FAILED':
+      return tr('这一步没有执行成功，请查看原始报错后重试', 'This step didn’t succeed. See the raw error, then retry.');
+    case 'CHECK_FAILED':
+      return tr(
+        '这一步的结果没有通过检查，重试会重新执行这一步',
+        'This step’s result didn’t pass its check. Retrying runs the step again.',
+      );
+    case 'NEEDS_USER':
+      return tr('需要你来决定下一步，请查看任务后重试或取消', 'This needs your decision. Review the task, then retry or cancel it.');
+    case 'NO_PROGRESS':
+      return tr(
+        '多次自动恢复后仍然没有进展，请查看出错的步骤后重试或取消',
+        'Several automatic recoveries made no progress. Review the failed step, then retry or cancel.',
+      );
     default:
       return null;
   }
+}
+
+/** 错误码 → 一句话；不认得返回 null（任务的 last_error.code 等不走 errorText 的地方用）。 */
+export function errorCodeText(code: string): string | null {
+  return knownCode(code);
 }
 
 /** 错误码：取 detail 里「CODE」或「CODE:附加信息」的 CODE 部分。 */

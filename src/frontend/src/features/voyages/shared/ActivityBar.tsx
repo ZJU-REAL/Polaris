@@ -1,6 +1,7 @@
 import { Icon } from '../../../components/ui/Icon';
 import { tr } from '../../../lib/i18n';
 import { enCount } from './stepUtils';
+import { ParkedRunNotice } from './ParkedRunNotice';
 import type { VoyageDetail, VoyageStatus, VoyageStepRead } from '../../../lib/api';
 
 /* ============================================================
@@ -189,14 +190,16 @@ export function ActivityBar({
         </div>
       )}
       {status === 'paused_error' && (
-        <div className="row gap8" style={{ marginTop: 12, padding: '10px 14px', background: 'var(--danger-bg)', color: 'var(--danger-tx)', borderRadius: 10, fontSize: 13 }}>
-          <Icon name="x" size={14} />
-          {tr('重试会从出错的步骤继续，已完成的步骤不重跑。', 'Retrying picks up at the failed step. Finished steps don’t rerun.')}
-          {onResume && (
-            <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} disabled={resuming} onClick={onResume}>
-              {resuming ? tr('重试中…', 'Retrying…') : tr('重试', 'Retry')}
-            </button>
-          )}
+        <div style={{ marginTop: 12 }}>
+          {/* 为什么停下（按错误码出文案）+ 原始报错 + 自动重试的安排 + 唯一的「重试」 */}
+          <ParkedRunNotice
+            error={voyage.last_error}
+            stepTitle={voyage.last_error?.step_title}
+            retryAt={voyage.retry_at}
+            retryAttempt={voyage.retry_attempt}
+            onRetry={onResume}
+            retrying={resuming}
+          />
         </div>
       )}
     </div>

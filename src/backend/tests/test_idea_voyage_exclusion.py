@@ -165,3 +165,107 @@ async def test_non_idea_runs_are_not_subject_to_the_check(client, queue_stub):
 
     resp = await client.post(f"/api/voyages/{demo_id}/resume", headers=headers)
     assert resp.status_code == 200, resp.text
+
+
+async def _add_gate(project_id: str, voyage_id: str) -> str:
+    from app.models.gate import Gate
+
+    async with get_sessionmaker()() as session:
+        gate = Gate(
+            project_id=uuid.UUID(project_id),
+            kind="idea_goal",
+            status="pending",
+            payload={"voyage_id": voyage_id},
+            requested_by="agent",
+        )
+        session.add(gate)
+        await session.commit()
+        return str(gate.id)
+
+
+async def test_approving_a_gate_on_a_parked_idea_run_while_another_runs_is_refused(
+    client, queue_stub
+):
+    """批准闸门 = 恢复那条任务，和「重试」一样要先查互斥。"""
+    project_id, headers = await _setup_project(client, "excl-gate@example.com")
+    parked_id = (await _start_forge(client, project_id, headers)).json()["id"]
+    await _set_status(parked_id, "paused_gate")
+    gate_id = await _add_gate(project_id, parked_id)
+    running_id = (await _start_forge(client, project_id, headers)).json()["id"]
+    jobs_before = list(queue_stub.jobs)
+
+    # 以前：闸门直接记成批准并入队恢复，同课题就有两条 idea 任务同时在跑
+    resp = await client.post(f"/api/gates/{gate_id}/approve", headers=headers)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "IDEA_VOYAGE_ALREADY_RUNNING"
+    assert queue_stub.jobs == jobs_before
+    assert await _status(parked_id) == "paused_gate"
+    # 闸门还是待审批：那条跑完之后可以再批
+    pending = (await client.get("/api/gates?status=pending", headers=headers)).json()
+    assert gate_id in [g["id"] for g in pending]
+
+    await _set_status(running_id, "done")
+    resp = await client.post(f"/api/gates/{gate_id}/approve", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "approved"
+    assert ("resume_voyage", (parked_id,), {}) in queue_stub.jobs
+
+
+async def test_rejecting_a_gate_on_a_parked_idea_run_is_always_allowed(client, queue_stub):
+    project_id, headers = await _setup_project(client, "excl-gate-reject@example.com")
+    parked_id = (await _start_forge(client, project_id, headers)).json()["id"]
+    await _set_status(parked_id, "paused_gate")
+    gate_id = await _add_gate(project_id, parked_id)
+    await _start_forge(client, project_id, headers)
+
+    resp = await client.post(f"/api/gates/{gate_id}/reject", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert await _status(parked_id) == "failed"
+
+
+async def test_forge_state_reports_a_parked_idea_run(client, queue_stub):
+    """停着的任务不算「进行中」，但想法页还得知道它在等人处理。"""
+    project_id, headers = await _setup_project(client, "excl-parked-state@example.com")
+    state = (await client.get(f"/api/projects/{project_id}/forge/state", headers=headers)).json()
+    assert state["parked_run"] is None
+
+    parked_id = (await _start_forge(client, project_id, headers)).json()["id"]
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, uuid.UUID(parked_id))
+        run.status = "paused_error"
+        run.checkpoint = {
+            **(run.checkpoint or {}),
+            "last_error": {
+                "code": "NETWORK",
+                "message": "执行步骤时出错：网络连接失败",
+                "detail": "ConnectError: boom",
+                "transient": True,
+                "source": "action",
+            },
+            "auto_retry": {"attempt": 2, "next_at": "2099-01-01T00:00:00+00:00"},
+        }
+        await session.commit()
+
+    state = (await client.get(f"/api/projects/{project_id}/forge/state", headers=headers)).json()
+    # 以前：running_voyage_id 为空、也没有别的字段提到它，页面上什么都看不出来
+    assert state["running_voyage_id"] is None
+    parked = state["parked_run"]
+    assert parked["voyage_id"] == parked_id
+    assert parked["kind"] == "idea_forge"
+    assert parked["status"] == "paused_error"
+    assert parked["error_code"] == "NETWORK"
+    assert parked["error_detail"] == "ConnectError: boom"
+    assert parked["retry_attempt"] == 2
+    assert parked["retry_at"].startswith("2099-01-01")
+
+    # 另起一条在跑的：两个都报，互不遮盖
+    running_id = (await _start_forge(client, project_id, headers)).json()["id"]
+    state = (await client.get(f"/api/projects/{project_id}/forge/state", headers=headers)).json()
+    assert state["running_voyage_id"] == running_id
+    assert state["parked_run"]["voyage_id"] == parked_id
+
+    # 取消之后不再报
+    resp = await client.post(f"/api/voyages/{parked_id}/cancel", headers=headers)
+    assert resp.status_code == 200, resp.text
+    state = (await client.get(f"/api/projects/{project_id}/forge/state", headers=headers)).json()
+    assert state["parked_run"] is None

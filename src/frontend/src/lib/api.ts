@@ -489,6 +489,22 @@ export interface AiDisclosureRead {
   facts: AiDisclosureFacts;
 }
 
+/** 任务为什么停在 paused_error（后端 schemas/voyage.py 的 VoyageErrorRead）。 */
+export interface VoyageError {
+  /** 稳定的错误码，界面按它出文案（lib/errors.ts） */
+  code: string;
+  /** 引擎给的兜底说明（只有中文） */
+  message: string;
+  /** 原始报错，排查用 */
+  detail?: string;
+  /** 像不像临时性故障（网络、超时、限流…）——是的话引擎会自己重试 */
+  transient?: boolean;
+  source?: string | null;
+  at?: string | null;
+  step_id?: string | null;
+  step_title?: string | null;
+}
+
 export interface VoyageRead {
   id: string;
   kind: string;
@@ -509,6 +525,12 @@ export interface VoyageRead {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** 仅 paused_error 时非空：这次为什么停下来 */
+  last_error?: VoyageError | null;
+  /** 下一次自动重试的时刻；没排（不是临时性故障 / 三次用完）为 null */
+  retry_at?: string | null;
+  /** 已经排到第几次自动重试（1..3；0 = 没有自动重试过） */
+  retry_attempt?: number;
 }
 
 /** 一次计划调整的留痕（source: signal=执行结果规则分支 / navigator=AI 调整 / template=模板分支）。 */
@@ -2163,9 +2185,24 @@ export interface ForgeLastRun {
   finished_at?: string | null;
 }
 
+/** 停下来等人处理的想法类任务（出错暂停 / 等回答 / 等确认）。它不算「进行中」。 */
+export interface ForgeParkedRun {
+  voyage_id: string;
+  /** idea_forge | idea_review | idea_proposal … */
+  kind: string;
+  status: 'paused_error' | 'paused_ask' | 'paused_gate' | (string & {});
+  error_code?: string | null;
+  error_message?: string | null;
+  error_detail?: string | null;
+  retry_at?: string | null;
+  retry_attempt?: number;
+}
+
 export interface ForgeState {
   /** 进行中的 forge/review voyage（同项目同时只允许一个）。 */
   running_voyage_id: string | null;
+  /** 最近一条停着等人处理的想法类任务；没有为 null */
+  parked_run?: ForgeParkedRun | null;
   last_run: ForgeLastRun | null;
   idea_counts: IdeaCounts;
 }

@@ -512,6 +512,47 @@ async def idea_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str,
     return counts
 
 
+PARKED_STATUSES = ("paused_error", "paused_ask", "paused_gate")
+
+
+async def find_parked_idea_voyage(
+    session: AsyncSession, project_id: uuid.UUID
+) -> dict[str, Any] | None:
+    """同课题里最近一条停着等人的 idea 类任务（出错暂停 / 等回答 / 等确认）。
+
+    :func:`find_running_idea_voyage` 只算在途的，停着的任务从 running_voyage_id 里
+    消失了——想法页如果只看那个字段，一条出错停住的生成任务就无声无息。这里单独
+    报出来，带上停下的原因和自动重试的安排。
+    """
+    from app.schemas.voyage import VoyageRead
+
+    stmt = (
+        select(VoyageRun)
+        .where(
+            VoyageRun.project_id == project_id,
+            VoyageRun.kind.in_(IDEA_VOYAGE_KINDS),
+            VoyageRun.status.in_(PARKED_STATUSES),
+        )
+        .order_by(VoyageRun.created_at.desc())
+        .limit(1)
+    )
+    run = (await session.execute(stmt)).scalar_one_or_none()
+    if run is None:
+        return None
+    read = VoyageRead.model_validate(run)
+    error = read.last_error
+    return {
+        "voyage_id": run.id,
+        "kind": run.kind,
+        "status": run.status,
+        "error_code": error.code if error else None,
+        "error_message": error.message if error else None,
+        "error_detail": error.detail if error else None,
+        "retry_at": read.retry_at,
+        "retry_attempt": read.retry_attempt,
+    }
+
+
 async def forge_state(session: AsyncSession, project: Project) -> dict[str, Any]:
     running = await find_running_idea_voyage(session, project.id)
     stmt = (
@@ -530,6 +571,7 @@ async def forge_state(session: AsyncSession, project: Project) -> dict[str, Any]
         }
     return {
         "running_voyage_id": running.id if running else None,
+        "parked_run": await find_parked_idea_voyage(session, project.id),
         "last_run": last_run,
         "idea_counts": await idea_counts(session, project.id),
     }
