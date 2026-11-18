@@ -8,6 +8,7 @@ import { toast } from '../../components/ui/Toast';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { api, type TemplateInfo, type TemplateDownloadProgress } from '../../lib/api';
 import { subscribeTemplateDownloadProgress } from '../../lib/sse';
+import { errorText } from '../../lib/errors';
 import { tr } from '../../lib/i18n';
 import { selectableIdeaOptions } from '../../lib/ideaOptions';
 import { TemplateUploadModal } from './TemplateUploadModal';
@@ -22,6 +23,8 @@ export interface NewManuscriptModalProps {
   open: boolean;
   onClose: () => void;
   pid: string;
+  /** 这台电脑有没有 LaTeX；不知道时不传 */
+  latex?: boolean;
 }
 
 function sourceLabel(t: TemplateInfo): string {
@@ -50,7 +53,7 @@ function downloadLabel(p: TemplateDownloadProgress): string {
   }
 }
 
-export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalProps) {
+export function NewManuscriptModal({ open, onClose, pid, latex }: NewManuscriptModalProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -176,7 +179,7 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
       onClose();
       navigate(`/writer/${m.id}`);
     },
-    onError: (e) => toast(`${tr('创建失败：', 'Couldn’t create the manuscript: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(errorText(e), 'error'),
   });
 
   // seed: 开头是未下载官方模板伪条目，下载完成前不能建稿
@@ -189,27 +192,12 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
       open={open}
       onClose={onClose}
       width={620}
-      title={
-        <>
-          <Icon name="pen" size={16} style={{ color: 'var(--accent)' }} />
-          {tr('新建稿件', 'New manuscript')}
-        </>
-      }
+      title={tr('新建稿件', 'New manuscript')}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
           <button className="btn btn-primary" disabled={!canSubmit} onClick={() => mutation.mutate()}>
-            {mutation.isPending ? (
-              <>
-                <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                {tr('创建中…', 'Creating…')}
-              </>
-            ) : (
-              <>
-                <Icon name="plus" size={14} />
-                {tr('创建', 'Create')}
-              </>
-            )}
+            {mutation.isPending ? tr('正在创建…', 'Creating…') : tr('创建稿件', 'Create manuscript')}
           </button>
         </>
       }
@@ -341,9 +329,9 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
 
       <div className="row gap12" style={{ alignItems: 'flex-start' }}>
         <FormField
-          label={tr('关联想法（可选）', 'Linked idea (optional)')}
+          label={tr('想法（可选）', 'Idea (optional)')}
           style={{ flex: 1, minWidth: 0 }}
-          hint={tr('已选定的想法排在前面', 'Picked ideas come first')}
+          hint={tr('AI 起草时以它为主题', 'The AI drafts around it')}
         >
           <SelectMenu
             value={ideaId}
@@ -355,9 +343,9 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
           />
         </FormField>
         <FormField
-          label={tr('关联实验（可选）', 'Linked experiment (optional)')}
+          label={tr('实验（可选）', 'Experiment (optional)')}
           style={{ flex: 1, minWidth: 0 }}
-          hint={tr('只显示已完成的实验', 'Finished experiments only')}
+          hint={tr('做完的实验；结果和图表会写进稿件', 'A finished one; its results and figures go into the draft')}
         >
           <SelectMenu
             value={experimentId}
@@ -369,6 +357,12 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
           />
         </FormField>
       </div>
+
+      {latex === false && (
+        <div className="field-hint" data-testid="latex-missing-modal">
+          {tr('这台电脑没有安装 LaTeX：稿件可以起草和编辑，但不能编译成 PDF。', 'LaTeX isn’t installed on this computer: you can draft and edit, but not compile to PDF.')}
+        </div>
+      )}
 
       <TemplateUploadModal
         open={uploadOpen}

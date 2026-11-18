@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
@@ -15,6 +14,10 @@ import { tr } from '../../lib/i18n';
 import { errorText } from '../../lib/errors';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { submitConfirmMessage } from '../writer/shared';
+import { useLatexAvailable } from '../writer/WriterPage';
+import '../voyages/task.css';
+import '../forge/ideas.css';
+import '../experiment/experiment.css';
 import {
   api,
   ApiError,
@@ -173,7 +176,7 @@ function StartReviewModal({
   const mutation = useMutation({
     mutationFn: () => api.startManuscriptReview(msId, personas.filter((p) => p.name.trim() !== '')),
     onSuccess: () => {
-      toast(tr('已开始同行评审', 'Peer review started'), 'ok');
+      toast(tr('已开始评审', 'Review started'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['voyages', pid] });
       void queryClient.invalidateQueries({ queryKey: ['manuscript', msId] });
       onClose();
@@ -210,7 +213,7 @@ function StartReviewModal({
       title={
         <>
           <Icon name="shield" size={16} style={{ color: 'var(--accent)' }} />
-          {tr('发起同行评审', 'Start peer review')}
+          {tr('开始评审', 'Start review')}
         </>
       }
       footer={
@@ -854,7 +857,8 @@ type ReviewTab = 'opinions' | 'checks';
 export function PaperReviewPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const { isLoading: projectsLoading, currentProjectId } = useProject();
+  const latex = useLatexAvailable(currentProjectId);
   const pid = currentProjectId;
 
   const [msId, setMsId] = useState<string | null>(null);
@@ -991,17 +995,37 @@ export function PaperReviewPage() {
 
   const noManuscripts = !manuscriptsQuery.isLoading && !manuscriptsQuery.isError && reviewable.length === 0;
 
+  // 没有能评审的稿件：不摆出空的下拉框和按钮，直接说清楚评审需要什么
+  if (pid && noManuscripts) {
+    const total = (manuscriptsQuery.data ?? []).length;
+    return (
+      <div className="page fadeup">
+        <div className="exp-needs" data-testid="review-empty">
+          <h2 className="exp-needs-title">{tr('还没有可以评审的稿件', 'No manuscripts to review yet')}</h2>
+          <p className="exp-needs-lead">
+            {tr(
+              '评审的是稿件编译出的 PDF：AI 审稿人核对引用和数字、打分，并给出接收或拒稿的建议。',
+              'A review reads the compiled PDF: AI reviewers check citations and numbers, score the paper and suggest accept or reject.',
+            )}
+            {tr('', ' ')}
+            {latex === false
+              ? tr('这台电脑没有安装 LaTeX，稿件编译不出 PDF，所以现在不能评审。', 'LaTeX isn’t installed on this computer, so manuscripts can’t be compiled and reviews can’t start yet.')
+              : total > 0
+                ? tr(`这个课题有 ${total} 篇稿件，还没有编译成功的。在编辑器里按 ⌘S 编译。`, `This topic has ${total} ${total === 1 ? 'manuscript' : 'manuscripts'}, none compiled yet. Press ⌘S in the editor to compile.`)
+                : tr('这个课题还没有稿件。', 'This topic has no manuscripts yet.')}
+          </p>
+          <div className="exp-needs-action">
+            <Link className="btn btn-primary" to={topicPath(pid, 'writer')}>
+              {tr('去写作', 'Go to Writing')}
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="page fadeup" style={{ maxWidth: 1280 }}>
-      <PageHead
-        sub={
-          currentProject
-            ? undefined
-            : projectsLoading
-              ? tr('加载中…', 'Loading…')
-              : tr('请先选择课题', 'Choose a topic first')
-        }
-      />
+    <div className="page fadeup">
 
       {/* —— 顶部一行：两个视图标签在左，发起评审在右 —— */}
       <div className="row page-tabs" style={{ marginBottom: 14 }}>
@@ -1022,7 +1046,7 @@ export function PaperReviewPage() {
                 ? tr('请先选择稿件', 'Choose a manuscript first')
                 : runningReview
                   ? tr('评审正在进行', 'A review is in progress')
-                  : tr('开始新一轮同行评审', 'Start a new round of peer review')
+                  : tr('开始新一轮评审', 'Start a new round of review')
             }
             onClick={() => setModalOpen(true)}
           >
@@ -1034,7 +1058,7 @@ export function PaperReviewPage() {
             ) : (
               <>
                 <Icon name="shield" size={13} />
-                {tr('发起同行评审', 'Start peer review')}
+                {tr('开始评审', 'Start review')}
               </>
             )}
           </button>
@@ -1099,21 +1123,13 @@ export function PaperReviewPage() {
 
       {/* —— 进行中的评审任务 —— */}
       {runningReview && (
-        <div
-          className="card card-pad hoverable"
-          onClick={() => navigate(`/voyages/${runningReview.id}`)}
-          style={{ marginBottom: 16, borderColor: 'var(--accent-soft-2)', background: 'var(--accent-soft)' }}
-        >
-          <div className="row gap10">
-            <span className="pulse" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--ok)', flexShrink: 0 }} />
-            <span style={{ fontSize: 13, fontWeight: 600 }}>
-              {tr('同行评审进行中', 'Peer review in progress')}
-            </span>
-            <span style={{ fontSize: 12, color: 'var(--accent-text)', marginLeft: 'auto' }}>
-              {tr('查看进度', 'View progress')}
-            </span>
-            <Icon name="arrow" size={14} style={{ color: 'var(--accent-text)' }} />
-          </div>
+        <div className="ideas-status">
+          <span className="task-dot is-active" />
+          <span className="ideas-status-text">{tr('正在评审这篇稿件', 'Reviewing this manuscript')}</span>
+          <span className="ideas-status-meta">{tr('完成后这里会自动更新', 'This page updates when it’s done')}</span>
+          <Link className="btn btn-plain xs" to={`/voyages/${runningReview.id}`}>
+            {tr('查看进度', 'View progress')}
+          </Link>
         </div>
       )}
 
@@ -1123,20 +1139,6 @@ export function PaperReviewPage() {
           <div className="empty" style={{ padding: 60 }}>
             {projectsLoading ? tr('加载中…', 'Loading…') : tr('请先选择课题', 'Choose a topic first')}
           </div>
-        </div>
-      ) : noManuscripts ? (
-        <div className="card">
-          <EmptyState
-            icon="pen"
-            title={tr('还没有可评审的稿件', 'No manuscripts to review yet')}
-            desc={tr('稿件编译成功后即可评审。', 'A manuscript can be reviewed once it compiles.')}
-            action={
-              <button className="btn btn-ghost" onClick={() => navigate(topicPath(pid, 'writer'))}>
-                <Icon name="pen" size={14} />
-                {tr('前往论文撰写', 'Open Paper Writer')}
-              </button>
-            }
-          />
         </div>
       ) : manuscriptsQuery.isError ? (
         <div className="card">
@@ -1177,12 +1179,6 @@ export function PaperReviewPage() {
               'AI 审稿人会核对引用和数字、打分，并给出接收或拒稿建议。',
               'AI reviewers check citations and numbers, score the paper and suggest accept or reject.',
             )}
-            action={
-              <button className="btn btn-soft" disabled={!!runningReview} onClick={() => setModalOpen(true)}>
-                <Icon name="shield" size={14} />
-                {tr('发起同行评审', 'Start peer review')}
-              </button>
-            }
           />
         </div>
       ) : (
