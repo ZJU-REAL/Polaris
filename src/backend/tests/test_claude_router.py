@@ -380,12 +380,12 @@ async def test_removed_configuration_endpoints_are_gone(client):
         ("get", "/api/admin/llm/routes"),
         ("get", "/api/admin/llm/input-budgets"),
         ("post", "/api/admin/llm/test-model"),
-        ("get", "/api/acp-agents"),
-        ("get", "/api/acp-agents/templates"),
-        ("get", "/api/chat/backends"),
     ]:
         resp = await getattr(client, method)(path, headers=headers)
         assert resp.status_code in (404, 405), (path, resp.status_code)
+    # 本机智能体回来了，但只作为某一场对话的回答方——不是模型服务、不进路由表
+    for path in ("/api/acp-agents", "/api/acp-agents/templates"):
+        assert (await client.get(path, headers=headers)).status_code == 200, path
     # 用量与调用日志还在
     assert (await client.get("/api/admin/llm/usage", headers=headers)).status_code == 200
     assert (await client.get("/api/admin/llm/call-logs", headers=headers)).status_code == 200
