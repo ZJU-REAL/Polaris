@@ -17,7 +17,7 @@
 import { BrowserWindow, app } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { gzipSync } from 'node:zlib';
@@ -25,8 +25,19 @@ import { join } from 'node:path';
 
 import type { FetchImpl, SqliteTree, StorageService } from '@polaris/kernel';
 
-import { kernelPluginMeta, localBackend, marketPluginsDir, startKernel, stopKernel } from './main/kernel';
+import {
+  engineBootstrapStatus,
+  kernelPluginMeta,
+  localBackend,
+  marketPluginsDir,
+  onEngineState,
+  startKernel,
+  stopKernel,
+} from './main/kernel';
 import { capabilityManifest } from './main/capabilities';
+import { diagnostics } from './main/diagnostics';
+import { chooseUpdate, parseRendererAsset, sameBackend } from './main/updates/engine-compat';
+import { normalizeProxy, parseProxyRule } from './main/network';
 import { installIpc, registeredMethods } from './main/ipc/router';
 import {
   MARKET_ENDPOINT_META_KEY,
@@ -78,6 +89,15 @@ void app.whenReady().then(async () => {
   check('connect-src 含本机引擎 http 源', csp.includes(LOCAL_ENGINE_URL));
   check('connect-src 含本机引擎 ws 源', csp.includes('ws://127.0.0.1:18080'));
   check('无本机引擎时 connect-src 只留自身与 blob:', !/connect-src [^;]*(https?|wss?):/.test(buildCsp(null)));
+  // 结构化阅读把论文里的图改写成本机引擎地址再用 <img> 渲染：img-src / media-src
+  // 不放行引擎源的话，这些图只在桌面端被拦（浏览器开发态同源，看不出来）
+  check('img-src 含本机引擎源（结构化阅读的图）', new RegExp(`img-src [^;]*${LOCAL_ENGINE_URL}`).test(csp));
+  check('media-src 含本机引擎源', new RegExp(`media-src [^;]*${LOCAL_ENGINE_URL}`).test(csp));
+  check(
+    '无本机引擎时 img-src / media-src 不放行任何网络源',
+    !/(img|media)-src [^;]*(https?|wss?):/.test(buildCsp(null)),
+  );
+  check('img-src 不放行任意 http/https 源', !/img-src [^;]*\s(https?:|\*)(\s|;|$)/.test(csp));
   check("connect-src 放行 blob:（pdf.js 取正文）", /connect-src [^;]*\bblob:/.test(csp));
   check("worker-src 放行 blob:（pdf.js worker）", csp.includes("worker-src 'self' blob:"));
   check("frame-src 放行 blob:（写作页 PDF 预览）", csp.includes('frame-src blob:'));
@@ -354,7 +374,15 @@ void app.whenReady().then(async () => {
   check('secure context（clipboard / Notification 可用）', secure === true);
 
   console.log('\n能力清单与 local.*');
-  const manifest = await capabilityManifest();
+  // 「设置 → 插件」目前整体关闭：默认能力位必须是不可用，界面才不会出现这一页
+  delete process.env.POLARIS_PLUGINS_UI;
+  check(
+    'plugins.manage 默认不可用（插件页与市场暂不对用户开放）',
+    capabilityManifest().capabilities['plugins.manage']?.available === false,
+  );
+  // 开发/测试开关打开后，下面照旧验证这套代码仍然是通的
+  process.env.POLARIS_PLUGINS_UI = '1';
+  const manifest = capabilityManifest();
   check('契约版本已声明', manifest.contract >= 1);
 
   // 方法表与契约版本是一对：#705 把 local.* 换成 kernel.*/plugins.* 却没动
@@ -363,8 +391,11 @@ void app.whenReady().then(async () => {
   const EXPECTED_METHODS: string[] = [
     'host.capabilities',
     'host.copyText',
-    'host.info',
+    'host.diagnostics',
+    'host.network.get',
+    'host.network.set',
     'host.openExternal',
+    'host.openLogsFolder',
     'host.relaunch',
     'host.setBadgeCount',
     'host.update.apply',
@@ -393,18 +424,14 @@ void app.whenReady().then(async () => {
     `actual=${JSON.stringify(methods)}`,
   );
   check(
-    'latex.compile 能力位仍关闭（本地编译未实现）',
-    manifest.capabilities['latex.compile']?.available === false,
+    '能力清单里没有永远为 false 的占位能力（latex.compile 已删）',
+    !('latex.compile' in manifest.capabilities),
   );
-  // plugins.manage（#705）是第一个真可用的能力位：kernel 已起、树已就绪
+  // plugins.manage（#705）：开关打开、kernel 已起、树已就绪
   check(
-    'plugins.manage 能力位可用（配置树已就绪）',
+    'plugins.manage 能力位可用（开关打开且配置树已就绪）',
     manifest.capabilities['plugins.manage']?.available === true,
     JSON.stringify(manifest.capabilities['plugins.manage']),
-  );
-  check(
-    'tectonic 探测已真的执行（本地编译落地时直接用）',
-    typeof (manifest.capabilities['latex.compile'].detail as { found?: boolean })?.found === 'boolean',
   );
 
   // 旧 stdio agent 及其三个占位方法已整体拆除（#731）：这些方法名如今必须是
@@ -435,64 +462,51 @@ void app.whenReady().then(async () => {
   check('kernel.status 经 IPC 往返返回', kernelState.error === undefined, kernelState.error ?? '');
   check('内核已启动（started=true）', kernelState.started === true);
   check('实例名为 polaris-desktop', kernelState.name === 'polaris-desktop', `name=${kernelState.name}`);
-  // 树驱动装载（#703）后 registry 至少有：storage、Loader（连带其内部
-  // isolate）、SqliteTree、树条目 desktop-probe / sources 五个 runtime——
-  // 引擎条目默认 disabled 不占名额。计数只会随插件增多而涨，用 ≥ 兜底。
-  check('插件树已建立（plugins ≥ 5）', (kernelState.plugins ?? 0) >= 5, `plugins=${kernelState.plugins}`);
+  // registry 至少有：直挂的 storage、Loader（连带其内部 isolate）、SqliteTree。
+  // 树里不再种任何内置条目；计数只会随用户装的插件增多而涨，用 ≥ 兜底。
+  check('插件宿主已建立（plugins ≥ 3）', (kernelState.plugins ?? 0) >= 3, `plugins=${kernelState.plugins}`);
 
-  // 树驱动装载（#703）：内核插件不再硬编码直挂，而是首启种进配置树、
-  // 由 loader 按树拉起。断言种子条目真的在树里、真的驱动出了 fiber 与服务，
-  // 再改一条配置留给下面的重启组验证持久性。
-  console.log('\n树驱动装载');
+  // 配置树只装用户自己装的插件：全新安装是一棵空树。引擎不在树里（它由宿主
+  // 直挂，见 main/kernel.ts），所以用户在任何界面都关不掉它，树写入也带不走它的
+  // 启动参数。
+  console.log('\n配置树');
   const tree = kernelInstance.ctx.get('configTree') as SqliteTree | undefined;
   check('configTree 服务可从 ctx 读到', tree != null);
-  if (tree) {
-    check('种子条目 desktop-probe 已装载', tree.store['desktop-probe']?.fiber != null);
-    check('种子条目 sources 已装载', tree.store['sources']?.fiber != null);
-    const engineEntry = tree.store['legacy-engine'];
-    check(
-      '种子条目 legacy-engine 保持 disabled 占位',
-      engineEntry != null && engineEntry.fiber == null && engineEntry.options.disabled === true,
-    );
-    check('树驱动的 sources 服务已挂出', kernelInstance.ctx.get('sources') != null);
-    // 改一条目的 config：write 是防抖合并的，必须 flush 才保证在重启前落库
-    await tree.update('desktop-probe', { config: { smokeTouched: true } });
-    await tree.flush();
-  }
+  check('全新安装的树是空的（没有内置条目）', pluginsList().length === 0, `ids=${pluginsList().map((i) => i.id).join(',')}`);
 
   // plugins.* IPC（#705）：与 kernel.status 同款调用路径——直接调 router
   // 背后的具名实现（router 只做参数形状分发）。语义细节在 kernel 的
   // plugins-manage.test 里测全，这里只验「桌面接线真的驱动 loader」。
+  // 树里没有现成条目可用，冒烟自己登记一个空插件当样本（只活在这次会话的
+  // 内置表里），用完即删。
   console.log('\nplugins.* IPC');
+  kernelInstance.ctx.loader.builtins['smoke-probe'] = { name: 'smoke-probe', apply(): void {} };
+  await tree?.create({ id: 'smoke-probe', name: 'cordis:smoke-probe' } as Parameters<SqliteTree['create']>[0]);
   const pluginList = pluginsList();
-  const pluginIds = pluginList.map((info) => info.id);
   check(
-    'plugins.list 返回全部种子条目',
-    ['desktop-probe', 'sources', 'legacy-engine'].every((id) => pluginIds.includes(id)),
-    `ids=${pluginIds.join(',')}`,
-  );
-  check(
-    '状态映射：desktop-probe=active / legacy-engine=disabled',
-    pluginList.find((info) => info.id === 'desktop-probe')?.state === 'active'
-      && pluginList.find((info) => info.id === 'legacy-engine')?.state === 'disabled',
+    'plugins.list 返回新建的条目且 state=active',
+    pluginList.find((info) => info.id === 'smoke-probe')?.state === 'active',
+    `list=${JSON.stringify(pluginList)}`,
   );
   const treeExport = pluginsExportTree();
   check(
-    'plugins.exportTree 带版本号且含种子条目',
-    treeExport.version === 1 && treeExport.entries.some((entry) => entry.id === 'sources'),
+    'plugins.exportTree 带版本号且含该条目',
+    treeExport.version === 1 && treeExport.entries.some((entry) => entry.id === 'smoke-probe'),
   );
-  const probeDisabled = await pluginsDisable('desktop-probe');
+  const probeDisabled = await pluginsDisable('smoke-probe');
   check(
     'plugins.disable 停掉 fiber',
-    probeDisabled.state === 'disabled' && tree?.store['desktop-probe']?.fiber == null,
+    probeDisabled.state === 'disabled' && tree?.store['smoke-probe']?.fiber == null,
     `state=${probeDisabled.state}`,
   );
-  const probeEnabled = await pluginsEnable('desktop-probe');
+  const probeEnabled = await pluginsEnable('smoke-probe');
   check(
     'plugins.enable 重建 fiber',
-    probeEnabled.state === 'active' && tree?.store['desktop-probe']?.fiber != null,
+    probeEnabled.state === 'active' && tree?.store['smoke-probe']?.fiber != null,
     `state=${probeEnabled.state}`,
   );
+  await tree?.remove('smoke-probe');
+  await tree?.flush();
 
   // 插件市场（#708）：源配置持久化 + 全离线的「安装→启用→拒卸→卸载」
   // 闭环。fetch 换成进程内替身（registry packument + tarball 都是现造的），
@@ -667,13 +681,21 @@ void app.whenReady().then(async () => {
     `path=${storageSvc?.path}`,
   );
   if (storageSvc) {
-    // 追加而不是整树覆盖：树现在是真实的装载来源，覆盖掉种子会让重启后的
-    // 树驱动断言测不到恢复路径。disabled: true 让这行假插件名（smoke-plugin
-    // 并不存在）在重启装载时不会被 import。
+    // 一行用户条目 + 旧版本种在树里的三条内置条目（其中引擎那条还带着泄进树的
+    // 启动命令——正是旧逻辑在任何一次树写入后留下的样子）。重启后前者必须原样
+    // 还在，后三条必须被清掉，而且绝不能有引擎被那条旧命令拉起来。
+    // disabled: true 让假插件名（smoke-plugin 并不存在）在重启装载时不会被 import。
     const current = await storageSvc.configTree.load();
     await storageSvc.configTree.save([
       ...current,
       { id: 'smoke-entry', name: 'smoke-plugin', disabled: true, config: { touched: true } },
+      { id: 'desktop-probe', name: 'cordis:desktop-probe', config: { smokeTouched: true } },
+      { id: 'sources', name: 'cordis:sources' },
+      {
+        id: 'legacy-engine',
+        name: 'cordis:legacy-engine',
+        config: { mode: 'command', command: ['/nonexistent/old-install/venv/bin/python', '-c', 'pass'], port: 18080 },
+      },
     ]);
   }
 
@@ -693,25 +715,168 @@ void app.whenReady().then(async () => {
     `entries=${JSON.stringify(entries)}`,
   );
 
-  // 树驱动恢复：重启后同一集合被重新装载，且上面那次条目配置修改仍在。
-  // 顺带证明「非空树不再种子」——smoke-entry 若被种子覆盖就不会在这里了。
+  // 旧版本留下的内置条目：装载前清掉（否则一条未知内置条目就让整棵树装不起来），
+  // 用户自己的条目不受影响。
   const reopenedTree = reopened.ctx.get('configTree') as SqliteTree | undefined;
-  check('重启后配置树重新驱动装载', reopenedTree != null);
+  check('重启后配置树照常装载（没被旧条目拖垮）', reopenedTree != null);
+  check(
+    '旧版本的内置条目已从库里清掉',
+    !entries.some((e) => ['desktop-probe', 'sources', 'legacy-engine'].includes(e.id)),
+    `ids=${entries.map((e) => e.id).join(',')}`,
+  );
+  check('库里不再有引擎的启动命令', !JSON.stringify(entries).includes('old-install'));
   if (reopenedTree) {
     check(
-      '重启后种子集合恢复（probe/sources 活、engine 仍 disabled）',
-      reopenedTree.store['desktop-probe']?.fiber != null
-        && reopenedTree.store['sources']?.fiber != null
-        && reopenedTree.store['legacy-engine'] != null
-        && reopenedTree.store['legacy-engine'].fiber == null,
+      '树里只剩用户条目',
+      [...reopenedTree.entries()].map((entry) => entry.id).join(',') === 'smoke-entry',
+      `ids=${[...reopenedTree.entries()].map((entry) => entry.id).join(',')}`,
     );
-    const probeConfig = reopenedTree.store['desktop-probe']?.options.config as
-      | { smokeTouched?: boolean }
-      | undefined;
-    check('重启后条目配置修改仍在', probeConfig?.smokeTouched === true, `config=${JSON.stringify(probeConfig)}`);
-    check('非空树未被重新种子（smoke-entry 仍在树中）', reopenedTree.store['smoke-entry'] != null);
   }
+  check('没有引擎被旧条目拉起来', localBackend().baseUrl === null && localBackend().state === 'none');
+  const backups = existsSync(join(app.getPath('userData'), 'kernel', 'backups'))
+    ? readdirSync(join(app.getPath('userData'), 'kernel', 'backups'))
+    : [];
+  check('清理前的树留了备份文件', backups.some((name) => name.startsWith('config-tree-dropped-builtins-')), backups.join(','));
   await stopKernel();
+
+  // 本机引擎（command 模式，就是安装包用的那种）：一个 node 写的假引擎，任何
+  // 机器都能跑。验的是外壳这一层的接线——引擎不进配置树、日志落盘、中途被杀
+  // 会自动重启并通知界面、诊断信息拿得到、停机不留进程。
+  console.log('\n本机引擎（command 模式）');
+  {
+    const enginePort = 20000 + Math.floor(Math.random() * 20000);
+    const engineScript = [
+      "const http = require('node:http');",
+      "console.log('fake engine up, key=' + (process.env.POLARIS_SMOKE_API_KEY || ''));",
+      'http.createServer((req, res) => {',
+      "  res.setHeader('content-type', 'application/json');",
+      "  res.end(JSON.stringify({ status: 'ok', version: '9.9.9-smoke', pid: process.pid, instance_id: process.env.POLARIS_INSTANCE_ID || '' }));",
+      `}).listen(${enginePort}, '127.0.0.1');`,
+    ].join('\n');
+    process.env.POLARIS_DESKTOP_ENGINE = `command:${JSON.stringify(['node', '-e', engineScript])}`;
+    process.env.POLARIS_DESKTOP_ENGINE_PORT = String(enginePort);
+    process.env.POLARIS_SMOKE_API_KEY = 'smoke-secret-value-do-not-log';
+    const states: string[] = [];
+    const unsubscribe = onEngineState((event) => states.push(event.state));
+    const waitFor = async (cond: () => boolean, ms: number): Promise<boolean> => {
+      const deadline = Date.now() + ms;
+      while (Date.now() < deadline) {
+        if (cond()) return true;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return cond();
+    };
+    const enginePid = async (baseUrl: string): Promise<number> =>
+      ((await (await fetch(`${baseUrl}/api/health`)).json()) as { pid: number }).pid;
+    const alive = (pid: number): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      const engineKernel = await startKernel();
+      const { baseUrl, state } = localBackend();
+      check('引擎已起来（baseUrl 非空、state=running）', baseUrl === `http://127.0.0.1:${enginePort}` && state === 'running', `baseUrl=${baseUrl} state=${state}`);
+      check('显式引擎路径的引导状态收尾为 idle', engineBootstrapStatus().phase === 'idle' && engineBootstrapStatus().done);
+
+      // 引擎参数不进配置树：做几次树写入，库里和导出里都不能出现它
+      const engineTree = engineKernel.ctx.get('configTree') as SqliteTree | undefined;
+      await engineTree?.update('smoke-entry', { config: { touched: 'again' } });
+      await engineTree?.flush();
+      const stored = JSON.stringify(await (engineKernel.ctx.get('storage') as StorageService).configTree.load());
+      check(
+        '树写入后库里没有引擎条目与启动命令',
+        !stored.includes('legacy-engine') && !stored.includes('fake engine up') && !stored.includes(String(enginePort)),
+        stored.slice(0, 200),
+      );
+      check('plugins.list 里没有引擎', !pluginsList().some((info) => /engine/.test(info.id)));
+
+      // 日志落盘 + 抹密钥
+      const engineLog = join(app.getPath('userData'), 'logs', 'engine.log');
+      await waitFor(() => existsSync(engineLog) && readFileSync(engineLog, 'utf8').includes('fake engine up'), 5_000);
+      const logText = existsSync(engineLog) ? readFileSync(engineLog, 'utf8') : '';
+      check('引擎输出写进 logs/engine.log', logText.includes('fake engine up'));
+      check('日志里没有密钥原文', !logText.includes('smoke-secret-value-do-not-log') && logText.includes('[redacted:POLARIS_SMOKE_API_KEY]'));
+
+      // 诊断信息
+      const diag = await diagnostics();
+      check('诊断信息带引擎自报的版本', diag.engineVersion === '9.9.9-smoke', `engineVersion=${diag.engineVersion}`);
+      check(
+        '诊断文本含版本、系统、引擎日志',
+        diag.text.includes(`Polaris ${app.getVersion()}`)
+          && diag.text.includes('Engine: 9.9.9-smoke')
+          && diag.text.includes('System: ')
+          && diag.text.includes('fake engine up'),
+      );
+      check('诊断文本里没有密钥原文', !diag.text.includes('smoke-secret-value-do-not-log'));
+      check('诊断信息给出日志文件夹', diag.logsDir === join(app.getPath('userData'), 'logs'));
+
+      // 中途杀掉引擎：自动重启一次，状态事件依次是 restarting → running
+      const firstPid = baseUrl ? await enginePid(baseUrl) : 0;
+      process.kill(firstPid, 'SIGKILL');
+      const sawRestarting = await waitFor(() => states.includes('restarting'), 5_000);
+      check('引擎被杀后进入 restarting 并通知订阅方', sawRestarting, `states=${states.join(',')}`);
+      const during = engineBootstrapStatus();
+      check(
+        '重启期间：本地地址不可用，引导状态回到 engine 且带 restarting 标记',
+        states.includes('running') || (localBackend().baseUrl === null && during.phase === 'engine' && during.restarting === true),
+        `phase=${during.phase} restarting=${during.restarting}`,
+      );
+      const recovered = await waitFor(() => states.includes('running'), 15_000);
+      check('引擎自动重启成功（running）', recovered, `states=${states.join(',')}`);
+      const after = localBackend();
+      const secondPid = after.baseUrl ? await enginePid(after.baseUrl) : 0;
+      check('重启后是新进程、地址恢复可用', after.baseUrl === baseUrl && secondPid !== 0 && secondPid !== firstPid);
+      check('引导状态回到 ready', engineBootstrapStatus().phase === 'ready' && engineBootstrapStatus().done);
+
+      // 再杀一次：十分钟内只自动重启一次，这次应当停在 failed 并给出原因
+      process.kill(secondPid, 'SIGKILL');
+      const gaveUp = await waitFor(() => states.includes('failed'), 10_000);
+      check('第二次崩溃不再重启（failed）', gaveUp, `states=${states.join(',')}`);
+      const failed = engineBootstrapStatus();
+      check(
+        '失败状态带原因与最后几行日志',
+        failed.phase === 'failed' && failed.failure?.code === 'engine-crashed' && (failed.failure?.lines.length ?? 0) > 0,
+        JSON.stringify(failed.failure ?? null).slice(0, 200),
+      );
+      check('failed 时本地地址为空', localBackend().baseUrl === null && localBackend().state === 'failed');
+
+      await stopKernel();
+      check('停机后没有残留引擎进程', !alive(firstPid) && !alive(secondPid));
+      check('停机后孤儿记录已清', !existsSync(join(app.getPath('userData'), 'engine.pid.json')));
+    } finally {
+      unsubscribe();
+      await stopKernel();
+      delete process.env.POLARIS_DESKTOP_ENGINE;
+      delete process.env.POLARIS_DESKTOP_ENGINE_PORT;
+      delete process.env.POLARIS_SMOKE_API_KEY;
+    }
+
+    // 启动途中退出：引擎进程活着但迟迟不就绪（首启跑迁移时就是这样），
+    // 停机必须立刻打断等待并回收它，而不是等满两分钟的健康超时。
+    process.env.POLARIS_DESKTOP_ENGINE = `command:${JSON.stringify(['node', '-e', "console.log('slow pid=' + process.pid); setInterval(() => {}, 1000)"])}`;
+    process.env.POLARIS_DESKTOP_ENGINE_PORT = String(enginePort + 1);
+    try {
+      const starting = startKernel().then(() => 'started', () => 'rejected');
+      await new Promise((r) => setTimeout(r, 1_200));
+      const t0 = Date.now();
+      await stopKernel();
+      const outcome = await starting;
+      const took = Date.now() - t0;
+      check('启动途中停机在几秒内完成', took < 8_000, `took=${took}ms`);
+      check('被打断的启动没有留下可用的内核', outcome === 'rejected' && localBackend().baseUrl === null, `outcome=${outcome}`);
+      const slowLog = readFileSync(join(app.getPath('userData'), 'logs', 'engine.log'), 'utf8');
+      const slowPid = Number(/slow pid=(\d+)/.exec(slowLog)?.[1] ?? 0);
+      check('被打断的引擎进程已回收', slowPid > 0 && (await waitFor(() => !alive(slowPid), 6_000)), `pid=${slowPid}`);
+    } finally {
+      await stopKernel();
+      delete process.env.POLARIS_DESKTOP_ENGINE;
+      delete process.env.POLARIS_DESKTOP_ENGINE_PORT;
+    }
+  }
 
   if (consoleErrors.length) {
     console.log('\n渲染进程 console 错误：');
@@ -795,6 +960,53 @@ void app.whenReady().then(async () => {
   // 同一个更新会被无限提示——这两条就是防这个的。
   check('热更装上的新界面参与版本比较', stagedSupersedes('0.3.2', '0.3.1'));
   check('整包更新反超后旧界面失效', !stagedSupersedes('0.3.2', '0.4.0') && !stagedSupersedes('0.3.2', '0.3.2'));
+
+  // 「只换界面」的判据：契约号管 preload，后端哈希管 Python 引擎。只看前者的旧逻辑
+  // 会让老安装装上新界面、引擎却停在旧版，还自认为已是最新。
+  console.log('\n[更新方式的选择]');
+  const HASH_A = 'a'.repeat(64);
+  const HASH_B = 'b'.repeat(64);
+  const installerAsset = { name: 'Polaris-0.6.0-universal.dmg' };
+  const rendererFor = (hash: string, contract = 4) => ({ name: `renderer-0.6.0-c${contract}-b${hash.slice(0, 16)}.tar.gz` });
+  const facts = { latestVersion: '0.6.0', contract: 4, backendHash: HASH_A };
+  const same = chooseUpdate([rendererFor(HASH_A), installerAsset], installerAsset, facts);
+  check('引擎相同 → 只换界面', same?.kind === 'hot' && same.renderer?.backendHash === HASH_A.slice(0, 16));
+  const engineChanged = chooseUpdate([rendererFor(HASH_B), installerAsset], installerAsset, facts);
+  check(
+    '引擎不同 → 走安装器，并说明是引擎变了',
+    engineChanged?.kind === 'full' && engineChanged.asset === installerAsset && engineChanged.fullReason === 'engine',
+  );
+  const shellChanged = chooseUpdate([rendererFor(HASH_A, 5), installerAsset], installerAsset, facts);
+  check('契约更高 → 走安装器（外壳要换）', shellChanged?.kind === 'full' && shellChanged.fullReason === 'shell');
+  const legacyName = chooseUpdate([{ name: 'renderer-0.6.0-c3.tar.gz' }, installerAsset], installerAsset, facts);
+  check('不带后端哈希的旧格式界面包不算数', legacyName?.kind === 'full' && legacyName.fullReason === 'no-renderer');
+  const fromSource = chooseUpdate([rendererFor(HASH_A), installerAsset], installerAsset, { ...facts, backendHash: null });
+  check('本机引擎哈希未知（从源码跑）→ 不做只换界面的更新', fromSource?.kind === 'full');
+  check('需要安装器却没有适合本机的 → 无可用更新包', chooseUpdate([rendererFor(HASH_B)], undefined, facts) === null);
+  check('别的版本的界面包被忽略', chooseUpdate([{ name: `renderer-0.5.9-c4-b${HASH_A.slice(0, 16)}.tar.gz` }], installerAsset, facts)?.kind === 'full');
+  check(
+    '文件名解析与哈希前缀比较',
+    parseRendererAsset(rendererFor(HASH_A).name)?.contract === 4
+      && sameBackend(HASH_A.slice(0, 16), HASH_A)
+      && !sameBackend(HASH_A.slice(0, 16), HASH_B)
+      && !sameBackend('', HASH_A)
+      && !sameBackend('aaaa', HASH_A),
+  );
+  // 旧外壳的文件名正则（只认 renderer-<版本>-c<契约>.tar.gz）必须认不出新格式：
+  // 这样已经装了旧版的机器会回落到安装器，而不是再被只换一次界面。
+  check('旧外壳认不出新格式的界面包', !/^renderer-(.+)-c(\d+)\.tar\.gz$/.test(rendererFor(HASH_A).name));
+
+  console.log('\n[联网设置]');
+  check('代理地址：host:port 补成 http://', normalizeProxy(' 127.0.0.1:7890 ') === 'http://127.0.0.1:7890');
+  check('代理地址：socks5 原样保留、去掉尾部斜杠', normalizeProxy('socks5://127.0.0.1:1080/') === 'socks5://127.0.0.1:1080');
+  check('代理地址：空串 = 清除', normalizeProxy('   ') === '');
+  check('代理地址：不认识的协议拒绝', (() => { try { normalizeProxy('ftp://x:1'); return false; } catch { return true; } })());
+  check(
+    '系统代理规则解析',
+    parseProxyRule('PROXY 127.0.0.1:7890; DIRECT') === 'http://127.0.0.1:7890'
+      && parseProxyRule('SOCKS5 127.0.0.1:1080') === 'socks5://127.0.0.1:1080'
+      && parseProxyRule('DIRECT') === null,
+  );
 
   // 本地引擎（P1-A4）：真的用 docker 拉起 Python 后端并走一遍
   // startKernel → kernel.localBackend → /api/health → stopKernel 回收。

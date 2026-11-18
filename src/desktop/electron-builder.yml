@@ -31,12 +31,6 @@ extraResources:
 
 asar: true
 
-# 深链接：一期 handler 为空，但注册必须现在就在包里，否则二期要全员重装
-protocols:
-  - name: Polaris
-    schemes:
-      - polaris
-
 # 打包后补 ad-hoc 签名（仅 macOS）。electron-builder 改包会让 Electron 自带的
 # 签名失效，而 Apple Silicon 内核拒绝执行无有效签名的二进制。详见脚本内注释。
 afterPack: build/after-pack.cjs

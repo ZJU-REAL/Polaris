@@ -12,8 +12,9 @@
    pushState / Worker / localStorage / navigator.clipboard / Notification
    全部按 https 页面的规则工作 —— 前端一行结构代码都不用改。
 
-   注意：scheme 用 app://，polaris:// 留给深链接，避免同一个 scheme 既做
-   内容协议又在系统里注册成外部 handler。
+   注意：scheme 用 app://。polaris:// 留给将来可能的深链接（现在没有注册，
+   也没有任何地方生成这种链接），避免同一个 scheme 既做内容协议又在系统里
+   注册成外部 handler。
    ============================================================ */
 
 import { app, net, protocol } from 'electron';
@@ -69,6 +70,10 @@ export function buildCsp(localBaseUrl?: string | null): string {
   // 是 fetch(blob:…pdf) 取正文（走 connect-src），标准阅读器是 <iframe src=blob:>
   // （走 frame-src）。少了这一项就只有标注阅读器打不开，且只在桌面端复现。
   const connect = new Set<string>(["'self'", 'blob:']);
+  // 图片与音视频也要放行本机引擎：结构化阅读（MinerU）把论文里的图改写成
+  // http://127.0.0.1:18080/api/structured-content-assets/… 再用 <img> 渲染，
+  // 只放行 connect-src 的话这些图在桌面端全被拦掉（浏览器开发态同源，看不出来）。
+  let engine = '';
   // 本地引擎：不放行 127.0.0.1 的话 renderer 对
   // 本地后端的一切 fetch/WS 都会被 CSP 拦死，endpoint.ts 的切换形同虚设。
   if (localBaseUrl) {
@@ -76,6 +81,7 @@ export function buildCsp(localBaseUrl?: string | null): string {
       const u = new URL(localBaseUrl);
       connect.add(u.origin);
       connect.add(u.origin.replace(/^http/, 'ws'));
+      engine = ` ${u.origin}`;
     } catch {
       /* 非法地址当作没有本地引擎 */
     }
@@ -85,8 +91,8 @@ export function buildCsp(localBaseUrl?: string | null): string {
     "script-src 'self' 'wasm-unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
-    "img-src 'self' data: blob:",
-    'media-src \'self\' blob:',
+    `img-src 'self' data: blob:${engine}`,
+    `media-src 'self' blob:${engine}`,
     'frame-src blob:',
     "worker-src 'self' blob:",
     `connect-src ${[...connect].join(' ')}`,

@@ -1,7 +1,7 @@
 /* ============================================================
    唯一的 IPC 入口：ipcMain.handle('polaris:rpc')。
 
-   所有方法在这里集中做参数校验后再分发。刻意不引 zod —— 一期只有 6 个方法、
+   所有方法在这里集中做参数校验后再分发。刻意不引 zod —— 方法不多、
    参数都是单个字符串或数字，手写守卫比多一个运行时依赖清楚；真正重要的是
    「校验发生在唯一一处」这个结构，而不是用哪个库。
 
@@ -20,7 +20,10 @@ import {
   type RpcRequest,
 } from '../../shared/contract';
 import { capabilityManifest } from '../capabilities';
+import { diagnostics } from '../diagnostics';
 import { engineBootstrapStatus, kernelStatus, localBackend } from '../kernel';
+import { openLogsFolder } from '../logging';
+import { getNetworkSettings, setNetworkSettings } from '../network';
 import { applyUpdate, checkForUpdate } from '../updates';
 import { cancelJob } from './events';
 import * as host from './methods.host';
@@ -53,7 +56,6 @@ const HANDLERS: Record<MethodName, Handler> = {
   // plugins.market.*（#708）：守卫与语义同样在 kernel（#754）；包名/版本的
   // 语义校验本来就在安装引擎里，这一层只管形状
   ...market.marketMethods,
-  'host.info': () => host.hostInfo(),
   'host.relaunch': () => host.relaunch(),
   'host.openExternal': (p) => host.openExternal(asString(p, 'url')),
   'host.copyText': (p) => host.copyText(asString(p, 'text')),
@@ -61,6 +63,10 @@ const HANDLERS: Record<MethodName, Handler> = {
   'host.capabilities': () => capabilityManifest(),
   'host.update.check': () => checkForUpdate(),
   'host.update.apply': () => applyUpdate(),
+  'host.diagnostics': () => diagnostics(),
+  'host.openLogsFolder': () => openLogsFolder(),
+  'host.network.get': () => getNetworkSettings(),
+  'host.network.set': (p) => setNetworkSettings({ proxy: asString(p, 'proxy'), mirror: asString(p, 'mirror') }),
   'kernel.status': () => kernelStatus(),
   'kernel.localBackend': () => localBackend(),
   'kernel.engineBootstrapStatus': () => engineBootstrapStatus(),

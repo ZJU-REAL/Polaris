@@ -31,8 +31,13 @@ export interface HostInfo {
  * 3（#842 起）：去掉远程服务器模式——host.setServerUrl / host.testServer 与
  * 「换服务器」事件删除，加 host.relaunch。新界面只认本机引擎，装到还可能连着
  * 服务器的老外壳上会把用户卡在「引擎没启动」页，所以老外壳必须走安装器。
+ *
+ * 4：加 host.diagnostics / host.openLogsFolder / host.network.*，删掉没人调的
+ * host.info；界面开始依赖引擎状态事件（engine.state）在引擎崩溃后自己恢复。
+ * 界面包的文件名同时带上了后端哈希（renderer-<版本>-c<契约>-b<哈希>.tar.gz）：
+ * 契约号只说明桥接层没变，说明不了 Python 引擎没变——只有引擎也一样时才能只换界面。
  */
-export const CONTRACT_VERSION = 3;
+export const CONTRACT_VERSION = 4;
 
 /** 单个能力的可用性。detail 给前端做提示（如 tectonic 装了但缓存是空的）。 */
 export interface CapabilityState {
@@ -53,10 +58,8 @@ export interface CapabilityManifest {
   capabilities: Record<string, CapabilityState>;
 }
 
-/** 已知能力键。latex.compile 的 tectonic 探测是真的在跑（见 capabilities.ts），
-    本地编译落地时把 available 翻成 true 即可，前端判断逻辑不用改。 */
-export const CAPABILITY_LATEX_COMPILE = 'latex.compile';
-/** 插件管理（#705）：kernel 活着且配置树服务可达时可用，设置页插件 tab 读它显隐。 */
+/** 插件管理（#705）：设置页插件 tab 读它显隐。目前整体关闭，见 capabilities.ts 的
+    PLUGINS_UI_ENABLED。 */
 export const CAPABILITY_PLUGINS_MANAGE = 'plugins.manage';
 
 /** 长任务句柄：invoke 立刻返回它，进度经事件通道推。 */
@@ -74,6 +77,11 @@ export interface UpdateInfo {
   publishedAt?: string;
   /** hot=换界面即可、免重启；full=要装安装器。 */
   kind?: 'hot' | 'full';
+  /**
+   * 为什么是 full：engine = 新版本的本机引擎与已装的不同（只换界面会让新界面跑在
+   * 旧引擎上）；shell = 外壳本身要更新（契约升级）；no-renderer = 这个版本没发界面包。
+   */
+  fullReason?: 'engine' | 'shell' | 'no-renderer';
   /** 该更新要求的 IPC 契约版本。 */
   contract?: number;
   downloadUrl?: string;
@@ -126,6 +134,55 @@ export interface LocalBackendInfo {
    * port-in-use = 端口被别的程序占着；stale-engine = 还有一个旧的 Polaris 引擎在跑。
    */
   problem?: 'port-in-use' | 'stale-engine' | null;
+  /**
+   * 引擎进程的运行状态：running = 在跑；restarting = 中途退出了，正在自动重启；
+   * failed = 重启也没成；none = 这次没有引擎（没装、没起来）。baseUrl 只在 running 时非空。
+   */
+  state?: EngineRunState;
+}
+
+export type EngineRunState = 'running' | 'restarting' | 'failed' | 'none';
+
+/**
+ * 引擎没准备好/没起来/中途挂掉的原因，给兜底页显示真实的错误而不是一句「检查网络」。
+ * code：disk-space = 磁盘空间不足；download = 下载 Python 或依赖失败；
+ * install = 环境装不起来；resources = 安装包不完整；engine-start = 环境装好了但引擎
+ * 没起来；engine-crashed = 运行中退出且自动重启没成；tree = 内部配置不可用。
+ * lines：最后几行相关输出（已抹掉密钥）。
+ */
+export interface EngineFailure {
+  code: 'disk-space' | 'download' | 'install' | 'resources' | 'engine-start' | 'engine-crashed' | 'tree';
+  message: string;
+  lines: string[];
+  at: number;
+}
+
+/** 联网设置（首启安装用的代理与镜像策略）。 */
+export interface NetworkSettings {
+  /** 代理地址；空串 = 不指定（沿用环境变量 / 系统代理）。 */
+  proxy: string;
+  /** auto = 官方源不通再换国内镜像；on = 先用镜像；off = 不用镜像。 */
+  mirror: 'auto' | 'on' | 'off';
+}
+
+/** 「复制诊断信息」与兜底页用的一份快照。text 是拼好的纯文本，可直接贴进 issue。 */
+export interface Diagnostics {
+  /** 外壳（安装包）版本。 */
+  appVersion: string;
+  /** 眼前这份界面的版本；热更新过才会与 appVersion 不同。 */
+  uiVersion: string;
+  /** 引擎自报的版本；引擎没在跑时为 null。 */
+  engineVersion: string | null;
+  os: string;
+  engineState: EngineRunState;
+  /** 首启安装/引擎启动所处的阶段（EngineBootstrapStatus.phase）。 */
+  bootstrapPhase: string;
+  failure: EngineFailure | null;
+  /** 新环境没装成、暂时沿用旧环境时的原因。 */
+  degraded: string | null;
+  logsDir: string;
+  dataDir: string;
+  text: string;
 }
 
 /**
@@ -151,6 +208,10 @@ export interface EngineBootstrapStatus {
   log?: string[];
   lastOutputAt?: number;
   downloadedBytes?: number;
+  /** 引擎运行中退出、正在自动重启（phase 此时是 engine）。等待页据此换一句说明。 */
+  restarting?: boolean;
+  /** phase=failed 时的原因与最后几行输出。 */
+  failure?: EngineFailure;
 }
 
 /* ---- plugins.*（#705）：配置树管理的载荷类型 ---- */
@@ -235,7 +296,6 @@ export type MarketUninstallResult =
   | { ok: false; code: 'plugin-enabled' | 'not-installed'; message: string };
 
 export interface Methods {
-  'host.info': { params: void; result: HostInfo };
   /** 退出并重新打开应用（本机引擎没起来时的「重试」）。 */
   'host.relaunch': { params: void; result: void };
   /** 用系统浏览器打开外链（仅 http/https）。 */
@@ -249,8 +309,16 @@ export interface Methods {
   'host.update.check': { params: void; result: UpdateInfo };
   /** 下载并应用上一次检查到的更新；进度走 job.* 事件。 */
   'host.update.apply': { params: void; result: JobHandle };
+  /** 版本、系统、引擎状态与最近的引擎日志，拼成可直接复制的文本。 */
+  'host.diagnostics': { params: void; result: Diagnostics };
+  /** 在文件管理器里打开日志文件夹；打不开返回 false。 */
+  'host.openLogsFolder': { params: void; result: boolean };
+  /** 读联网设置（代理、镜像策略）。 */
+  'host.network.get': { params: void; result: NetworkSettings };
+  /** 改联网设置；下次安装（重新打开应用）时生效。代理地址不合法抛 ERR_INVALID_PARAMS。 */
+  'host.network.set': { params: { proxy: string; mirror: string }; result: NetworkSettings };
 
-  /** 内核状态探针。前端不依赖它做分支，只用于诊断页与冒烟。 */
+  /** 内核状态探针。界面不依赖它做分支；壳级 E2E 用它判断内核就绪、数插件数。 */
   'kernel.status': { params: void; result: KernelStatus };
   /** 本地引擎地址；前端启动时问一次，非空则 REST/WS 全走本地。 */
   'kernel.localBackend': { params: void; result: LocalBackendInfo };
@@ -323,7 +391,10 @@ export type HostEvent =
   | { type: 'job.progress'; jobId: string; phase: string; done: number; total: number; note?: string }
   | { type: 'job.log'; jobId: string; chunk: string }
   | { type: 'job.done'; jobId: string; result: unknown }
-  | { type: 'job.error'; jobId: string; code: string; message: string };
+  | { type: 'job.error'; jobId: string; code: string; message: string }
+  /* 引擎运行状态变了：restarting = 中途退出、正在自动重启；running = 回来了；
+     failed = 没救回来。界面收到后换到等待页/兜底页，回来后自己重新加载。 */
+  | { type: 'engine.state'; state: 'running' | 'restarting' | 'failed'; reason?: string };
 
 export const IPC_CHANNEL_RPC = 'polaris:rpc';
 export const IPC_CHANNEL_EVENT = 'polaris:event';
