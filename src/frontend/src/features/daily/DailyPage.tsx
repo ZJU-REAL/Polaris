@@ -33,6 +33,7 @@ import {
 } from '../../lib/api';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { PaperRow, shortAuthors } from '../shared/PaperRow';
 import { Markdown } from '../../lib/markdown';
 import { usePendingByPaper } from '../../lib/pending';
 import { PaperReader } from '../wiki/PaperReader';
@@ -64,7 +65,6 @@ import { DailyChatTab } from './DailyChatTab';
 import { CollectTreeModal, type CollectPaperRef } from './CollectTreeModal';
 import { PaperProgressModal } from '../library/PaperProgressModal';
 import { paperDragProps } from '../assistant/paperDrag';
-import { clampLines } from '../../lib/clamp';
 
 /* ============================================================
    /daily — 每日新论文：arxiv 每日新提交（订阅分类内）。保留期由管理员配置（默认 14 天）。
@@ -84,13 +84,6 @@ function dayLabel(iso: string, count: number | undefined): string {
   const en = `${EN_MONTHS[m - 1] ?? iso} ${d}`;
   if (count === undefined) return tr(`${m}月${d}日`, en);
   return tr(`${m}月${d}日 · ${count} 篇`, `${en} · ${count} papers`);
-}
-
-/** 作者行：前 3 名 + et al。 */
-function authorsBrief(p: DailyPaperItem): string {
-  const names = p.authors.map((a) => a.name).filter(Boolean);
-  if (names.length === 0) return '';
-  return names.length > 3 ? `${names.slice(0, 3).join(', ')} et al.` : names.join(', ');
 }
 
 /** 类型徽标：new=绿色 NEW；cross=「更新」（保持原角标样式，仅换文案）。 */
@@ -128,99 +121,51 @@ function DailyRow({
   onToggleCheck: () => void;
 }) {
   const navigate = useNavigate();
+  // 和文献库里的论文行同一个样子（features/shared/PaperRow）
   return (
-    <div
+    <PaperRow
+      title={p.title}
+      meta={[
+        shortAuthors(p.authors),
+        p.primary_category,
+        p.announce_type === 'new' ? null : tr('更新版', 'updated'),
+        p.has_wiki ? tr('有解读', 'summarized') : null,
+      ]}
+      summary={p.abstract}
+      active={active}
       onClick={onClick}
-      // 可以直接拖给 PolarisBuddy 解读（右下角悬浮球是落点）
-      {...paperDragProps(p.paper_id, p.title)}
-      style={{
-        padding: '11px 14px 11px 16px',
-        cursor: 'pointer',
-        borderBottom: '0.5px solid var(--border)',
-        background: active ? 'var(--accent-soft)' : 'transparent',
-        borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
-        transition: 'background 0.12s',
-      }}
-    >
-      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-        {/* 占位常驻：切换多选时行内容不左右跳 */}
-        <input
-          type="checkbox"
-          checked={checked}
-          onClick={(e) => e.stopPropagation()}
-          onChange={onToggleCheck}
-          title={tr('选择以导出引用', 'Select to export citations')}
-          style={{
-            width: 13,
-            height: 13,
-            margin: '2px 0 0',
-            flexShrink: 0,
-            accentColor: 'var(--accent)',
-            cursor: 'pointer',
-            visibility: selectMode ? 'visible' : 'hidden',
-          }}
-        />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, ...clampLines(2) }}
-            title={p.title}
+      rowProps={paperDragProps(p.paper_id, p.title)}
+      leading={
+        selectMode ? (
+          <input
+            type="checkbox"
+            checked={checked}
+            aria-label={tr('选择以导出引用', 'Select to export citations')}
+            onClick={(e) => e.stopPropagation()}
+            onChange={onToggleCheck}
+          />
+        ) : undefined
+      }
+      footer={
+        p.related_library_name ? (
+          <span
+            className="pl-link"
+            role="link"
+            tabIndex={0}
+            title={tr(`与文献库「${p.related_library_name}」相关，点击打开`, `Related to your library “${p.related_library_name}”. Click to open.`)}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (p.related_library_id) navigate(`/libraries/${p.related_library_id}`);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && p.related_library_id) navigate(`/libraries/${p.related_library_id}`);
+            }}
           >
-            {p.title}
-          </div>
-          <div className="row gap8" style={{ marginTop: 5, fontSize: 11, color: 'var(--text-3)' }}>
-            <span className="pill sm mono" style={{ background: 'var(--surface-3)', flexShrink: 0 }}>
-              {p.primary_category}
-            </span>
-            <AnnounceBadge type={p.announce_type} />
-            <span
-              style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-              title={p.authors.map((a) => a.name).join(', ')}
-            >
-              {authorsBrief(p)}
-            </span>
-            {p.has_wiki && (
-              <span
-                title={tr('已有解读', 'Summary available')}
-                style={{ display: 'inline-flex', color: 'var(--accent)', flexShrink: 0 }}
-              >
-                <Icon name="file" size={11} />
-              </span>
-            )}
-          </div>
-          {/* 「与你的库相关」：后端按库质心/关键词算出来的最像的那个库；没命中不占行 */}
-          {p.related_library_name && (
-            <div style={{ marginTop: 4 }}>
-              <span
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (p.related_library_id) navigate(`/libraries/${p.related_library_id}`);
-                }}
-                title={tr(
-                  `与文献库「${p.related_library_name}」相关，点击打开`,
-                  `Related to your library “${p.related_library_name}”. Click to open.`,
-                )}
-                style={{
-                  fontSize: 11,
-                  color: 'var(--accent-text)',
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  maxWidth: '100%',
-                }}
-              >
-                <Icon name="book" size={10} />
-                <span
-                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                >
-                  {tr('相关文献库', 'Related to')} · {p.related_library_name}
-                </span>
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+            {tr(`与「${p.related_library_name}」相关`, `Related to “${p.related_library_name}”`)}
+          </span>
+        ) : undefined
+      }
+    />
   );
 }
 

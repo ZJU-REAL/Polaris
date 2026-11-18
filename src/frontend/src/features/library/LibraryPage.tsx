@@ -17,6 +17,7 @@ import {
 } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { PaperRow, shortAuthors } from '../shared/PaperRow';
 import '../libraries/papersHome.css';
 import {
   AdvancedPanel,
@@ -98,148 +99,66 @@ function EntryRow({
   onToggleSave: () => void;
   onPurge: () => void;
 }) {
-  const authors = entry.authors.map((a) => a.name).join(', ');
-  const summary = entry.tldr ?? entry.abstract;
+  // 和文献库里的论文行同一个样子（features/shared/PaperRow）：标题、作者 · 年 · 期刊 · 看过几次、一句话
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <PaperRow
+      title={entry.title}
+      meta={[
+        shortAuthors(entry.authors),
+        entry.year,
+        entry.venue && !/^[a-z-]+(\.[A-Za-z-]{2,})?$/.test(entry.venue) ? entry.venue : null,
+        entry.visit_count > 0
+          ? tr(`${fmtRelative(entry.last_visited_at)}看过`, `viewed ${fmtRelative(entry.last_visited_at)}`)
+          : null,
+        entry.last_paper_id === null ? tr('原文所在的课题已删除', 'its topic was deleted') : null,
+      ]}
+      summary={entry.tldr ?? entry.abstract}
+      active={active}
       onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      style={{
-        padding: '12px 16px',
-        borderBottom: '0.5px solid var(--border)',
-        display: 'flex',
-        gap: 12,
-        alignItems: 'flex-start',
-        cursor: 'pointer',
-        background: active ? 'var(--accent-soft)' : 'transparent',
-        borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
-        transition: 'background 0.12s',
-      }}
-    >
-      {/* 多选复选框：占位常驻（源方向已删除的条目无活体论文，不能导出引用 → 禁用） */}
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={entry.last_paper_id === null}
-        onClick={(e) => e.stopPropagation()}
-        onChange={onToggleCheck}
-        title={
-          entry.last_paper_id === null
-            ? tr('原文已删除，无法导出引用', 'The paper was deleted, so its citation can’t be exported')
-            : undefined
-        }
-        style={{
-          width: 13,
-          height: 13,
-          margin: '2px 0 0',
-          flexShrink: 0,
-          accentColor: 'var(--accent)',
-          cursor: entry.last_paper_id === null ? 'not-allowed' : 'pointer',
-          visibility: selectMode ? 'visible' : 'hidden',
-        }}
-      />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {/* 顶部 mono 元信息行：编号/venue + 年份 + 源方向状态；右侧浏览信息 */}
-        <div className="row gap8" style={{ marginBottom: 5 }}>
-          <span className="mono" style={{ fontSize: 11, color: active ? 'var(--accent-text)' : 'var(--text-3)' }}>
-            {entry.arxiv_id ?? entry.venue ?? '—'}
-          </span>
-          {entry.year !== null && (
-            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-              {entry.year}
-            </span>
-          )}
-          {entry.last_paper_id === null && (
-            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-              {tr('来源课题已删除', 'Topic deleted')}
-            </span>
-          )}
-          {entry.visit_count > 0 ? (
-            <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
-              {fmtRelative(entry.last_visited_at)}
-              {' · '}
-              {tr(`看过 ${entry.visit_count} 次`, `Viewed ${entry.visit_count} ${entry.visit_count === 1 ? 'time' : 'times'}`)}
-            </span>
-          ) : null}
-        </div>
-        <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, color: 'var(--text)' }}>
-          {entry.title}
-        </div>
-        {authors && (
-          <div
-            title={authors}
-            style={{
-              fontSize: 12,
-              color: 'var(--text-3)',
-              marginTop: 3,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {authors}
-          </div>
-        )}
-        {/* 底部行：venue（编号占位时）+ 摘要/tldr 截断 */}
-        {(summary || (entry.venue && entry.arxiv_id)) && (
-          <div className="row gap8" style={{ marginTop: 6 }}>
-            {entry.venue && entry.arxiv_id && (
-              <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>{entry.venue}</span>
-            )}
-            {summary && (
-              <span
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  fontSize: 12,
-                  color: 'var(--text-3)',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {summary}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* —— 右：操作（收藏开关 / 浏览记录删除） —— */}
-      <div className="row gap6" style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
-        <button
-          className="icon-btn"
-          disabled={busy}
-          title={
-            entry.saved
-              ? tr('取消收藏（移入回收站）', 'Unsave (moves to trash)')
-              : tr('收藏', 'Save')
-          }
-          style={{ color: entry.saved ? 'var(--accent)' : 'var(--text-3)' }}
-          onClick={onToggleSave}
-        >
-          <Icon name={entry.saved ? 'bookmarkFill' : 'bookmark'} size={15} />
-        </button>
-        {tab === 'history' && (
+      leading={
+        selectMode ? (
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={entry.last_paper_id === null}
+            aria-label={tr('选择这篇论文', 'Select this paper')}
+            onClick={(e) => e.stopPropagation()}
+            onChange={onToggleCheck}
+            title={
+              entry.last_paper_id === null
+                ? tr('原文已删除，无法导出引用', 'The paper was deleted, so its citation can’t be exported')
+                : undefined
+            }
+          />
+        ) : undefined
+      }
+      trailing={
+        <>
           <button
             className="icon-btn"
             disabled={busy}
-            title={tr('删除这条记录', 'Delete this entry')}
-            style={{ color: 'var(--text-3)' }}
-            onClick={onPurge}
+            title={entry.saved ? tr('取消收藏（移入回收站）', 'Unsave (moves to trash)') : tr('收藏', 'Save')}
+            aria-label={entry.saved ? tr('取消收藏', 'Unsave') : tr('收藏', 'Save')}
+            style={{ color: entry.saved ? 'var(--accent)' : 'var(--text-3)', width: 26, height: 26 }}
+            onClick={onToggleSave}
           >
-            <Icon name="trash" size={15} />
+            <Icon name={entry.saved ? 'bookmarkFill' : 'bookmark'} size={14} />
           </button>
-        )}
-      </div>
-    </div>
+          {tab === 'history' && (
+            <button
+              className="icon-btn"
+              disabled={busy}
+              title={tr('删除这条记录', 'Delete this entry')}
+              aria-label={tr('删除这条记录', 'Delete this entry')}
+              style={{ color: 'var(--text-3)', width: 26, height: 26 }}
+              onClick={onPurge}
+            >
+              <Icon name="trash" size={14} />
+            </button>
+          )}
+        </>
+      }
+    />
   );
 }
 
@@ -635,7 +554,7 @@ export function LibraryPage() {
         />
         {onLibraryTab && (
           <button
-            className="btn btn-primary sm"
+            className="btn btn-ghost sm"
             style={{ marginLeft: 'auto' }}
             onClick={() => setAddOpen(true)}
           >
@@ -788,15 +707,24 @@ export function LibraryPage() {
                 )}
 
                 <div className="row gap8" style={{ marginTop: 10, ...(semantic ? { opacity: 0.45, pointerEvents: 'none' as const } : {}) }}>
-                  <Segmented<LibrarySort>
-                    options={SORTS.map((s) => ({ v: s.v, label: tr(s.zh, s.en) }))}
+                  {/* 排序用一个安静的下拉，和文献库的论文列表一样（分段按钮在「清空记录」旁边会被挤成竖排） */}
+                  <select
+                    className="pl-sort"
+                    style={{ marginLeft: 0 }}
                     value={sort}
-                    onChange={setSort}
-                  />
+                    onChange={(e) => setSort(e.target.value as LibrarySort)}
+                    aria-label={tr('排序', 'Sort')}
+                  >
+                    {SORTS.map((s) => (
+                      <option key={s.v} value={s.v}>
+                        {tr(s.zh, s.en)}
+                      </option>
+                    ))}
+                  </select>
                   {tab === 'history' && (
                     <button
-                      className="btn btn-ghost sm"
-                      style={{ marginLeft: 'auto', height: 26, flexShrink: 0 }}
+                      className="btn btn-plain xs"
+                      style={{ marginLeft: 'auto', flexShrink: 0 }}
                       disabled={clearMutation.isPending || (data !== undefined && data.total === 0)}
                       onClick={() => setClearOpen(true)}
                     >

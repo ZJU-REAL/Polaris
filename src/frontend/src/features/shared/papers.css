@@ -39,6 +39,9 @@
   display: -webkit-box; -webkit-line-clamp: var(--pl-sum-lines, 1); -webkit-box-orient: vertical; overflow: hidden;
 }
 .pl-sum.is-missing { color: var(--text-3); }
+.pl-foot-line { margin-top: 4px; font-size: var(--fs-sm); color: var(--text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-link { color: var(--accent-text); cursor: pointer; }
+.pl-link:hover { text-decoration: underline; }
 .pl-trail { flex-shrink: 0; display: flex; align-items: center; gap: var(--sp-1); }
 
 /* ---------- 详情：头部 ---------- */

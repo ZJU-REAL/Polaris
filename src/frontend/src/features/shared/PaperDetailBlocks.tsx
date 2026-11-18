@@ -32,10 +32,13 @@ export function PaperMyMetaRow({
   detailKey,
   invalidateKeys,
   style,
+  bare,
 }: {
   paperId: string;
   starred: boolean;
   readingStatus: ReadingStatus;
+  /** 放在详情的事实行里：三个安静的文字选项 + 星标，不再自带「阅读状态」字样 */
+  bare?: boolean;
   /** 详情 queryKey：给了就直接改缓存，点完立刻变，不用等列表刷新 */
   detailKey?: QueryKey;
   /** 改完要刷新的列表 / 搜索 queryKey */
@@ -59,6 +62,39 @@ export function PaperMyMetaRow({
     onError: (e) =>
       toast(`${tr('更新失败：', 'Couldn’t update: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
+
+  if (bare) {
+    return (
+      <div className="row gap8 wrap" style={{ alignItems: 'center', ...style }}>
+        <div className="pd-seg" role="radiogroup" aria-label={tr('阅读状态', 'Reading status')}>
+          {READING_STATUS.map((m) => (
+            <button
+              key={m.v}
+              type="button"
+              role="radio"
+              aria-checked={readingStatus === m.v}
+              className={'pl-qtab' + (readingStatus === m.v ? ' is-on' : '')}
+              disabled={metaMutation.isPending}
+              onClick={() => metaMutation.mutate({ reading_status: m.v })}
+            >
+              {tr(m.label, m.en)}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="btn btn-plain xs"
+          aria-pressed={starred}
+          disabled={metaMutation.isPending}
+          onClick={() => metaMutation.mutate({ starred: !starred })}
+          style={starred ? { color: 'var(--warn-tx)' } : undefined}
+        >
+          <Icon name={starred ? 'starFill' : 'star'} size={12} />
+          {starred ? tr('已加星标', 'Starred') : tr('加星标', 'Star')}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="row gap12 wrap" style={{ marginTop: 12, ...style }}>

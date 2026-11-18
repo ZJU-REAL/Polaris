@@ -19,6 +19,7 @@ import {
 } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { PaperRow, shortAuthors } from '../shared/PaperRow';
 import { topicPath, useProject } from '../../app/project';
 import { libraryPath } from '../libraries/hooks';
 import { TrashModal, type TrashItemView } from '../shared/TrashModal';
@@ -38,7 +39,7 @@ import {
 import { AddPaperModal } from './AddPaperModal';
 import { PaperProgressModal } from '../library/PaperProgressModal';
 import { ShelfChatTab } from './ShelfChatTab';
-import { shelfHasWiki, ShelfDetailPane, WikiBadge } from './ShelfDetailPane';
+import { shelfHasWiki, ShelfDetailPane } from './ShelfDetailPane';
 
 /* ============================================================
    /t/:topicId/research — 课题相关研究书架。
@@ -114,106 +115,31 @@ function ShelfRow({
   onSelect: () => void;
   onToggleCheck: () => void;
 }) {
-  const authors = item.authors.map((a) => a.name).join(', ');
+  // 和文献库里的论文行同一个样子（features/shared/PaperRow）；写过备注的，备注排在一句话前面
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <PaperRow
+      title={item.title}
+      meta={[
+        shortAuthors(item.authors),
+        item.year,
+        item.venue && !/^[a-z-]+(\.[A-Za-z-]{2,})?$/.test(item.venue) ? item.venue : null,
+        shelfHasWiki(item) ? null : tr('还没有解读', 'no summary yet'),
+      ]}
+      summary={item.note ? tr(`备注：${item.note}`, `Note: ${item.note}`) : item.tldr}
+      active={active}
       onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      style={{
-        padding: '12px 16px',
-        borderBottom: '0.5px solid var(--border)',
-        cursor: 'pointer',
-        background: active ? 'var(--accent-soft)' : 'transparent',
-        borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
-        transition: 'background 0.12s',
-      }}
-    >
-      {/* 顶部 mono 元信息行：复选框（多选态常驻占位）+ 编号/venue + 年份；右侧解读状态徽标 */}
-      <div className="row gap8" style={{ marginBottom: 5 }}>
-        {/* 占位常驻：切换多选时行内容不左右跳（对齐文献库 PapersTab） */}
-        <input
-          type="checkbox"
-          checked={checked}
-          onClick={(e) => e.stopPropagation()}
-          onChange={onToggleCheck}
-          title={tr('选择', 'Select')}
-          style={{
-            width: 13,
-            height: 13,
-            margin: 0,
-            flexShrink: 0,
-            accentColor: 'var(--accent)',
-            cursor: 'pointer',
-            visibility: selectMode ? 'visible' : 'hidden',
-          }}
-        />
-        <span
-          className="mono"
-          style={{
-            fontSize: 11,
-            color: active ? 'var(--accent-text)' : 'var(--text-3)',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          {item.arxiv_id ?? item.venue ?? '—'}
-        </span>
-        {item.year !== null && (
-          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
-            {item.year}
-          </span>
-        )}
-        <span style={{ marginLeft: 'auto' }} />
-        <WikiBadge hasWiki={shelfHasWiki(item)} compact />
-      </div>
-
-      <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, color: 'var(--text)' }}>{item.title}</div>
-
-      {(authors || item.venue) && (
-        <div
-          title={authors}
-          style={{
-            fontSize: 12,
-            color: 'var(--text-3)',
-            marginTop: 3,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          {authors}
-          {authors && item.venue && item.arxiv_id ? ` · ${item.venue}` : ''}
-        </div>
-      )}
-
-      {/* 备注摘要一行：写过备注才显示 */}
-      {item.note && (
-        <div className="row gap6" style={{ marginTop: 5, alignItems: 'flex-start' }}>
-          <Icon name="pen" size={11} style={{ marginTop: 2, flexShrink: 0, color: 'var(--text-3)' }} />
-          <span
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontSize: 12,
-              color: 'var(--text-3)',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {item.note}
-          </span>
-        </div>
-      )}
-    </div>
+      leading={
+        selectMode ? (
+          <input
+            type="checkbox"
+            checked={checked}
+            aria-label={tr('选择', 'Select')}
+            onClick={(e) => e.stopPropagation()}
+            onChange={onToggleCheck}
+          />
+        ) : undefined
+      }
+    />
   );
 }
 

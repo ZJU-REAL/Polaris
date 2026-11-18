@@ -54,6 +54,8 @@ export interface PaperRowProps {
   noteCount?: number;
   /** 行尾的其他小记号 */
   marks?: ReactNode;
+  /** 摘要下面再加一小行（每日新论文的「与某文献库相关」） */
+  footer?: ReactNode;
   active?: boolean;
   /** 行首（多选框） */
   leading?: ReactNode;
@@ -74,6 +76,7 @@ export function PaperRow({
   starred,
   noteCount,
   marks,
+  footer,
   active,
   leading,
   trailing,
@@ -140,6 +143,7 @@ export function PaperRow({
         ) : summaryFallback ? (
           <div className="pl-sum is-missing">{summaryFallback}</div>
         ) : null}
+        {footer && <div className="pl-foot-line">{footer}</div>}
       </div>
       {trailing && (
         <span className="pl-trail" onClick={(e) => e.stopPropagation()}>

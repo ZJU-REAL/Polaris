@@ -9,7 +9,7 @@ import {
   hasEmbeddedFigures,
   usePaperFigures,
 } from '../../components/ui/FigureGallery';
-import { ScoreRing } from '../../components/ui/ScoreRing';
+import { DotsMenu } from '../../components/ui/DotsMenu';
 import { Markdown } from '../../lib/markdown';
 import {
   api,
@@ -22,9 +22,11 @@ import { tr } from '../../lib/i18n';
 import { libraryPath, useTopicLibrary } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
 import { PaperReader } from '../wiki/PaperReader';
-import { PdfUploadButton } from '../shared/PdfUploadButton';
-import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
-import { AffiliationChips, AuthorLinks, MetaFold, usePoolConceptNav } from '../wiki/shared';
+import { PaperFact, PaperFacts, PaperKeyPoints, PaperKicker, splitSummary } from '../shared/PaperDetail';
+import { PaperFulltextFact } from '../shared/PaperFulltext';
+import { relevanceWords } from '../shared/PaperRow';
+import '../shared/papers.css';
+import { AuthorLinks, MetaFold, usePoolConceptNav } from '../wiki/shared';
 import {
   ConceptChips,
   PaperMyMetaRow,
@@ -208,152 +210,95 @@ export function LibraryDetailPane({
       key={paperId ?? snapshot.title}
       style={{ overflowY: 'auto', flex: 1, padding: '26px 32px 60px' }}
     >
-      {/* —— pills 行 —— */}
-      <div className="row gap8 wrap" style={{ marginBottom: 8 }}>
-        {venue && (
-          <span className="pill sm" style={{ background: 'var(--surface-3)' }}>
-            {venue}
-          </span>
-        )}
-        {alive && paper.has_wiki && (
-          <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-            <Icon name="sparkle" size={11} />
-            {tr('解读', 'Summary')}
-          </span>
-        )}
-        {!alive && (
-          <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-            {tr('原文已删除，仅保留副本', 'Paper deleted, copy kept')}
-          </span>
-        )}
-      </div>
-
-      {/* —— 标题 + 作者 + 机构（都可点：点了按它过滤列表）+ 相关度 —— */}
-      <div className="row" style={{ alignItems: 'flex-start', gap: 20 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
-            {title}
-          </h1>
-          <AuthorLinks authors={authors} onFilter={onFilterAuthor} />
-          <AffiliationChips affiliations={affiliations} onFilter={onFilterAffiliation} />
+      {/* 和文献库里的论文详情同一个顺序（features/shared/PaperDetail）：出处 · 标题 · 作者 → 一个主动作 →
+          事实行 → 要点（只出现一次）→ 摘要 / 笔记 / 解读 */}
+      <PaperKicker
+        year={paper?.year ?? snapshot.year}
+        venue={venue && !/^[a-z-]+(\.[A-Za-z-]{2,})?$/.test(venue) ? venue : null}
+        arxivId={paper?.arxiv_id ?? snapshot.arxivId}
+        doi={paper?.doi ?? snapshot.doi}
+        url={url}
+        extra={!alive ? tr('原文已删除，这里是保存时的副本', 'The paper was deleted; this is the copy you saved') : undefined}
+      />
+      <h1 className="pd-title">{title}</h1>
+      <AuthorLinks authors={authors} onFilter={onFilterAuthor} />
+      {affiliations && affiliations.length > 0 && (
+        <div className="pd-affil">
+          {affiliations.slice(0, 4).map((a, i) => (
+            <span key={a}>
+              {i > 0 && ' · '}
+              <span className="author-link" role="button" tabIndex={0} onClick={() => onFilterAffiliation?.(a)} onKeyDown={(e) => { if (e.key === 'Enter') onFilterAffiliation?.(a); }}>
+                {a}
+              </span>
+            </span>
+          ))}
         </div>
-        {alive && paper.relevance_score !== null && (
-          <ScoreRing value={paper.relevance_score} max={1} size={56} label={tr('相关度', 'Relevance')} />
-        )}
-      </div>
+      )}
 
-      {/* —— 操作：打开阅读页（仅活体论文）+ 外链 —— */}
-      <div className="row gap8 wrap" style={{ marginTop: 14 }}>
-        {alive && (
+      {alive && (
+        <div className="pd-actions">
           <button
             className="btn btn-primary sm"
             onClick={() => navigate(`/papers/${paper.id}/read`, { state: readerFrom(location, 'library') })}
           >
             <Icon name="file" size={13} />
-            {tr('阅读全文', 'Read paper')}
+            {tr('阅读原文', 'Read paper')}
           </button>
-        )}
-        {alive && paper.wiki_content && (
-          <button
-            className="btn btn-soft sm"
-            title={tr('全屏阅读解读，可导出 PDF', 'Read the summary full screen and export to PDF')}
-            onClick={openReader}
-          >
-            <Icon name="book" size={13} />
-            {tr('阅读模式', 'Reading mode')}
-          </button>
-        )}
-        {alive &&
-          (paperLibId ? (
-            <button
-              className="btn btn-ghost sm"
-              onClick={() => navigate(libraryPath(paperLibId, `?paper=${paper.id}`))}
-            >
+          {paperLibId && (
+            <button className="btn btn-ghost sm" onClick={() => navigate(libraryPath(paperLibId, `?paper=${paper.id}`))}>
               <Icon name="book" size={13} />
-              {tr('去文献库', 'Open library')}
+              {tr('在文献库里看', 'Open in its library')}
             </button>
-          ) : (
-            // 手动添加、未纳入任何方向文献库：置灰不可点，hover 说明原因
-            <span title={tr('这篇论文不在任何文献库中', 'This paper isn’t in any library')}>
-              <button className="btn btn-ghost sm" disabled style={{ opacity: 0.45, cursor: 'not-allowed' }}>
-                <Icon name="book" size={13} />
-                {tr('去文献库', 'Open library')}
-              </button>
-            </span>
-          ))}
-        {arxivUrl && (
-          <a
-            className="btn btn-ghost sm"
-            href={arxivUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            style={{ textDecoration: 'none' }}
-          >
-            <Icon name="link" size={13} />
-            arXiv
-          </a>
-        )}
-        {url && !arxivUrl && (
-          <a
-            className="btn btn-ghost sm"
-            href={url}
-            target="_blank"
-            rel="noreferrer noopener"
-            style={{ textDecoration: 'none' }}
-          >
-            <Icon name="link" size={13} />
-            {tr('原文链接', 'Original link')}
-          </a>
-        )}
-        {alive && <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />}
-      </div>
-
-      {/* —— 个人状态：星标 + 阅读状态（论文还在才有） —— */}
-      {alive && (
-        <PaperMyMetaRow
-          paperId={paper.id}
-          starred={paper.starred ?? false}
-          readingStatus={readingStatus}
-          detailKey={detailKey}
-          invalidateKeys={listKeys}
-        />
-      )}
-
-      {/* —— 我的标签：就地改，只有自己看得到 —— */}
-      {/* 库标签的界面入口已移除，个人标签取代了它；后端端点与数据保留。 */}
-      {alive && (
-        <PaperMyTagsRow
-          paperId={paper.id}
-          myTags={paper.my_tags}
-          detailKey={detailKey}
-          invalidateKeys={listKeys}
-          trailing={<PaperIndexStatusRow paperId={paper.id} showRebuild={false} />}
-        />
-      )}
-
-      {/* —— 概念 chips：点了跳所属课题库的概念页 —— */}
-      {alive && <ConceptChips concepts={paper.concepts} onOpen={openConcept} />}
-
-
-      {/* —— TL;DR —— */}
-      {tldr && (
-        <div
-          style={{
-            marginTop: 18,
-            padding: '12px 16px',
-            borderRadius: 10,
-            background: 'var(--accent-soft)',
-            fontSize: 13,
-            lineHeight: 1.65,
-            color: 'var(--text)',
-          }}
-        >
-          <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
-            TL;DR
-          </span>
-          {tldr}
+          )}
+          <DotsMenu
+            label={tr('这篇论文的更多操作', 'More for this paper')}
+            items={[
+              ...(paper.wiki_content
+                ? [
+                    { key: 'reader', icon: 'book' as const, label: tr('全屏阅读解读', 'Read the summary full screen'), onSelect: openReader },
+                    { key: 'print', icon: 'download' as const, label: tr('把解读导出为 PDF', 'Export the summary as PDF'), onSelect: openReaderForPrint },
+                  ]
+                : []),
+              ...(arxivUrl || url
+                ? [{ key: 'src', icon: 'link' as const, label: arxivUrl ? tr('在 arXiv 打开', 'Open on arXiv') : tr('打开原文页面', 'Open the source page'), onSelect: () => window.open(arxivUrl ?? url ?? '', '_blank', 'noopener') }]
+                : []),
+            ]}
+          />
         </div>
       )}
+
+      {alive && (
+        <PaperFacts>
+          {paper.relevance_score !== null && paper.relevance_score !== undefined && (
+            <PaperFact label={tr('为什么在这里', 'Why it’s here')}>
+              {tr(
+                `${relevanceWords(paper.relevance_score)}（${paper.relevance_score.toFixed(2)}）`,
+                `${relevanceWords(paper.relevance_score)} (${paper.relevance_score.toFixed(2)})`,
+              )}
+            </PaperFact>
+          )}
+          <PaperFact label={tr('PDF 与全文', 'PDF & full text')}>
+            <PaperFulltextFact libraryId={paperLibId ?? undefined} paperId={paper.id} pdfAvailable={!!paper.pdf_available} doi={paper.doi} />
+          </PaperFact>
+          <PaperFact label={tr('阅读状态', 'Reading')}>
+            <PaperMyMetaRow
+              bare
+              paperId={paper.id}
+              starred={paper.starred ?? false}
+              readingStatus={readingStatus}
+              detailKey={detailKey}
+              invalidateKeys={listKeys}
+            />
+          </PaperFact>
+          <PaperFact label={tr('我的标签', 'My tags')}>
+            <PaperMyTagsRow bare paperId={paper.id} myTags={paper.my_tags} detailKey={detailKey} invalidateKeys={listKeys} />
+          </PaperFact>
+        </PaperFacts>
+      )}
+
+      {alive && <ConceptChips concepts={paper.concepts} onOpen={openConcept} />}
+
+      <PaperKeyPoints tldr={tldr} />
 
       {/* 摘要 + 元信息合成一块：元信息本来就是查证时才看的东西，单独一张卡
           只是多一次点击。样式与「我的笔记」同款，默认收起。 */}
@@ -416,7 +361,7 @@ export function LibraryDetailPane({
                   style={{ marginLeft: 'auto' }}
                 />
               </div>
-              <Markdown source={paper.wiki_content} onWikiLink={openConceptByName} renderFigure={renderFigure} />
+              <Markdown source={splitSummary(paper.wiki_content).body || paper.wiki_content} onWikiLink={openConceptByName} renderFigure={renderFigure} />
             </>
           ) : (
             <div
@@ -446,7 +391,7 @@ export function LibraryDetailPane({
               {tr('AI 解读（副本）', 'AI summary (copy)')}
             </span>
           </div>
-          <Markdown source={snapshotWiki} onWikiLink={openConceptByName} renderFigure={renderSnapshotFigure} />
+          <Markdown source={splitSummary(snapshotWiki).body || snapshotWiki} onWikiLink={openConceptByName} renderFigure={renderSnapshotFigure} />
         </div>
       )}
 
