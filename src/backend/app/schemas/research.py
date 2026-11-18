@@ -186,6 +186,7 @@ class SurveyRead(BaseModel):
     # 还没开始为空。只是提示：阶段到哪了以 phase + status 为准
     state: str | None = None
     step_title: str | None = None  # 正在做哪一步
+    step_action: str | None = None  # 这一步的动作名（wiki.compile 等），界面按它出文案
     started_at: datetime | None = None
     finished_at: datetime | None = None  # 任务结束（完成 / 失败 / 取消）的时刻
     progress: SurveyProgress = Field(default_factory=SurveyProgress)
@@ -199,6 +200,7 @@ class HypothesesRead(BaseModel):
     voyage_id: uuid.UUID | None = None
     state: str | None = None  # 同 SurveyRead.state
     step_title: str | None = None
+    step_action: str | None = None  # 同 SurveyRead.step_action
     started_at: datetime | None = None
     finished_at: datetime | None = None
     round: int = 0  # 已完成几轮

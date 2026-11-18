@@ -554,6 +554,7 @@ async def test_one_direction_runs_from_post_to_ideas(client, live_queue, literat
     # 文献：进度从库里的数算出来
     survey = detail["survey"]
     assert survey["state"] == "done" and survey["step_title"] is None
+    assert survey["step_action"] is None  # 任务结束后没有「正在做的一步」
     assert survey["progress"] == {
         "found": 6,  # 不相关的那篇被排除后成员行直接删掉
         "screened": 6,
@@ -1311,6 +1312,8 @@ async def test_survey_does_not_finish_when_no_paper_could_be_screened(
     assert detail["survey"]["progress"]["found"] == 7
     assert detail["survey"]["progress"]["screened"] == 0
     assert detail["survey"]["step_title"] == "相关性打分（LLM）"
+    # 动作名：界面按它出自己的说法（标题是写给日志的，只有中文）
+    assert detail["survey"]["step_action"] == "wiki.score_relevance"
 
     monkeypatch.setattr(FakeProvider, "_respond_relevance", staticmethod(real))
     await worker_tasks.resume_voyage(_ctx(queue_stub), survey_id)

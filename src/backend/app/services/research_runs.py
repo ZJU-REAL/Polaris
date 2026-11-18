@@ -1203,11 +1203,14 @@ async def _all_phase_voyages(session: AsyncSession, run: ResearchRun) -> list[Vo
     )
 
 
-async def _step_title(session: AsyncSession, voyage: VoyageRun | None) -> str | None:
+async def _current_step(session: AsyncSession, voyage: VoyageRun | None) -> dict[str, Any]:
+    """正在做（或停在）哪一步：标题给日志看，动作名给界面按它出自己的说法。"""
     if voyage is None or voyage.status in TERMINAL_STATUSES:
-        return None
+        return {}
     step = await _first_open_step(session, voyage.id)
-    return step.title if step is not None else None
+    if step is None:
+        return {}
+    return {"step_title": step.title, "step_action": step.action}
 
 
 async def _survey_read(
@@ -1217,8 +1220,8 @@ async def _survey_read(
     out = SurveyRead(
         voyage_id=voyage.id if voyage is not None else None,
         state=voyage.status if voyage is not None else None,
-        step_title=await _step_title(session, voyage),
         usage=_usage(voyage),
+        **await _current_step(session, voyage),
         **_times(voyage),
     )
     if run.library_id is None:
@@ -1271,8 +1274,8 @@ async def _hypotheses_read(session: AsyncSession, run: ResearchRun) -> Hypothese
     out = HypothesesRead(
         voyage_id=voyage.id if voyage is not None else None,
         state=voyage.status if voyage is not None else None,
-        step_title=await _step_title(session, voyage),
         usage=_usage(voyage),
+        **await _current_step(session, voyage),
         **_times(voyage),
     )
     if voyage is None:
