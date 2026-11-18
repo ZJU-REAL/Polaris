@@ -7,15 +7,23 @@ import {
   attentionSection,
   attentionText,
   countsText,
+  durationText,
+  elapsedText,
   evidenceText,
   minutesUntil,
   pollInterval,
   retryText,
   runHeadline,
   sectionStates,
+  sourceLines,
+  surveyDoneText,
   surveyFraction,
   surveyProgressText,
   surveyStage,
+  surveyStageCaption,
+  surveyStageLabel,
+  SURVEY_STAGES,
+  usageText,
   waitingFor,
 } from '../phase';
 
@@ -83,17 +91,29 @@ describe('sectionStates', () => {
 });
 
 describe('attention', () => {
-  it('gives every known reason exactly one primary action', () => {
-    expect(attentionActions('PLAN_FAILED')).toEqual({ primary: 'retry' });
-    expect(attentionActions('SURVEY_SOURCES_UNREACHABLE')).toEqual({ primary: 'retry' });
-    expect(attentionActions('SURVEY_NO_RESULTS')).toEqual({ primary: 'edit_scope' });
-    expect(attentionActions('SURVEY_TOO_FEW_RELEVANT').primary).toBe('broaden');
-    expect(attentionActions('SURVEY_FAILED')).toEqual({ primary: 'retry' });
-    expect(attentionActions('LIBRARY_TOO_SMALL').primary).toBe('add_papers');
-    expect(attentionActions('NO_HYPOTHESES_SURVIVED').primary).toBe('add_papers');
-    expect(attentionActions('HYPOTHESES_FAILED')).toEqual({ primary: 'retry' });
-    expect(attentionActions('LLM_AUTH').primary).toBe('settings');
-    expect(attentionActions('SOMETHING_NEW')).toEqual({ primary: 'retry' });
+  it('takes the primary action from the engine', () => {
+    // 这些 (code, action) 就是引擎实际给出的组合（services/research_runs.py）
+    expect(attentionActions({ code: 'PLAN_FAILED', action: 'retry' })).toEqual({ primary: 'retry' });
+    expect(attentionActions({ code: 'SURVEY_SOURCES_UNREACHABLE', action: 'retry' })).toEqual({ primary: 'retry' });
+    expect(attentionActions({ code: 'SURVEY_NO_RESULTS', action: 'edit_scope' })).toEqual({ primary: 'edit_scope', secondary: 'retry' });
+    expect(attentionActions({ code: 'SURVEY_TOO_FEW_RELEVANT', action: 'broaden' })).toEqual({ primary: 'broaden', secondary: 'add_papers' });
+    expect(attentionActions({ code: 'SURVEY_FAILED', action: 'retry' })).toEqual({ primary: 'retry' });
+    expect(attentionActions({ code: 'LIBRARY_TOO_SMALL', action: 'retry' })).toEqual({ primary: 'retry', secondary: 'add_papers' });
+    expect(attentionActions({ code: 'NO_HYPOTHESES_SURVIVED', action: 'add_papers' })).toEqual({ primary: 'add_papers', secondary: 'retry' });
+    expect(attentionActions({ code: 'HYPOTHESES_FAILED', action: 'retry' })).toEqual({ primary: 'retry' });
+    // 引擎换了主意，界面跟着换
+    expect(attentionActions({ code: 'SURVEY_FAILED', action: 'edit_scope' }).primary).toBe('edit_scope');
+  });
+
+  it('sends a rejected key to Settings, because retrying cannot help', () => {
+    expect(attentionActions({ code: 'LLM_AUTH', action: 'retry' })).toEqual({ primary: 'settings', secondary: 'retry' });
+  });
+
+  it('guesses from the code when the engine gives no action it knows', () => {
+    expect(attentionActions({ code: 'SURVEY_NO_RESULTS' }).primary).toBe('edit_scope');
+    expect(attentionActions({ code: 'SURVEY_TOO_FEW_RELEVANT', action: null }).primary).toBe('broaden');
+    expect(attentionActions({ code: 'NO_HYPOTHESES_SURVIVED', action: 'something_new' }).primary).toBe('add_papers');
+    expect(attentionActions({ code: 'SOMETHING_NEW' })).toEqual({ primary: 'retry' });
   });
 
   it('writes the counts into the sentence when it has them', () => {
@@ -165,21 +185,99 @@ describe('survey progress', () => {
     expect(surveyStage(p(0, 0, 0, 0, 0))).toBe('search');
     expect(surveyStage(p(120, 0, 0, 0, 0))).toBe('search');
     expect(surveyStage(p(182, 60, 14, 0, 14))).toBe('screen');
-    expect(surveyStage(p(182, 182, 46, 0, 46))).toBe('summarise');
+    // 筛完了、还没有一篇解读：在读全文
+    expect(surveyStage(p(182, 182, 46, 0, 46))).toBe('fulltext');
     expect(surveyStage(p(182, 182, 46, 12, 46))).toBe('summarise');
   });
 
-  it('has no fraction while searching and a real one afterwards', () => {
+  it('lets the step the engine reports win over the counts', () => {
+    expect(surveyStage(p(182, 182, 46, 0, 46), 'wiki.compile')).toBe('summarise');
+    expect(surveyStage(p(182, 182, 46, 46, 46), 'wiki.link_concepts')).toBe('index');
+    expect(surveyStage(p(0, 0, 0, 0, 0), 'wiki.score_relevance')).toBe('screen');
+    // 认不出的动作：回到按数字判断
+    expect(surveyStage(p(182, 60, 14, 0, 14), 'wiki.something_new')).toBe('screen');
+    expect(surveyStage(p(182, 60, 14, 0, 14), null)).toBe('screen');
+  });
+
+  it('has a fraction only for the steps that have a total', () => {
     expect(surveyFraction(p(120, 0, 0, 0, 0))).toBeNull();
     expect(surveyFraction(p(200, 50, 10, 0, 10))).toBe(0.25);
     expect(surveyFraction(p(182, 182, 46, 23, 46))).toBe(0.5);
+    expect(surveyFraction(p(182, 182, 46, 0, 46), 'fulltext')).toBeNull();
+    expect(surveyFraction(p(182, 182, 46, 46, 46), 'index')).toBeNull();
+  });
+
+  it('says what each step is doing in a plain sentence, never a log line', () => {
+    expect(surveyStageCaption('search', p(0, 0, 0, 0, 0), ['arXiv', 'OpenAlex'])).toBe('正在 arXiv、OpenAlex 检索论文');
+    expect(surveyStageCaption('search', p(0, 0, 0, 0, 0), [])).toBe('正在检索论文');
+    expect(surveyStageCaption('summarise', p(182, 182, 46, 3, 46), [])).toBe('正在为最相关的 46 篇写解读');
+    for (const stage of SURVEY_STAGES) {
+      expect(surveyStageLabel(stage)).not.toMatch(/LLM|PDF|wiki|embedding/i);
+      expect(surveyStageCaption(stage, p(10, 10, 5, 0, 5), ['arXiv'])).not.toMatch(/LLM|wiki|embedding|▶/i);
+    }
   });
 
   it('leaves out numbers that do not exist yet', () => {
     expect(surveyProgressText(p(0, 0, 0, 0, 0))).toBe('');
     expect(surveyProgressText(p(120, 0, 0, 0, 0))).toBe('找到 120 篇');
     expect(surveyProgressText(p(182, 140, 30, 0, 30))).toBe('找到 182 篇 · 已筛选 140 · 留下 30');
-    expect(surveyProgressText(p(182, 182, 46, 12, 46))).toBe('找到 182 篇 · 已筛选 182 · 留下 46 · 已生成解读 12/46');
+    expect(surveyProgressText(p(182, 182, 46, 0, 46))).toBe('找到 182 篇 · 已筛选 182 · 留下 46');
+    expect(surveyProgressText(p(182, 182, 46, 12, 46))).toBe('找到 182 篇 · 已筛选 182 · 留下 46 · 已写解读 12/46');
+  });
+
+  it('never shows more summaries than the total', () => {
+    // 重新检索后：库里已有 10 篇解读，这次只打算写 8 篇
+    expect(surveyProgressText(p(10, 10, 10, 10, 8))).toContain('已写解读 10/10');
+  });
+
+  it('starts a fresh task at Search even when the library already has numbers', () => {
+    expect(surveyStage(p(8, 8, 8, 8, 8), null, 'planning')).toBe('search');
+    expect(surveyStage(p(8, 8, 8, 8, 8), 'wiki.compile', 'executing')).toBe('summarise');
+  });
+
+  it('sums a finished survey up as a result, not as a process', () => {
+    expect(surveyDoneText(p(182, 182, 46, 46, 46))).toBe('留下 46 篇（共找到 182 篇），都有解读');
+    expect(surveyDoneText(p(193, 193, 193, 60, 60))).toBe('留下 193 篇，其中 60 篇有解读');
+    expect(surveyDoneText(p(10, 10, 10, 0, 8))).toBe('留下 10 篇');
+  });
+});
+
+describe('sources, time and usage', () => {
+  it('says honestly what each source returned', () => {
+    const lines = sourceLines([
+      { source: 'openalex', fetched: 10, error: null },
+      { source: 'arxiv', fetched: 0, error: 'ArxivRateLimitedError: HTTP 429' },
+      { source: 'my_plugin', fetched: 0, error: null },
+    ]);
+    expect(lines.map((l) => `${l.name} ${l.text}`)).toEqual(['OpenAlex 10 篇', 'arXiv 没取到', 'my_plugin 0 篇']);
+    expect(lines.map((l) => l.failed)).toEqual([false, true, false]);
+    expect(lines[1]?.detail).toContain('429');
+  });
+
+  it('does not call a source failed when it still returned papers', () => {
+    const [line] = sourceLines([{ source: 'arxiv', fetched: 40, error: 'timeout on page 3' }]);
+    expect(line?.failed).toBe(false);
+    expect(line?.text).toBe('40 篇');
+  });
+
+  it('counts elapsed time from the engine’s timestamps', () => {
+    const now = Date.parse('2026-11-18T10:12:30Z');
+    expect(elapsedText('2026-11-18T10:00:00Z', null, now)).toBe('已用 12 分钟');
+    expect(elapsedText('2026-11-18T10:12:10Z', null, now)).toBe('刚开始');
+    expect(elapsedText('2026-11-18T10:12:00Z', '2026-11-18T10:12:20Z', now)).toBe('用时不到 1 分钟');
+    expect(elapsedText('2026-11-18T08:00:00Z', '2026-11-18T09:05:00Z', now)).toBe('用时 1 小时 5 分钟');
+    expect(elapsedText(null, null, now)).toBe('');
+    expect(elapsedText('2026-11-18T10:00:00Z', '2026-11-18T09:00:00Z', now)).toBe('');
+    expect(durationText(3 * 3_600_000)).toBe('3 小时');
+  });
+
+  it('shows usage as an approximate cost, and nothing before there is any', () => {
+    expect(usageText({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cost_usd: 0 })).toBeNull();
+    expect(usageText(null)).toBeNull();
+    const u = usageText({ prompt_tokens: 103520, completion_tokens: 10201, total_tokens: 113721, cost_usd: 0.77 });
+    expect(u?.text).toBe('用量约 $0.77');
+    expect(u?.title).toContain('113.7k tokens');
+    expect(usageText({ prompt_tokens: 300, completion_tokens: 20, total_tokens: 320, cost_usd: 0 })?.text).toBe('用量不到 $0.01');
   });
 });
 

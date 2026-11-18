@@ -20,6 +20,8 @@ export interface ResearchAttention {
   detail?: string | null;
   /** 随原因而变：SURVEY_TOO_FEW_RELEVANT 带 {found, relevant}，LIBRARY_TOO_SMALL 带 {papers, required} */
   counts?: Record<string, number> | null;
+  /** 引擎建议的那一个操作：retry | edit_scope | broaden | add_papers。认不出的按 retry 处理。 */
+  action?: string | null;
 }
 
 /** 检索范围：由模型从一句方向推出来，用户可以在开始前或重新检索前改。 */
@@ -38,8 +40,12 @@ export interface ResearchBrief {
   out_of_scope: string[];
   /** 12 | 36 | 60 */
   months_back: number;
-  /** 最多读多少篇；不带就用默认（200）。契约 §2.2 里没有这一项，见 F2 的说明。 */
+  /** 最多检索并筛选多少篇（5..500，默认 200） */
   max_papers?: number | null;
+  /** 给相关度最高的多少篇写解读（默认 60）；界面不改它，原样带回 */
+  compile_top_n?: number | null;
+  /** 相关度达到多少才留下（默认 0.7）；界面不改它，原样带回 */
+  relevance_threshold?: number | null;
 }
 
 export interface ResearchCounts {
@@ -60,7 +66,23 @@ export interface ResearchRunRead {
   status: ResearchStatus;
   attention: ResearchAttention | null;
   counts: ResearchCounts;
+  created_at: string;
   updated_at: string;
+}
+
+/** 用量：token 数与按标价估的费用（美元，不计缓存折扣，是上限的近似）。 */
+export interface ResearchUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+/** 一个文献来源这次拿到了多少篇；error 不为空 = 这个来源这次没连上。 */
+export interface SurveySource {
+  source: string;
+  fetched: number;
+  error: string | null;
 }
 
 export interface SurveyProgress {
@@ -84,19 +106,34 @@ export interface ResearchSurvey {
   voyage_id: string | null;
   /** 子任务的状态原样透出；页面只把它当提示用，阶段状态以 phase + status 为准 */
   state: string | null;
+  /** 正在做哪一步：引擎写给日志的标题（只有中文）。界面用 step_action 出自己的说法 */
   step_title: string | null;
+  /** 这一步的动作名，如 wiki.compile；任务没在跑时为 null */
+  step_action?: string | null;
+  started_at: string | null;
+  /** 任务结束（完成 / 失败 / 取消）的时刻 */
+  finished_at: string | null;
   progress: SurveyProgress;
   top_papers: SurveyPaper[];
-  /** 检索过程中值得告诉用户的事（如「某个来源没有响应」），已经是给人读的句子 */
+  /** 引擎写的检索提示（哪个来源失败了等）。界面不直接显示这些句子，改用 sources 自己说 */
   notes: string[];
+  /** 各来源这次拿到多少 */
+  sources: SurveySource[];
+  usage: ResearchUsage;
 }
 
 export interface ResearchHypotheses {
   voyage_id: string | null;
   state: string | null;
+  step_title: string | null;
+  step_action?: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  /** 已完成几轮 */
   round: number;
   max_rounds: number;
   node_count: number;
+  usage: ResearchUsage;
 }
 
 export interface EvidenceCounts {
@@ -113,6 +150,8 @@ export interface ResearchIdea {
   status: IdeaStatus;
   evidence_counts: EvidenceCounts;
   origin: { kind?: string; novelty_scope?: string; library_paper_count?: number; [extra: string]: unknown } | null;
+  source_voyage_id: string | null;
+  created_at: string;
 }
 
 /** 子任务为什么停下（引擎写的 last_error）。 */
@@ -132,10 +171,12 @@ export interface ResearchRunDetail extends ResearchRunRead {
   open_ask: VoyageMessageRead | null;
   /** 排了自动重试时的时刻；有它时 status 仍是 running */
   next_retry_at: string | null;
-  /** 即将进行的是第几次自动重试（1..3）。契约里没有，缺省时页面不显示次数。 */
-  retry_attempt?: number | null;
-  /** 当前子任务最近一次出错的原因。契约里没有，缺省时页面只说「遇到临时问题」。 */
-  last_error?: ResearchLastError | null;
+  /** 即将进行的是第几次自动重试（1..3；0 = 没有自动重试过） */
+  retry_attempt: number;
+  /** 当前阶段的任务停在出错状态时的原因 */
+  last_error: ResearchLastError | null;
+  /** 这次研究到目前为止的用量（各阶段加起来，含重做过的） */
+  usage: ResearchUsage;
   capabilities: { remote_machine: boolean; latex: boolean };
 }
 
@@ -149,8 +190,10 @@ export interface CreateRunInput {
 export interface RetryRunInput {
   /** 带上就按这份范围重新检索 */
   brief?: ResearchBrief;
-  /** SURVEY_TOO_FEW_RELEVANT 的「放宽范围」：降低相关性门槛、时间拉到 5 年。契约里没有这一项。 */
+  /** 放宽后重新检索：相关度门槛 0.5、时间拉到 5 年 */
   broaden?: boolean;
+  /** 明确重做哪个阶段；不给 = 重试当前阶段 */
+  phase?: 'survey' | 'hypotheses';
 }
 
 export const researchApi = {
@@ -179,6 +222,13 @@ export const researchApi = {
   },
   renameRun(id: string, name: string): Promise<ResearchRunRead> {
     return requestJson<ResearchRunRead>(`/research/${id}`, 'PATCH', { name });
+  },
+  /**
+   * 删除这次研究。purge=false 只删研究记录：课题、文献库、论文和想法都留着；
+   * purge=true 连课题和它的文献库一起删。
+   */
+  deleteRun(id: string, purge: boolean): Promise<void> {
+    return request<void>(`/research/${id}${purge ? '?purge=true' : ''}`, { method: 'DELETE' });
   },
   /** 选定 / 取消选定一个想法（两个方向都可逆）。 */
   pickIdea(ideaId: string, picked: boolean): Promise<unknown> {

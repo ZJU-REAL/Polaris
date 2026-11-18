@@ -42,6 +42,30 @@
 .dr-note.is-error { color: var(--danger-tx); }
 .dr-note a { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; }
 
+/* 还没有 Claude 的 key：框上方一条说明 + 一个去处 */
+.dr-setup {
+  display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-3); padding: 12px 14px;
+  background: var(--warn-bg); border-radius: var(--radius);
+}
+.dr-setup-text { flex: 1; min-width: 0; }
+.dr-setup-title { font-size: var(--fs-body); font-weight: 600; color: var(--text); }
+.dr-setup-body { margin-top: 2px; font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--text-2); overflow-wrap: anywhere; }
+.dr-setup .btn { flex-shrink: 0; text-decoration: none; }
+
+/* 首次打开的方向例子：一组安静的行，点一下填进框里 */
+.dr-examples { margin-top: var(--sp-6); }
+.dr-examples-label { font-size: var(--fs-sm); color: var(--text-3); margin-bottom: var(--sp-2); }
+.dr-examples-list { display: flex; flex-direction: column; }
+.dr-example {
+  display: block; width: 100%; padding: 9px 2px; text-align: left; cursor: pointer;
+  border: 0; border-top: 0.5px solid var(--border); background: transparent;
+  font-family: var(--sans); font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-2);
+  transition: color var(--dur-micro) var(--ease-out);
+}
+.dr-example:last-child { border-bottom: 0.5px solid var(--border); }
+.dr-example:hover { color: var(--accent-text); }
+.dr-example:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+
 /* 范围编辑：标签在左、控件在右的几行，一张平卡片 */
 .dr-brief {
   margin-top: var(--sp-4); padding: var(--sp-4) var(--sp-4) var(--sp-3);
@@ -179,13 +203,17 @@
 .dr-sec-head { display: flex; align-items: center; gap: var(--sp-3); min-height: 24px; margin-bottom: var(--sp-2); }
 .dr-sec-title { margin: 0; font-size: var(--fs-title); font-weight: 600; color: var(--text); line-height: 20px; }
 .dr-sec.is-pending .dr-sec-title { color: var(--text-3); font-weight: 500; }
+.dr-sec-meta { font-size: var(--fs-sm); color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dr-sec-aside { margin-left: auto; display: flex; gap: var(--sp-1); flex-shrink: 0; }
 .dr-sec-aside .btn, .dr-links .btn, .dr-attn-actions .btn, .dr-next .btn { text-decoration: none; }
 
 .dr-pending { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-3); max-width: 560px; }
 
 /* 进度 */
-.dr-steps { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: var(--fs-sm); color: var(--text-3); }
+.dr-steps {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 2px 6px; margin: 0 0 6px; padding: 0; list-style: none;
+  font-size: var(--fs-sm); color: var(--text-3);
+}
 .dr-step + .dr-step::before { content: '›'; margin-right: 6px; color: var(--text-3); }
 .dr-step.is-current { color: var(--text); font-weight: 500; }
 .dr-step.is-done { color: var(--text-2); }
@@ -215,7 +243,12 @@
 .dr-sec .dr-brief { margin-top: var(--sp-2); }
 
 /* 文献 */
-.dr-notes { margin: var(--sp-2) 0 0; padding: 0; list-style: none; font-size: var(--fs-sm); color: var(--text-3); line-height: var(--lh-body); }
+.dr-sources {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--sp-3); margin-top: var(--sp-2);
+  font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--text-2); font-variant-numeric: tabular-nums;
+}
+.dr-sources-label { color: var(--text-3); }
+.dr-source.is-failed { color: var(--warn-tx); }
 .dr-papers { margin: var(--sp-3) 0 0; padding: 0; list-style: none; border-top: 0.5px solid var(--border); }
 .dr-papers li { padding: 9px 0; border-bottom: 0.5px solid var(--border); min-width: 0; }
 .dr-paper-title {

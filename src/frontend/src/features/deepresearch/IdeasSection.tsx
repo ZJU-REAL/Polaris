@@ -6,11 +6,11 @@ import { toast } from '../../components/ui/Toast';
 import { errorText } from '../../lib/errors';
 import { tr } from '../../lib/i18n';
 import { researchApi, type ResearchIdea, type ResearchRunDetail } from '../../lib/researchApi';
-import { researchKeys } from './hooks';
+import { researchKeys, useNow } from './hooks';
 import { IdeaEvidence } from './IdeaEvidence';
 import { InlineQuestion } from './InlineQuestion';
 import { AttentionBlock, NowDoing, PendingLine, ProgressBar, RetryBlock, Section, StoppedBlock, type RunActions } from './parts';
-import { evidenceText, type SectionState } from './phase';
+import { elapsedText, evidenceText, type SectionState } from './phase';
 
 /* ============================================================
    想法：寻找假设的进度、AI 的提问、以及活下来的想法（每个都带文献依据的数量）。
@@ -31,14 +31,36 @@ export interface IdeasSectionProps {
   run: ResearchRunDetail;
   state: SectionState;
   actions: RunActions;
-  liveCaption: string | null;
   onMoreIdeas: () => void;
   onChanged: () => void;
 }
 
-export function IdeasSection({ run, state, actions, liveCaption, onMoreIdeas, onChanged }: IdeasSectionProps) {
+/** 寻找假设时正在做的那一步，一句人话。认不出的动作不写（留给下面那句对过程的说明）。 */
+function hypothesesCaption(action: string | null | undefined, doneRounds: number, maxRounds: number): string | null {
+  switch (action) {
+    case 'hypothesis.seed':
+      return tr('正在从文献里提出第一批假设', 'Proposing the first hypotheses from the papers');
+    case 'hypothesis.expand':
+      return maxRounds > 0
+        ? tr(`第 ${Math.min(doneRounds + 1, maxRounds)} 轮：提出新假设并对照文献核对`, `Round ${Math.min(doneRounds + 1, maxRounds)}: proposing hypotheses and checking them against the papers`)
+        : tr('正在提出新假设并对照文献核对', 'Proposing hypotheses and checking them against the papers');
+    case 'hypothesis.prune':
+      return tr('正在淘汰站不住的假设', 'Dropping hypotheses that don’t hold');
+    case 'discovery.summarize':
+      return tr('正在汇总留下的假设', 'Summing up the hypotheses that held');
+    case 'discovery.write_ideas':
+      return tr('正在把留下的假设写成想法', 'Writing up the surviving hypotheses as ideas');
+    default:
+      return null;
+  }
+}
+
+export function IdeasSection({ run, state, actions, onMoreIdeas, onChanged }: IdeasSectionProps) {
   const queryClient = useQueryClient();
   const { hypotheses: h, ideas } = run;
+  const active = state === 'running' || state === 'retrying';
+  const now = useNow(30_000, active);
+  const started = state !== 'pending' && !!h.started_at && (active || !!h.finished_at);
   const picked = ideas.filter((i) => i.status === 'promoted').length;
   const choosing = state === 'waiting' && run.phase === 'choose';
   // 新颖性只对照了这一个文献库：只要显示了分数，这句话就要在
@@ -78,10 +100,11 @@ export function IdeasSection({ run, state, actions, liveCaption, onMoreIdeas, on
       stateLabel={
         state === 'waiting' ? (choosing ? tr('等你选定', 'Waiting for your picks') : tr('等你回答', 'Waiting for your answer')) : undefined
       }
+      meta={started ? elapsedText(h.started_at, active ? null : h.finished_at, now) : undefined}
       aside={
         h.voyage_id ? (
           <Link className="btn btn-plain xs" to={`/voyages/${h.voyage_id}`}>
-            {tr('查看探索过程', 'View the search')}
+            {tr('查看过程', 'View steps')}
           </Link>
         ) : undefined
       }
@@ -98,18 +121,18 @@ export function IdeasSection({ run, state, actions, liveCaption, onMoreIdeas, on
 
       {(state === 'running' || state === 'retrying' || (state === 'waiting' && !choosing)) && h.max_rounds > 0 && h.round > 0 && (
         <div className="dr-progress-text">
-          {tr(`第 ${h.round}/${h.max_rounds} 轮 · ${h.node_count} 个假设`, `Round ${h.round} of ${h.max_rounds} · ${h.node_count} ${h.node_count === 1 ? 'hypothesis' : 'hypotheses'}`)}
+          {tr(`已完成 ${h.round}/${h.max_rounds} 轮 · ${h.node_count} 个假设`, `${h.round} of ${h.max_rounds} rounds done · ${h.node_count} ${h.node_count === 1 ? 'hypothesis' : 'hypotheses'}`)}
         </div>
       )}
 
       {state === 'running' && (
         <>
           <ProgressBar
-            fraction={h.max_rounds > 0 && h.round > 0 ? (h.round - 0.5) / h.max_rounds : null}
+            fraction={h.max_rounds > 0 && h.round > 0 ? Math.min(1, h.round / h.max_rounds) : null}
             label={tr('寻找假设', 'Looking for hypotheses')}
           />
           <NowDoing
-            caption={liveCaption}
+            caption={hypothesesCaption(h.step_action, h.round, h.max_rounds)}
             wait={tr('每一轮提出假设、对照文献核对、淘汰站不住的。通常要几十分钟，可以离开这个页面。', 'Each round proposes hypotheses, checks them against the papers and drops the ones that don’t hold. This usually takes tens of minutes; you can leave this page.')}
           />
         </>

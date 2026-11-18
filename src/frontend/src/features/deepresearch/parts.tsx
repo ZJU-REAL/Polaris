@@ -12,6 +12,7 @@ import {
   attentionText,
   retryText,
   sectionStateLabel,
+  transientReason,
   type AttentionAction,
   type SectionState,
 } from './phase';
@@ -37,7 +38,9 @@ export interface SectionProps {
   state: SectionState;
   /** 覆盖默认的状态词（如等用户时说清是「等你回答」还是「等你选定」） */
   stateLabel?: string;
-  /** 标题行右侧的安静链接（如「详细日志」） */
+  /** 状态词后面的一小段安静的字：这一段花了多久（「已用 12 分钟」） */
+  meta?: string;
+  /** 标题行右侧的安静链接（如「查看过程」） */
   aside?: ReactNode;
   /** 最后一段不画连接线 */
   last?: boolean;
@@ -45,10 +48,10 @@ export interface SectionProps {
 }
 
 /** 时间线的一段：左边一条细轨道 + 状态标记，右边是小标题、状态词和内容。 */
-export function Section({ title, state, stateLabel, aside, last, children }: SectionProps) {
+export function Section({ title, state, stateLabel, meta, aside, last, children }: SectionProps) {
   const label = sectionStateLabel(state);
   return (
-    <section className={`dr-sec is-${state}` + (last ? ' is-last' : '')}>
+    <section className={`dr-sec is-${state}` + (last ? ' is-last' : '')} data-section-state={state}>
       <div className="dr-sec-rail" aria-hidden="true">
         <span className="dr-sec-mark">{state === 'done' && <Icon name="check" size={10} sw={2.4} />}</span>
         {!last && <span className="dr-sec-line" />}
@@ -57,6 +60,7 @@ export function Section({ title, state, stateLabel, aside, last, children }: Sec
         <div className="dr-sec-head">
           <h2 className="dr-sec-title">{title}</h2>
           {label && <StatusDot tone={label.tone} label={stateLabel ?? label.label} />}
+          {meta && <span className="dr-sec-meta">{meta}</span>}
           {aside && <div className="dr-sec-aside">{aside}</div>}
         </div>
         {children}
@@ -97,7 +101,7 @@ export function AttentionBlock({
   run: ResearchRunDetail;
   actions: RunActions;
 }) {
-  const { primary, secondary } = attentionActions(attention.code);
+  const { primary, secondary } = attentionActions(attention);
   const libraryHref = run.library_id ? `/libraries/${run.library_id}` : '/libraries';
 
   function button(action: AttentionAction, isPrimary: boolean) {
@@ -139,13 +143,20 @@ export function AttentionBlock({
     }
   }
 
+  const kept = run.survey.progress.kept;
+  const need = attention.counts?.required ?? 5;
+  // 留下的论文本来就够：再让人去「添加论文」是指错了路
+  const showSecondary = secondary && !(secondary === 'add_papers' && attention.code === 'LIBRARY_TOO_SMALL' && kept >= need);
+  // 引擎的原始信息只在它是一句报错时给出来；「kept=8 indexed=0」这类内部计数上面那句话已经说了
+  const detail = attention.detail && !/^(\w+=\S+\s*)+$/.test(attention.detail.trim()) ? attention.detail : null;
+
   return (
     <div className="dr-attn" role="alert">
-      <div className="dr-attn-text">{attentionText(attention)}</div>
-      {attention.detail && <div className="dr-attn-detail">{attention.detail}</div>}
+      <div className="dr-attn-text">{attentionText(attention, kept)}</div>
+      {detail && <div className="dr-attn-detail">{detail}</div>}
       <div className="dr-attn-actions">
         {button(primary, true)}
-        {secondary && button(secondary, false)}
+        {showSecondary && secondary && button(secondary, false)}
       </div>
     </div>
   );
@@ -170,14 +181,14 @@ export function RetryBlock({
     : `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
   return (
     <div className="dr-attn is-quiet" role="status">
-      <div className="dr-attn-text">
-        {lastError?.message
-          ? tr(`遇到临时问题：${lastError.message}`, `Hit a temporary problem: ${lastError.message}`)
-          : tr('遇到临时问题', 'Hit a temporary problem')}
+      {/* 一句话：出了什么事 + 什么时候再试。引擎的原始信息放进悬停提示，给排查的人看 */}
+      <div className="dr-attn-text" title={lastError?.message || undefined}>
+        {transientReason(lastError?.code)}
+        {tr('，', '. ')}
+        {retryText(nextRetryAt, attempt, now)}
       </div>
       <div className="dr-attn-sub" title={clock ? tr(`${clock} 重试`, `Retries at ${clock}`) : undefined}>
-        {retryText(nextRetryAt, attempt, now)}
-        {tr('，不需要你操作。', '. Nothing for you to do.')}
+        {tr('不需要你操作，已有的进度都保留着。', 'Nothing for you to do. Progress so far is kept.')}
       </div>
       <div className="dr-attn-actions">
         <button type="button" className="btn btn-ghost sm" disabled={actions.busy} onClick={() => actions.retry()}>

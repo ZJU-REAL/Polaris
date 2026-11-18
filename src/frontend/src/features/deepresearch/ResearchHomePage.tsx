@@ -3,11 +3,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
-import { api } from '../../lib/api';
+import { api, ApiError } from '../../lib/api';
 import { errorText } from '../../lib/errors';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
-import { MODEL_SETTINGS_HREF } from '../../lib/llmNotConfigured';
+import { isLlmNotConfigured, llmNotConfiguredText, MODEL_SETTINGS_HREF } from '../../lib/llmNotConfigured';
 import { isEngineUnreachable, researchApi, type ResearchBrief, type ResearchRunRead } from '../../lib/researchApi';
 import { StatusDot } from '../voyages/shared/StatusDot';
 import { BriefEditor } from './BriefEditor';
@@ -29,6 +29,29 @@ function sortRuns(runs: ResearchRunRead[]): ResearchRunRead[] {
   return [...runs].sort((a, b) => rank(a) - rank(b) || b.updated_at.localeCompare(a.updated_at));
 }
 
+/** 首次打开时给的几个方向例子（跨几个学科，都是一句话能说清的方向）。 */
+function exampleDirections(): string[] {
+  return [
+    tr('用扩散模型设计蛋白质骨架', 'Diffusion models for protein backbone design'),
+    tr('检索增强生成中检索器与生成器的联合训练', 'Joint training of retriever and generator in retrieval-augmented generation'),
+    tr('大模型智能体的长期记忆机制', 'Long-term memory for LLM agents'),
+    tr('钙钛矿太阳能电池的界面钝化', 'Interface passivation in perovskite solar cells'),
+  ];
+}
+
+/**
+ * 开始 / 拟范围失败时框下面那句话。模型这一侧的失败（接口回 424，detail 是
+ * LLM_AUTH / LLM_UNREACHABLE / PLAN_FAILED，或者引擎根本没有 key）多给一个去看模型状态的链接。
+ */
+function describeError(e: unknown): { text: string; needsModel: boolean } {
+  const code = e instanceof ApiError ? e.message : '';
+  const notConfigured = isLlmNotConfigured(code);
+  return {
+    text: notConfigured ? llmNotConfiguredText() : errorText(e),
+    needsModel: notConfigured || code === 'LLM_AUTH' || (e instanceof ApiError && e.status === 424),
+  };
+}
+
 function newClientKey(): string {
   try {
     return crypto.randomUUID();
@@ -42,7 +65,9 @@ export function ResearchHomePage() {
   const queryClient = useQueryClient();
   const [direction, setDirection] = useState(loadDraft);
   const [brief, setBrief] = useState<ResearchBrief | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [formError, setFormErrorState] = useState<{ text: string; needsModel: boolean } | null>(null);
+  const setFormError = (e: unknown) => setFormErrorState(e === null ? null : describeError(e));
+  const boxRef = useRef<HTMLTextAreaElement | null>(null);
   // 同一段文字重复点「开始」用同一个幂等键：第一次其实成功了但回应丢了，也不会建出两个课题
   const keyRef = useRef<{ text: string; key: string } | null>(null);
 
@@ -77,13 +102,13 @@ export function ResearchHomePage() {
       toast(tr('已开始研究', 'Research started'), 'ok');
       navigate(`/research/${run.id}`);
     },
-    onError: (e) => setFormError(errorText(e)),
+    onError: (e) => setFormError(e),
   });
 
   const draft = useMutation({
     mutationFn: () => researchApi.draftBrief(direction.trim()),
     onSuccess: (b) => setBrief(b),
-    onError: (e) => setFormError(errorText(e)),
+    onError: (e) => setFormError(e),
   });
 
   function start(withBrief?: ResearchBrief) {
@@ -92,6 +117,8 @@ export function ResearchHomePage() {
   }
 
   const hasRuns = runs.length > 0;
+  // 第一次打开（还没有课题、框是空的）：给几个方向做例子，点一下填进框里
+  const showExamples = !hasRuns && !runsQuery.isLoading && !brief && direction.trim() === '' && !draft.isPending;
 
   return (
     <div className={'page fadeup dr-home' + (hasRuns ? ' has-runs' : '')}>
@@ -103,8 +130,22 @@ export function ResearchHomePage() {
         )}
       </p>
 
+      {/* 没有 Claude 的 key 什么都开始不了：在框的上方说清楚要做什么，而不是等点了才报错 */}
+      {modelMissing && (
+        <div className="dr-setup" role="status">
+          <div className="dr-setup-text">
+            <div className="dr-setup-title">{tr('先连接 Claude', 'Connect Claude first')}</div>
+            <div className="dr-setup-body">{llmNotConfiguredText()}</div>
+          </div>
+          <Link className="btn btn-ghost sm" to={MODEL_SETTINGS_HREF}>
+            {tr('查看模型状态', 'Check model status')}
+          </Link>
+        </div>
+      )}
+
       <DirectionBox
         value={direction}
+        inputRef={boxRef}
         onChange={(v) => {
           setDirection(v);
           if (formError) setFormError(null);
@@ -123,12 +164,13 @@ export function ResearchHomePage() {
       {/* 框下面至多一行提示：按紧要程度只显示一条 */}
       {formError ? (
         <div className="dr-note is-error" role="alert">
-          {formError}
-        </div>
-      ) : modelMissing ? (
-        <div className="dr-note is-warn" role="status">
-          {tr('还没有连接 Claude，研究无法开始。', 'Claude isn’t connected yet, so research can’t start.')}{' '}
-          <Link to={MODEL_SETTINGS_HREF}>{tr('前往「设置 → 模型」', 'Open Settings → Model')}</Link>
+          {formError.text}
+          {formError.needsModel && (
+            <>
+              {' '}
+              <Link to={MODEL_SETTINGS_HREF}>{tr('查看模型状态', 'Check model status')}</Link>
+            </>
+          )}
         </div>
       ) : engineDown ? (
         <div className="dr-note is-warn" role="status">
@@ -147,10 +189,43 @@ export function ResearchHomePage() {
           busyLabel={tr('正在开始…', 'Starting…')}
           busy={create.isPending}
           onSubmit={(b) => start(b)}
-          onCancel={() => setBrief(null)}
+          onCancel={() => {
+            setBrief(null);
+            boxRef.current?.focus();
+          }}
         />
       )}
 
+      {showExamples && (
+        <div className="dr-examples">
+          <div className="dr-examples-label">{tr('可以从这些方向试起', 'Or start from one of these')}</div>
+          <div className="dr-examples-list">
+            {exampleDirections().map((text) => (
+              <button
+                key={text}
+                type="button"
+                className="dr-example"
+                onClick={() => {
+                  setDirection(text);
+                  setFormError(null);
+                  // 填进去之后光标回到框里，接着改或者直接回车
+                  requestAnimationFrame(() => {
+                    const el = boxRef.current;
+                    if (!el) return;
+                    el.focus();
+                    el.setSelectionRange(text.length, text.length);
+                  });
+                }}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 还没有课题时不画这一段：一个只写着「还没有课题」的空列表帮不上第一次来的人 */}
+      {(runsQuery.isLoading || runsQuery.isError || hasRuns) && (
       <div className="dr-list">
         <div className="group-label">{tr('课题', 'Topics')}</div>
         {runsQuery.isLoading ? (
@@ -167,8 +242,6 @@ export function ResearchHomePage() {
               onRetry={() => void runsQuery.refetch()}
             />
           )
-        ) : !hasRuns ? (
-          <div className="dr-list-empty">{tr('还没有课题', 'No topics yet')}</div>
         ) : (
           <div className="dr-rows">
             {runs.map((run) => (
@@ -177,6 +250,7 @@ export function ResearchHomePage() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

@@ -96,7 +96,8 @@ function knownCode(code: string): string | null {
     case 'LLM_UNREACHABLE':
       return tr('无法连接模型服务，请稍后重试', 'Couldn’t reach the model service. Try again shortly.');
     case 'LLM_AUTH':
-      return tr('模型服务拒绝了请求，请在设置中检查密钥', 'The model service rejected the request. Check the key in Settings.');
+      // key 不在设置里填（引擎启动时从环境变量读），所以不说「在设置中检查」
+      return tr('Claude 拒绝了请求，请检查 API key 是否有效', 'Claude rejected the request. Check that your API key is valid.');
     case 'INVALID_IDS':
       return tr('所选内容已变化，请刷新后重试', 'The selection changed. Refresh and try again.');
     // —— 生成想法的前置条件 ——
@@ -105,19 +106,15 @@ function knownCode(code: string): string | null {
         '没有可用的论文，无法生成想法。请为课题关联有论文的文献库，或先添加论文',
         'There are no papers to work from, so no ideas were generated. Link a library that has papers, or add papers first.',
       );
-    case 'LIBRARY_TOO_SMALL':
-      return tr(
-        '文献库里的论文太少，无法生成想法。请再添加一些论文后重试',
-        'The library has too few papers to generate ideas from. Add more papers, then retry.',
-      );
+    // LIBRARY_TOO_SMALL 在上面「研究」那一组里已经有了（同一个码，同一句话）
     case 'RETRIEVAL_UNAVAILABLE':
       return tr(
         '语义检索暂时不可用，请稍后重试；如果一直不行，请在「设置 → 模型」中查看状态',
         'Semantic search isn’t available right now. Retry shortly, or check Settings → Model if it keeps failing.',
       );
     // —— 任务因出错暂停的原因（voyage 的 last_error.code，见后端 agents/voyage/failures.py）——
+    // LLM_UNREACHABLE / LLM_AUTH 在上面已经有更具体的说法（模型服务），这里只管通用的那几个
     case 'NETWORK':
-    case 'LLM_UNREACHABLE':
       return tr('网络连接失败，请检查网络后重试', 'The network connection failed. Check your connection, then retry.');
     case 'TIMEOUT':
       return tr('请求超时，请稍后重试', 'The request timed out. Retry shortly.');
@@ -130,7 +127,6 @@ function knownCode(code: string): string | null {
     case 'DB_BUSY':
       return tr('本地数据正忙，请稍后重试', 'Local data is busy. Retry shortly.');
     case 'AUTH':
-    case 'LLM_AUTH':
       return tr(
         '对方服务拒绝了访问，请检查密钥或登录状态后重试',
         'The service refused access. Check the key or sign-in, then retry.',

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, type MutableRefObject } from 'react';
 import { Icon } from '../../components/ui/Icon';
 import { tr } from '../../lib/i18n';
 
@@ -43,6 +43,8 @@ export interface DirectionBoxProps {
   adjusting: boolean;
   /** 不能开始（如还没连上模型）：主按钮置灰，原因由页面在框下面说 */
   blocked?: boolean;
+  /** 页面要把光标放回框里时用（点了例子、取消了范围编辑） */
+  inputRef?: MutableRefObject<HTMLTextAreaElement | null>;
 }
 
 export function DirectionBox({
@@ -54,13 +56,15 @@ export function DirectionBox({
   drafting,
   adjusting,
   blocked,
+  inputRef,
 }: DirectionBoxProps) {
-  const ref = useRef<HTMLTextAreaElement | null>(null);
+  const ownRef = useRef<HTMLTextAreaElement | null>(null);
+  const ref = inputRef ?? ownRef;
 
   // 打开页面光标就在框里
   useEffect(() => {
     ref.current?.focus();
-  }, []);
+  }, [ref]);
 
   // 随内容长高，到上限后框内滚动
   useLayoutEffect(() => {
@@ -68,7 +72,7 @@ export function DirectionBox({
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
-  }, [value]);
+  }, [value, ref]);
 
   const text = value.trim();
   const tooLong = value.length > DIRECTION_MAX;
@@ -83,6 +87,8 @@ export function DirectionBox({
         rows={3}
         value={value}
         disabled={submitting}
+        // 范围是按这段方向拟的：编辑范围时方向先锁住，取消后再改
+        readOnly={adjusting || drafting}
         aria-label={tr('研究方向', 'Research direction')}
         placeholder={tr('例如 用扩散模型设计蛋白质骨架', 'e.g. diffusion models for protein backbone design')}
         onChange={(e) => onChange(e.target.value)}
@@ -97,7 +103,7 @@ export function DirectionBox({
         <span className={'dr-box-count' + (tooLong ? ' is-over' : '')}>
           {value.length > DIRECTION_MAX - 200
             ? `${value.length} / ${DIRECTION_MAX}`
-            : !adjusting && text.length > 0
+            : !adjusting && text.length > 0 && !blocked
               ? tr('Enter 开始 · Shift + Enter 换行', 'Enter to start · Shift + Enter for a new line')
               : ''}
         </span>
@@ -107,7 +113,8 @@ export function DirectionBox({
               type="button"
               className="btn btn-plain sm"
               onClick={onAdjust}
-              disabled={text.length === 0 || tooLong || busy}
+              // 拟范围也要用模型：模型没连上时一样做不了
+              disabled={text.length === 0 || tooLong || busy || blocked}
             >
               {drafting ? (
                 <>

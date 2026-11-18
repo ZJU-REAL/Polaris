@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
@@ -13,12 +13,12 @@ import { tr } from '../../lib/i18n';
 import { isEngineUnreachable, researchApi, type ResearchBrief, type RetryRunInput } from '../../lib/researchApi';
 import { StatusDot } from '../voyages/shared/StatusDot';
 import { useVoyageChannel } from '../voyages/shared/useVoyageChannel';
-import { researchKeys, useResearchRun } from './hooks';
+import { researchKeys, useNow, useResearchRun } from './hooks';
 import { IdeasSection } from './IdeasSection';
 import { NextSection } from './NextSection';
 import { PapersSection } from './PapersSection';
 import type { RunActions } from './parts';
-import { countsText, runHeadline, sectionStates } from './phase';
+import { countsText, elapsedText, runHeadline, sectionStates, usageText } from './phase';
 import { ScopeSection } from './ScopeSection';
 import './deepresearch.css';
 
@@ -26,12 +26,13 @@ import './deepresearch.css';
    /research/:id —— 一次研究的时间线：范围 / 文献 / 想法 / 下一步。
 
    数据只有一份：GET /research/{id}，按状态轮询（见 hooks.ts）。当前子任务的事件流
-   只做两件事：状态或步骤一变就提前取一次数；最近一行日志作为「正在做什么」。
-   事件流断了、重连后漏了事件都没关系，下一次轮询会补上。
+   只做一件事：状态或步骤一变就提前取一次数。事件流断了、重连后漏了事件都没关系，
+   下一次轮询会补上。页面上「正在做什么」的说法来自引擎报的当前步骤，不是日志行。
    ============================================================ */
 
 export function ResearchRunPage() {
   const { id = '' } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const query = useResearchRun(id);
   const run = query.data;
@@ -40,6 +41,7 @@ export function ResearchRunPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   // 换到另一次研究：收起上一页留下的编辑器和菜单
@@ -91,7 +93,7 @@ export function ResearchRunPage() {
         : null
     : null;
   const live = !!run && (run.status === 'running' || run.status === 'waiting_user');
-  const { terminal } = useVoyageChannel(currentVoyageId, live, { onExtraEvent: refresh });
+  useVoyageChannel(currentVoyageId, live, { onExtraEvent: refresh });
   // 事件流把 status / step 写进这份任务缓存；它一变就提前取一次研究数据
   const voyageQuery = useQuery({
     queryKey: ['voyage', currentVoyageId, false],
@@ -109,15 +111,6 @@ export function ResearchRunPage() {
     lastSignature.current = voyageSignature;
     if (prev && voyageSignature && prev !== voyageSignature && prev.split(':')[0] === voyageSignature.split(':')[0]) refresh();
   }, [voyageSignature, refresh]);
-
-  const liveCaption = useMemo(() => {
-    if (!run || run.status !== 'running') return null;
-    for (let i = terminal.entries.length - 1; i >= 0; i--) {
-      const e = terminal.entries[i];
-      if (e && e.kind === 'log' && e.level !== 'error' && e.message.trim()) return e.message.trim().split('\n')[0] ?? null;
-    }
-    return null;
-  }, [terminal.entries, run]);
 
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: researchKeys.run(id) });
@@ -155,6 +148,22 @@ export function ResearchRunPage() {
     },
     onError: (e) => toast(errorText(e), 'error'),
   });
+  const remove = useMutation({
+    mutationFn: () => researchApi.deleteRun(id, true),
+    onSuccess: () => {
+      setDeleting(false);
+      toast(tr('已删除', 'Deleted'), 'ok');
+      queryClient.removeQueries({ queryKey: researchKeys.run(id) });
+      void queryClient.invalidateQueries({ queryKey: researchKeys.list });
+      void queryClient.invalidateQueries({ queryKey: ['projects'] });
+      void queryClient.invalidateQueries({ queryKey: ['libraries'] });
+      navigate('/research', { replace: true });
+    },
+    onError: (e) => toast(errorText(e), 'error'),
+  });
+
+  const running = run?.status === 'running';
+  const now = useNow(30_000, running);
 
   if (query.isLoading) {
     return (
@@ -195,7 +204,10 @@ export function ResearchRunPage() {
     busy: retry.isPending || more.isPending || cancel.isPending,
     editing,
   };
-  const meta = [countsText(run.counts), fmtRelative(run.updated_at)].filter(Boolean).join(' · ');
+  const usage = usageText(run.usage);
+  // 运行中说已经跑了多久（从创建算起）；其余状态说最后一次变化是什么时候
+  const when = running ? elapsedText(run.created_at, null, now) : fmtRelative(run.updated_at);
+  const meta = [countsText(run.counts), when].filter(Boolean).join(' · ');
   // 名称就是方向原话（还没起名、或方向本来就短）时不重复一遍
   const showDirection = run.direction.trim() !== run.name.trim();
 
@@ -243,27 +255,33 @@ export function ResearchRunPage() {
                   <Icon name="pen" size={14} />
                   {tr('重命名', 'Rename')}
                 </button>
-                <Link role="menuitem" className="user-menu-item" to={`/t/${run.project_id}`} onClick={() => setMenuOpen(false)}>
-                  <Icon name="dashboard" size={14} />
-                  {tr('打开课题工作台', 'Open topic workbench')}
-                </Link>
                 {stoppable && (
-                  <>
-                    <div className="user-menu-sep" />
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="user-menu-item danger"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        setStopping(true);
-                      }}
-                    >
-                      <Icon name="pause" size={14} />
-                      {tr('停止研究', 'Stop research')}
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="user-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setStopping(true);
+                    }}
+                  >
+                    <Icon name="pause" size={14} />
+                    {tr('停止研究', 'Stop research')}
+                  </button>
                 )}
+                <div className="user-menu-sep" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="user-menu-item danger"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setDeleting(true);
+                  }}
+                >
+                  <Icon name="trash" size={14} />
+                  {tr('删除课题', 'Delete topic')}
+                </button>
               </div>
             )}
           </div>
@@ -273,9 +291,14 @@ export function ResearchRunPage() {
             {run.direction}
           </p>
         )}
-        <div className="dr-run-status">
+        <div className="dr-run-status" data-run-status={run.status} data-run-phase={run.phase}>
           <StatusDot tone={head.tone} label={head.label} />
           <span className="dr-run-meta">{meta}</span>
+          {usage && (
+            <span className="dr-run-meta" title={usage.title}>
+              {usage.text}
+            </span>
+          )}
         </div>
       </header>
 
@@ -288,12 +311,11 @@ export function ResearchRunPage() {
           onCloseEdit={() => setEditing(false)}
           onSubmitEdit={(brief: ResearchBrief) => retry.mutate({ brief })}
         />
-        <PapersSection run={run} state={states.papers} actions={actions} liveCaption={run.phase === 'survey' ? liveCaption : null} />
+        <PapersSection run={run} state={states.papers} actions={actions} />
         <IdeasSection
           run={run}
           state={states.ideas}
           actions={actions}
-          liveCaption={run.phase === 'hypotheses' ? liveCaption : null}
           onMoreIdeas={() => more.mutate()}
           onChanged={invalidate}
         />
@@ -313,11 +335,23 @@ export function ResearchRunPage() {
         open={stopping}
         onClose={() => setStopping(false)}
         title={tr('停止这次研究？', 'Stop this research?')}
-        message={tr('已找到的论文和想法会保留。', 'Papers and ideas found so far are kept.')}
+        message={tr('已找到的论文和想法会保留，之后可以继续。', 'Papers and ideas found so far are kept. You can resume later.')}
         confirmText={tr('停止', 'Stop')}
-        danger
         busy={cancel.isPending}
         onConfirm={() => cancel.mutate()}
+      />
+      <ConfirmModal
+        open={deleting}
+        onClose={() => setDeleting(false)}
+        title={tr(`删除课题「${run.name}」？`, `Delete topic “${run.name}”?`)}
+        message={tr(
+          '课题、它的想法和文献库都会删除，无法恢复。',
+          'The topic, its ideas and its library are deleted. This can’t be undone.',
+        )}
+        confirmText={tr('删除', 'Delete')}
+        danger
+        busy={remove.isPending}
+        onConfirm={() => remove.mutate()}
       />
     </div>
   );
