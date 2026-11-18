@@ -7,6 +7,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { Timeline, TimelineItem } from '../../components/ui/Timeline';
 import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
+import { splitInlineEnumerations } from './ideaText';
 import { fmtTime } from '../../lib/format';
 import {
   api,
@@ -569,7 +570,7 @@ export function IdeaDetailPage() {
               )}
             </span>
             {idea.content ? (
-              <Markdown source={idea.content} renderPaperRef={renderPaperRef} />
+              <Markdown source={splitInlineEnumerations(idea.content)} renderPaperRef={renderPaperRef} />
             ) : (
               <span className="muted" style={{ fontSize: 13 }}>{tr('还没有内容', 'No content yet')}</span>
             )}

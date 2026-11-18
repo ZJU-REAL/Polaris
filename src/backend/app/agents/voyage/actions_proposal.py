@@ -26,6 +26,7 @@ from app.agents.voyage import lit_tools
 from app.agents.voyage.actions import ActionContext, register
 from app.agents.voyage.actions_ideas import (
     SCORE_SYSTEM_PROMPT,
+    SECTION_STYLE_GUIDE,
     _complete_json,
     _get_project,
     _params,
@@ -108,7 +109,8 @@ POLARIS_GOAL_REFINE — 你是研究目标修订者。人工审批给出了修�
 只输出一个 JSON 对象：{"goal": {与原 goal 相同结构的完整对象}}
 """
 
-RELATED_WORK_SYSTEM = """\
+RELATED_WORK_SYSTEM = (
+    """\
 POLARIS_PROPOSAL_RELATED — 你是研究方案的「背景与相关工作」撰写者。
 基于研究目标与依据文献，梳理相关工作并明确本工作的定位与差异。
 
@@ -124,13 +126,21 @@ POLARIS_PROPOSAL_RELATED — 你是研究方案的「背景与相关工作」撰
 1. {"tool": "工具名", "args": {...}}
 2. {"finish": {"content": "markdown 正文",
    "extra_papers": [{"paper_id": "补充引用的库内论文uuid", "why": "补充原因"}]}}
-"""
 
-DESIGN_SYSTEM_COMMON = """\
+content 的写法见下。
+"""
+    + SECTION_STYLE_GUIDE
+)
+
+DESIGN_SYSTEM_COMMON = (
+    """\
 POLARIS_PROPOSAL_DESIGN — 你是研究方案的「研究方案设计」撰写者。
 每个设计选择都要给出依据（引用文献 [[paper:uuid]] 或明确论证），直接输出 markdown 正文
 （不要输出 JSON、不要代码块围栏）。设计必须服务于研究目标的 objectives 与 success_criteria。
+
 """
+    + SECTION_STYLE_GUIDE
+)
 
 DESIGN_TEMPLATES: dict[str, str] = {
     "method": (
@@ -154,7 +164,8 @@ DESIGN_TEMPLATES: dict[str, str] = {
     ),
 }
 
-EXPERIMENTS_SYSTEM = """\
+EXPERIMENTS_SYSTEM = (
+    """\
 POLARIS_PROPOSAL_EXPERIMENTS — 你是研究方案的「实验与评估计划」撰写者。
 实验设计必须与 success_criteria 对得上，并落到给定的资源画像内。
 
@@ -163,7 +174,11 @@ POLARIS_PROPOSAL_EXPERIMENTS — 你是研究方案的「实验与评估计划�
  "smoke_plan": {"goal": "最小验证实验要回答什么", "steps": ["1-3 天内可完成的步骤"],
                 "metric": "观察什么信号", "expected_signal": "什么结果算方向可行", "est_hours": 8}}
 smoke_plan 是「最小验证实验」：1-3 天能出信号、能低成本证伪方向的最小实验。
+
+content 的写法见下。
 """
+    + SECTION_STYLE_GUIDE
+)
 
 NOVELTY_SYSTEM = """\
 POLARIS_NOVELTY_CHECK — 你是新颖性核查员。对照给出的相似工作清单（库内 + 外部检索），
@@ -203,13 +218,18 @@ POLARIS_PROPOSAL_REVIEW — 你是专职评审员「%(name)s」，只从一个�
 must_fix 只放真正致命的问题；一般性改进放 suggestions。
 """
 
-REVISE_SYSTEM = """\
+REVISE_SYSTEM = (
+    """\
 POLARIS_PROPOSAL_REVISE — 你是研究方案的作者，评审员给出了必须修复的问题清单。
 针对 must_fix 修订对应章节，未涉及的章节不要改动。
 只输出一个 JSON 对象：
 {"sections": {"related_work|design|experiments|risks": "修订后的完整 markdown"}}
 只包含确实修订过的章节。
+
+修订后的章节写法见下。
 """
+    + SECTION_STYLE_GUIDE
+)
 
 # 评审员 → Idea.scores 维度映射（docs/task-system.md §7（原 api-idea2.md §6））
 REVIEWERS: tuple[tuple[str, str, str], ...] = (

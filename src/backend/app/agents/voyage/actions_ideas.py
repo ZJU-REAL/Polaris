@@ -80,7 +80,18 @@ LIMITATIONS_SYSTEM_PROMPT = """\
 给出 2-4 个研究空白。
 """
 
-GENERATE_SYSTEM_PROMPT = """\
+# 想法 / 研究方案各小节的写法。以前没有要求，模型常把几条并列内容挤成一大段
+# 「……：1) …；2) …；3) …」，在想法页上是一整块密不透风的文字。
+SECTION_STYLE_GUIDE = """\
+各小节正文的写法（markdown）：
+- 写短段落，每段只讲一件事，2-3 句为宜；不要把整节写成一大段；
+- 有并列的几条内容（步骤、实验、风险、对比项）时用 markdown 列表，每条单独一行，
+  以 "- " 或 "1. " 开头；不要在一段话里用 "1) … 2) …" 或 "(a) … (b) …" 连着写；
+- 言简意赅：直接写做法和结论，不写套话和重复的铺垫。
+"""
+
+GENERATE_SYSTEM_PROMPT = (
+    """\
 你是 Idea Forge 的想法生成器，围绕研究空白提出具体可执行的研究想法。
 研究空白清单中每条带有下标与信号来源（signal），生成时注意：
 - 每个想法通过 gap_index 绑定它主要针对的空白（0 起下标）；
@@ -88,7 +99,11 @@ GENERATE_SYSTEM_PROMPT = """\
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
 {"ideas": [{"title": "想法标题", "summary": "一句话概述", "gap_index": 0, "motivation": "动机",
 "method": "方法概述", "experiments": "预期实验", "risks": "风险"}]}
+motivation / method / experiments / risks 都是 markdown 字符串（换行写成 \\n），
+每节不超过 150 字左右。
 """
+    + SECTION_STYLE_GUIDE
+)
 
 SCORE_SYSTEM_PROMPT = """\
 你是 Idea Forge 的评审员，对一个研究想法做四维独立打分（各维 0-10）。
