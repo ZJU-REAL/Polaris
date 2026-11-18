@@ -40,6 +40,8 @@ export const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   rag_answer: { zh: '文献问答·作答', en: 'Library Q&A · answering' },
   hyp_generate: { zh: '假设·生成', en: 'Hypothesis · generation' },
   hyp_ground: { zh: '假设·找文献依据', en: 'Hypothesis · finding evidence' },
+  hyp_writeup: { zh: '假设·写成想法', en: 'Hypothesis · writing up ideas' },
+  research_brief: { zh: '研究·确定范围', en: 'Research · scoping' },
   hyp_novelty: { zh: '假设·查新', en: 'Hypothesis · novelty check' },
   hyp_feasibility: { zh: '假设·可行性论证', en: 'Hypothesis · feasibility' },
   hyp_compare: { zh: '假设·两两对比', en: 'Hypothesis · pairwise comparison' },
