@@ -948,7 +948,8 @@ async def _survey_search(
         "status": "warning" if messages else "ok",
         "messages": messages,
         "source_errors": result.errors,
-        "source_counts": {s: n for s, n in result.fetched.items() if n},
+        # 查过但一条没回的来源也记 0：不记的话界面上像是根本没查过它
+        "source_counts": dict(result.fetched),
         "source_selected": result.selected_by_source,
         "queries": query_log,
     }

@@ -1194,7 +1194,8 @@ async def test_arxiv_failure_is_soft_when_another_source_returned_results(
     stats = voyage.checkpoint["ingest_search_stats"]
     assert stats["strategy"] == "survey"
     assert stats["selected"] == 6 and stats["inserted"] == 6  # 六条查询回的是同样六篇
-    assert stats["source_fetched"] == 36 and stats["source_counts"] == {"openalex": 36}
+    assert stats["source_fetched"] == 36
+    assert stats["source_counts"] == {"arxiv": 0, "openalex": 36}
     assert stats["source_selected"] == {"openalex": 6}
     assert [e["source"] for e in stats["source_errors"]] == ["arxiv"]
     assert "ConnectError" in stats["source_errors"][0]["error"]
@@ -1219,6 +1220,38 @@ async def test_arxiv_failure_is_soft_when_another_source_returned_results(
         )
     assert first.action == "wiki.search_candidates" and first.status == "passed"
     assert first.observation["queries"] == stats["queries"]
+
+
+async def test_a_source_that_was_queried_and_returned_nothing_is_still_listed(
+    client, queue_stub, literature, monkeypatch
+):
+    """查过、一条没回的来源也要出现在来源列表里（fetched=0），不然看着像没查过它。"""
+    run_id, voyage = await _search_step(monkeypatch, queue_stub, client, openalex=_OpenAlexStub())
+    stats = voyage.checkpoint["ingest_search_stats"]
+    assert stats["source_counts"] == {"arxiv": 0, "openalex": 0}
+    assert [q["returned"] for q in stats["queries"] if q["source"] == "openalex"] == [0] * 6
+
+    async def sources() -> list[dict]:
+        async with get_sessionmaker()() as session:
+            run = await session.get(ResearchRun, uuid.UUID(run_id))
+            read = await research._survey_read(session, run, None)
+        return [s.model_dump() for s in read.sources]
+
+    listed = {s["source"]: s for s in await sources()}
+    assert listed["openalex"] == {"source": "openalex", "fetched": 0, "selected": 0, "error": None}
+    assert listed["arxiv"]["fetched"] == 0 and "ConnectError" in listed["arxiv"]["error"]
+
+    # 以前的任务不记 0 条的来源：从逐次请求的记录里照样认得出查过它
+    async with get_sessionmaker()() as session:
+        row = await session.get(VoyageRun, voyage.id)
+        legacy = dict(row.checkpoint["ingest_search_stats"])
+        legacy["source_counts"] = {}
+        legacy["source_selected"] = {}
+        legacy["source_errors"] = []
+        row.checkpoint = {**row.checkpoint, "ingest_search_stats": legacy}
+        await session.commit()
+    listed = {s["source"]: s for s in await sources()}
+    assert listed["openalex"] == {"source": "openalex", "fetched": 0, "selected": 0, "error": None}
 
 
 async def test_search_fails_the_step_when_every_source_is_unreachable(

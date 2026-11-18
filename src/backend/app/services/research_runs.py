@@ -1577,13 +1577,23 @@ async def _survey_read(
         }
         fetched = stats.get("source_counts") if isinstance(stats.get("source_counts"), dict) else {}
         selected = stats.get("source_selected")
+        by_source = isinstance(selected, dict) and stats.get("strategy") == "survey"
         selected = selected if isinstance(selected, dict) else {}
-        names = list(dict.fromkeys([*fetched, *errors]))
+        # 查过的来源都列出来，一条没回的也列（fetched=0）。旧任务的 source_counts 不记
+        # 0 条的来源，所以还要从逐次请求的记录里认：实测某来源查了 12 次、一条没回，
+        # 列表里就没有它，看着像是没查
+        queried = [
+            str(q["source"])
+            for q in (stats.get("queries") or [])
+            if isinstance(q, dict) and q.get("source")
+        ]
+        names = list(dict.fromkeys([*fetched, *queried, *errors]))
         out.sources = [
             SourceResult(
                 source=s,
                 fetched=int(fetched.get(s, 0) or 0),
-                selected=int(selected[s]) if s in selected else None,
+                # 调研检索按来源分了「选中几篇」：没被选中的来源是 0，不是「不知道」
+                selected=int(selected.get(s, 0) or 0) if s in selected or by_source else None,
                 error=errors.get(s),
             )
             for s in names
