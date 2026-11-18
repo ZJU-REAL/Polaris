@@ -56,6 +56,22 @@ async def test_a_backend_declares_what_you_need_before_choosing_it(client):
     assert row["licenses"] == []
 
 
+async def test_backends_the_experiment_flow_cannot_drive_are_not_runnable(client):
+    """ngspice/openfoam/fmu 注册了，但实验流程只接了 SSH 底座：选了它们，备环境那一步
+    必然报「尚未接入该后端的执行生命周期」。清单要把这件事说出来，而不是把它们和
+    python-ml 并排当成可用项。"""
+    headers = await _auth(client)
+    rows = (await client.get("/api/experiment-backends", headers=headers)).json()
+    runnable = {r["backend"]: r["runnable"] for r in rows}
+    assert runnable["python-ml"] is True
+    for backend in ("fmu", "ngspice", "openfoam"):
+        assert runnable[backend] is False, backend
+    # 缺省后端必须能跑，否则「不选」就等于选了一个跑不起来的
+    assert all(r["runnable"] for r in rows if r["is_default"])
+    # 旧字段原样保留：前端此前按 credential_kinds 含 "ssh" 过滤
+    assert next(r for r in rows if r["backend"] == "ngspice")["credential_kinds"] == []
+
+
 async def test_listing_backends_has_no_side_effects(client):
     """manifest 由无参探针实例给出。列个清单要是会去连 SSH 或起容器，
     打开创建表单就会卡住。"""

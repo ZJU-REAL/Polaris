@@ -68,6 +68,17 @@ def manifest_for(backend: str) -> RunnerManifest:
     return get(backend)().manifest
 
 
+def is_runnable(backend: str) -> bool:
+    """实验流程今天能不能真的把这个后端跑起来。
+
+    动作层的整条流程（建环境/冒烟/运行/出图）只接了 SSH 执行底座；不吃 SSH 凭据的
+    后端（ngspice/openfoam/fmu）注册了、建得出实验，但第一步备环境就在
+    actions_experiment._open_executor 报「尚未接入该后端的执行生命周期」。
+    选择器和分派点都问这一个函数：哪天动作层接上了某个后端，只改这里，两边一起变。
+    """
+    return "ssh" in manifest_for(backend).credential_kinds
+
+
 def known_backends() -> list[str]:
     """已注册后端 id（排序稳定；schema 校验 params.backend ∈ 此集合）。"""
     return sorted(_FACTORIES)

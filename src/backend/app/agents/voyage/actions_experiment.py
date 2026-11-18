@@ -1270,8 +1270,7 @@ async def _resolve_runner_plugin(
     raw = str(_params(ctx).get("backend") or "").strip()
     backend = raw or runner_registry.DEFAULT_BACKEND
     # 未注册后端在此抛 UnknownBackendError：经 _guarded 留痕后交引擎失败分派（可诊断）
-    manifest = runner_registry.manifest_for(backend)
-    if "ssh" not in manifest.credential_kinds:
+    if not runner_registry.is_runnable(backend):
         return runner_registry.get(backend)(), None
     if experiment.credential_id is None:
         raise ValueError("实验缺少 SSH 凭据（credential_id 为空）")

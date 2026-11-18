@@ -39,6 +39,9 @@ class RunnerBackendRead(BaseModel):
     licenses: list[str]
     #: 缺省后端（不选时就是它，等于今天所有存量实验的行为）
     is_default: bool
+    #: 实验流程今天能不能真的跑它。False = 已注册但执行流程还没接上，选了必然在
+    #: 备环境那一步失败——界面应当列出来但不让选，而不是当成可用项
+    runnable: bool
 
 
 class ProcessPackRead(BaseModel):
@@ -72,6 +75,7 @@ async def list_backends(
                 credential_kinds=list(manifest.credential_kinds),
                 licenses=[lic.feature for lic in manifest.licenses],
                 is_default=backend == registry.DEFAULT_BACKEND,
+                runnable=registry.is_runnable(backend),
             )
         )
     return out
