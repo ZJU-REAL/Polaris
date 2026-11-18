@@ -16,13 +16,15 @@ import logging
 import uuid
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import String, cast, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models.daily_feed import DailyFeedEntry
 from app.models.download_client import DownloadBatchItem
 from app.models.evidence import PaperEvidenceAnchor
+from app.models.hypothesis import HypothesisNode
+from app.models.idea import Idea
 from app.models.library import UserLibraryEntry
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.literature_discovery import LiteratureSearchHit
@@ -217,6 +219,59 @@ async def _repoint_associations(
         await session.execute(update(table).where(paper_col == drop_id).values(paper_id=keep_id))
     ).rowcount
     return int(repointed or 0), int(deduped or 0)
+
+
+def _swap_ids(value: Any, old: str, new: str) -> tuple[Any, int]:
+    """把 JSON 值里等于 ``old`` 的字符串换成 ``new``（递归），返回 (新值, 换了几处)。
+    列表里换完若出现重复的 id，只留第一个。"""
+    if isinstance(value, str):
+        return (new, 1) if value == old else (value, 0)
+    if isinstance(value, list):
+        out: list[Any] = []
+        count = 0
+        for item in value:
+            swapped, n = _swap_ids(item, old, new)
+            count += n
+            out.append(swapped)
+        if count and out.count(new) > 1:
+            first = out.index(new)
+            out = [x for i, x in enumerate(out) if x != new or i == first]
+        return out, count
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        count = 0
+        for key, item in value.items():
+            result[key], n = _swap_ids(item, old, new)
+            count += n
+        return result, count
+    return value, 0
+
+
+async def _repoint_json_references(
+    session: AsyncSession, *, keep_id: uuid.UUID, drop_id: uuid.UUID
+) -> int:
+    """想法（evidence[].paper_id、parent_paper_ids）与假设节点（grounding 的 paper_ids /
+    snippet_paper_ids、novelty_report 的 paper_ids）里指向 drop 的 id 改指 keep。"""
+    old, new = str(drop_id), str(keep_id)
+    targets = (
+        (Idea, ("evidence", "parent_paper_ids")),
+        (HypothesisNode, ("grounding", "novelty_report")),
+    )
+    changed = 0
+    for model, fields in targets:
+        columns = [getattr(model, f) for f in fields]
+        rows = (
+            await session.execute(
+                select(model).where(or_(*(cast(c, String).contains(old) for c in columns)))
+            )
+        ).scalars()
+        for row in rows:
+            for field in fields:
+                value, n = _swap_ids(getattr(row, field), old, new)
+                if n:
+                    setattr(row, field, value)
+                    changed += n
+    return changed
 
 
 async def merge_papers(
@@ -458,6 +513,12 @@ async def merge_papers(
             )
         ).rowcount
         or 0
+    )
+
+    # ---- 7c. JSON 里按 id 引用这篇论文的地方：想法的依据与来源论文、假设树的接地 /
+    # 查新。它们不是外键，删 drop 时不会级联，不改就成了指向不存在论文的死链 ----
+    report["json_references_repointed"] = await _repoint_json_references(
+        session, keep_id=keep_id, drop_id=drop_id
     )
 
     # ---- 8. 内容池行缺项回填（keep 缺 → 用 drop 的） ----

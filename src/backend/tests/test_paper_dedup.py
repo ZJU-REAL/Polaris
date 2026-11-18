@@ -385,3 +385,62 @@ async def test_library_merge_leaves_lookalikes_alone(client):
 
         assert await paper_merge.merge_library_duplicates(session, library_id=library.id) == []
         assert len(await _library_titles(session, library.id)) == 5
+
+
+async def test_library_merge_repoints_ideas_and_hypotheses_that_cite_the_dropped_row(client):
+    """想法的依据 / 来源论文、假设树的接地与查新都按 id 记论文（JSON，不是外键）：
+    合并后改指留下的那行，不留下指向已删论文的死链；来源列表里不出现两次同一篇。"""
+    from app.models.hypothesis import HypothesisNode
+    from app.models.idea import Idea
+    from app.models.voyage import VoyageRun
+
+    project_id = await _project(client, "dedup-json@example.com")
+    async with get_sessionmaker()() as session:
+        rich = await _add_realm_from_arxiv(session, project_id)
+        thin = await add_paper(
+            session,
+            project_id=project_id,
+            source="openalex",
+            title=REALM_OPENALEX,
+            year=2020,
+            authors=GUU_OPENALEX,
+            dedup_key="title:realm",
+        )
+        library = await get_library_for_project(session, uuid.UUID(project_id))
+        keep, drop = str(rich.id), str(thin.id)
+        idea = Idea(
+            project_id=uuid.UUID(project_id),
+            title="t",
+            status="candidate",
+            depth="sketch",
+            evidence=[{"paper_id": drop, "stance": "support"}, {"paper_id": keep}],
+            parent_paper_ids=[drop, keep],
+        )
+        run = VoyageRun(kind="discovery", goal="g", status="done", cursor=0, checkpoint={})
+        session.add_all([idea, run])
+        await session.flush()
+        node = HypothesisNode(
+            run_id=run.id,
+            kind="hypothesis",
+            statement="s",
+            status="open",
+            seq=1,
+            grounding=[{"subclaim": "c", "paper_ids": [drop], "snippet_paper_ids": [drop]}],
+            novelty_report={"subclaims": [{"verdict": "known", "paper_ids": [keep, drop]}]},
+        )
+        session.add(node)
+        await session.commit()
+        idea_id, node_id, library_id = idea.id, node.id, library.id
+
+    async with get_sessionmaker()() as session:
+        (report,) = await paper_merge.merge_library_duplicates(session, library_id=library_id)
+        assert report["dropped_id"] == drop and report["json_references_repointed"] == 5
+
+    async with get_sessionmaker()() as session:
+        idea = await session.get(Idea, idea_id)
+        assert [e["paper_id"] for e in idea.evidence] == [keep, keep]
+        assert idea.parent_paper_ids == [keep]
+        node = await session.get(HypothesisNode, node_id)
+        assert node.grounding[0]["paper_ids"] == [keep]
+        assert node.grounding[0]["snippet_paper_ids"] == [keep]
+        assert node.novelty_report["subclaims"][0]["paper_ids"] == [keep]
