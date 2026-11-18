@@ -228,5 +228,9 @@ async def cancel_voyage(session: AsyncSession, run: VoyageRun) -> VoyageRun:
     from app.services import resource_leases as resource_leases_service
 
     await resource_leases_service.release_for_run(session, run.id)
+    # 挂在这条任务上的实验跟着取消：任务不会再推进它，留着就永远显示「进行中」
+    from app.services import experiments as experiments_service
+
+    await experiments_service.cancel_by_voyage(session, run.id)
     await session.refresh(run)
     return run

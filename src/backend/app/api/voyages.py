@@ -381,12 +381,23 @@ async def cancel_voyage(
     voyage_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
+    bus: EventBus = Depends(get_event_bus),
 ) -> VoyageRead:
     run = await _get_owned_voyage(session, voyage_id, user)
     try:
         run = await voyages_service.cancel_voyage(session, run)
     except voyages_service.VoyageAlreadyFinishedError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="VOYAGE_ALREADY_FINISHED") from e
+    # 任务带着的实验已随它一起取消（services/voyages.py）：实验页靠这条通知刷新状态
+    for experiment_id in await experiments_service.cancelled_ids_by_voyage(session, run.id):
+        await bus.publish_notify(
+            user.id,
+            {
+                "type": "experiment.status",
+                "experiment_id": str(experiment_id),
+                "status": "cancelled",
+            },
+        )
     # 取消了就不该再有排着的自动重试（定时任务只碰 paused_error，本来也拉不起它；
     # 这里把记录也清掉，库里不留一个指向未来的重试时刻）
     checkpoint = dict(run.checkpoint or {})

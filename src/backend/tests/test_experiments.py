@@ -1278,6 +1278,107 @@ async def test_cancel_api(client, queue_stub, fake_ssh, bus_recorder):
     assert resp.json()["status"] == "cancelled"
 
 
+async def test_cancelling_the_voyage_cancels_its_experiment(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """从任务那边取消：挂在它上面的实验一并取消，收尾和实验自己的取消接口一样。
+
+    以前 ``POST /voyages/{id}/cancel`` 只改任务行：任务不再推进，实验却一直停在
+    running，只能再去点一次实验的取消。
+    """
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+
+    async with get_sessionmaker()() as session:
+        experiment = await session.get(Experiment, uuid.UUID(exp_id))
+        experiment.status = "running"
+        session.add(
+            ExperimentRun(
+                experiment_id=experiment.id,
+                seq=1,
+                command="bash run.sh",
+                status="running",
+                pid=31337,
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(f"/api/voyages/{voyage_id}/cancel", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "cancelled"
+
+    detail = (await client.get(f"/api/experiments/{exp_id}", headers=headers)).json()
+    assert detail["status"] == "cancelled"
+    assert 31337 in fake_ssh.killed
+    async with get_sessionmaker()() as session:
+        run = (
+            await session.execute(
+                select(ExperimentRun).where(ExperimentRun.experiment_id == uuid.UUID(exp_id))
+            )
+        ).scalar_one()
+        assert run.status == "failed"
+        activity = select(Activity.kind).where(Activity.project_id == uuid.UUID(project_id))
+        assert "experiment.cancelled" in (await session.execute(activity)).scalars().all()
+    assert [
+        m["experiment_id"]
+        for _, m in bus_recorder.notify
+        if m.get("type") == "experiment.status" and m["status"] == "cancelled"
+    ] == [exp_id]
+
+    # 两边都已是终态
+    resp = await client.post(f"/api/experiments/{exp_id}/cancel", headers=headers)
+    assert resp.status_code == 409
+    resp = await client.post(f"/api/voyages/{voyage_id}/cancel", headers=headers)
+    assert resp.status_code == 409
+
+
+@pytest.mark.parametrize("status", ["planning", "awaiting_gate", "waiting_user"])
+async def test_cancelling_the_voyage_cancels_an_experiment_that_is_not_running(
+    client, queue_stub, fake_ssh, status
+):
+    """计划中、等确认、等回答的实验同样跟着任务取消（没有进程可杀，只改状态）。"""
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+    async with get_sessionmaker()() as session:
+        experiment = await session.get(Experiment, uuid.UUID(exp_id))
+        experiment.status = status
+        await session.commit()
+
+    resp = await client.post(f"/api/voyages/{voyage_id}/cancel", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    detail = (await client.get(f"/api/experiments/{exp_id}", headers=headers)).json()
+    assert detail["status"] == "cancelled"
+    assert fake_ssh.killed == []
+
+
+async def test_cancelling_the_voyage_leaves_a_finished_experiment_alone(
+    client, queue_stub, fake_ssh
+):
+    """实验已经有结论（done）时取消任务：结论保留，不被改写成 cancelled。"""
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+    async with get_sessionmaker()() as session:
+        experiment = await session.get(Experiment, uuid.UUID(exp_id))
+        experiment.status = "done"
+        await session.commit()
+
+    resp = await client.post(f"/api/voyages/{voyage_id}/cancel", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    detail = (await client.get(f"/api/experiments/{exp_id}", headers=headers)).json()
+    assert detail["status"] == "done"
+
+
 async def test_gate_reject_fails_experiment(client, queue_stub, fake_ssh, bus_recorder):
     """驳回 compute_budget 闸门 → voyage failed + 实验 failed（联动）。"""
     project_id, headers = await _setup_project(client)

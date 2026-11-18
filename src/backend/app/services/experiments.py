@@ -610,6 +610,38 @@ async def cancel_experiment(session: AsyncSession, experiment: Experiment) -> Ex
     return experiment
 
 
+async def cancel_by_voyage(session: AsyncSession, voyage_id: uuid.UUID) -> list[Experiment]:
+    """任务被取消：挂在它上面、还没结束的实验一并取消，返回这次取消掉的实验。
+
+    从任务那边取消（``POST /voyages/{id}/cancel``、研究流程换阶段）以前只改任务行，
+    实验行停在 running / planning / awaiting_gate——任务已经不会再推进它，它却一直显示
+    「进行中」，实验自己的取消接口成了唯一能收掉它的地方。这里走和实验取消同一套收尾
+    （运行中的 run 置 failed、尽力 kill 远端进程、记一条动态）。一个实验收尾出错不影响
+    其余的，也不影响任务本身已经生效的取消。
+    """
+    stmt = select(Experiment).where(
+        Experiment.voyage_id == voyage_id,
+        Experiment.status.not_in(EXPERIMENT_TERMINAL_STATUSES),
+    )
+    cancelled: list[Experiment] = []
+    for experiment in (await session.execute(stmt)).scalars().all():
+        experiment_id = experiment.id
+        try:
+            cancelled.append(await cancel_experiment(session, experiment))
+        except Exception:  # noqa: BLE001 — 任务已取消，实验收尾尽力而为
+            await session.rollback()
+            logger.exception("cancel experiment with its voyage failed: %s", experiment_id)
+    return cancelled
+
+
+async def cancelled_ids_by_voyage(session: AsyncSession, voyage_id: uuid.UUID) -> list[uuid.UUID]:
+    """这条任务名下已取消的实验 id（取消任务后给实验页发状态通知用）。"""
+    stmt = select(Experiment.id).where(
+        Experiment.voyage_id == voyage_id, Experiment.status == "cancelled"
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def _kill_pids(credential: SSHCredential, experiment: Experiment, pids: list[int]) -> None:
     """尽力而为的远端 kill（DB 状态已提交后调用）。"""
     try:
