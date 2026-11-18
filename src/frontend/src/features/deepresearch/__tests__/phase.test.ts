@@ -1,15 +1,23 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { ApiError } from '../../../lib/api';
+import { setLang } from '../../../lib/i18n';
 import { errorText } from '../../../lib/errors';
 import { isEngineUnreachable } from '../../../lib/researchApi';
 import {
   attentionActions,
   attentionSection,
   attentionText,
+  costText,
   countsText,
   durationText,
   elapsedText,
+  estimateText,
   evidenceText,
+  groupQueries,
+  querySortText,
+  queryWindowText,
+  surveyFunnelText,
+  totalDurationMs,
   minutesUntil,
   pollInterval,
   retryText,
@@ -220,9 +228,9 @@ describe('survey progress', () => {
   it('leaves out numbers that do not exist yet', () => {
     expect(surveyProgressText(p(0, 0, 0, 0, 0))).toBe('');
     expect(surveyProgressText(p(120, 0, 0, 0, 0))).toBe('找到 120 篇');
-    expect(surveyProgressText(p(182, 140, 30, 0, 30))).toBe('找到 182 篇 · 已筛选 140 · 留下 30');
-    expect(surveyProgressText(p(182, 182, 46, 0, 46))).toBe('找到 182 篇 · 已筛选 182 · 留下 46');
-    expect(surveyProgressText(p(182, 182, 46, 12, 46))).toBe('找到 182 篇 · 已筛选 182 · 留下 46 · 已写解读 12/46');
+    expect(surveyProgressText(p(182, 140, 30, 0, 30))).toBe('找到 182 篇 · 已筛选 140/182 篇 · 留下 30 篇');
+    expect(surveyProgressText(p(182, 182, 46, 0, 46))).toBe('找到 182 篇 · 已筛选 182 篇 · 留下 46 篇');
+    expect(surveyProgressText(p(182, 182, 46, 12, 46))).toBe('找到 182 篇 · 已筛选 182 篇 · 留下 46 篇 · 已写解读 12/46');
   });
 
   it('never shows more summaries than the total', () => {
@@ -236,7 +244,7 @@ describe('survey progress', () => {
   });
 
   it('sums a finished survey up as a result, not as a process', () => {
-    expect(surveyDoneText(p(182, 182, 46, 46, 46))).toBe('留下 46 篇（共找到 182 篇），都有解读');
+    expect(surveyDoneText(p(182, 182, 46, 46, 46))).toBe('留下 46 篇，都有解读');
     expect(surveyDoneText(p(193, 193, 193, 60, 60))).toBe('留下 193 篇，其中 60 篇有解读');
     expect(surveyDoneText(p(10, 10, 10, 0, 8))).toBe('留下 10 篇');
   });
@@ -249,7 +257,7 @@ describe('sources, time and usage', () => {
       { source: 'arxiv', fetched: 0, error: 'ArxivRateLimitedError: HTTP 429' },
       { source: 'my_plugin', fetched: 0, error: null },
     ]);
-    expect(lines.map((l) => `${l.name} ${l.text}`)).toEqual(['OpenAlex 10 篇', 'arXiv 没取到', 'my_plugin 0 篇']);
+    expect(lines.map((l) => `${l.name} ${l.text}`)).toEqual(['OpenAlex 10 条', 'arXiv 没取到', 'my_plugin 0 条']);
     expect(lines.map((l) => l.failed)).toEqual([false, true, false]);
     expect(lines[1]?.detail).toContain('429');
   });
@@ -257,7 +265,7 @@ describe('sources, time and usage', () => {
   it('does not call a source failed when it still returned papers', () => {
     const [line] = sourceLines([{ source: 'arxiv', fetched: 40, error: 'timeout on page 3' }]);
     expect(line?.failed).toBe(false);
-    expect(line?.text).toBe('40 篇');
+    expect(line?.text).toBe('40 条');
   });
 
   it('counts elapsed time from the engine’s timestamps', () => {
@@ -322,5 +330,59 @@ describe('isEngineUnreachable', () => {
     expect(isEngineUnreachable(new ApiError(404, 'RESEARCH_RUN_NOT_FOUND', { detail: 'RESEARCH_RUN_NOT_FOUND' }))).toBe(false);
     expect(isEngineUnreachable(new ApiError(500, 'boom', { detail: 'boom' }))).toBe(false);
     expect(isEngineUnreachable(new Error('x'))).toBe(false);
+  });
+});
+
+describe('what the real runs added', () => {
+  beforeEach(() => setLang('zh'));
+
+  it('counts results fetched, papers screened and papers kept as three different things', () => {
+    const real = { fetched: 354, found: 85, screened: 85, kept: 26, summarised: 13, to_summarise: 20 };
+    expect(surveyDoneText(real)).toBe('留下 26 篇，其中 13 篇有解读');
+    expect(surveyFunnelText(real)).toBe('检索到 354 条，去重后筛选了 85 篇，留下 26 篇');
+    expect(surveyProgressText({ ...real, screened: 60, kept: 19, summarised: 0 })).toBe('检索到 354 条 · 已筛选 60/85 篇 · 留下 19 篇');
+    // 旧引擎没有 fetched：不编一个数
+    expect(surveyFunnelText({ found: 85, screened: 85, kept: 26, summarised: 13, to_summarise: 20 })).toBe('筛选了 85 篇，留下 26 篇');
+    expect(surveyFunnelText({ found: 26, screened: 26, kept: 26, summarised: 26, to_summarise: 26 })).toBe('');
+  });
+
+  it('has a step for following citations', () => {
+    expect(SURVEY_STAGES).toContain('expand');
+    expect(surveyStage({ found: 85, screened: 60, kept: 19, summarised: 0, to_summarise: 20 }, 'wiki.expand_citations')).toBe('expand');
+    expect(surveyStageLabel('expand')).toBe('沿引用扩展');
+    setLang('en');
+    expect(surveyStageLabel('expand')).toBe('Citations');
+  });
+
+  it('groups the search queries by source and words sort and window plainly', () => {
+    const groups = groupQueries([
+      { source: 'crossref', query: 'a', sort: 'relevance', window: '2016..2026', returned: 10 },
+      { source: 'arxiv', query: 'all:a AND all:b', sort: 'relevance', window: '2016-11-20..2026-11-18', returned: 10 },
+      { source: 'crossref', query: 'b', sort: 'date', window: '', returned: 7, error: null },
+    ]);
+    expect(groups.map((g) => [g.name, g.queries.length, g.returned])).toEqual([
+      ['Crossref', 2, 17],
+      ['arXiv', 1, 10],
+    ]);
+    expect(querySortText('relevance')).toBe('按相关度');
+    expect(querySortText('submittedDate')).toBe('按时间');
+    expect(queryWindowText('2016-11-20..2026-11-18')).toBe('2016–2026');
+    expect(queryWindowText('2016..2026')).toBe('2016–2026');
+    expect(groupQueries(undefined)).toEqual([]);
+  });
+
+  it('gives a rough expectation and a total once both phases are done', () => {
+    expect(estimateText({ minutes_low: 30, minutes_high: 50 })).toBe('通常需要 30–50 分钟');
+    expect(estimateText({ minutes_low: 0, minutes_high: 0 })).toBe('');
+    const run = {
+      created_at: '2026-11-18T09:44:23Z',
+      survey: { started_at: '2026-11-18T09:44:40Z', finished_at: '2026-11-18T10:10:37Z' },
+      hypotheses: { started_at: '2026-11-18T10:10:37Z', finished_at: '2026-11-18T10:33:10Z' },
+    };
+    expect(Math.round((totalDurationMs(run) ?? 0) / 60_000)).toBe(49);
+    // 有一段还没结束：没有总时长
+    expect(totalDurationMs({ ...run, hypotheses: { started_at: run.hypotheses.started_at, finished_at: null } })).toBeNull();
+    expect(costText({ prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, cost_usd: 5.07 })).toBe('约 $5.07');
+    expect(costText({ prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, cost_usd: 0.001 })).toBe('');
   });
 });

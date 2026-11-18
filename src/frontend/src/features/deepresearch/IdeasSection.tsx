@@ -10,7 +10,7 @@ import { researchKeys, useNow } from './hooks';
 import { IdeaEvidence } from './IdeaEvidence';
 import { InlineQuestion } from './InlineQuestion';
 import { AttentionBlock, NowDoing, PendingLine, ProgressBar, RetryBlock, Section, StoppedBlock, type RunActions } from './parts';
-import { elapsedText, evidenceText, type SectionState } from './phase';
+import { costText, elapsedText, evidenceText, type SectionState } from './phase';
 
 /* ============================================================
    想法：寻找假设的进度、AI 的提问、以及活下来的想法（每个都带文献依据的数量）。
@@ -100,7 +100,7 @@ export function IdeasSection({ run, state, actions, onMoreIdeas, onChanged }: Id
       stateLabel={
         state === 'waiting' ? (choosing ? tr('等你选定', 'Waiting for your picks') : tr('等你回答', 'Waiting for your answer')) : undefined
       }
-      meta={started ? elapsedText(h.started_at, active ? null : h.finished_at, now) : undefined}
+      meta={started ? [elapsedText(h.started_at, active ? null : h.finished_at, now), costText(h.usage)].filter(Boolean).join(' · ') : undefined}
       aside={
         h.voyage_id ? (
           <Link className="btn btn-plain xs" to={`/voyages/${h.voyage_id}`}>
@@ -166,7 +166,7 @@ export function IdeasSection({ run, state, actions, onMoreIdeas, onChanged }: Id
                   : tr(`${ideas.length} 个想法`, `${ideas.length} ${ideas.length === 1 ? 'idea' : 'ideas'}`)}
             </span>
             {showNovelty && (
-              <span className="dr-ideas-note">{tr('新颖性只对照你的文献库判断。', 'Novelty is judged against your library only.')}</span>
+              <span className="dr-ideas-note">{tr('评分满分 10；新颖性只对照你的文献库判断。', 'Scores are out of 10. Novelty is judged against your library only.')}</span>
             )}
           </div>
           <ul className="dr-ideas">

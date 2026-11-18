@@ -6,6 +6,7 @@ import { api } from '../../lib/api';
 import { errorText } from '../../lib/errors';
 import { tr } from '../../lib/i18n';
 import type { ResearchRunDetail } from '../../lib/researchApi';
+import { useCapabilities } from './hooks';
 import { PendingLine, Section } from './parts';
 import type { SectionState } from './phase';
 
@@ -35,7 +36,9 @@ export function NextSection({ run, state }: { run: ResearchRunDetail; state: Sec
   });
 
   const ready = state === 'ready' && !!idea;
-  const { remote_machine: hasMachine, latex: hasLatex } = run.capabilities;
+  // 能力问引擎现在的状态（刚在设置里加了机器，回来就该变）；取不到时用这次研究读数里的那份
+  const caps = useCapabilities().data ?? run.capabilities;
+  const { remote_machine: hasMachine, latex: hasLatex } = caps;
 
   return (
     <Section title={tr('下一步', 'Next')} state={state} last>

@@ -13,7 +13,8 @@ import { tr } from '../../lib/i18n';
  * （fmu / ngspice / openfoam）选了以后一定会在运行时报错。所以这里只留要 SSH 的。
  */
 export function usableBackends(backends: RunnerBackendSummary[]): RunnerBackendSummary[] {
-  return backends.filter((b) => b.credential_kinds.includes('ssh'));
+  // 引擎说了能不能跑（runnable）就听它的；旧引擎不带这一项时按「要 SSH 的才能跑」推断
+  return backends.filter((b) => (typeof b.runnable === 'boolean' ? b.runnable : b.credential_kinds.includes('ssh')));
 }
 
 /** 状态点的色调。 */

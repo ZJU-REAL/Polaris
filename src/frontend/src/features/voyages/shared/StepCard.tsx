@@ -29,6 +29,8 @@ export interface PaperBrief {
   score?: number;
   passed?: boolean;
   pdf?: boolean;
+  /** 筛选时 AI 写的一句理由：为什么相关 / 不相关 */
+  reason?: string;
 }
 
 function briefsOf(v: unknown): PaperBrief[] {
@@ -114,6 +116,22 @@ export function wikiStepFriendly(action: string, obs: Record<string, unknown>): 
         .map((x) => x.trim())
         .filter((x) => x && x !== 'none');
       const where = used.length ? used.map(sourceLabel).join(tr('、', ', ')) : tr('数据源', 'the sources');
+      // 新的检索方式分得清三个数：各来源返回的条数（有重复）→ 去重后的论文 → 取进来筛选的
+      if (num(obs.fetched) > 0) {
+        const fetched = num(obs.fetched);
+        const unique = num(obs.found);
+        const taken = num(obs.inserted);
+        return {
+          text:
+            tr(`在 ${where} 检索到 ${fetched} 条`, `${fetched} results from ${where}`) +
+            (unique > 0 && unique < fetched ? tr(`，去重后 ${unique} 篇`, `, ${unique} after merging duplicates`) : '') +
+            (taken < Math.max(unique, 1) || unique === 0
+              ? tr(`，取最相关的 ${taken} 篇进来筛选`, `; the ${taken} most relevant go on to screening`)
+              : tr('，都进来筛选', '; all go on to screening')),
+          papers: briefsOf(obs.new_papers),
+          papersTotal: taken,
+        };
+      }
       return {
         text: tr(
           `新收录 ${num(obs.inserted)} 篇（在 ${where} 找到 ${num(obs.found)} 篇）`,
@@ -121,6 +139,29 @@ export function wikiStepFriendly(action: string, obs: Record<string, unknown>): 
         ),
         papers: briefsOf(obs.new_papers),
         papersTotal: num(obs.inserted),
+      };
+    }
+    case 'wiki.expand_citations': {
+      if (obs.skipped) return { text: tr('已跳过', 'Skipped'), papers: [] };
+      const kept = Math.max(0, num(obs.succeeded) - num(obs.excluded));
+      const seeds = num(obs.seeds_found) || num(obs.seeds);
+      if (num(obs.inserted) === 0) {
+        return {
+          text: tr(
+            `看了最相关的 ${seeds} 篇引用了谁、被谁引用，没有找到新的相关论文`,
+            `Followed the citations of the ${seeds} most relevant papers; nothing new and relevant turned up`,
+          ),
+          papers: [],
+        };
+      }
+      return {
+        text:
+          tr(
+            `看了最相关的 ${seeds} 篇引用了谁、被谁引用，找到 ${num(obs.inserted)} 篇新的，其中 ${kept} 篇相关、留下了`,
+            `Followed the citations of the ${seeds} most relevant papers: ${num(obs.inserted)} new, ${kept} relevant and kept`,
+          ) + (failedCount ? tr(`，${failedCount} 篇没能判断`, `; ${failedCount} couldn’t be checked`) : ''),
+        papers: briefsOf(obs.scored_papers),
+        papersTotal: num(obs.succeeded),
       };
     }
     case 'wiki.snowball':
@@ -162,7 +203,9 @@ export function wikiStepFriendly(action: string, obs: Record<string, unknown>): 
       return {
         text:
           tr(`生成 ${num(obs.succeeded)} 篇解读`, `Generated ${enCount(num(obs.succeeded), 'summary', 'summaries')}`) +
-          (failedCount ? tr(`，${failedCount} 篇失败，下次同步时重试`, `; ${failedCount} failed and will retry on the next sync`) : ''),
+          (failedCount
+            ? tr(`，${failedCount} 篇没写成，可以在文献库里逐篇重新生成`, `; ${failedCount} failed. Regenerate them one by one in the library.`)
+            : ''),
         papers: briefsOf(obs.compiled_papers),
         papersTotal: num(obs.succeeded),
       };
@@ -212,19 +255,20 @@ function StepPaperList({ papers, total }: { papers: PaperBrief[]; total?: number
             style={{
               cursor: 'pointer',
               color: p.passed === false ? 'var(--text-3)' : 'var(--text-2)',
-              textDecoration: p.passed === false ? 'line-through' : 'none',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
               minWidth: 0,
             }}
-            title={p.title}
+            title={p.reason ? `${p.title}\n${p.reason}` : p.title}
             onClick={() => navigate(`/papers/${p.id}/read`)}
           >
             {p.title}
           </span>
           {typeof p.score === 'number' && (
-            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+              {p.passed === false ? tr('不相关 · ', 'off-topic · ') : ''}
+              {tr('相关度 ', 'relevance ')}
               {p.score.toFixed(2)}
             </span>
           )}

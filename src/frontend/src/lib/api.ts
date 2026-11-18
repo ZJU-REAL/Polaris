@@ -532,6 +532,8 @@ export interface VoyageRead {
   retry_at?: string | null;
   /** 已经排到第几次自动重试（1..3；0 = 没有自动重试过） */
   retry_attempt?: number;
+  /** 生成想法的任务结束后：写进课题几个、因为重复没写几个。其余任务为 null；旧引擎不带 */
+  result?: { ideas_written: number; dropped_as_duplicates: number } | null;
 }
 
 /** 一次计划调整的留痕（source: signal=执行结果规则分支 / navigator=AI 调整 / template=模板分支）。 */
@@ -2091,6 +2093,8 @@ export interface IdeaRead {
   trashed_at?: string | null;
   /** 生成它的任务；手工写入的为 null */
   source_voyage_id?: string | null;
+  /** 文献依据的数量：几篇支持 / 几篇反对 / 几处尚无依据。旧引擎不带这一项 */
+  evidence_counts?: { support: number; refute: number; unsupported: number } | null;
   /** 从哪来的：寻找假设（kind=discovery）写入时带文献核对的结果；其余为 null */
   origin?: IdeaOrigin | null;
 }
@@ -2282,6 +2286,11 @@ export interface TournamentInput {
 export interface LeaderboardRow extends IdeaRead {
   matches: number;
   wins: number;
+  /** 名次（并列的相同）；没对比过的为 null。旧引擎不带，界面自己按评分算 */
+  rank?: number | null;
+  /** 这个名次有几个想法共用（1 = 不并列） */
+  rank_shared_by?: number;
+  tied?: boolean;
 }
 
 export interface TournamentSummary {
@@ -2625,6 +2634,8 @@ export interface RunnerBackendSummary {
   licenses: string[];
   /** 不选时跑的就是它 */
   is_default: boolean;
+  /** 实验流程今天能不能真的跑它；false = 选了一定失败。旧引擎不带这一项 */
+  runnable?: boolean;
 }
 
 /** 一个可选的流程包。name 是写进 params.process_pack 的值。 */

@@ -3,11 +3,13 @@ import { fmtTokens, parseApiDate } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import type {
   ResearchAttention,
+  ResearchEstimate,
   ResearchPhase,
   ResearchRunRead,
   ResearchStatus,
   ResearchUsage,
   SurveyProgress,
+  SurveyQuery,
   SurveySource,
 } from '../../lib/researchApi';
 
@@ -269,18 +271,19 @@ export function pollInterval(status: string | undefined): number | false {
 }
 
 /**
- * 文献检索走到哪个小步：检索 → 筛选 → 读全文 → 写解读 → 整理。
+ * 文献检索走到哪个小步：检索 → 筛选 → 沿引用扩展 → 读全文 → 写解读 → 整理。
  * 引擎说了正在做哪一步（step_action）就听它的；没说（任务还没起来、已经结束）时
  * 只看库里的数字，刷新、重启后一致。
  */
-export type SurveyStage = 'search' | 'screen' | 'fulltext' | 'summarise' | 'index';
+export type SurveyStage = 'search' | 'screen' | 'expand' | 'fulltext' | 'summarise' | 'index';
 
-export const SURVEY_STAGES: readonly SurveyStage[] = ['search', 'screen', 'fulltext', 'summarise', 'index'];
+export const SURVEY_STAGES: readonly SurveyStage[] = ['search', 'screen', 'expand', 'fulltext', 'summarise', 'index'];
 
 const ACTION_STAGE: Record<string, SurveyStage> = {
   'wiki.search_candidates': 'search',
   'wiki.snowball': 'search',
   'wiki.score_relevance': 'screen',
+  'wiki.expand_citations': 'expand',
   'wiki.fetch_extract': 'fulltext',
   'wiki.compile': 'summarise',
   'wiki.link_concepts': 'index',
@@ -307,6 +310,8 @@ export function surveyStageLabel(stage: SurveyStage): string {
       return tr('检索', 'Search');
     case 'screen':
       return tr('筛选', 'Screen');
+    case 'expand':
+      return tr('沿引用扩展', 'Citations');
     case 'fulltext':
       return tr('读全文', 'Full text');
     case 'summarise':
@@ -325,6 +330,11 @@ export function surveyStageCaption(stage: SurveyStage, p: SurveyProgress, source
     }
     case 'screen':
       return tr('正在逐篇判断是否和你的方向相关', 'Checking each paper against your direction');
+    case 'expand':
+      return tr(
+        '正在看最相关的几篇引用了谁、被谁引用，把相关的也收进来',
+        'Following what the most relevant papers cite and what cites them, and keeping the relevant ones',
+      );
     case 'fulltext':
       return tr('正在获取留下论文的全文，拿不到的改用摘要', 'Getting the full text of the kept papers. Abstracts are used where it isn’t available.');
     case 'summarise':
@@ -343,12 +353,28 @@ export function surveyFraction(p: SurveyProgress, stage: SurveyStage = surveySta
   return null;
 }
 
-/** 「找到 182 篇 · 已筛选 140 · 留下 46 · 已生成解读 12/46」；还没有的数字不写。 */
+/** 各来源一共返回了多少条（去重前）。旧引擎不带这个数：返回 0，句子里就不写这一段。 */
+function fetchedOf(p: SurveyProgress): number {
+  return typeof p.fetched === 'number' && p.fetched > p.found ? p.fetched : 0;
+}
+
+/**
+ * 进行中的数字，按先后：「检索到 354 条 · 已筛选 60/85 篇 · 留下 19 篇 · 已写解读 3/20」；
+ * 还没有的数字不写。检索到的是各来源返回的条数（有重复），筛选的是去重后取进来的论文。
+ */
 export function surveyProgressText(p: SurveyProgress): string {
   const parts: string[] = [];
-  if (p.found > 0) parts.push(tr(`找到 ${p.found} 篇`, `${p.found} found`));
-  if (p.screened > 0) parts.push(tr(`已筛选 ${p.screened}`, `${p.screened} screened`));
-  if (p.screened > 0) parts.push(tr(`留下 ${p.kept}`, `${p.kept} kept`));
+  const fetched = fetchedOf(p);
+  if (fetched > 0) parts.push(tr(`检索到 ${fetched} 条`, `${fetched} results`));
+  else if (p.found > 0) parts.push(tr(`找到 ${p.found} 篇`, `${p.found} found`));
+  if (p.screened > 0) {
+    parts.push(
+      p.screened < p.found
+        ? tr(`已筛选 ${p.screened}/${p.found} 篇`, `${p.screened} of ${p.found} screened`)
+        : tr(`已筛选 ${p.screened} 篇`, `${p.screened} screened`),
+    );
+  } else if (fetched > 0 && p.found > 0) parts.push(tr(`去重后 ${p.found} 篇待筛选`, `${p.found} to screen after merging duplicates`));
+  if (p.screened > 0) parts.push(tr(`留下 ${p.kept} 篇`, `${p.kept} kept`));
   if (p.to_summarise > 0 && p.summarised > 0) {
     // 重新检索后库里已有的解读可能比这次打算写的多：分母不小于分子，不出现「10/8」
     const total = Math.max(p.to_summarise, p.summarised);
@@ -357,18 +383,112 @@ export function surveyProgressText(p: SurveyProgress): string {
   return parts.join(' · ');
 }
 
-/** 文献这一段做完后的一句结果：「留下 46 篇（共找到 182 篇），其中 46 篇有解读」。 */
+/**
+ * 文献这一段做完后的一句结果，先说留下的：「留下 26 篇，其中 13 篇有解读」。
+ * 怎么来的在第二句（surveyFunnelText）。
+ */
 export function surveyDoneText(p: SurveyProgress): string {
   if (p.kept === 0) return surveyProgressText(p);
-  const found = Math.max(p.found, p.kept);
-  const head =
-    found > p.kept
-      ? tr(`留下 ${p.kept} 篇（共找到 ${found} 篇）`, `${p.kept} kept of ${found} found`)
-      : tr(`留下 ${p.kept} 篇`, `${p.kept} kept`);
+  const head = tr(`留下 ${p.kept} 篇`, `${p.kept} ${p.kept === 1 ? 'paper' : 'papers'} kept`);
   if (p.summarised <= 0) return head;
   return p.summarised >= p.kept
     ? head + tr('，都有解读', ', all summarised')
-    : head + tr(`，其中 ${p.summarised} 篇有解读`, `, ${p.summarised} summarised`);
+    : head + tr(`，其中 ${p.summarised} 篇有解读`, `, ${p.summarised} with a summary`);
+}
+
+/**
+ * 这些论文是怎么筛出来的：「检索到 354 条，去重后筛选了 85 篇，留下 26 篇」。
+ * 没有可说的（什么都没筛掉、也不知道检索到多少）返回空串。
+ */
+export function surveyFunnelText(p: SurveyProgress): string {
+  if (p.kept === 0) return '';
+  const fetched = fetchedOf(p);
+  const found = Math.max(p.found, p.kept);
+  if (fetched > 0) {
+    return tr(
+      `检索到 ${fetched} 条，去重后筛选了 ${found} 篇，留下 ${p.kept} 篇`,
+      `${fetched} results fetched, ${found} screened after merging duplicates, ${p.kept} kept`,
+    );
+  }
+  if (found > p.kept) return tr(`筛选了 ${found} 篇，留下 ${p.kept} 篇`, `${found} screened, ${p.kept} kept`);
+  return '';
+}
+
+export interface QueryGroup {
+  source: string;
+  name: string;
+  /** 这个来源一共返回多少条 */
+  returned: number;
+  queries: SurveyQuery[];
+}
+
+/** 检索式按来源分组（来源的顺序 = 第一次出现的顺序）。 */
+export function groupQueries(queries: SurveyQuery[] | null | undefined): QueryGroup[] {
+  const out: QueryGroup[] = [];
+  for (const q of queries ?? []) {
+    let g = out.find((x) => x.source === q.source);
+    if (!g) {
+      g = { source: q.source, name: sourceName(q.source), returned: 0, queries: [] };
+      out.push(g);
+    }
+    g.queries.push(q);
+    g.returned += q.returned || 0;
+  }
+  return out;
+}
+
+/** 排序方式的说法：relevance → 按相关度，date / submittedDate → 按时间。认不出的原样。 */
+export function querySortText(sort: string | null | undefined): string {
+  const s = (sort ?? '').toLowerCase();
+  if (!s) return '';
+  if (s.includes('relev')) return tr('按相关度', 'by relevance');
+  if (s.includes('date') || s.includes('recent') || s.includes('time')) return tr('按时间', 'by date');
+  if (s.includes('cit')) return tr('按被引次数', 'by citations');
+  return sort ?? '';
+}
+
+/** 时间范围的说法：「2016..2026」「2016-11-20..2026-11-18」→「2016–2026」。 */
+export function queryWindowText(window: string | null | undefined): string {
+  const w = (window ?? '').trim();
+  if (!w) return '';
+  const m = /^(\d{4})[\d-]*\.\.(\d{4})[\d-]*$/.exec(w);
+  return m ? `${m[1]}–${m[2]}` : w;
+}
+
+/** 「通常需要 30–50 分钟」。 */
+export function estimateText(e: Pick<ResearchEstimate, 'minutes_low' | 'minutes_high'>): string {
+  const lo = Math.round(e.minutes_low ?? 0);
+  const hi = Math.round(e.minutes_high ?? 0);
+  if (lo <= 0 || hi <= 0) return '';
+  return lo === hi
+    ? tr(`通常需要约 ${hi} 分钟`, `Usually takes about ${hi} min`)
+    : tr(`通常需要 ${lo}–${hi} 分钟`, `Usually takes ${lo}–${hi} min`);
+}
+
+/**
+ * 一次研究一共花了多久：确定范围 + 检索文献 + 寻找假设三段各自的时长加起来
+ * （不是从创建到现在——选想法想了两天不算）。有哪一段没结束就返回 null。
+ */
+export function totalDurationMs(run: {
+  created_at: string;
+  survey: { started_at: string | null; finished_at: string | null };
+  hypotheses: { started_at: string | null; finished_at: string | null };
+}): number | null {
+  const t = (iso: string | null) => (iso ? parseApiDate(iso).getTime() : NaN);
+  const s0 = t(run.survey.started_at);
+  const s1 = t(run.survey.finished_at);
+  const h0 = t(run.hypotheses.started_at);
+  const h1 = t(run.hypotheses.finished_at);
+  const c = t(run.created_at);
+  if ([s0, s1, h0, h1].some((x) => Number.isNaN(x)) || s1 < s0 || h1 < h0) return null;
+  const plan = Number.isNaN(c) ? 0 : Math.max(0, s0 - c);
+  return plan + (s1 - s0) + (h1 - h0);
+}
+
+/** 一段的用量，跟在时长后面：「约 $5.07」；还没有或不到一分钱不写。 */
+export function costText(usage: ResearchUsage | null | undefined): string {
+  if (!usage || !(usage.cost_usd >= 0.01)) return '';
+  return tr(`约 $${usage.cost_usd.toFixed(2)}`, `about $${usage.cost_usd.toFixed(2)}`);
 }
 
 /** 「5 篇支持 · 1 篇反对 · 1 处尚无依据」；为 0 的不写，全为 0 时说明没有依据。 */
@@ -461,7 +581,7 @@ export function sourceLines(sources: SurveySource[]): SourceLine[] {
     return {
       id: s.source,
       name: sourceName(s.source),
-      text: failed ? tr('没取到', 'failed') : tr(`${s.fetched} 篇`, String(s.fetched)),
+      text: failed ? tr('没取到', 'failed') : tr(`${s.fetched} 条`, String(s.fetched)),
       failed,
       detail: s.error || null,
     };

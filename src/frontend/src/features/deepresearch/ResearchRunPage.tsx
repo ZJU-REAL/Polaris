@@ -20,7 +20,7 @@ import { IdeasSection } from './IdeasSection';
 import { NextSection } from './NextSection';
 import { PapersSection } from './PapersSection';
 import type { RunActions } from './parts';
-import { countsText, elapsedText, sectionStates, usageText } from './phase';
+import { countsText, durationText, elapsedText, sectionStates, totalDurationMs, usageText } from './phase';
 import { ScopeSection } from './ScopeSection';
 import './deepresearch.css';
 
@@ -213,8 +213,14 @@ export function ResearchRunPage() {
     editing,
   };
   const usage = usageText(run.usage);
-  // 运行中说已经跑了多久（从创建算起）；其余状态说最后一次变化是什么时候
-  const when = running ? elapsedText(run.created_at, null, now) : fmtRelative(run.updated_at);
+  // 运行中说已经跑了多久（从创建算起）；检索和寻找假设都做完了说一共用了多久；
+  // 其余状态（停下、卡住）说最后一次变化是什么时候
+  const total = running ? null : totalDurationMs(run);
+  const when = running
+    ? elapsedText(run.created_at, null, now)
+    : total !== null
+      ? tr(`用时 ${durationText(total)}`, `Took ${durationText(total)}`)
+      : fmtRelative(run.updated_at);
   const meta = [countsText(run.counts), when].filter(Boolean).join(' · ');
   // 名称就是方向原话（还没起名、或方向本来就短）时不重复一遍
   const showDirection = run.direction.trim() !== run.name.trim();
@@ -305,12 +311,15 @@ export function ResearchRunPage() {
         )}
         {/* 状态词在页头的课题名旁边；这一行是数字：多少论文和想法、跑了多久、用了多少 */}
         <div className="dr-run-status" data-run-status={run.status} data-run-phase={run.phase}>
-          <span className="dr-run-meta">{meta}</span>
-          {usage && (
-            <span className="dr-run-meta" title={usage.title}>
-              {usage.text}
-            </span>
-          )}
+          <span className="dr-run-meta" data-testid="run-meta">
+            {meta}
+            {usage && (
+              <span title={usage.title}>
+                {meta ? ' · ' : ''}
+                {usage.text}
+              </span>
+            )}
+          </span>
         </div>
       </header>
 

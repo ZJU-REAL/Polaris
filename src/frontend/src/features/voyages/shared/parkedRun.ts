@@ -32,13 +32,21 @@ function embeddedCode(detail: string | null | undefined): string | null {
   return null;
 }
 
-/** 给人看的一句话：先认报错正文里的具体错误码，再认引擎给的 code，都不认得就用引擎的兜底文案。 */
+/** 引擎按异常类型归出来的笼统的码：认得，但说不出具体原因。 */
+const GENERIC_CODES = new Set(['INVALID_OUTPUT', 'INTERNAL', 'STEP_FAILED', 'CHECK_FAILED', 'LLM_ERROR', 'MISSING_PREREQUISITE', 'BAD_REQUEST']);
+
+/**
+ * 给人看的一句话。引擎现在把前置条件的码（IDEA_CONTEXT_EMPTY 等）直接放在 code 里，
+ * 所以先认 code；只有 code 是笼统的那几个（旧引擎只会给这些）时，才去报错正文里找
+ * 更具体的码。都不认得就用引擎的兜底文案。
+ */
 export function parkedErrorText(error: ParkedError | null | undefined): string {
   const fallback = tr('任务出错后暂停了，可以重试', 'The task paused after an error. You can retry it.');
   if (!error) return fallback;
+  const known = error.code ? errorCodeText(error.code) : null;
+  if (known && !GENERIC_CODES.has(error.code!)) return known;
   const specific = embeddedCode(error.detail);
   if (specific) return errorCodeText(specific)!;
-  const known = error.code ? errorCodeText(error.code) : null;
   if (known) return known;
   return error.message?.trim() || fallback;
 }

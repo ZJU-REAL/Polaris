@@ -38,7 +38,9 @@ describe('rankIdeas', () => {
 describe('where an idea came from', () => {
   it('tells thorough, quick and proposal apart', () => {
     expect(originKind({ depth: 'sketch', origin: { kind: 'discovery' }, source_voyage_id: 'v' })).toBe('thorough');
-    expect(originKind({ depth: 'sketch', origin: null, source_voyage_id: null })).toBe('quick');
+    // 快速生成 = 有任务写了它、但没有逐条核对的来历；没记任务的不猜
+    expect(originKind({ depth: 'sketch', origin: null, source_voyage_id: 'v2' })).toBe('quick');
+    expect(originKind({ depth: 'sketch', origin: null, source_voyage_id: null })).toBe('manual');
     expect(originKind({ depth: 'proposal', origin: null, source_voyage_id: null })).toBe('proposal');
   });
 });
@@ -97,5 +99,30 @@ describe('comparisons', () => {
     expect(matchInfo(session, 'a')).toMatchObject({ opponentId: 'b', decided: true, won: false });
     expect(matchInfo(session, 'b')).toMatchObject({ opponentId: 'a', decided: true, won: true });
     expect(matchInfo({ ...session, payload: { idea_a: 'a', idea_b: 'b' } }, 'a')).toMatchObject({ decided: false, won: false });
+  });
+});
+
+describe('ranks from the engine', () => {
+  it('uses the engine rank and tie flag when the leaderboard carries them', () => {
+    const rows = [
+      { id: 'a', elo_rating: 1216, matches: 1, wins: 1, rank: 1, rank_shared_by: 2, tied: true },
+      { id: 'b', elo_rating: 1216, matches: 1, wins: 1, rank: 1, rank_shared_by: 2, tied: true },
+      { id: 'c', elo_rating: 1184, matches: 1, wins: 0, rank: 3, rank_shared_by: 1, tied: false },
+      { id: 'd', elo_rating: 1200, matches: 0, wins: 0, rank: null, rank_shared_by: 0, tied: false },
+    ];
+    const ranks = rankIdeas(rows);
+    expect(ranks.get('a')).toMatchObject({ rank: 1, tied: true });
+    expect(ranks.get('c')).toMatchObject({ rank: 3, tied: false, of: 3 });
+    expect(ranks.has('d')).toBe(false);
+  });
+});
+
+describe('the unsupported section of a real idea', () => {
+  it('recognises the heading the model actually writes', () => {
+    const content = ['## 动机', '', '一段。', '', '## 尚无文献依据的部分', '', '- 论断甲。', '- 论断乙。'].join('\n');
+    const split = splitUnsupportedSection(content);
+    expect(split.unsupported).toEqual(['论断甲。', '论断乙。']);
+    expect(split.body).not.toContain('尚无文献依据');
+    expect(splitUnsupportedSection('## Not yet supported by the literature:\n- A claim.').unsupported).toEqual(['A claim.']);
   });
 });

@@ -1,9 +1,14 @@
+import { useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { topicPath, useProject } from '../../app/project';
-import { api, type DirectionLibrarySummary } from '../../lib/api';
+import { toast } from '../../components/ui/Toast';
+import { api, ApiError, type DirectionLibrarySummary } from '../../lib/api';
+import { errorText } from '../../lib/errors';
 import { tr } from '../../lib/i18n';
-import { saveDraft } from '../deepresearch/DirectionBox';
+import { researchApi } from '../../lib/researchApi';
+import { researchKeys, useResearchEstimate } from '../deepresearch/hooks';
+import { estimateText } from '../deepresearch/phase';
 import '../deepresearch/deepresearch.css';
 
 /* ============================================================
@@ -21,7 +26,34 @@ function count(n: number | undefined, zh: string, enOne: string, enMany = `${enO
 
 export function TopicOverviewPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { currentProject, currentProjectId: pid } = useProject();
+  const llm = useQuery({ queryKey: ['llm-status'], queryFn: () => api.getLlmStatus(), retry: false, staleTime: 30_000 });
+  const estimate = useResearchEstimate();
+  // 幂等键：连点两下只开始一次
+  const clientKey = useRef<string>(`topic-${Math.random().toString(36).slice(2)}-${Date.now()}`);
+
+  // 在这个课题上开始研究（不新建课题）：成功后这个课题的概览就变成时间线
+  const start = useMutation({
+    mutationFn: () => researchApi.createRun({ project_id: pid!, client_key: clientKey.current }),
+    onSuccess: (run) => {
+      void queryClient.invalidateQueries({ queryKey: researchKeys.list });
+      navigate(`/research/${run.id}`);
+    },
+    onError: async (e) => {
+      // 已经有研究了（别处刚开始的）：不是错，去那次研究
+      if (e instanceof ApiError && e.status === 409) {
+        const runs = await queryClient.fetchQuery({ queryKey: researchKeys.list, queryFn: () => researchApi.listRuns(), staleTime: 0 }).catch(() => []);
+        const existing = runs.find((r) => r.project_id === pid);
+        if (existing) {
+          navigate(`/research/${existing.id}`);
+          return;
+        }
+      }
+      toast(errorText(e), 'error');
+    },
+  });
+  const noModel = llm.data?.configured === false;
 
   const statsQuery = useQuery({
     queryKey: ['stats', pid],
@@ -125,22 +157,22 @@ export function TopicOverviewPage() {
           <div className="dr-attn-text">{tr('这个课题还没有研究进展', 'This topic has no research run yet')}</div>
           <div className="dr-attn-sub">
             {tr(
-              '用它的说明开始一次研究：Polaris 检索文献、寻找有文献依据的假设，再列出想法。会新建一个课题，这里的内容都保留。',
-              'Start a research run from its description: Polaris surveys the literature, looks for supported hypotheses and lists ideas. This creates a new topic; everything here stays.',
-            )}
+              '用它的说明开始一次研究：Polaris 检索文献、寻找有文献依据的假设，再列出想法。就在这个课题里进行，现有的想法、实验和稿件都保留。',
+              'Start a research run from its description: Polaris surveys the literature, looks for supported hypotheses and lists ideas. It runs in this topic; existing ideas, experiments and manuscripts stay.',
+            )}{' '}
+            {estimateText(estimate)}
+            {tr('。', '.')}
           </div>
           <div className="dr-attn-actions">
             <button
               type="button"
               className="btn btn-primary sm"
-              disabled={!direction}
-              onClick={() => {
-                // 方向先放进首页那个框里，由用户确认后再开始（可以改一改、调范围）
-                saveDraft(direction);
-                navigate('/research');
-              }}
+              data-testid="start-on-topic"
+              disabled={!direction || !pid || start.isPending || noModel}
+              title={noModel ? tr('还没有可用的模型', 'No model is available yet') : undefined}
+              onClick={() => start.mutate()}
             >
-              {tr('用这个方向开始研究', 'Start research on this')}
+              {start.isPending ? tr('正在开始…', 'Starting…') : tr('用这个方向开始研究', 'Start research on this')}
             </button>
           </div>
         </div>

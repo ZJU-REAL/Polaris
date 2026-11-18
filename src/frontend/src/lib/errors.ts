@@ -18,6 +18,8 @@ function knownCode(code: string): string | null {
   switch (code) {
     case 'PROJECT_NOT_FOUND':
       return tr('找不到这个课题，可能已被删除', 'This topic no longer exists.');
+    case 'RESEARCH_ALREADY_EXISTS':
+      return tr('这个课题已经有研究进展了', 'This topic already has a research run.');
     case 'PAPER_NOT_FOUND':
       return tr('找不到这篇论文，可能已被删除', 'This paper no longer exists.');
     case 'LIBRARY_NOT_FOUND':

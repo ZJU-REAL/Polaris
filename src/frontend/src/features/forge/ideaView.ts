@@ -22,9 +22,19 @@ export interface IdeaRank {
  * 两两对比后的名次。只给对比过的想法排（没对比过的没有名次）；
  * 评分相同的并列。输入是排行接口的结果（已按评分从高到低）。
  */
-export function rankIdeas(rows: Pick<LeaderboardRow, 'id' | 'elo_rating' | 'matches' | 'wins'>[]): Map<string, IdeaRank> {
+export function rankIdeas(
+  rows: Pick<LeaderboardRow, 'id' | 'elo_rating' | 'matches' | 'wins' | 'rank' | 'rank_shared_by' | 'tied'>[],
+): Map<string, IdeaRank> {
   const played = rows.filter((r) => r.matches > 0).sort((a, b) => b.elo_rating - a.elo_rating);
   const out = new Map<string, IdeaRank>();
+  // 引擎给了名次就用引擎的（它知道并列）；旧引擎不给，下面自己按评分算
+  if (played.length > 0 && played.every((r) => typeof r.rank === 'number')) {
+    for (const r of played) {
+      const shared = r.rank_shared_by ?? 1;
+      out.set(r.id, { rank: r.rank as number, tied: r.tied ?? shared > 1, matches: r.matches, wins: r.wins, of: played.length });
+    }
+    return out;
+  }
   let rank = 0;
   let prev: number | null = null;
   played.forEach((r, i) => {
@@ -64,9 +74,9 @@ export type IdeaOriginKind = 'thorough' | 'quick' | 'proposal' | 'manual';
 export function originKind(idea: Pick<IdeaRead, 'depth' | 'origin' | 'source_voyage_id'>): IdeaOriginKind {
   if (idea.depth === 'proposal') return 'proposal';
   if (idea.origin?.kind === 'discovery') return 'thorough';
-  // 草案只有两种来路：寻找假设（上面那种，带 origin）和快速生成。
-  // 快速生成的想法引擎没有记来源任务，所以这里按排除法算。
-  return 'quick';
+  // 引擎记了是哪个任务写的（source_voyage_id）：不带 origin 的就是快速生成。
+  // 没记任务的是手工写入的，或旧引擎生成的（那时不记）——不猜，不贴标签。
+  return idea.source_voyage_id ? 'quick' : 'manual';
 }
 
 export function originLabel(kind: IdeaOriginKind): string {
@@ -144,7 +154,9 @@ export function groupEvidence(evidence: IdeaEvidence[] | null | undefined): { su
   };
 }
 
-const UNSUPPORTED_HEADING = /^#{1,6}\s*(not yet supported by the literature|尚无文献依据|尚无依据|文献尚未支持)\s*$/i;
+// 真实模型写的标题带尾巴：「尚无文献依据的部分」「尚无依据的论断」「Not yet supported by the literature:」
+const UNSUPPORTED_HEADING =
+  /^#{1,6}\s*(not yet supported(?: by the (?:literature|papers))?|unsupported (?:claims|parts)|尚无文献依据|尚无依据|文献尚未支持|尚未被文献支持)(?:的(?:部分|论断|内容|主张))?\s*[:：]?\s*$/i;
 
 /**
  * 正文里「尚无文献依据」那一节单独拿出来：详情页把它放在依据后面，

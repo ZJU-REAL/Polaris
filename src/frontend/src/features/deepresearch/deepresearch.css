@@ -249,6 +249,26 @@
   font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--text-2); font-variant-numeric: tabular-nums;
 }
 .dr-sources-label { color: var(--text-3); }
+.dr-funnel { margin-top: 2px; font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.dr-queries-toggle {
+  padding: 0; border: 0; background: transparent; cursor: pointer;
+  font-family: var(--sans); font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--accent-text);
+}
+.dr-queries-toggle:hover { text-decoration: underline; text-underline-offset: 2px; }
+.dr-queries-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+/* 检索式：安静的一块，按来源分组；一行 = 检索式 + 怎么排的 + 返回几条 */
+.dr-queries { margin-top: var(--sp-2); padding: 10px 12px; max-width: 760px; background: var(--surface-2); border-radius: var(--radius-sm); }
+.dr-queries-note { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--text-2); }
+.dr-query-group + .dr-query-group { margin-top: var(--sp-3); }
+.dr-query-source { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px var(--sp-2); font-size: var(--fs-sm); font-weight: 500; color: var(--text); }
+.dr-query-source span { font-weight: 400; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.dr-queries ul { margin: 4px 0 0; padding: 0; list-style: none; }
+.dr-queries li { display: flex; align-items: baseline; gap: var(--sp-3); padding: 3px 0; min-width: 0; font-size: var(--fs-sm); line-height: var(--lh-body); }
+.dr-queries code { flex: 1; min-width: 0; font-family: var(--mono); font-size: var(--fs-caption); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; padding: 0; }
+.dr-query-meta { flex-shrink: 0; color: var(--text-3); white-space: nowrap; }
+.dr-query-n { flex-shrink: 0; min-width: 44px; text-align: right; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dr-queries li.is-failed .dr-query-n { color: var(--warn-tx); }
+@media (max-width: 768px) { .dr-query-meta { display: none; } }
 .dr-source.is-failed { color: var(--warn-tx); }
 .dr-papers { margin: var(--sp-3) 0 0; padding: 0; list-style: none; border-top: 0.5px solid var(--border); }
 .dr-papers li { padding: 9px 0; border-bottom: 0.5px solid var(--border); min-width: 0; }

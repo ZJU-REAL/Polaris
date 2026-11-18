@@ -44,7 +44,7 @@ export interface ResearchBrief {
   max_papers?: number | null;
   /** 给相关度最高的多少篇写解读（默认 60）；界面不改它，原样带回 */
   compile_top_n?: number | null;
-  /** 相关度达到多少才留下（默认 0.7）；界面不改它，原样带回 */
+  /** 相关度达到多少才留下（默认 0.5，「放宽范围」时 0.35）；界面不改它，原样带回 */
   relevance_threshold?: number | null;
 }
 
@@ -81,11 +81,29 @@ export interface ResearchUsage {
 /** 一个文献来源这次拿到了多少篇；error 不为空 = 这个来源这次没连上。 */
 export interface SurveySource {
   source: string;
+  /** 这个来源返回了多少条 */
   fetched: number;
+  /** 其中多少篇被取进来筛选（旧的检索方式不分，为空） */
+  selected?: number | null;
   error: string | null;
 }
 
+/** 检索时向一个来源发的一次请求。 */
+export interface SurveyQuery {
+  source: string;
+  query: string;
+  /** relevance | date … */
+  sort: string;
+  /** 时间范围，如 2016..2026 */
+  window: string;
+  returned: number;
+  error?: string | null;
+}
+
 export interface SurveyProgress {
+  /** 各来源返回的条数之和（去重前）；旧引擎不带 */
+  fetched?: number;
+  /** 取进来筛选的候选（去重后） */
   found: number;
   screened: number;
   kept: number;
@@ -119,6 +137,8 @@ export interface ResearchSurvey {
   notes: string[];
   /** 各来源这次拿到多少 */
   sources: SurveySource[];
+  /** 这次检索发出的每一条查询；旧引擎不带 */
+  queries?: SurveyQuery[];
   usage: ResearchUsage;
 }
 
@@ -177,11 +197,28 @@ export interface ResearchRunDetail extends ResearchRunRead {
   last_error: ResearchLastError | null;
   /** 这次研究到目前为止的用量（各阶段加起来，含重做过的） */
   usage: ResearchUsage;
-  capabilities: { remote_machine: boolean; latex: boolean };
+  capabilities: Capabilities;
+}
+
+/** 这台电脑现在能做什么：有没有登记过远程机器、能不能把稿件编译成 PDF。 */
+export interface Capabilities {
+  remote_machine: boolean;
+  latex: boolean;
+}
+
+/** 开始之前的估计：一次研究通常要多久、花多少。数字都是范围。 */
+export interface ResearchEstimate {
+  minutes_low?: number | null;
+  minutes_high?: number | null;
+  cost_usd_low?: number | null;
+  cost_usd_high?: number | null;
 }
 
 export interface CreateRunInput {
-  direction: string;
+  /** 带 project_id 时可以不填：用课题的说明，没有就用课题名 */
+  direction?: string;
+  /** 在已有的课题上开始研究（不新建课题）。课题已有研究回 409 RESEARCH_ALREADY_EXISTS */
+  project_id?: string;
   /** 幂等键：同一个键重复提交返回同一次研究 */
   client_key: string;
   brief?: ResearchBrief;
@@ -203,6 +240,14 @@ export const researchApi = {
   },
   createRun(input: CreateRunInput): Promise<ResearchRunRead> {
     return requestJson<ResearchRunRead>('/research', 'POST', input);
+  },
+  /** 不依赖任何一次研究：写作页、实验页打开时就要知道。 */
+  getCapabilities(): Promise<Capabilities> {
+    return request<Capabilities>('/capabilities');
+  },
+  /** 开始前的时间和费用估计。引擎还没有这个接口时会 404，调用方用固定的范围兜底。 */
+  getEstimate(): Promise<ResearchEstimate> {
+    return request<ResearchEstimate>('/research/estimate');
   },
   listRuns(): Promise<ResearchRunRead[]> {
     return request<ResearchRunRead[]>('/research');

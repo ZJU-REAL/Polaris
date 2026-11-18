@@ -12,7 +12,7 @@ import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { api, type ManuscriptRead } from '../../lib/api';
 import { useDirections } from '../deepresearch/directions';
-import { useResearchRun } from '../deepresearch/hooks';
+import { useCapabilities, useResearchRun } from '../deepresearch/hooks';
 import { saveBlob } from '../wiki/shared';
 import { NewManuscriptModal } from './NewManuscriptModal';
 import '../deepresearch/deepresearch.css';
@@ -66,12 +66,16 @@ export function manuscriptSentence(status: string): string {
   }
 }
 
-/** 引擎所在的电脑上有没有 LaTeX。只有研究的读数里带这一项；一次研究都没有时不知道（undefined）。 */
+/**
+ * 引擎所在的电脑上有没有 LaTeX。问 GET /capabilities（不需要有研究）；旧引擎没有这个
+ * 接口时退回研究读数里的那一项，都没有就是不知道（undefined）。
+ */
 export function useLatexAvailable(pid: string | null): boolean | undefined {
+  const caps = useCapabilities();
   const { byProject, directions } = useDirections();
   const run = byProject(pid)?.run ?? directions.find((d) => d.run)?.run ?? null;
-  const runQuery = useResearchRun(run?.id ?? '');
-  return runQuery.data?.capabilities?.latex;
+  const runQuery = useResearchRun(caps.isError ? (run?.id ?? '') : '');
+  return caps.data?.latex ?? runQuery.data?.capabilities?.latex;
 }
 
 export function WriterPage() {

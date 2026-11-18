@@ -223,7 +223,7 @@ export function ForgePage() {
   // 任务跑完的那一刻：把列表、名次、上次对比都重新取一遍；
   // 生成类的任务还要说清楚这次多了几个想法（一个都没多也要说）
   const wasRunning = useRef<{ id: string; kind: string; ids: Set<string> } | null>(null);
-  const [outcome, setOutcome] = useState<{ ids: Set<string>; kind: string } | null>(null);
+  const [outcome, setOutcome] = useState<{ ids: Set<string>; kind: string; voyageId: string } | null>(null);
   useEffect(() => setOutcome(null), [pid]);
   useEffect(() => {
     const now = running?.id ?? null;
@@ -239,7 +239,10 @@ export function ForgePage() {
         .fetchQuery({ queryKey: ['ideas', pid, 'all'], queryFn: () => api.listIdeas(pid!), staleTime: 0 })
         .then((list) => {
           if (prev.kind === 'idea_review') return;
-          setOutcome({ ids: new Set(list.filter((i) => !prev.ids.has(i.id)).map((i) => i.id)), kind: prev.kind });
+          // 哪些是这次新写的：引擎记了来源任务就按它认，旧引擎不记，才用前后两份列表相减
+          const mine = list.filter((i) => i.source_voyage_id === prev.id);
+          const fresh = mine.length > 0 ? mine : list.filter((i) => !prev.ids.has(i.id));
+          setOutcome({ ids: new Set(fresh.map((i) => i.id)), kind: prev.kind, voyageId: prev.id });
         })
         .catch(() => {});
       void queryClient.invalidateQueries({ queryKey: ['leaderboard', pid] });
@@ -249,6 +252,17 @@ export function ForgePage() {
       if (run) void queryClient.invalidateQueries({ queryKey: researchKeys.run(run.id) });
     }
   }, [running, pid, run, queryClient, ideasQuery.data]);
+
+  // 这次任务到底写了几个、因为重复丢了几个：任务结束后引擎在任务上给出结果
+  const finishedQuery = useQuery({
+    queryKey: ['voyage', outcome?.voyageId ?? '', 'result'],
+    queryFn: () => api.getVoyage(outcome!.voyageId, { includeObsolete: false }),
+    enabled: !!outcome && outcome.kind !== 'idea_review',
+    retry: false,
+  });
+  const result = finishedQuery.data?.result ?? null;
+  const added = result ? result.ideas_written : (outcome?.ids.size ?? 0);
+  const dropped = result?.dropped_as_duplicates ?? 0;
 
   const ranks = useMemo(() => rankIdeas(leaderboardQuery.data ?? []), [leaderboardQuery.data]);
   const hasRanks = ranks.size > 0;
@@ -260,9 +274,12 @@ export function ForgePage() {
     return map;
   }, [runQuery.data]);
   const evidenceOf = (idea: IdeaRead): EvidenceCounts | null => {
+    // 列表本身带数量（每个想法都有）；全是 0 的是没逐条核对过的想法，不显示这一项
+    const own = idea.evidence_counts;
+    if (own) return own.support + own.refute + own.unsupported > 0 ? own : null;
+    // 旧引擎：有研究进展的课题从那次研究的读数里取，其余只知道有几处尚无依据
     const fromRun = evidenceById.get(idea.id);
     if (fromRun) return fromRun;
-    // 深入生成的想法：列表里至少知道有几处尚无依据；支持的篇数要点开才取
     const unsupported = unsupportedOf(idea).length;
     return idea.origin?.kind === 'discovery' && unsupported > 0 ? { support: 0, refute: 0, unsupported } : null;
   };
@@ -627,17 +644,24 @@ export function ForgePage() {
           </div>
         )}
         {!running && outcome && (
-          <div className="ideas-status is-quiet" data-testid="ideas-outcome" data-added={outcome.ids.size}>
+          <div className="ideas-status is-quiet" data-testid="ideas-outcome" data-added={added} data-dropped={dropped} data-from-result={result ? 'yes' : 'no'}>
             <span className="ideas-status-text">
-              {outcome.ids.size > 0
-                ? tr(`新增 ${outcome.ids.size} 个想法`, `${outcome.ids.size} new ${outcome.ids.size === 1 ? 'idea' : 'ideas'}`)
+              {added > 0
+                ? tr(`新增 ${added} 个想法`, `${added} new ${added === 1 ? 'idea' : 'ideas'}`)
                 : tr('这次没有留下新的想法', 'No new ideas this time')}
             </span>
-            {outcome.ids.size === 0 && (
+            {added > 0 && dropped > 0 && (
               <span className="ideas-status-meta">
-                {outcome.kind === 'discovery'
-                  ? tr('提出的假设和已有的重复，或没通过文献核对。', 'The hypotheses repeated existing ones or didn’t hold against the papers.')
-                  : tr('提出的想法和已有的太相似，被合并了。', 'What was proposed was too close to existing ideas and was merged.')}
+                {tr(`另有 ${dropped} 个和已有的想法重复，没有保留。`, `${dropped} more repeated existing ideas and ${dropped === 1 ? 'was' : 'were'} not kept.`)}
+              </span>
+            )}
+            {added === 0 && (
+              <span className="ideas-status-meta">
+                {dropped > 0
+                  ? tr(`提出的 ${dropped} 个都和已有的想法重复。`, `All ${dropped} proposed repeated existing ideas.`)
+                  : outcome.kind === 'discovery'
+                    ? tr('提出的假设和已有的重复，或没通过文献核对。', 'The hypotheses repeated existing ones or didn’t hold against the papers.')
+                    : tr('提出的想法和已有的太相似，被合并了。', 'What was proposed was too close to existing ideas and was merged.')}
               </span>
             )}
             <button type="button" className="btn btn-plain xs" onClick={() => setOutcome(null)}>
@@ -693,7 +717,7 @@ export function ForgePage() {
             <div className="ideas-head">
               <div className="ideas-head-text">
                 <h2 className="ideas-lead">{lead}</h2>
-                {showNovelty && <span className="ideas-note">{tr('新颖性只对照你的文献库判断。', 'Novelty is judged against your library only.')}</span>}
+                {showNovelty && <span className="ideas-note">{tr('评分满分 10；新颖性只对照你的文献库判断。', 'Scores are out of 10. Novelty is judged against your library only.')}</span>}
               </div>
               <div className="ideas-head-actions">
                 {plan.matches > 0 && (

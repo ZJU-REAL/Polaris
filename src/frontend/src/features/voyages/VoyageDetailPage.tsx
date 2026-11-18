@@ -77,16 +77,18 @@ function surveyResultText(steps: VoyageStepRead[]): string | null {
   const search = obsOf('wiki.search_candidates');
   const snowball = obsOf('wiki.snowball');
   const score = obsOf('wiki.score_relevance');
+  const expand = obsOf('wiki.expand_citations');
   const compile = obsOf('wiki.compile');
   if (!search && !compile) return null;
   const parts: string[] = [];
-  if (search || snowball) {
-    const added = num(search?.inserted) + num(snowball?.inserted);
-    parts.push(tr(`新收录 ${added} 篇`, `${added} new ${added === 1 ? 'paper' : 'papers'}`));
+  if (search || snowball || expand) {
+    // 筛选过的论文 = 检索取进来的 + 沿引用找到的
+    const added = num(search?.inserted) + num(snowball?.inserted) + num(expand?.inserted);
+    parts.push(tr(`筛选了 ${added} 篇`, `${added} ${added === 1 ? 'paper' : 'papers'} screened`));
   }
-  if (score) {
-    const relevant = num(score.succeeded) - num(score.excluded);
-    parts.push(tr(`${relevant} 篇相关`, `${relevant} relevant`));
+  if (score || expand) {
+    const relevant = num(score?.succeeded) - num(score?.excluded) + (num(expand?.succeeded) - num(expand?.excluded));
+    parts.push(tr(`留下 ${relevant} 篇`, `${relevant} kept`));
   }
   if (compile) parts.push(tr(`写了 ${num(compile.succeeded)} 篇解读`, `${num(compile.succeeded)} summarised`));
   return parts.length > 0 ? parts.join(' · ') : null;

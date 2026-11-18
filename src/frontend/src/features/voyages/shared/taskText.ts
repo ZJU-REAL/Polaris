@@ -74,6 +74,7 @@ const STEP_LABELS: Record<string, { zh: string; en: string }> = {
   // 文献
   'wiki.search_candidates': { zh: '检索论文', en: 'Search for papers' },
   'wiki.snowball': { zh: '扩展参考文献', en: 'Follow references' },
+  'wiki.expand_citations': { zh: '沿引用扩展', en: 'Following citations' },
   'wiki.score_relevance': { zh: '筛选相关论文', en: 'Screen for relevance' },
   'wiki.fetch_extract': { zh: '获取全文', en: 'Get full text' },
   'wiki.compile': { zh: '写解读', en: 'Write summaries' },

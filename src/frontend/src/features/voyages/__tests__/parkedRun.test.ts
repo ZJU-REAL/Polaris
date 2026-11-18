@@ -43,6 +43,13 @@ describe('parked run: why it stopped', () => {
     expect(parkedErrorText({ code: 'INVALID_OUTPUT', detail: 'ValueError: HTTP_STATUS: 400' })).toContain('不符合要求');
   });
 
+  it('reads a precondition code straight from last_error.code', () => {
+    // 引擎现在把前置条件的码直接放在 code 里：正文里另有别的码也不改主意
+    const error = { code: 'IDEA_CONTEXT_EMPTY', message: '执行步骤时出错', detail: 'RuntimeError: LIBRARY_TOO_SMALL: 3' };
+    expect(parkedErrorText(error)).toContain('没有可用的论文');
+    expect(parkedErrorText({ code: 'LIBRARY_TOO_SMALL', detail: null })).toContain('论文太少');
+  });
+
   it('falls back to the engine sentence for an unknown code', () => {
     expect(parkedErrorText({ code: 'SOMETHING_NEW', message: '执行步骤时出错：某个新问题' })).toBe('执行步骤时出错：某个新问题');
     expect(parkedErrorText(null)).toBe('任务出错后暂停了，可以重试');
