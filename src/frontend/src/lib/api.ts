@@ -3456,7 +3456,7 @@ export const api = {
   },
   patchProject(
     id: string,
-    input: { name?: string; statement?: string; status?: string },
+    input: { name?: string; statement?: string; status?: string; research_mode?: 'conventional' | 'interdisciplinary' },
   ): Promise<ProjectRead> {
     return requestJson<ProjectRead>(`/projects/${id}`, 'PATCH', input);
   },

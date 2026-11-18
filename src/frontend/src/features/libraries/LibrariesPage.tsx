@@ -521,7 +521,7 @@ export function LibrariesPage() {
           desc={
             canCreate
               ? undefined
-              : tr('新建课题时会一并创建文献库。', 'A library is created with each new topic.')
+              : tr('开始一次研究时会一并创建文献库。', 'A library is created when you start a research.')
           }
           action={
             canCreate ? (
@@ -530,9 +530,8 @@ export function LibrariesPage() {
                 {tr('新建文献库', 'New library')}
               </button>
             ) : (
-              <button className="btn btn-primary sm" onClick={() => navigate('/projects/new')}>
-                <Icon name="plus" size={13} />
-                {tr('新建课题', 'New topic')}
+              <button className="btn btn-primary sm" onClick={() => navigate('/research')}>
+                {tr('开始研究', 'Start a research')}
               </button>
             )
           }

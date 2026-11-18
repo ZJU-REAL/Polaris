@@ -167,7 +167,6 @@ export const router = createBrowserRouter([
       { index: true, element: <Navigate to="/research" replace /> },
       { path: 'research', element: page(() => import('../features/deepresearch/ResearchHomePage'), 'ResearchHomePage') },
       { path: 'research/:id', element: page(() => import('../features/deepresearch/ResearchRunPage'), 'ResearchRunPage') },
-      { path: 'projects/new', element: page(() => import('../features/projects/ProjectWizardPage'), 'ProjectWizardPage') },
       {
         element: <RequireTopic />,
         children: [
@@ -225,6 +224,8 @@ export const router = createBrowserRouter([
 
       // —— 旧地址 ——
       { path: 'start', element: <Navigate to="/research" replace /> },
+      // 旧的新建课题向导：课题现在从「研究」首页的一句方向开始
+      { path: 'projects/new', element: <Navigate to="/research" replace /> },
       { path: 'lab', element: <Navigate to="/activity" replace /> },
       { path: 'projects/:id', element: <ProjectSettingsRedirect /> },
       { path: 'mcp-tools', element: <Navigate to="/settings?tab=mcp" replace /> },

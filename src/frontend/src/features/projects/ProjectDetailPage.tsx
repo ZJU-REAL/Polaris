@@ -15,6 +15,8 @@ import { errorText } from '../../lib/errors';
 import { useLibraries } from '../libraries/hooks';
 import { LibraryPicker } from '../libraries/LibraryPicker';
 import { InterdisciplinaryScopePanel } from './InterdisciplinaryScopePanel';
+import type { ResearchMode } from './interdisciplinaryWorkflow';
+import { ResearchModeFields } from './ResearchModeFields';
 
 /* ============================================================
    /projects/:id — 课题设置：只留真正的课题属性
@@ -117,7 +119,7 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
   });
 
   const patchMutation = useMutation({
-    mutationFn: (input: { name?: string; statement?: string }) => api.patchProject(id, input),
+    mutationFn: (input: { name?: string; statement?: string; research_mode?: ResearchMode }) => api.patchProject(id, input),
     onSuccess: (updated: ProjectRead) => {
       queryClient.setQueryData(['project', id], updated);
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
@@ -300,6 +302,16 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
         <SectionCard icon="sparkle" zh="简介" en="Description">
           <EditableText value={project.statement ?? ''} placeholder={tr('一句话说明研究什么', 'One sentence on what you study')}
             onSave={(v) => patchMutation.mutate({ statement: v })} saving={saving} />
+        </SectionCard>
+
+        {/* 课题类型：跨学科课题多一份「研究范围」和一个专属文献库（以前只能在新建课题时选） */}
+        <SectionCard icon="layers" zh="课题类型" en="Topic type">
+          <ResearchModeFields
+            mode={project.research_mode === 'interdisciplinary' ? 'interdisciplinary' : 'conventional'}
+            onModeChange={(mode) => {
+              if (mode !== project.research_mode && !saving) patchMutation.mutate({ research_mode: mode });
+            }}
+          />
         </SectionCard>
 
         {/* 关联文献库 */}

@@ -79,7 +79,6 @@ export function crumbsFor(pathname: string, ctx: CrumbContext): Crumb[] {
         ? [{ label: navLabel('activity'), to: '/activity' }, { label: tr('任务详情', 'Task') }]
         : inTopic(tab('tasks'), { label: tr('任务详情', 'Task') });
     }
-    if (pathname === '/projects/new') return [research, { label: tr('新建课题', 'New topic') }];
 
     if (pathname === '/libraries') return [papers, { label: tr('文献库', 'Libraries') }];
     if (pathname.startsWith('/libraries/')) return [papers, { label: ctx.libraryName || tr('文献库', 'Library') }];
