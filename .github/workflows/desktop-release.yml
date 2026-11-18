@@ -128,10 +128,39 @@ jobs:
           sudo chmod 4755 src/desktop/node_modules/electron/dist/chrome-sandbox
           cd src/desktop && xvfb-run -a pnpm run smoke
 
-      # The renderer ships separately so a frontend-only release can be applied
-      # without reinstalling: the client swaps this bundle in and reloads. The
-      # contract version in the filename tells the client whether its preload is
-      # new enough to run it — see src/desktop/src/main/updates.
+      # Downloads the pinned uv binary and copies the backend sources into
+      # src/desktop/resources/, which electron-builder ships as extraResources.
+      # The packaged app bootstraps a Python environment from them on first
+      # launch (#607); see src/desktop/src/main/engine-bootstrap.ts.
+      # Staging also computes the backend content hash (resources/backend/.hash)
+      # and stamps the engine's version from the tag (app/_release.py), so it
+      # runs before the renderer bundle is packaged: the bundle's name carries
+      # that hash.
+      - name: Stage bundled engine resources
+        shell: bash
+        run: pnpm --dir src/desktop run stage:resources
+
+      # Each platform records the backend hash it computed. The release job
+      # compares them: the renderer bundle is built on Linux but applied on all
+      # three platforms, so it is only publishable if they agree.
+      - name: Record backend hash
+        shell: bash
+        run: |
+          mkdir -p src/desktop/release
+          cp src/desktop/resources/backend/.hash "src/desktop/release/backend-hash-${{ matrix.name }}.txt"
+          cat "src/desktop/release/backend-hash-${{ matrix.name }}.txt"
+
+      # The renderer ships separately so a release that changes only the
+      # interface can be applied without reinstalling: the client swaps this
+      # bundle in and reloads. Two things in the filename tell a client whether
+      # it may do that — see src/desktop/src/main/updates/engine-compat.ts:
+      #   c<N>     the IPC contract version (is the installed shell new enough?)
+      #   b<hash>  the backend hash this interface was built against (is the
+      #            installed Python engine the same one?)
+      # Without the second, an older install would take the new interface, keep
+      # its old engine, report the new version and never be offered the
+      # installer. Shells from before this scheme do not recognise the new
+      # filename and fall back to the installer, which is what they need.
       # Built once, on Linux, since the bundle is platform-independent.
       - name: Package renderer update
         if: matrix.name == 'linux'
@@ -139,17 +168,11 @@ jobs:
         run: |
           CONTRACT=$(grep -oE 'CONTRACT_VERSION = [0-9]+' src/desktop/src/shared/contract.ts | grep -oE '[0-9]+')
           VERSION="${{ steps.meta.outputs.version }}"
-          echo "{\"version\":\"$VERSION\",\"contract\":$CONTRACT}" > src/frontend/dist/meta.json
+          BACKEND_HASH=$(tr -d '[:space:]' < src/desktop/resources/backend/.hash)
+          test -n "$BACKEND_HASH"
+          echo "{\"version\":\"$VERSION\",\"contract\":$CONTRACT,\"backendHash\":\"$BACKEND_HASH\"}" > src/frontend/dist/meta.json
           mkdir -p src/desktop/release
-          tar -czf "src/desktop/release/renderer-$VERSION-c$CONTRACT.tar.gz" -C src/frontend/dist .
-
-      # Downloads the pinned uv binary and copies the backend sources into
-      # src/desktop/resources/, which electron-builder ships as extraResources.
-      # The packaged app bootstraps a Python environment from them on first
-      # launch (#607); see src/desktop/src/main/engine-bootstrap.ts.
-      - name: Stage bundled engine resources
-        shell: bash
-        run: pnpm --dir src/desktop run stage:resources
+          tar -czf "src/desktop/release/renderer-$VERSION-c$CONTRACT-b${BACKEND_HASH:0:16}.tar.gz" -C src/frontend/dist .
 
       - name: Package
         shell: bash
@@ -186,6 +209,7 @@ jobs:
             src/desktop/release/*.AppImage
             src/desktop/release/*.deb
             src/desktop/release/renderer-*.tar.gz
+            src/desktop/release/backend-hash-*.txt
 
   release:
     needs: build
@@ -210,6 +234,20 @@ jobs:
             echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
           fi
 
+      # The renderer bundle declares the backend hash computed on Linux. If the
+      # macOS or Windows build computed a different one, clients on that platform
+      # would (correctly) refuse the bundle — but so that nobody has to wonder
+      # why, drop it from the release and say so: every platform then updates
+      # through its installer. The hash files themselves are not release assets.
+      - name: Check the backend hash agrees across platforms
+        run: |
+          cat dist/backend-hash-*.txt
+          if [ "$(cat dist/backend-hash-*.txt | tr -d '[:blank:]' | sort -u | grep -c .)" != "1" ]; then
+            echo "::warning::Backend hash differs between platforms; publishing without the renderer bundle (installer-only update)."
+            rm -f dist/renderer-*.tar.gz
+          fi
+          rm -f dist/backend-hash-*.txt
+
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -227,9 +265,12 @@ jobs:
           These builds are **neither signed nor notarized**, so each platform needs to be
           told once that the app is safe to run:
 
-          - **macOS**: `xattr -dr com.apple.quarantine /Applications/Polaris.app`, or
-            right-click → Open → Open anyway. The zip carries one less layer of quarantine
-            propagation than the dmg.
+          - **macOS**: open the app once (macOS refuses), then go to System Settings →
+            Privacy & Security, scroll to Security and choose **Open Anyway**. On
+            macOS 15 and later this is the only route in the interface: right-click →
+            Open no longer works for apps that are not notarized. From Terminal,
+            `xattr -dr com.apple.quarantine /Applications/Polaris.app` does the same.
+            The zip carries one less layer of quarantine propagation than the dmg.
           - **Windows**: SmartScreen will block it — choose More info → Run anyway, or use
             the portable zip instead.
           - **Linux**: AppImage needs `libnss3 libgtk-3-0 libasound2` on the host. Under

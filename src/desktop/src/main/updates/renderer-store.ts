@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 
 import { CONTRACT_VERSION } from '../../shared/contract';
+import { installedBackendHash, sameBackend } from './engine-compat';
 import { extractTarGz } from './tar';
 import { stagedSupersedes } from './version';
 
@@ -27,6 +28,8 @@ export interface RendererMeta {
   version: string;
   /** 这份界面要求的 IPC 契约版本；高于当前外壳就不能热更。 */
   contract: number;
+  /** 这份界面是配哪份引擎打出来的（后端内容哈希）；与本机已装的不同就不能用。 */
+  backendHash: string;
 }
 
 interface Pointer extends RendererMeta {
@@ -55,30 +58,37 @@ function readPointer(): Pointer | null {
  * 契约版本在这里再查一次：外壳可能被整包更新降级过，留着的旧 pointer 不能生效。
  */
 export function stagedRendererDir(): string | null {
+  return activePointer()?.dir ?? null;
+}
+
+/**
+ * 真正在用的那份热更新界面；任何一条不满足都不用它、回落包内自带的界面：
+ * - 契约版本高于外壳（外壳被降级过）；
+ * - 不比外壳自带的新（整包更新后包内界面已经反超）——就地清掉；
+ * - 不是配本机这份引擎打的。没带后端哈希的旧记录同样不认：那是只看契约版本
+ *   的旧逻辑留下的，正是「新界面跑在旧引擎上」的来源。
+ */
+function activePointer(): Pointer | null {
   const p = readPointer();
   if (!p) return null;
   if (p.contract > CONTRACT_VERSION) return null;
-  // 整包更新后包内自带的界面可能已经反超，那份旧的必须让位并就地清掉，
-  // 否则新外壳会一直提供旧界面。
   if (!stagedSupersedes(p.version, app.getVersion())) {
     clearStagedRenderer();
     return null;
   }
-  return p.dir;
-}
-
-export function stagedVersion(): string | null {
-  return readPointer()?.version ?? null;
+  if (!sameBackend(p.backendHash, installedBackendHash())) {
+    clearStagedRenderer();
+    return null;
+  }
+  return p;
 }
 
 /**
- * 用户眼前这份界面的版本。更新检查与「关于」都必须用它而不是 `app.getVersion()`：
- * 热更新不换外壳，外壳版本装完新界面也不会变。
+ * 用户眼前这份界面的版本。更新检查必须用它而不是 `app.getVersion()`：
+ * 热更新不换外壳，外壳版本装完新界面也不会变。只认真正在用的那份。
  */
 export function effectiveVersion(): string {
-  const staged = stagedVersion();
-  const shell = app.getVersion();
-  return staged && stagedSupersedes(staged, shell) ? staged : shell;
+  return activePointer()?.version ?? app.getVersion();
 }
 
 /** 解包并启用一份新界面。抛错即视为失败，调用方不应切换。 */
@@ -107,8 +117,21 @@ export function stageRenderer(archive: Buffer, expected: RendererMeta): void {
     rmSync(dir, { recursive: true, force: true });
     throw new Error('update package metadata does not match the release');
   }
+  // 文件名里只有哈希前缀，包里是完整的：两者都要与本机已装的引擎对得上
+  if (
+    typeof meta.backendHash !== 'string' ||
+    !sameBackend(meta.backendHash, expected.backendHash) ||
+    !sameBackend(meta.backendHash, installedBackendHash())
+  ) {
+    rmSync(dir, { recursive: true, force: true });
+    throw new Error('update package was built for a different engine than the one installed');
+  }
 
-  writeFileSync(pointerPath(), JSON.stringify({ ...meta, dir }), 'utf8');
+  writeFileSync(
+    pointerPath(),
+    JSON.stringify({ version: meta.version, contract: meta.contract, backendHash: meta.backendHash, dir }),
+    'utf8',
+  );
 }
 
 /** 回滚到包内自带的界面。加载失败时由 window.ts 调用。 */

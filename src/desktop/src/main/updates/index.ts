@@ -1,16 +1,18 @@
 /* ============================================================
    更新检查与应用。
 
-   两条路径，优先热更：
-   - **热更新**：界面层单独打成 renderer-<version>-c<contract>.tar.gz。契约版本
-     不高于当前外壳时，下载→解包→reload，**不重启、不碰 app bundle**。
-   - **整包更新**：preload/主进程/Electron 变了（契约升级或没有界面包）时，只能
-     下载安装器。Windows 直接拉起安装器；macOS 只能打开 dmg 让用户拖进
+   两条路径：
+   - **热更新**：界面层单独打成 renderer-<version>-c<contract>-b<后端哈希>.tar.gz。
+     契约版本不高于当前外壳、**且包里声明的后端哈希与本机已装的引擎相同**时，
+     下载→解包→reload，不重启、不碰 app bundle。
+   - **整包更新**：其余情况（外壳要换、引擎要换、或这个版本没发界面包）只能下载
+     安装器。Windows 直接拉起安装器；macOS 只能打开 dmg 让用户拖进
      Applications——Squirrel.Mac 要求 Developer ID 签名才肯静默替换，本项目是
      ad-hoc 签名，这条绕不过。
 
-   契约版本作判据是复用现成机制：CONTRACT_VERSION 本来就是 preload 与界面之间
-   的约定版本，界面要求的版本一旦高于外壳，说明桥接层也变了，热更就不安全。
+   两个判据各管一件事：契约版本管 preload 与界面之间的约定，后端哈希管界面与
+   Python 引擎之间的约定。少了后一个，老安装会装上新界面、引擎却停在旧版，
+   还自认为已是最新（判定细节见 engine-compat.ts）。
    ============================================================ */
 
 import { app, net, shell } from 'electron';
@@ -21,12 +23,12 @@ import { join } from 'node:path';
 import { CONTRACT_VERSION, type UpdateInfo } from '../../shared/contract';
 import { fail, finish, log, progress, startJob } from '../ipc/events';
 import { getWindow } from '../window';
+import { chooseUpdate, installedBackendHash } from './engine-compat';
 import { effectiveVersion, stageRenderer } from './renderer-store';
 import { compareVersions } from './version';
 
 const REPO = 'ZJU-REAL/Polaris';
 const RELEASES_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
-const RENDERER_RE = /^renderer-(.+)-c(\d+)\.tar\.gz$/;
 
 interface Asset {
   name: string;
@@ -62,6 +64,7 @@ function installerFor(assets: Asset[]): Asset | undefined {
 }
 
 let cached: UpdateInfo | null = null;
+let cachedBackendHash: string | null = null;
 
 export async function checkForUpdate(): Promise<UpdateInfo> {
   const currentVersion = effectiveVersion();
@@ -87,13 +90,14 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
       return { ...base, checked: true };
     }
 
-    const rendererAsset = release.assets.find((a) => {
-      const m = RENDERER_RE.exec(a.name);
-      return m?.[1] === latestVersion && Number(m[2]) <= CONTRACT_VERSION;
-    });
     const installer = installerFor(release.assets);
-    const asset = rendererAsset ?? installer;
-    if (!asset) {
+    const backendHash = installedBackendHash();
+    const choice = chooseUpdate(release.assets, installer, {
+      latestVersion,
+      contract: CONTRACT_VERSION,
+      backendHash,
+    });
+    if (!choice) {
       // 新版本已经发布，但还没有适合本机的包——发版流水线先建 release 再逐个
       // 上传产物，这段窗口里就是这样。说成「已是最新」是错的，说成出错也不对
       return {
@@ -111,14 +115,17 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
       latestVersion,
       notes: release.body ?? '',
       publishedAt: release.published_at,
-      kind: rendererAsset ? 'hot' : 'full',
-      contract: rendererAsset ? Number(RENDERER_RE.exec(rendererAsset.name)![2]) : CONTRACT_VERSION,
-      downloadUrl: asset.browser_download_url,
-      downloadSize: asset.size,
+      kind: choice.kind,
+      fullReason: choice.fullReason,
+      contract: choice.renderer?.contract ?? CONTRACT_VERSION,
+      downloadUrl: choice.asset.browser_download_url,
+      downloadSize: choice.asset.size,
       installerUrl: installer?.browser_download_url,
       checked: true,
       releaseUrl,
     };
+    // 热更新装包时要再核对一次的后端哈希：只留在主进程，不交给界面
+    cachedBackendHash = choice.kind === 'hot' ? backendHash : null;
     return cached;
   } catch (err) {
     // 自动检查（顶栏角标）只看 available，失败时照样什么都不显示——后台检查失败
@@ -167,7 +174,11 @@ export function applyUpdate(): { jobId: string } {
       if (info.kind === 'hot') {
         try {
           log(jobId, 'installing renderer update');
-          stageRenderer(data, { version: info.latestVersion!, contract: info.contract! });
+          stageRenderer(data, {
+            version: info.latestVersion!,
+            contract: info.contract!,
+            backendHash: cachedBackendHash ?? '',
+          });
           finish(jobId, { kind: 'hot', reloaded: true, version: info.latestVersion });
           // 换界面即完成更新：重新加载窗口就跑在新版本上了
           getWindow()?.webContents.reload();
