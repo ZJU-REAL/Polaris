@@ -182,7 +182,7 @@ export function IdeasSection({ run, state, actions, onMoreIdeas, onChanged }: Id
           <div className="dr-links">
             {state !== 'running' && state !== 'retrying' && (
               <button type="button" className="btn btn-ghost sm" onClick={onMoreIdeas} disabled={actions.busy}>
-                {tr('再生成一批', 'Generate more')}
+                {tr('再想一些', 'Generate more')}
               </button>
             )}
             <Link className="btn btn-plain sm" to={`/t/${run.project_id}/forge`}>

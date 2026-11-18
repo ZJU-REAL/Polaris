@@ -26,7 +26,7 @@ export const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   goal_explore: { zh: '目标构建', en: 'Goal building' },
   proposal: { zh: '方案起草', en: 'Proposal drafting' },
   proposal_review: { zh: '方案评审', en: 'Proposal review' },
-  debate: { zh: '辩论评审', en: 'Debate review' },
+  debate: { zh: '想法对比', en: 'Idea comparison' },
   discovery_plan: { zh: '假设探索', en: 'Hypothesis exploration' },
   experiment: { zh: '实验', en: 'Experiments' },
   writing: { zh: '论文撰写', en: 'Paper writing' },

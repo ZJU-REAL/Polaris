@@ -25,7 +25,7 @@ describe('idea picker in the new-experiment / new-manuscript dialogs', () => {
 
   it('lists every idea that is not rejected, picked ones first', () => {
     expect(selectableIdeaOptions(ideas)).toEqual([
-      { value: 'p1', label: '已选中 · 选中的' },
+      { value: 'p1', label: '已选定 · 选中的' },
       { value: 'c1', label: '候选一' },
       { value: 'u1', label: '评审中' },
     ]);

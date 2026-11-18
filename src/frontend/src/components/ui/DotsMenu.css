@@ -1,0 +1,20 @@
+.dots-menu { position: relative; flex-shrink: 0; display: inline-flex; }
+.dots-menu-btn {
+  width: var(--control-h-sm); height: var(--control-h-sm); border-radius: var(--radius-sm);
+  border: 0.5px solid var(--border-2); background: var(--surface); color: var(--text-2);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  transition: background var(--dur-micro) var(--ease-out);
+}
+.dots-menu-btn.is-plain { border-color: transparent; background: transparent; color: var(--text-3); }
+.dots-menu-btn:hover, .dots-menu-btn[aria-expanded='true'] { background: var(--surface-2); color: var(--text); }
+.dots-menu-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dots-menu-dots { display: inline-flex; gap: 3px; }
+.dots-menu-dots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; }
+.dots-menu-list {
+  position: absolute; top: calc(100% + 4px); right: 0; min-width: 180px; z-index: 40;
+  background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-pop); padding: 5px; display: flex; flex-direction: column; gap: 1px;
+}
+.dots-menu-list.is-left { right: auto; left: 0; }
+.dots-menu-list .user-menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
+.dots-menu-list .user-menu-item:disabled:hover { background: transparent; }

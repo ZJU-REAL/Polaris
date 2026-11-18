@@ -1,256 +1,250 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Icon } from '../../components/ui/Icon';
-import { StatusPill } from '../../components/ui/StatusPill';
-import { EmptyState } from '../../components/ui/EmptyState';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { DotsMenu, type DotsMenuItem } from '../../components/ui/DotsMenu';
+import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
 import { Timeline, TimelineItem } from '../../components/ui/Timeline';
 import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
-import { splitInlineEnumerations } from './ideaText';
 import { fmtTime } from '../../lib/format';
 import {
   api,
   type IdeaDetail,
-  type IdeaEvidenceSource,
+  type IdeaEvidence,
   type IdeaGoal,
   type ReviewMessageRead,
   type ReviewSessionRead,
 } from '../../lib/api';
+import { errorText } from '../../lib/errors';
 import { tr } from '../../lib/i18n';
-import { topicPath, useProject } from '../../app/project';
+import { topicPath, useProject, useSyncTopic } from '../../app/project';
 import { DiscussionPanel } from '../review/DiscussionPanel';
 import { DiscussionBubble } from '../review/messages';
-import { errorText } from '../../lib/errors';
-import { IdeaActionCard } from './IdeaActionCard';
-import { compositeOf, DepthBadge, ResearchTypeBadge, RubricBar, SCORE_DIMS } from './ideaShared';
+import { researchKeys } from '../deepresearch/hooks';
+import { IdeaComparisons, matchInfo } from './IdeaComparisons';
+import { researchTypeLabel, SCORE_DIMS } from './ideaShared';
+import { splitInlineEnumerations } from './ideaText';
+import {
+  groupEvidence,
+  localizeHeadings,
+  originKind,
+  originSentence,
+  overallScore,
+  rankIdeas,
+  standingText,
+  splitUnsupportedSection,
+  unsupportedOf,
+} from './ideaView';
+import '../voyages/task.css';
+import './ideas.css';
 
 /* ============================================================
-   /ideas/:id — idea 详情（M3 + Idea 2.0）
-   content markdown（[[paper:uuid]] → 库内论文链接）、四维分数 +
-   rationale 折叠、parent papers 链接（跳 wiki）、选中 / 开始实验 / 淘汰、
-   研究方案：研究目标卡片 + 依据文献 + 评审修订记录（只读），
-   底部人机讨论区。
+   /ideas/:id —— 一个想法，从上往下读：
+
+     它主张什么（标题 + 一段话）→ 现在能对它做什么（选定 / 开始实验 / 展开为研究方案）
+     → 为什么可能成立（文献依据，按支持 / 反对分组，点论文就能读）
+     → 哪些地方还没有依据 → 打算怎么做（方法与实验）→ 评分 → 和别的想法比的结果 → 讨论。
+
+   以前是两栏卡片：正文在左，评分条、依据、来源论文、操作挤在右栏，
+   辩论记录要跳去另一页。
    ============================================================ */
 
-/* ---------------- 研究目标卡片（Idea 2.0） ---------------- */
-
-function GoalField({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 13, lineHeight: 1.6 }}>{children}</div>
-    </div>
-  );
-}
-
-/** goal JSON 由 LLM/脚本产出，列表字段可能被写成单个字符串（线上实测
- *  resources_needed.data 是字符串，`.join` 直接把整页炸成错误屏）——统一容错。 */
+/** goal JSON 由模型写，列表字段可能是单个字符串——统一成列表。 */
 function asList(v: unknown): string[] {
   if (Array.isArray(v)) return v.map((x) => (typeof x === 'string' ? x : JSON.stringify(x)));
   if (typeof v === 'string' && v.trim()) return [v];
   return [];
 }
 
-function GoalCard({ goal }: { goal: IdeaGoal }) {
+function Section({ title, note, aside, children, id }: { title: string; note?: ReactNode; aside?: ReactNode; children: ReactNode; id?: string }) {
+  return (
+    <section className="idea-sec" id={id} data-sec={id}>
+      <div className="idea-sec-head">
+        <h2 className="idea-sec-title">{title}</h2>
+        {note && <span className="idea-sec-note">{note}</span>}
+        {aside && <span className="idea-sec-aside">{aside}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/* ---------------- 文献依据 ---------------- */
+
+function EvidenceItem({ ev }: { ev: IdeaEvidence }) {
+  const [open, setOpen] = useState(false);
+  const snippet = typeof ev.snippet === 'string' ? ev.snippet.trim() : '';
+  return (
+    <li className="idea-ev-item">
+      {ev.why && <div className="idea-ev-why">{ev.why}</div>}
+      <div className="idea-ev-src">
+        {ev.paper_id ? (
+          <Link to={`/papers/${ev.paper_id}/read`} className="idea-ev-paper" title={ev.title}>
+            {ev.title}
+          </Link>
+        ) : ev.url ? (
+          <a href={ev.url} target="_blank" rel="noreferrer noopener" className="idea-ev-paper" title={ev.title}>
+            {ev.title}
+          </a>
+        ) : (
+          <span className="idea-ev-paper" title={ev.title}>
+            {ev.title}
+          </span>
+        )}
+        {!ev.paper_id && <span className="idea-ev-tag">{ev.source === 'external' ? tr('不在文献库里', 'Not in your library') : tr('趋势信号', 'Trend signal')}</span>}
+        {snippet && (
+          <button type="button" className="step-toggle idea-ev-tag" style={{ marginTop: 0 }} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+            {open ? tr('收起原文', 'Hide excerpt') : tr('原文片段', 'Excerpt')}
+          </button>
+        )}
+      </div>
+      {open && snippet && <blockquote className="idea-ev-snippet">{snippet}</blockquote>}
+    </li>
+  );
+}
+
+function EvidenceSection({ idea }: { idea: IdeaDetail }) {
+  const { support, refute } = groupEvidence(idea.evidence);
+  const [allParents, setAllParents] = useState(false);
+  const cited = new Set((idea.evidence ?? []).map((e) => e.paper_id).filter(Boolean));
+  const parents = idea.parent_papers.filter((p) => !cited.has(p.id));
+  const shownParents = allParents ? parents : parents.slice(0, 5);
+  const total = support.length + refute.length;
+
+  const group = (label: string, tone: string, list: IdeaEvidence[]) =>
+    list.length > 0 && (
+      <div className="idea-ev-group">
+        <div className="idea-ev-label">
+          <span className={'task-dot ' + tone} />
+          {label}
+          <span className="idea-sec-note">{list.length}</span>
+        </div>
+        <ul className="idea-ev-list">
+          {list.map((ev, i) => (
+            <EvidenceItem key={`${ev.paper_id ?? ev.title}-${i}`} ev={ev} />
+          ))}
+        </ul>
+      </div>
+    );
+
+  return (
+    <Section id="evidence" title={tr('文献依据', 'Evidence')} note={total > 0 ? tr('每条是一句论断和支持或反对它的论文。', 'Each line is a claim and the paper that supports or contradicts it.') : undefined}>
+      {group(tr('支持', 'Supporting'), 'is-ok', support)}
+      {group(tr('反对', 'Against'), 'is-err', refute)}
+      {total === 0 && parents.length === 0 && <div className="idea-empty">{tr('这个想法没有记录文献依据。', 'No evidence from the papers is recorded for this idea.')}</div>}
+      {parents.length > 0 && (
+        <div className="idea-ev-group">
+          <div className="idea-ev-label">
+            {total > 0 ? tr('还参考了', 'Also drew on') : tr('提出时参考的论文', 'Papers it was drawn from')}
+            <span className="idea-sec-note">{parents.length}</span>
+          </div>
+          {total === 0 && (
+            <div className="idea-sec-note" style={{ marginBottom: 6 }}>
+              {tr('快速生成的想法只记录参考了哪些论文，没有逐条核对论断。', 'Quick ideas only record which papers they drew on; the claims weren’t checked one by one.')}
+            </div>
+          )}
+          <ul className="idea-plain-list">
+            {shownParents.map((p) => (
+              <li key={p.id}>
+                <Link to={`/papers/${p.id}/read`}>{p.title}</Link>
+              </li>
+            ))}
+          </ul>
+          {parents.length > 5 && (
+            <button type="button" className="step-toggle" onClick={() => setAllParents((v) => !v)}>
+              {allParents ? tr('收起', 'Show fewer') : tr(`显示全部 ${parents.length} 篇`, `Show all ${parents.length}`)}
+            </button>
+          )}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/* ---------------- 研究目标（研究方案才有） ---------------- */
+
+function GoalSection({ goal }: { goal: IdeaGoal }) {
   const [showSmoke, setShowSmoke] = useState(false);
   const res = goal.resources_needed;
-  // scope 本身也可能是字符串（此时没有 in/out 子列表）
   const scopeObj = goal.scope && typeof goal.scope === 'object' ? goal.scope : undefined;
   const scopeText = typeof goal.scope === 'string' ? goal.scope : null;
   const inScope = asList(scopeObj?.in_scope);
   const outScope = asList(scopeObj?.out_of_scope);
   const objectives = asList(goal.objectives);
-  const successCriteria = asList(goal.success_criteria);
-  const keyConcepts = asList(goal.key_concepts);
-  const resData = asList(res?.data);
+  const success = asList(goal.success_criteria);
+  const concepts = asList(goal.key_concepts);
+  const data = asList(res?.data);
+  const resources = [
+    res?.compute ? tr(`算力：${res.compute}`, `Compute: ${res.compute}`) : null,
+    data.length > 0 ? tr(`数据：${data.join('、')}`, `Data: ${data.join(', ')}`) : null,
+    res?.time_weeks != null ? tr(`约 ${res.time_weeks} 周`, `About ${res.time_weeks} weeks`) : null,
+  ].filter((x): x is string => !!x);
+  const row = (label: string, body: ReactNode) => (
+    <>
+      <dt>{label}</dt>
+      <dd>{body}</dd>
+    </>
+  );
+  const list = (items: string[]) => (
+    <ul>
+      {items.map((s, i) => (
+        <li key={i}>{s}</li>
+      ))}
+    </ul>
+  );
   return (
-    <div className="card card-pad">
-      <div className="row gap8" style={{ marginBottom: 14 }}>
-        <span className="section-h">
-          {tr('研究目标', 'Research goal')}
-        </span>
-        <span style={{ marginLeft: 'auto' }}>
-          <ResearchTypeBadge type={goal.research_type} />
-        </span>
-      </div>
-      {goal.task && <GoalField label={tr('研究任务', 'Task')}>{goal.task}</GoalField>}
-      {goal.question && (
-        <GoalField label={tr('核心问题', 'Core question')}>
-          <b>{goal.question}</b>
-        </GoalField>
-      )}
-      {objectives.length > 0 && (
-        <GoalField label={tr('具体目标', 'Objectives')}>
-          <ol style={{ margin: 0, paddingLeft: 18 }}>
-            {objectives.map((o, i) => (
-              <li key={i} style={{ marginBottom: 3 }}>{o}</li>
-            ))}
-          </ol>
-        </GoalField>
-      )}
-      {scopeText && <GoalField label={tr('研究范围', 'Scope')}>{scopeText}</GoalField>}
-      {(inScope.length > 0 || outScope.length > 0) && (
-        <GoalField label={tr('研究范围', 'Scope')}>
-          <div className="row gap12 wrap" style={{ alignItems: 'flex-start' }}>
-            {inScope.length > 0 && (
-              <div style={{ flex: 1, minWidth: 180 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ok-tx)', marginBottom: 3 }}>{tr('做什么', 'In scope')}</div>
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
-                  {inScope.map((s, i) => (
-                    <li key={i}>{s}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {outScope.length > 0 && (
-              <div style={{ flex: 1, minWidth: 180 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', marginBottom: 3 }}>{tr('不做什么', 'Out of scope')}</div>
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
-                  {outScope.map((s, i) => (
-                    <li key={i}>{s}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        </GoalField>
-      )}
-      {successCriteria.length > 0 && (
-        <GoalField label={tr('成功标准', 'Success criteria')}>
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {successCriteria.map((c, i) => (
-              <li key={i} style={{ marginBottom: 3 }}>{c}</li>
-            ))}
-          </ul>
-        </GoalField>
-      )}
-      {keyConcepts.length > 0 && (
-        <GoalField label={tr('关键概念', 'Key concepts')}>
-          <div className="row gap6 wrap">
-            {keyConcepts.map((c, i) => (
-              <span key={i} className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
-                {c}
-              </span>
-            ))}
-          </div>
-        </GoalField>
-      )}
-      {res && (
-        <GoalField label={tr('资源需求', 'Resources')}>
-          <div className="col gap4">
-            {res.compute && (
-              <div className="row gap6">
-                <Icon name="cpu" size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
-                <span>{tr('算力：', 'Compute: ')}{res.compute}</span>
-              </div>
-            )}
-            {resData.length > 0 && (
-              <div className="row gap6" style={{ alignItems: 'flex-start' }}>
-                <Icon name="grid" size={13} style={{ color: 'var(--text-3)', flexShrink: 0, marginTop: 3 }} />
-                <span>{tr('数据：', 'Data: ')}{resData.join(tr('、', ', '))}</span>
-              </div>
-            )}
-            {res.time_weeks != null && (
-              <div className="row gap6">
-                <Icon name="clock" size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
-                <span>{tr(`约 ${res.time_weeks} 周`, `About ${res.time_weeks} weeks`)}</span>
-              </div>
-            )}
-          </div>
-        </GoalField>
-      )}
+    <Section id="goal" title={tr('研究目标', 'Research goal')} note={goal.research_type ? researchTypeLabel(goal.research_type) : undefined}>
+      <dl className="idea-goal">
+        {goal.question && row(tr('核心问题', 'Core question'), goal.question)}
+        {goal.task && row(tr('研究任务', 'Task'), goal.task)}
+        {objectives.length > 0 && row(tr('具体目标', 'Objectives'), list(objectives))}
+        {scopeText && row(tr('研究范围', 'Scope'), scopeText)}
+        {(inScope.length > 0 || outScope.length > 0) &&
+          row(
+            tr('研究范围', 'Scope'),
+            <>
+              {inScope.length > 0 && (
+                <>
+                  <div className="idea-goal-sub">{tr('做什么', 'In scope')}</div>
+                  {list(inScope)}
+                </>
+              )}
+              {outScope.length > 0 && (
+                <>
+                  <div className="idea-goal-sub">{tr('不做什么', 'Out of scope')}</div>
+                  {list(outScope)}
+                </>
+              )}
+            </>,
+          )}
+        {success.length > 0 && row(tr('成功标准', 'Success criteria'), list(success))}
+        {concepts.length > 0 && row(tr('关键概念', 'Key concepts'), concepts.join(tr('、', ', ')))}
+        {resources.length > 0 && row(tr('资源需求', 'Resources'), resources.join(tr('；', '; ')))}
+      </dl>
       {goal.smoke_plan && Object.keys(goal.smoke_plan).length > 0 && (
         <>
-          <button className="btn btn-soft sm" onClick={() => setShowSmoke((v) => !v)}>
-            <Icon
-              name="chevron"
-              size={12}
-              style={{ transform: showSmoke ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}
-            />
-            {tr('快速验证实验', 'Quick validation')} <span style={{ color: 'var(--text-3)', fontSize: 11 }}>{tr('1–3 天见结果', 'results in 1–3 days')}</span>
+          <button type="button" className="step-toggle" aria-expanded={showSmoke} onClick={() => setShowSmoke((v) => !v)}>
+            {showSmoke ? tr('收起快速验证实验', 'Hide the quick validation plan') : tr('快速验证实验（1–3 天见结果）', 'Quick validation plan (results in 1–3 days)')}
           </button>
           {showSmoke && (
-            <pre className="codeblock" style={{ fontSize: 11, marginTop: 10 }}>
+            <pre className="codeblock" style={{ fontSize: 11, marginTop: 8 }}>
               {JSON.stringify(goal.smoke_plan, null, 2)}
             </pre>
           )}
         </>
       )}
-    </div>
+    </Section>
   );
 }
 
-/* ---------------- 依据文献列表（Idea 2.0） ---------------- */
+/* ---------------- 写研究方案时的评审与修订（只读） ---------------- */
 
-/* 文案在渲染处 tr()，避免模块级求值不随语言切换 */
-const EVIDENCE_SOURCE_META: Record<IdeaEvidenceSource, { zh: string; en: string; bg: string; tx: string }> = {
-  library: { zh: '库内', en: 'Library', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
-  external: { zh: '外部', en: 'External', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
-  signal: { zh: '信号', en: 'Signal', bg: 'var(--surface-3)', tx: 'var(--text-2)' },
-};
-
-function EvidenceCard({ idea }: { idea: IdeaDetail }) {
-  const navigate = useNavigate();
-  const evidence = Array.isArray(idea.evidence) ? idea.evidence : [];
-  if (evidence.length === 0) return null;
-  return (
-    <div className="card card-pad">
-      <span className="section-h" style={{ marginBottom: 12 }}>
-        {tr('依据文献', 'Evidence papers')} <span className="en-label" style={{ fontSize: 11 }}>{tr(`${evidence.length} 条`, `${evidence.length} items`)}</span>
-      </span>
-      <div className="col">
-        {evidence.map((ev, i) => {
-          const meta = EVIDENCE_SOURCE_META[ev.source] ?? EVIDENCE_SOURCE_META.signal;
-          const clickable = ev.source === 'library' && !!ev.paper_id;
-          return (
-            <div
-              key={i}
-              className={`row gap8${clickable ? ' hoverable' : ''}`}
-              onClick={clickable ? () => navigate(`/papers/${ev.paper_id}/read`) : undefined}
-              style={{
-                borderTop: i > 0 ? '0.5px solid var(--border)' : 'none',
-                padding: '8px 0',
-                alignItems: 'flex-start',
-              }}
-            >
-              <span className="pill sm" style={{ background: meta.bg, color: meta.tx, flexShrink: 0 }}>
-                {tr(meta.zh, meta.en)}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, lineHeight: 1.4, fontWeight: 600 }}>
-                  {ev.source === 'external' && ev.url ? (
-                    <a href={ev.url} target="_blank" rel="noreferrer noopener" onClick={(e) => e.stopPropagation()}>
-                      {ev.title}
-                      <Icon name="link" size={11} style={{ marginLeft: 4, verticalAlign: '-1px' }} />
-                    </a>
-                  ) : (
-                    ev.title
-                  )}
-                </div>
-                {ev.why && (
-                  <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5, marginTop: 2 }}>{ev.why}</div>
-                )}
-              </div>
-              {clickable && <Icon name="chevron" size={12} style={{ color: 'var(--text-4)', flexShrink: 0, marginTop: 3 }} />}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ---------------- 评审修订记录（Idea 2.0，只读时间线） ---------------- */
-
-/** 从 session.payload 里容错取某轮的分数 / 修订摘要（后端结构宽松处理）。 */
 function roundInfoOf(payload: Record<string, unknown> | null, round: number): { scores: string | null; summary: string | null } {
   const empty = { scores: null, summary: null };
   const roundsRaw = payload?.rounds;
   if (!Array.isArray(roundsRaw)) return empty;
-  const item = roundsRaw.find(
-    (r) => r && typeof r === 'object' && Number((r as Record<string, unknown>).round) === round,
-  ) as Record<string, unknown> | undefined;
+  const item = roundsRaw.find((r) => r && typeof r === 'object' && Number((r as Record<string, unknown>).round) === round) as Record<string, unknown> | undefined;
   if (!item) return empty;
   const summaryRaw = item.revision_summary ?? item.summary;
   const summary = typeof summaryRaw === 'string' && summaryRaw.trim() !== '' ? summaryRaw : null;
@@ -280,45 +274,24 @@ function RevisionSessionBlock({ session }: { session: ReviewSessionRead }) {
     return [...map.entries()].sort((a, b) => a[0] - b[0]);
   }, [messages]);
 
-  if (messagesQuery.isLoading) {
-    return <div className="empty" style={{ padding: 16 }}>{tr('加载中…', 'Loading…')}</div>;
-  }
-  if (rounds.length === 0) {
-    return <div className="empty" style={{ padding: 16 }}>{tr('还没有评审意见', 'No review comments yet')}</div>;
-  }
+  if (messagesQuery.isLoading) return <LoadingState compact rows={2} />;
+  if (rounds.length === 0) return <div className="idea-empty">{tr('还没有评审意见', 'No review comments yet')}</div>;
   return (
     <Timeline>
       {rounds.map(([round, msgs], i) => {
         const info = roundInfoOf(session.payload, round);
         return (
-          <TimelineItem
-            key={round}
-            marker={String(round > 0 ? round : i + 1)}
-            markerBg="var(--accent-soft)"
-            markerColor="var(--accent-text)"
-            last={i === rounds.length - 1}
-          >
+          <TimelineItem key={round} marker={String(round > 0 ? round : i + 1)} markerBg="var(--surface-3)" markerColor="var(--text-2)" last={i === rounds.length - 1}>
             <div className="row gap8" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13, fontWeight: 600 }}>{tr(`第 ${round > 0 ? round : i + 1} 轮评审`, `Review round ${round > 0 ? round : i + 1}`)}</span>
-              {info.scores && (
-                <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{info.scores}</span>
-              )}
+              {info.scores && <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{info.scores}</span>}
             </div>
             {msgs.map((m) => (
               <DiscussionBubble key={m.id} msg={m} />
             ))}
             {info.summary && (
-              <div
-                style={{
-                  fontSize: 12,
-                  color: 'var(--text-2)',
-                  lineHeight: 1.55,
-                  background: 'var(--surface-2)',
-                  borderRadius: 8,
-                  padding: '7px 10px',
-                }}
-              >
-                <b style={{ color: 'var(--text)' }}>{tr('本轮修订：', 'Revision: ')}</b>
+              <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.55 }}>
+                <b style={{ color: 'var(--text)', fontWeight: 500 }}>{tr('这一轮改了什么：', 'What changed: ')}</b>
                 {info.summary}
               </div>
             )}
@@ -329,100 +302,16 @@ function RevisionSessionBlock({ session }: { session: ReviewSessionRead }) {
   );
 }
 
-function RevisionTimeline({ ideaId }: { ideaId: string }) {
-  const sessionsQuery = useQuery({
-    queryKey: ['idea-sessions', ideaId],
-    queryFn: () => api.listIdeaSessions(ideaId),
-    retry: false,
-  });
-  const sessions = (sessionsQuery.data ?? []).filter((s) => s.target_type === 'idea_revision');
-  if (sessions.length === 0) return null;
-  return (
-    <div className="card card-pad">
-      <span className="section-h" style={{ marginBottom: 6 }}>
-        {tr('评审与修订', 'Reviews and revisions')}
-      </span>
-      <div className="scroll" style={{ maxHeight: 460, overflowY: 'auto', marginTop: 14 }}>
-        {sessions.map((s) => (
-          <RevisionSessionBlock key={s.id} session={s} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ScoresCard({ idea }: { idea: IdeaDetail }) {
-  const [showRationale, setShowRationale] = useState(false);
-  const composite = compositeOf(idea.scores);
-  return (
-    <div className="card card-pad">
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
-        <span className="section-h">
-          {tr('评分', 'Scores')}
-        </span>
-        {composite !== null && (
-          <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-            {tr('综合', 'Overall')} <span className="mono" style={{ fontWeight: 600 }}>{composite.toFixed(1)}</span>
-          </span>
-        )}
-      </div>
-      {idea.scores ? (
-        <>
-          {SCORE_DIMS.map((d) => (
-            <RubricBar key={d.key} label={tr(d.zh, d.en)} value={idea.scores![d.key]} />
-          ))}
-          {idea.score_rationale && (
-            <>
-              <button
-                className="btn btn-soft sm"
-                onClick={() => setShowRationale((v) => !v)}
-                style={{ marginTop: 6 }}
-              >
-                <Icon
-                  name="chevron"
-                  size={12}
-                  style={{ transform: showRationale ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}
-                />
-                {tr('评分理由', 'Why these scores')}
-              </button>
-              {showRationale && (
-                <div className="col gap8" style={{ marginTop: 10 }}>
-                  {SCORE_DIMS.map((d) => {
-                    const r = idea.score_rationale?.[d.key];
-                    if (!r) return null;
-                    return (
-                      <div
-                        key={d.key}
-                        style={{
-                          fontSize: 12,
-                          lineHeight: 1.55,
-                          color: 'var(--text-2)',
-                          background: 'var(--surface-2)',
-                          borderRadius: 8,
-                          padding: '8px 11px',
-                        }}
-                      >
-                        <b style={{ color: 'var(--text)' }}>{tr(d.zh, d.en)}</b> — {r}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </>
-          )}
-        </>
-      ) : (
-        <span className="muted" style={{ fontSize: 13 }}>{tr('未评分', 'Not scored')}</span>
-      )}
-    </div>
-  );
-}
+/* ---------------- 页面 ---------------- */
 
 export function IdeaDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const { currentProjectId } = useProject();
+  const { currentProjectId, projects } = useProject();
+  const [confirmTrash, setConfirmTrash] = useState(false);
+  const [showRevisions, setShowRevisions] = useState(false);
 
   const ideaQuery = useQuery({
     queryKey: ['idea', id],
@@ -431,209 +320,313 @@ export function IdeaDetailPage() {
     retry: false,
   });
   const idea = ideaQuery.data;
+  const pid = idea?.project_id ?? null;
+  useSyncTopic(pid);
 
-  function invalidateIdea() {
+  const leaderboardQuery = useQuery({
+    queryKey: ['leaderboard', pid],
+    queryFn: () => api.getLeaderboard(pid!),
+    enabled: !!pid,
+    retry: false,
+  });
+  const sessionsQuery = useQuery({
+    queryKey: ['idea-sessions', id],
+    queryFn: () => api.listIdeaSessions(id!),
+    enabled: !!id,
+    retry: false,
+  });
+  const voyagesQuery = useQuery({
+    queryKey: ['voyages', pid],
+    queryFn: () => api.listVoyages(pid!),
+    enabled: !!pid,
+    retry: false,
+  });
+
+  const rank = useMemo(() => (id ? rankIdeas(leaderboardQuery.data ?? []).get(id) : undefined), [leaderboardQuery.data, id]);
+  const titles = useMemo(() => new Map((leaderboardQuery.data ?? []).map((r) => [r.id, r.title])), [leaderboardQuery.data]);
+  const matches = useMemo(
+    () => (sessionsQuery.data ?? []).filter((s) => s.target_type === 'idea_match').map((s) => matchInfo(s, id ?? '')),
+    [sessionsQuery.data, id],
+  );
+  const revisions = (sessionsQuery.data ?? []).filter((s) => s.target_type === 'idea_revision');
+  const ideaTaskRunning = (voyagesQuery.data ?? []).some(
+    (v) => ['idea_forge', 'idea_review', 'idea_proposal'].includes(v.kind) && ['planning', 'executing', 'verifying', 'replanning'].includes(v.status),
+  );
+
+  function invalidate() {
     void queryClient.invalidateQueries({ queryKey: ['idea', id] });
     void queryClient.invalidateQueries({ queryKey: ['ideas'] });
-    // leaderboard 缓存键带课题 id（['leaderboard', pid]），按同键失效
-    void queryClient.invalidateQueries({ queryKey: ['leaderboard', idea?.project_id ?? currentProjectId] });
+    void queryClient.invalidateQueries({ queryKey: ['leaderboard', pid] });
     void queryClient.invalidateQueries({ queryKey: ['forge-state'] });
+    void queryClient.invalidateQueries({ queryKey: researchKeys.list });
+    void queryClient.invalidateQueries({ queryKey: ['research'] });
   }
 
-  // 选中 / 取消选中 / 淘汰 / 恢复：都是直接改状态，可以反悔
+  // 选定 / 取消选定 / 淘汰 / 恢复：都是直接改状态，可以反悔
   const statusMutation = useMutation({
-    mutationFn: (status: 'candidate' | 'promoted' | 'rejected') =>
-      status === 'promoted' ? api.pickIdea(id!) : api.patchIdea(id!, { status }),
+    mutationFn: (status: 'candidate' | 'promoted' | 'rejected') => (status === 'promoted' ? api.pickIdea(id!) : api.patchIdea(id!, { status })),
     onSuccess: (updated, requested) => {
       const wasRejected = idea?.status === 'rejected';
       toast(
-        requested === 'promoted'
-          ? tr('已选中', 'Picked')
-          : requested === 'rejected'
-            ? tr('已淘汰', 'Rejected')
-            : wasRejected
-              ? tr('已恢复为候选', 'Restored')
-              : tr('已取消选中', 'Unpicked'),
+        requested === 'promoted' ? tr('已选定', 'Picked') : requested === 'rejected' ? tr('已淘汰', 'Rejected') : wasRejected ? tr('已恢复', 'Restored') : tr('已取消选定', 'Unpicked'),
         'ok',
       );
       queryClient.setQueryData<IdeaDetail>(['idea', id], (prev) => (prev ? { ...prev, status: updated.status } : prev));
-      invalidateIdea();
+      invalidate();
     },
     onError: (e) => toast(errorText(e), 'error'),
   });
+  const expand = useMutation({
+    mutationFn: () => api.startDeepIdea(pid!, { seed: { type: 'idea', value: id! } }),
+    onSuccess: (voyage) => {
+      toast(tr('已开始写研究方案', 'Started writing the proposal'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['voyages'] });
+      navigate(`/voyages/${voyage.id}`);
+    },
+    onError: (e) => toast(errorText(e), 'error'),
+  });
+  const trash = useMutation({
+    mutationFn: () => api.trashIdea(id!),
+    onSuccess: () => {
+      toast(tr('已移入回收站', 'Moved to trash'), 'ok');
+      invalidate();
+      navigate(topicPath(pid, 'forge'));
+    },
+    onError: (e) => toast(errorText(e), 'error'),
+    onSettled: () => setConfirmTrash(false),
+  });
 
-  // —— [[paper:uuid]] → 库内论文链接（标题优先取依据文献 / 来源论文 / 目标 grounding） ——
+  // —— [[paper:uuid]] → 论文链接（标题取自依据 / 参考论文） ——
   const paperTitles = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of idea?.parent_papers ?? []) map.set(p.id, p.title);
-    for (const ev of idea?.evidence ?? []) {
-      if (ev.paper_id) map.set(ev.paper_id, ev.title);
-    }
+    for (const ev of idea?.evidence ?? []) if (ev.paper_id) map.set(ev.paper_id, ev.title);
     return map;
   }, [idea]);
   const renderPaperRef = useCallback(
     (paperId: string) => (
-      <span
-        className="wikilink"
-        role="link"
-        tabIndex={0}
-        title={tr('打开这篇论文', 'Open this paper')}
-        onClick={() => navigate(`/papers/${paperId}/read`)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') navigate(`/papers/${paperId}/read`);
-        }}
-      >
-        {paperTitles.get(paperId) ?? tr('库内论文', 'Library paper')}
-      </span>
+      <Link className="wikilink" to={`/papers/${paperId}/read`} title={tr('打开这篇论文', 'Open this paper')}>
+        {paperTitles.get(paperId) ?? tr('文献库里的论文', 'Paper in your library')}
+      </Link>
     ),
-    [paperTitles, navigate, idea?.project_id],
+    [paperTitles],
   );
+
+  const body = useMemo(() => {
+    if (!idea?.content) return { text: '', unsupported: [] as string[] };
+    const split = splitUnsupportedSection(idea.content);
+    return { text: splitInlineEnumerations(localizeHeadings(split.body)), unsupported: split.unsupported };
+  }, [idea?.content]);
 
   if (ideaQuery.isLoading) {
     return (
-      <div className="page fadeup">
-        <div className="empty" style={{ padding: 80 }}>{tr('加载中…', 'Loading…')}</div>
+      <div className="page fadeup idea-page">
+        <LoadingState rows={5} />
       </div>
     );
   }
   if (ideaQuery.isError || !idea) {
     return (
-      <div className="page fadeup">
-        <div className="card">
-          <EmptyState
-            icon="x"
-            title={tr('无法加载这个想法', 'Couldn’t load this idea')}
-            desc={tr('它可能已被删除，或本机引擎没有运行。', 'It may have been deleted, or the local engine isn’t running.')}
-            action={
-              <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'forge'))}>
-                <Icon name="arrow" size={14} style={{ transform: 'rotate(180deg)' }} />
-                {tr('返回想法列表', 'Back to ideas')}
-              </button>
-            }
-          />
-        </div>
+      <div className="page fadeup idea-page">
+        <ErrorState
+          title={tr('无法加载这个想法，它可能已被删除', 'Couldn’t load this idea. It may have been deleted.')}
+          detail={ideaQuery.error ? errorText(ideaQuery.error) : null}
+          onRetry={() => void ideaQuery.refetch()}
+          action={
+            <Link className="btn btn-ghost sm" to={topicPath(currentProjectId, 'forge')}>
+              {tr('返回想法', 'Back to ideas')}
+            </Link>
+          }
+        />
       </div>
     );
   }
 
+  const picked = idea.status === 'promoted';
+  const rejected = idea.status === 'rejected';
+  const proposal = idea.depth === 'proposal';
+  const origin = originKind(idea);
+  const fromList = unsupportedOf(idea);
+  const unsupported = fromList.length > 0 ? fromList : body.unsupported;
+  const overall = overallScore(idea.scores);
+  const topicName = projects.find((p) => p.id === idea.project_id)?.name ?? '';
+  const busy = statusMutation.isPending;
+  const startExperiment = topicPath(idea.project_id, `experiment?new=${idea.id}`);
+  const expandTitle = ideaTaskRunning ? tr('等正在运行的想法任务完成', 'Wait for the running idea task to finish') : undefined;
+
+  const menu: DotsMenuItem[] = [
+    ...(picked ? [{ key: 'unpick', label: tr('取消选定', 'Unpick'), onSelect: () => statusMutation.mutate('candidate') } as DotsMenuItem] : []),
+    ...(!rejected ? [{ key: 'reject', label: tr('淘汰', 'Reject'), icon: 'x', onSelect: () => statusMutation.mutate('rejected') } as DotsMenuItem] : []),
+    { key: 'trash', label: tr('移入回收站', 'Move to trash'), icon: 'trash', danger: true, separated: true, onSelect: () => setConfirmTrash(true) },
+  ];
+
   return (
-    <div className="page fadeup">
-      {/* 头部 */}
-      <button className="btn btn-soft sm" onClick={() => navigate(topicPath(idea.project_id, 'forge'))} style={{ marginBottom: 16 }}>
-        <Icon name="arrow" size={13} style={{ transform: 'rotate(180deg)' }} />
-        {tr('返回想法列表', 'Back to ideas')}
-      </button>
-      <div className="row gap8" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
-        <StatusPill status={idea.status} sm />
-        <DepthBadge depth={idea.depth} />
-        <ResearchTypeBadge type={idea.research_type} />
-        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-          Elo <span style={{ fontWeight: 600, color: 'var(--accent-text)' }}>{Math.round(idea.elo_rating)}</span>
-        </span>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 'auto' }}>
-          {fmtTime(idea.created_at)}
-        </span>
-      </div>
-      <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.015em', lineHeight: 1.3, margin: '0 0 6px' }}>
+    <div className="page fadeup idea-page">
+      <Link className="task-back" to={topicPath(idea.project_id, 'forge')}>
+        ← {topicName ? tr(`${topicName} · 想法`, `${topicName} · Ideas`) : tr('想法', 'Ideas')}
+      </Link>
+      <h1 className="task-title" title={idea.title}>
         {idea.title}
       </h1>
-      <p style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 8px', maxWidth: 780 }}>
-        {idea.summary}
-      </p>
-      {idea.seed_idea ? (
-        <div className="row gap6" style={{ fontSize: 12, color: 'var(--text-3)', margin: '0 0 22px' }}>
-          <Icon name="git" size={13} />
-          {tr('基于草案：', 'Developed from: ')}
-          <span
-            className="hoverable"
-            style={{ color: 'var(--accent-text)', fontWeight: 600 }}
-            onClick={() => navigate(`/ideas/${idea.seed_idea!.id}`)}
-          >
-            {idea.seed_idea.title}
+      {idea.summary && idea.summary.trim() !== idea.title.trim() && <p className="idea-summary">{idea.summary}</p>}
+
+      <div className="idea-meta">
+        {(picked || rejected) && (
+          <span className="idea-state" data-idea-state={idea.status}>
+            <span className={'task-dot ' + (picked ? 'is-ok' : '')} />
+            {picked ? tr('已选定', 'Picked') : tr('已淘汰', 'Rejected')}
           </span>
-          <Icon name="chevron" size={12} style={{ color: 'var(--text-4)' }} />
-        </div>
-      ) : (
-        <div style={{ height: 14 }} />
+        )}
+        {rank && (
+          <a href="#comparisons" className="is-strong" data-testid="idea-rank">
+            {standingText(rank)}
+          </a>
+        )}
+        {origin !== 'manual' && <span>{originSentence(origin)}</span>}
+        {idea.seed_idea && (
+          <span>
+            {tr('由想法展开：', 'Expanded from: ')}
+            <Link to={`/ideas/${idea.seed_idea.id}`}>{idea.seed_idea.title}</Link>
+          </span>
+        )}
+        <span>{fmtTime(idea.created_at)}</span>
+      </div>
+
+      <div className="idea-actions" data-idea-actions={idea.status}>
+        {rejected ? (
+          <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => statusMutation.mutate('candidate')}>
+            {tr('恢复', 'Restore')}
+          </button>
+        ) : picked ? (
+          <Link className="btn btn-primary" to={startExperiment}>
+            {tr('开始实验', 'Start experiment')}
+          </Link>
+        ) : (
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => statusMutation.mutate('promoted')}>
+            {tr('选定', 'Pick')}
+          </button>
+        )}
+        {!rejected && !proposal && (
+          <button type="button" className="btn btn-ghost" disabled={expand.isPending || ideaTaskRunning} title={expandTitle} onClick={() => expand.mutate()}>
+            {expand.isPending ? tr('正在开始…', 'Starting…') : tr('展开为研究方案', 'Expand into a proposal')}
+          </button>
+        )}
+        {!rejected && !picked && (
+          <Link className="btn btn-ghost" to={startExperiment}>
+            {tr('开始实验', 'Start experiment')}
+          </Link>
+        )}
+        <DotsMenu items={menu} align="left" />
+        <span className="idea-actions-hint">
+          {rejected
+            ? tr('已淘汰的想法不参加对比，也不会出现在实验和写作的选项里。', 'Rejected ideas are left out of comparisons and aren’t offered for experiments or writing.')
+            : picked
+              ? tr('已选定：它会排在实验和写作的选项最前面。', 'Picked: it is offered first for experiments and writing.')
+              : tr('选定你想继续做的想法；可以随时取消。', 'Pick the ideas you want to pursue; you can unpick at any time.')}
+        </span>
+      </div>
+
+      <EvidenceSection idea={idea} />
+
+      {unsupported.length > 0 && (
+        <Section id="unsupported" title={tr('尚无依据', 'Not yet supported')} note={tr('这些论断在文献库里没找到依据，要靠实验来检验。', 'No paper in your library backs these claims; an experiment has to test them.')}>
+          <ul className="idea-plain-list">
+            {unsupported.map((s, i) => (
+              <li key={i}>{s}</li>
+            ))}
+          </ul>
+        </Section>
       )}
 
-      <div className="row gap20" style={{ alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        {/* —— 左：研究目标 + 正文 + 评审修订记录 + 讨论 —— */}
-        <div className="col gap20" style={{ flex: '1.6 1 420px', minWidth: 0 }}>
-          {idea.goal && <GoalCard goal={idea.goal} />}
-          <div className="card card-pad">
-            <span className="section-h" style={{ marginBottom: 14 }}>
-              {idea.depth === 'proposal' ? (
-                tr('研究方案', 'Research proposal')
-              ) : (
-                tr('内容', 'Details')
-              )}
-            </span>
-            {idea.content ? (
-              <Markdown source={splitInlineEnumerations(idea.content)} renderPaperRef={renderPaperRef} />
-            ) : (
-              <span className="muted" style={{ fontSize: 13 }}>{tr('还没有内容', 'No content yet')}</span>
-            )}
+      {idea.goal && <GoalSection goal={idea.goal} />}
+
+      <Section id="plan" title={proposal ? tr('研究方案', 'Proposal') : tr('方法与实验', 'Method and experiments')}>
+        {body.text ? (
+          <div className="idea-body">
+            <Markdown source={body.text} renderPaperRef={renderPaperRef} />
           </div>
-          <RevisionTimeline ideaId={idea.id} />
-          <DiscussionPanel ideaId={idea.id} />
-        </div>
-
-        {/* —— 右：评分 / 依据文献 / parent papers / 操作 —— */}
-        <div className="col gap16" style={{ flex: '1 1 280px', minWidth: 0 }}>
-          <ScoresCard idea={idea} />
-          <EvidenceCard idea={idea} />
-
-          {/* parent papers */}
-          <div className="card card-pad">
-            <span className="section-h" style={{ marginBottom: 12 }}>
-              {tr('来源论文', 'Source papers')}
-            </span>
-            {idea.parent_papers.length > 0 ? (
-              <div className="col">
-                {idea.parent_papers.map((p, i) => (
-                  <div
-                    key={p.id}
-                    className="row gap8 hoverable"
-                    onClick={() => navigate(`/papers/${p.id}/read`)}
-                    style={{
-                      borderTop: i > 0 ? '0.5px solid var(--border)' : 'none',
-                      padding: '8px 0',
-                    }}
-                  >
-                    <Icon name="file" size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
-                    <span style={{ fontSize: 12, lineHeight: 1.4, flex: 1 }}>{p.title}</span>
-                    <Icon name="chevron" size={12} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
-                  </div>
+        ) : (
+          <div className="idea-empty">{tr('还没有写方法和实验。', 'No method or experiments written yet.')}</div>
+        )}
+        {revisions.length > 0 && (
+          <>
+            <button type="button" className="step-toggle" aria-expanded={showRevisions} onClick={() => setShowRevisions((v) => !v)}>
+              {showRevisions ? tr('收起评审与修订', 'Hide reviews and revisions') : tr('这份方案的评审与修订', 'Reviews and revisions of this proposal')}
+            </button>
+            {showRevisions && (
+              <div style={{ marginTop: 12 }}>
+                {revisions.map((s) => (
+                  <RevisionSessionBlock key={s.id} session={s} />
                 ))}
               </div>
-            ) : (
-              <span className="muted" style={{ fontSize: 13 }}>{tr('没有来源论文', 'No source papers')}</span>
             )}
+          </>
+        )}
+      </Section>
+
+      <Section
+        id="scores"
+        title={tr('评分', 'Scores')}
+        note={
+          idea.scores
+            ? [
+                overall !== null ? tr(`综合 ${overall.toFixed(1)}，满分 10。`, `Overall ${overall.toFixed(1)} out of 10.`) : '',
+                idea.origin?.novelty_scope === 'library' ? tr('新颖性只对照你的文献库判断。', 'Novelty is judged against your library only.') : '',
+              ]
+                .filter(Boolean)
+                .join(' ')
+            : undefined
+        }
+      >
+        {idea.scores ? (
+          <dl className="idea-scores">
+            {SCORE_DIMS.map((d) => (
+              <div key={d.key} style={{ display: 'contents' }}>
+                <dt>{tr(d.zh, d.en)}</dt>
+                <dd className="idea-score-n">{Number.isInteger(idea.scores![d.key]) ? idea.scores![d.key] : idea.scores![d.key].toFixed(1)}</dd>
+                <dd className="idea-score-why">{idea.score_rationale?.[d.key] ?? ''}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <div className="idea-empty">{tr('还没有评分。', 'Not scored yet.')}</div>
+        )}
+      </Section>
+
+      <Section
+        id="comparisons"
+        title={tr('对比记录', 'Comparisons')}
+        note={matches.length > 0 ? tr('点开一场看审稿人的讨论。', 'Open one to read the reviewers’ discussion.') : undefined}
+      >
+        {sessionsQuery.isLoading ? (
+          <LoadingState compact rows={2} />
+        ) : matches.length === 0 ? (
+          <div className="idea-empty">
+            {tr('还没和别的想法对比过。在想法页点「对比排序」，AI 审稿人会把想法两两对比、排出名次。', 'Not compared with other ideas yet. Use Compare on the Ideas page: AI reviewers compare ideas in pairs and rank them.')}
           </div>
-
-          {/* 下一步：选中 → 开始实验 */}
-          <IdeaActionCard
-            status={idea.status}
-            busy={statusMutation.isPending}
-            onPick={() => statusMutation.mutate('promoted')}
-            onUnpick={() => statusMutation.mutate('candidate')}
-            onReject={() => statusMutation.mutate('rejected')}
-            onRestore={() => statusMutation.mutate('candidate')}
-            onStartExperiment={() => navigate(topicPath(idea.project_id, `experiment?new=${idea.id}`))}
+        ) : (
+          <IdeaComparisons
+            matches={matches}
+            titleOf={(oid) => (oid ? (titles.get(oid) ?? tr('已删除的想法', 'Deleted idea')) : tr('未知想法', 'Unknown idea'))}
+            initialOpen={searchParams.get('match')}
           />
+        )}
+      </Section>
 
-          {/* 辩论记录入口 */}
-          <button
-            className="btn btn-ghost"
-            onClick={() => navigate(topicPath(idea.project_id, `review?tab=matches&idea=${idea.id}`))}
-            style={{ justifyContent: 'center' }}
-          >
-            <Icon name="scale" size={14} />
-            {tr('查看评审辩论', 'View review debates')}
-          </button>
-        </div>
-      </div>
+      <Section id="discussion" title={tr('讨论', 'Discussion')} note={tr('下次对比时，AI 审稿人会看到这里的评论。', 'AI reviewers read these comments in the next comparison.')}>
+        <DiscussionPanel ideaId={idea.id} />
+      </Section>
+
+      <ConfirmModal
+        open={confirmTrash}
+        onClose={() => setConfirmTrash(false)}
+        title={tr(`把「${idea.title}」移入回收站？`, `Move “${idea.title}” to the trash?`)}
+        message={tr('之后可以在想法页的回收站里恢复。', 'You can restore it from the trash on the Ideas page.')}
+        confirmText={tr('移入回收站', 'Move to trash')}
+        danger
+        busy={trash.isPending}
+        onConfirm={() => trash.mutate()}
+      />
     </div>
   );
 }

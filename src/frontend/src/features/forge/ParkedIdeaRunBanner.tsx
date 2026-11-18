@@ -18,15 +18,15 @@ import { ParkedRunNotice } from '../voyages/shared/ParkedRunNotice';
 
 /** 任务种类 → 这一页上的叫法（函数里求值：tr 不能在模块顶层调）。 */
 export function parkedKindLabel(kind: string): string {
-  if (kind === 'idea_review') return tr('想法评审', 'Idea review');
-  if (kind === 'idea_proposal') return tr('深度生成', 'Deep dive');
+  if (kind === 'idea_review') return tr('对比排序', 'Idea comparison');
+  if (kind === 'idea_proposal') return tr('写研究方案', 'Proposal');
   return tr('生成想法', 'Idea generation');
 }
 
 export function parkedTitle(run: Pick<ForgeParkedRun, 'kind' | 'status'>): string {
   const kind = parkedKindLabel(run.kind);
   if (run.status === 'paused_ask') return tr(`「${kind}」任务有问题要问你`, `The “${kind}” task has a question for you`);
-  if (run.status === 'paused_gate') return tr(`「${kind}」任务在等你确认`, `The “${kind}” task is waiting for your approval`);
+  if (run.status === 'paused_gate') return tr(`「${kind}」任务在等你确认`, `The “${kind}” task is waiting for you to confirm`);
   return tr(`「${kind}」任务出错后暂停了`, `The “${kind}” task paused after an error`);
 }
 
@@ -104,7 +104,7 @@ export function ParkedIdeaRunBanner({ run, pid }: { run: ForgeParkedRun; pid: st
         <span style={{ fontWeight: 400 }}>
           {run.status === 'paused_ask'
             ? tr('，回复后任务会继续。', '. It continues once you reply.')
-            : tr('，批准后任务会继续。', '. It continues once you approve.')}
+            : tr('，确认后任务会继续。', '. It continues once you confirm.')}
         </span>
       </span>
       <div className="row gap8" style={{ marginLeft: 'auto', flexShrink: 0 }}>

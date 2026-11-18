@@ -44,7 +44,7 @@ export const TOPIC_TABS: readonly TabDef[] = [
   { key: 'forge', sub: 'forge', zh: '想法', en: 'Ideas', main: true },
   { key: 'experiment', sub: 'experiment', zh: '实验', en: 'Experiments', main: true },
   { key: 'writer', sub: 'writer', zh: '写作', en: 'Writing', main: true },
-  { key: 'review', sub: 'review', zh: '想法评审', en: 'Idea review', main: false },
+  { key: 'review', sub: 'review', zh: '想法对比', en: 'Idea comparisons', main: false },
   { key: 'paper-review', sub: 'paper-review', zh: '稿件评审', en: 'Manuscript review', main: false },
   { key: 'research', sub: 'research', zh: '相关研究', en: 'Related work', main: false },
   { key: 'tasks', sub: 'tasks', zh: '任务', en: 'Tasks', main: false },

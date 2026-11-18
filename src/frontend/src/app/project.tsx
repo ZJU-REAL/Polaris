@@ -78,3 +78,17 @@ export function useProject(): ProjectContextValue {
   if (!ctx) throw new Error('useProject must be used within <ProjectProvider>');
   return ctx;
 }
+
+/**
+ * 条目详情页（想法 / 实验 / 稿件）用：条目属于哪个课题，就把哪个课题当成当前课题。
+ * 这些页面的地址里没有课题，从搜索、任务或别的课题的链接点进来时，侧栏和面包屑
+ * 否则会停在上一个课题上。
+ */
+export function useSyncTopic(projectId: string | null | undefined): void {
+  const { projects, currentProjectId, setCurrentProjectId } = useProject();
+  useEffect(() => {
+    if (projectId && projectId !== currentProjectId && projects.some((p) => p.id === projectId)) {
+      setCurrentProjectId(projectId);
+    }
+  }, [projectId, currentProjectId, projects, setCurrentProjectId]);
+}

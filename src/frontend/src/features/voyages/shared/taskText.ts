@@ -40,7 +40,7 @@ export function taskTitle(task: TaskLike): string {
     case 'idea_forge':
       return tr('生成想法', 'Generate ideas');
     case 'idea_review':
-      return task.goal.includes('补赛') ? tr('想法评审（补评）', 'Idea review (rematch)') : tr('想法评审', 'Idea review');
+      return task.goal.includes('补赛') ? tr('想法对比（补做没完成的）', 'Idea comparison (unfinished ones)') : tr('想法对比', 'Idea comparison');
     case 'idea_proposal':
       return tr('写研究方案', 'Write a research proposal');
     case 'experiment':
@@ -106,7 +106,7 @@ const STEP_LABELS: Record<string, { zh: string; en: string }> = {
   'proposal.review_revise': { zh: '评审并修订', en: 'Review and revise' },
   // 想法评审
   'review.pair': { zh: '安排对比', en: 'Pair up ideas' },
-  'review.match': { zh: '对比辩论', en: 'Debate' },
+  'review.match': { zh: '两两对比', en: 'Comparison' },
   'review.summarize': { zh: '汇总结果', en: 'Sum up the results' },
   // 实验
   'experiment.plan': { zh: '制定实验计划', en: 'Plan the experiment' },

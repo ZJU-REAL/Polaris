@@ -2089,6 +2089,22 @@ export interface IdeaRead {
   created_at: string;
   /** 软删除时间戳；null=活动，非 null=在回收站 */
   trashed_at?: string | null;
+  /** 生成它的任务；手工写入的为 null */
+  source_voyage_id?: string | null;
+  /** 从哪来的：寻找假设（kind=discovery）写入时带文献核对的结果；其余为 null */
+  origin?: IdeaOrigin | null;
+}
+
+/** 想法的来历。目前只有寻找假设会写。 */
+export interface IdeaOrigin {
+  kind?: string;
+  /** 新颖性对照的范围：library = 只对照了这个文献库 */
+  novelty_scope?: string;
+  library_id?: string;
+  library_paper_count?: number;
+  /** 文献库里没找到依据的论断 */
+  unsupported_subclaims?: string[];
+  [extra: string]: unknown;
 }
 
 export interface IdeaParentPaper {
@@ -2146,6 +2162,10 @@ export interface IdeaEvidence {
   url: string | null;
   why: string;
   source: IdeaEvidenceSource;
+  /** 这篇论文对这条论断的立场（寻找假设写入）；其余来源没有 */
+  stance?: 'support' | 'refute' | string | null;
+  /** 论文里的原文片段 */
+  snippet?: string | null;
 }
 
 export interface IdeaDetail extends IdeaRead {

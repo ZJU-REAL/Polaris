@@ -217,8 +217,9 @@ export const researchApi = {
   cancelRun(id: string): Promise<ResearchRunRead> {
     return request<ResearchRunRead>(`/research/${id}/cancel`, { method: 'POST' });
   },
-  moreIdeas(id: string): Promise<ResearchRunRead> {
-    return requestJson<ResearchRunRead>(`/research/${id}/more-ideas`, 'POST', {});
+  /** 在同一个文献库上再找一批假设；rounds 不给用默认轮数。 */
+  moreIdeas(id: string, rounds?: number): Promise<ResearchRunRead> {
+    return requestJson<ResearchRunRead>(`/research/${id}/more-ideas`, 'POST', rounds ? { rounds } : {});
   },
   renameRun(id: string, name: string): Promise<ResearchRunRead> {
     return requestJson<ResearchRunRead>(`/research/${id}`, 'PATCH', { name });

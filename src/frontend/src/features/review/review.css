@@ -1,0 +1,16 @@
+/* 想法对比的名次表：一行一个想法，没有固定列宽，窄屏不横滚。 */
+.rank-list { margin: var(--sp-4) 0 0; padding: 0; list-style: none; border-top: 0.5px solid var(--border); }
+.rank-row { display: flex; align-items: center; gap: var(--sp-4); padding: 11px 0; border-bottom: 0.5px solid var(--border); min-width: 0; }
+.rank-n { flex-shrink: 0; width: 72px; font-size: var(--fs-body); font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rank-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-decoration: none; color: inherit; }
+.rank-title { font-size: var(--fs-body); font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-main:hover .rank-title { color: var(--accent-text); }
+.rank-main:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.rank-sub { font-size: var(--fs-sm); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.rank-act { flex-shrink: 0; min-width: 64px; display: flex; justify-content: flex-end; }
+.rank-state { font-size: var(--fs-sm); font-weight: 500; color: var(--accent-text); }
+.rank-state.is-quiet { font-weight: 400; color: var(--text-3); }
+@media (max-width: 768px) {
+  .rank-row { gap: var(--sp-3); }
+  .rank-n { width: 60px; }
+}

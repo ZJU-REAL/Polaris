@@ -213,7 +213,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
     >
       <FormField
         label={tr('想法', 'Idea')}
-        hint={noIdeas ? undefined : tr('已选中的想法排在前面，实验开始后这个想法会标为已选中', 'Picked ideas come first. Starting an experiment marks the idea as picked.')}
+        hint={noIdeas ? undefined : tr('已选定的想法排在前面，实验开始后这个想法会标为已选定', 'Picked ideas come first. Starting an experiment marks the idea as picked.')}
         error={noIdeas ? tr('这个课题还没有想法，请先生成想法', 'This topic has no ideas yet. Generate some first.') : null}
       >
         <SelectMenu

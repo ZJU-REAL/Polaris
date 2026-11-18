@@ -121,7 +121,7 @@ describe('step labels', () => {
 describe('task titles', () => {
   it('says what the task does, without internal names', () => {
     expect(taskTitle({ kind: 'idea_forge', goal: 'Idea Forge：智能体自我反思' })).toBe('生成想法');
-    expect(taskTitle({ kind: 'idea_review', goal: 'Idea 评审锦标赛：智能体自我反思' })).toBe('想法评审');
+    expect(taskTitle({ kind: 'idea_review', goal: 'Idea 评审锦标赛：智能体自我反思' })).toBe('想法对比');
     expect(taskTitle({ kind: 'idea_proposal', goal: '深度研究方案：智能体自我反思' })).toBe('写研究方案');
     expect(taskTitle({ kind: 'experiment', goal: '实验验证：过程级反思' })).toBe('实验：过程级反思');
     expect(taskTitle({ kind: 'paper_writing', goal: '论文撰写：ReflectStep' })).toBe('起草稿件：ReflectStep');

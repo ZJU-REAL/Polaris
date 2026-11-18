@@ -10,6 +10,7 @@ import { ConfigRow, RangeControl } from '../voyages/shared/ConfigRow';
 import { toast } from '../../components/ui/Toast';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { api, ApiError, type DeepSeedType } from '../../lib/api';
+import { errorText } from '../../lib/errors';
 import { tr } from '../../lib/i18n';
 
 /* ============================================================
@@ -24,7 +25,7 @@ const SEED_TYPES: { v: DeepSeedType; zh: string; en: string }[] = [
   { v: 'text', zh: '描述', en: 'Description' },
   { v: 'concept', zh: '概念', en: 'Concept' },
   { v: 'paper', zh: '论文', en: 'Paper' },
-  { v: 'idea', zh: '从草案深化', en: 'From sketch' },
+  { v: 'idea', zh: '已有想法', en: 'An idea' },
 ];
 
 export interface DeepDiveDrawerProps {
@@ -110,7 +111,7 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
         knobs: { confirm_goal: confirmGoal, external_search: externalSearch, revise_rounds: reviseRounds },
       }),
     onSuccess: (v) => {
-      toast(tr('已开始深度生成', 'Deep dive started'), 'ok');
+      toast(tr('已开始写研究方案', 'Started writing the proposal'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['deep-state', pid] });
       void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       onClose();
@@ -118,11 +119,11 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
-        toast(tr('已有想法任务在运行，请等它完成', 'An idea task is already running. Wait for it to finish.'), 'error');
+        toast(tr('这个课题已有想法任务在运行，请等它完成', 'An idea task is already running for this topic. Wait for it to finish.'), 'error');
         void queryClient.invalidateQueries({ queryKey: ['deep-state', pid] });
         void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       } else {
-        toast(`${tr('启动失败：', 'Start failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(errorText(e), 'error');
       }
     },
   });
@@ -135,11 +136,10 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
       onClose={onClose}
       title={
         <>
-          <Icon name="sparkle" size={18} style={{ color: 'var(--accent)' }} />
-          <span style={{ fontSize: 15, fontWeight: 600 }}>{tr('深度生成', 'Deep dive')}</span>
+          <span style={{ fontSize: 15, fontWeight: 600 }}>{tr('写研究方案', 'Write a proposal')}</span>
         </>
       }
-      sub={tr('检索文献并起草一份完整的研究方案。', 'Searches the literature and drafts a full proposal.')}
+      sub={tr('检索文献，把一个起点写成完整的研究方案：目标、方法、实验设计和风险。', 'Searches the literature and turns a starting point into a full proposal: goals, method, experiments and risks.')}
     >
       <FormField label={tr('从哪里开始', 'Start from')}>
         <Segmented<DeepSeedType>
@@ -209,10 +209,10 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
       )}
 
       {seedType === 'idea' && (
-        <FormField label={tr('草案', 'Sketch')} hint={tr('沿用草案引用的论文', 'Reuses the papers the sketch cites')}>
+        <FormField label={tr('想法', 'Idea')} hint={tr('沿用这个想法参考的论文', 'Reuses the papers the idea drew on')}>
           <SelectMenu
             value={ideaId}
-            placeholder={sketchesQuery.isLoading ? tr('加载中…', 'Loading…') : sketchesQuery.isError ? tr('无法加载草案', 'Couldn’t load sketches') : sketches.length === 0 ? tr('还没有草案，请先生成想法', 'No sketches yet. Generate ideas first') : tr('选择草案', 'Choose a sketch')}
+            placeholder={sketchesQuery.isLoading ? tr('加载中…', 'Loading…') : sketchesQuery.isError ? tr('无法加载想法', 'Couldn’t load ideas') : sketches.length === 0 ? tr('还没有想法', 'No ideas yet') : tr('选择想法', 'Choose an idea')}
             options={[
               ...(initialSeedIdea && !sketches.some((s) => s.id === initialSeedIdea.id)
                 ? [{ value: initialSeedIdea.id, label: initialSeedIdea.title }]
@@ -225,8 +225,8 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
       )}
 
       <div className="settings-list" style={{ marginBottom: 8 }}>
-        <ConfigRow label={tr('先确认研究目标', 'Approve the research goal first')} hint={tr('确认后再起草方案', 'Drafting starts after you approve')}>
-          <Switch checked={confirmGoal} onChange={setConfirmGoal} aria-label={tr('先确认研究目标', 'Approve the research goal first')} />
+        <ConfigRow label={tr('先让我确认研究目标', 'Let me confirm the research goal first')} hint={tr('写好目标后停下来等你确认，再起草方案', 'Pauses once the goal is written; drafting starts after you confirm')}>
+          <Switch checked={confirmGoal} onChange={setConfirmGoal} aria-label={tr('先让我确认研究目标', 'Let me confirm the research goal first')} />
         </ConfigRow>
       </div>
 
@@ -237,12 +237,12 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
         onClick={() => setShowAdvanced((v) => !v)}
       >
         <Icon name={showAdvanced ? 'chevDown' : 'chevron'} size={13} />
-        {tr('高级选项', 'Advanced')}
+        {tr('高级', 'Advanced')}
       </button>
       {showAdvanced && (
         <div className="settings-list" style={{ marginBottom: 14 }}>
-          <ConfigRow label={tr('站外查找相似工作', 'Search for similar work online')} hint={tr('Semantic Scholar 和 OpenAlex', 'Semantic Scholar and OpenAlex')}>
-            <Switch checked={externalSearch} onChange={setExternalSearch} aria-label={tr('站外查找相似工作', 'Search for similar work online')} />
+          <ConfigRow label={tr('在文献库之外查找相似工作', 'Look for similar work outside your library')} hint={tr('用 Semantic Scholar 和 OpenAlex', 'Uses Semantic Scholar and OpenAlex')}>
+            <Switch checked={externalSearch} onChange={setExternalSearch} aria-label={tr('在文献库之外查找相似工作', 'Look for similar work outside your library')} />
           </ConfigRow>
           <ConfigRow label={tr('修订轮数', 'Revision rounds')} hint={tr('评审并修改方案的最多轮数', 'Most rounds of review and revision')}>
             <RangeControl ariaLabel={tr('修订轮数', 'Revision rounds')} value={reviseRounds} min={0} max={4} step={1} onChange={setReviseRounds} />
@@ -263,8 +263,7 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
           </>
         ) : (
           <>
-            <Icon name="play" size={14} />
-            {tr('开始深度生成', 'Start deep dive')}
+            {tr('开始写', 'Start writing')}
           </>
         )}
       </button>

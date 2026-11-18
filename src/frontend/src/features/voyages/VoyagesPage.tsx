@@ -60,7 +60,7 @@ export const KIND_META: Record<string, KindMeta> = {
   wiki_bootstrap: { zh: '检索文献', en: 'Find papers', icon: 'book', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
   wiki_ingest: { zh: '更新文献库', en: 'Library update', icon: 'refresh', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
   idea_forge: { zh: '生成想法', en: 'Idea generation', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
-  idea_review: { zh: '想法评审', en: 'Idea review', icon: 'scale', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
+  idea_review: { zh: '想法对比', en: 'Idea comparison', icon: 'scale', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
   idea_proposal: { zh: '研究方案', en: 'Research plan', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
   experiment: { zh: '实验', en: 'Experiment', icon: 'flask', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)' },
   paper_writing: { zh: '起草稿件', en: 'Manuscript draft', icon: 'pen', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },

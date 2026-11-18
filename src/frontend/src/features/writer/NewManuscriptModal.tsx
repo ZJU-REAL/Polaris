@@ -343,7 +343,7 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
         <FormField
           label={tr('关联想法（可选）', 'Linked idea (optional)')}
           style={{ flex: 1, minWidth: 0 }}
-          hint={tr('已选中的想法排在前面', 'Picked ideas come first')}
+          hint={tr('已选定的想法排在前面', 'Picked ideas come first')}
         >
           <SelectMenu
             value={ideaId}

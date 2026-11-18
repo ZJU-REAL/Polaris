@@ -12,7 +12,7 @@ export function selectableIdeaOptions(
   const rest = usable.filter((i) => i.status !== 'promoted');
   return [
     // 标记放在前面：下拉框窄，放在标题后面会被省略号截掉
-    ...picked.map((i) => ({ value: i.id, label: `${tr('已选中', 'Picked')} · ${i.title}` })),
+    ...picked.map((i) => ({ value: i.id, label: `${tr('已选定', 'Picked')} · ${i.title}` })),
     ...rest.map((i) => ({ value: i.id, label: i.title })),
   ];
 }
