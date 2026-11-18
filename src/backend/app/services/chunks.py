@@ -9,6 +9,7 @@
 支撑文献库对话（services/library_chat.py）与后续 idea 生成等知识服务。
 """
 
+import asyncio
 import re
 import uuid
 from pathlib import Path
@@ -18,6 +19,7 @@ from sqlalchemy import delete, exists, func, select
 from sqlalchemy import true as sa_true
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import get_sessionmaker
 from app.core.embedding_space import EmbeddingSpace, active_space
 from app.core.llm.router import LLMRouter
 from app.models.library_direction import LibraryPaper
@@ -30,6 +32,8 @@ CHUNK_MAX_CHARS = 1600  # 超过则硬切
 CHUNK_OVERLAP_CHARS = 150
 MAX_CHUNKS_PER_PAPER = 120
 EMBED_BATCH = 32
+# 同时在途的向量化请求数（每个请求一批 EMBED_BATCH 段）
+EMBED_CONCURRENCY = 4
 
 _PARA_SPLIT_RE = re.compile(r"\n\s*\n")
 _WORD_RE = re.compile(r"[\w一-鿿]+")
@@ -235,26 +239,42 @@ async def _embed_chunks(
     """
     from app.services.embedding import embed_documents, upsert_chunk_vector
 
+    identity: dict[str, Any] = dict(
+        user_id=user_id, project_id=project_id, library_id=library_id, voyage_id=voyage_id
+    )
+
+    async def embed(batch: list[PaperChunk], own_session: bool) -> Any:
+        texts = [c.text[:2000] for c in batch]
+        if not own_session:
+            return await embed_documents(session, texts, **identity)
+        # 并发的批次各用各的会话读向量空间（一个 AsyncSession 不能并发用）；写入仍然
+        # 回到调用方的会话里顺序做
+        async with get_sessionmaker()() as side:
+            return await embed_documents(side, texts, **identity)
+
+    batches = [pending[i : i + EMBED_BATCH] for i in range(0, len(pending), EMBED_BATCH)]
     embedded = 0
-    for i in range(0, len(pending), EMBED_BATCH):
-        batch = pending[i : i + EMBED_BATCH]
-        try:
-            vectors, space = await embed_documents(
-                session,
-                [c.text[:2000] for c in batch],
-                user_id=user_id,
-                project_id=project_id,
-                library_id=library_id,
-                voyage_id=voyage_id,
-            )
-        except NotImplementedError:
-            return embedded, "provider does not support embeddings"
-        except Exception as e:  # noqa: BLE001 — 嵌入失败不影响主流程
-            return embedded, f"{type(e).__name__}: {e}"
-        for chunk, vector in zip(batch, vectors, strict=True):
-            await upsert_chunk_vector(session, chunk.id, vector, space)
-            embedded += 1
-        await session.commit()
+    cursor = 0
+    while cursor < len(batches):
+        # 第一批单独做：平台还没有向量空间时由它定下来（随调用方的事务提交）。之后每波
+        # 并发 EMBED_CONCURRENCY 批——20 篇全文约 30 批，逐批请求实测要一分半
+        wave = batches[cursor : cursor + (1 if cursor == 0 else EMBED_CONCURRENCY)]
+        results = await asyncio.gather(
+            *(embed(batch, own_session=cursor > 0) for batch in wave), return_exceptions=True
+        )
+        cursor += len(wave)
+        for batch, result in zip(wave, results, strict=True):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, NotImplementedError):
+                return embedded, "provider does not support embeddings"
+            if isinstance(result, BaseException):  # 嵌入失败不影响主流程
+                return embedded, f"{type(result).__name__}: {result}"
+            vectors, space = result
+            for chunk, vector in zip(batch, vectors, strict=True):
+                await upsert_chunk_vector(session, chunk.id, vector, space)
+                embedded += 1
+            await session.commit()
     return embedded, None
 
 
