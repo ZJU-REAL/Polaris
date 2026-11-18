@@ -323,7 +323,15 @@ async def get_leaderboard(
 ) -> list[IdeaLeaderboardEntry]:
     await _member_project(session, project_id, user)
     ideas = await ideas_service.list_ideas(session, project_ids=[project_id], sort="elo")
-    return [ideas_service.to_read(i, IdeaLeaderboardEntry) for i in ideas]
+    ranks = ideas_service.leaderboard_ranks(ideas)
+    board: list[IdeaLeaderboardEntry] = []
+    for idea in ideas:
+        entry = ideas_service.to_read(idea, IdeaLeaderboardEntry)
+        if idea.id in ranks:
+            entry.rank, entry.rank_shared_by = ranks[idea.id]
+            entry.tied = entry.rank_shared_by > 1
+        board.append(entry)
+    return board
 
 
 @router.get("/projects/{project_id}/review/tournament/latest")

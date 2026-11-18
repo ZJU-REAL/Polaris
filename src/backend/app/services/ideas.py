@@ -43,11 +43,28 @@ def evidence_counts(idea: Idea) -> EvidenceCounts:
     )
 
 
+def leaderboard_ranks(ideas: Sequence[Idea]) -> dict[uuid.UUID, tuple[int, int]]:
+    """比较过的想法的名次：{idea_id: (名次, 共用这个名次的想法数)}。
+
+    并列占位（1, 1, 3）：评分相同就是同一名，不靠列表位置硬分先后。评分按两位小数
+    比（和对局结果里给出的评分同一精度——看起来一样的两个分不该排出先后）。
+    一场都没比过的想法不在结果里：1200 是起始值，不是比出来的名次。
+    """
+    played = [i for i in ideas if i.matches > 0]
+    ratings = sorted((round(i.elo_rating, 2) for i in played), reverse=True)
+    out: dict[uuid.UUID, tuple[int, int]] = {}
+    for idea in played:
+        rating = round(idea.elo_rating, 2)
+        out[idea.id] = (ratings.index(rating) + 1, ratings.count(rating))
+    return out
+
+
 def to_read[T: IdeaRead](idea: Idea, schema: type[T] = IdeaRead) -> T:
     """Idea 行 → 读模型（IdeaRead 或它的子类），带上算出来的依据计数。"""
     out = schema.model_validate(idea)
     out.evidence_counts = evidence_counts(idea)
     return out
+
 
 # 同项目 idea 类 voyage 互斥（docs/task-system.md §7）
 IDEA_VOYAGE_KINDS = ("idea_forge", "idea_review", "idea_proposal")

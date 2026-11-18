@@ -153,3 +153,11 @@ class IdeaUpdate(BaseModel):
 class IdeaLeaderboardEntry(IdeaRead):
     matches: int
     wins: int
+    # 名次（并列占位：1, 1, 3）。只在比较过的想法之间排；一场都没比过为 null——
+    # 它的评分只是起始值，不是比出来的。一轮比较里每个想法只对一个对手，所以
+    # 并列是常态：再跑一轮（按当前评分相邻配对）才会把并列的拆开。
+    rank: int | None = None
+    # 这个名次有几个想法共用（含自己）；没有名次为 0
+    rank_shared_by: int = 0
+    # rank_shared_by > 1：界面应显示「并列第 N」，不要按列表位置编 1、2、3
+    tied: bool = False

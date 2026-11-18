@@ -188,6 +188,54 @@ async def test_failed_match_retry_rejects_trashed_participant(client, queue_stub
     assert retry.json()["detail"] == "TOURNAMENT_RETRY_UNAVAILABLE"
 
 
+async def test_leaderboard_ranks_are_honest_about_ties(client, queue_stub):
+    """一轮比较里每个想法只对一个对手：四个想法比完是两个 1216、两个 1184。
+    排行榜必须说「并列第 1」「并列第 3」，而不是按列表位置编出 1、2、3、4；
+    没比过的想法没有名次。再跑一轮（按评分相邻配对）才把首尾的并列拆开。"""
+    project_id, headers = await _setup_project(client)
+    for n in range(4):
+        await _seed_idea(project_id, f"候选想法 {n}")
+    bystander = await _seed_idea(project_id, "没参加比较的想法", status="promoted")
+
+    async def _run_round() -> list[dict]:
+        resp = await client.post(
+            f"/api/projects/{project_id}/review/tournament", json={"rounds": 1}, headers=headers
+        )
+        assert resp.status_code == 201, resp.text
+        engine, _ = _make_engine()
+        await engine.run(uuid.UUID(resp.json()["id"]))
+        resp = await client.get(f"/api/projects/{project_id}/review/leaderboard", headers=headers)
+        return resp.json()
+
+    board = await _run_round()
+    played = [e for e in board if e["matches"] > 0]
+    assert [e["elo_rating"] for e in played] == [1216.0, 1216.0, 1184.0, 1184.0]
+    assert [(e["rank"], e["rank_shared_by"], e["tied"]) for e in played] == [
+        (1, 2, True),
+        (1, 2, True),
+        (3, 2, True),
+        (3, 2, True),
+    ]
+    idle = next(e for e in board if e["id"] == bystander)
+    assert idle["matches"] == 0
+    assert (idle["rank"], idle["rank_shared_by"], idle["tied"]) == (None, 0, False)
+    # 列表顺序和原有字段不变：仍按评分降序
+    assert [e["elo_rating"] for e in board] == sorted(
+        (e["elo_rating"] for e in board), reverse=True
+    )
+
+    board = await _run_round()
+    played = [e for e in board if e["matches"] > 0]
+    assert all(e["matches"] == 2 for e in played)
+    assert [e["elo_rating"] for e in played] == [1232.0, 1200.0, 1200.0, 1168.0]
+    assert [(e["rank"], e["rank_shared_by"], e["tied"]) for e in played] == [
+        (1, 1, False),
+        (2, 2, True),
+        (2, 2, True),
+        (4, 1, False),
+    ]
+
+
 async def test_tournament_debate_elo_and_leaderboard(client, queue_stub):
     project_id, headers = await _setup_project(client)
     idea_a = await _seed_idea(project_id, "想法甲：agent 规划新范式")
@@ -295,6 +343,7 @@ async def test_tournament_debate_elo_and_leaderboard(client, queue_stub):
     assert board[0]["elo_rating"] == 1216.0
     assert board[0]["matches"] == 1 and board[0]["wins"] == 1
     assert board[1]["wins"] == 0
+    assert [(e["rank"], e["tied"]) for e in board] == [(1, False), (2, False)]
 
     # 两个 idea 的 sessions 都能看到这场辩论（idea_b 经 payload 关联）+ 惰性讨论区
     for idea_id in (idea_a, idea_b):
