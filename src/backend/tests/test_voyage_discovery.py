@@ -28,6 +28,7 @@ from app.core.llm.router import LLMRouter
 from app.models.hypothesis import HypothesisNode
 from app.models.paper import PaperChunk
 from app.models.voyage import VoyageRun, VoyageStep, mode_for_kind
+from app.services import hypothesis_pipeline as pipeline
 from tests.conftest import (
     RecordingBus,
     add_paper,
@@ -384,7 +385,7 @@ async def test_discovery_run_is_replayable(client, queue_stub):
 async def test_discovery_low_score_children_auto_pruned(client, queue_stub):
     """库里检索不到任何片段：接地检索空手 → 全 speculation → score=0 < 0.15 →
     两个子候选当场剪枝（留痕不删）→ 无 open 节点 → 直接转汇总。"""
-    project_id, library_id, _headers = await _make_workspace(
+    project_id, library_id, headers = await _make_workspace(
         client, corpus=_CORPUS_MISS, indexed=False
     )
     run_id = await _make_run(project_id, library_id, direction="东岸洋流建模", max_expansions=3)
@@ -421,6 +422,55 @@ async def test_discovery_low_score_children_auto_pruned(client, queue_stub):
     assert [h["id"] for h in artifact["hypotheses"]] == [str(root.id)]
     assert {p["id"] for p in artifact["pruned_appendix"]} == pruned_ids
     assert all("自动剪枝" in p["reason"] for p in artifact["pruned_appendix"])
+
+    # 结构化的剪枝原因：决策留痕、方案附录、树接口三处一致；原话照旧
+    expected = {
+        "score": 0.0,
+        "threshold": pipeline.MIN_VIABLE_SCORE,
+        "support_ratio": 0.0,
+        "novel_ratio": 0.0,
+        "cause": "no_support",
+    }
+    assert all(d["prune"] == expected for d in pruned_decisions)
+    assert all(p["prune"] == expected for p in artifact["pruned_appendix"])
+    tree = (await client.get(f"/api/voyages/{run_id}/hypothesis-tree", headers=headers)).json()
+    by_id = {n["id"]: n for n in tree}
+    assert all(by_id[i]["prune"] == expected for i in pruned_ids)
+    assert all("自动剪枝" in by_id[i]["prune_reason"] for i in pruned_ids)
+    assert by_id[str(root.id)]["prune"] is None and by_id[str(root.id)]["prune_reason"] is None
+
+    # 旧记录只有原话：接口照样给出原话，结构化原因为空
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, run_id)
+        checkpoint = json.loads(json.dumps(run.checkpoint))
+        for decision in checkpoint["discovery"]["decisions"]:
+            decision.pop("prune", None)
+        run.checkpoint = checkpoint
+        await session.commit()
+    tree = (await client.get(f"/api/voyages/{run_id}/hypothesis-tree", headers=headers)).json()
+    old = [n for n in tree if n["status"] == "pruned"]
+    assert old and all(n["prune"] is None and "自动剪枝" in n["prune_reason"] for n in old)
+
+
+def test_prune_reason_names_the_factor_that_failed():
+    support = [{"stance": "support"}, {"stance": "speculation"}]
+    nothing = [{"stance": "speculation"}, {"stance": "speculation"}]
+    novel = {"subclaims": [{"verdict": "novel"}, {"verdict": "known"}]}
+    known = {"subclaims": [{"verdict": "known"}, {"verdict": "known"}]}
+    assert pipeline.prune_reason(nothing, novel, 0.0)["cause"] == "no_support"
+    assert pipeline.prune_reason(support, known, 0.0)["cause"] == "not_novel"
+    low = pipeline.prune_reason(
+        [{"stance": "support"}] + [{"stance": "speculation"}] * 5,
+        {"subclaims": [{"verdict": "novel"}] + [{"verdict": "known"}] * 5},
+        0.0278,
+    )
+    assert low == {
+        "score": 0.0278,
+        "threshold": pipeline.MIN_VIABLE_SCORE,
+        "support_ratio": 0.1667,
+        "novel_ratio": 0.1667,
+        "cause": "low_score",
+    }
 
 
 async def test_discovery_max_expansions_cutoff(client, queue_stub):

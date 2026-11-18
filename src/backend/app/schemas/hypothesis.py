@@ -23,3 +23,9 @@ class HypothesisNodeRead(BaseModel):
     status: str  # open | expanded | pruned | validated | refuted
     created_at: datetime
     updated_at: datetime
+    # 被剪节点的原因（取自任务的决策留痕；没被剪、或随父级联被剪的为 None）：
+    # prune 是结构化的 {score, threshold, support_ratio, novel_ratio,
+    # cause: low_score | not_novel | no_support}，只有自动剪枝且记录较新时才有；
+    # prune_reason 是当时记下的原话，旧记录只有它
+    prune: dict[str, Any] | None = None
+    prune_reason: str | None = None

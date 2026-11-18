@@ -1579,3 +1579,40 @@ def score_hypothesis(grounding: list[dict[str, Any]], novelty_report: dict[str, 
         return 0.0
     support = sum(1 for e in grounding if e.get("stance") == "support")
     return round(novelty_ratio(novelty_report) * (support / total), 4)
+
+
+def support_ratio(grounding: list[dict[str, Any]]) -> float:
+    """有文献支持的子命题占比（score 公式的另一半；空接地为 0）。"""
+    rows = [e for e in grounding if isinstance(e, dict)]
+    if not rows:
+        return 0.0
+    return sum(1 for e in rows if e.get("stance") == "support") / len(rows)
+
+
+def prune_reason(
+    grounding: list[dict[str, Any]],
+    novelty_report: dict[str, Any],
+    score: float,
+    threshold: float = MIN_VIABLE_SCORE,
+) -> dict[str, Any]:
+    """自动剪枝的结构化原因：分数、剪枝线、两个因子，以及卡在哪一个因子上。
+
+    cause：一条有文献支持的子命题都没有 → ``no_support``；有支持但一条新颖的都没有
+    → ``not_novel``；两样都有、只是乘起来不够 → ``low_score``。界面据此用自己的话
+    说原因，不必解析中文句子。
+    """
+    supported = round(support_ratio(grounding), 4)
+    novel = round(novelty_ratio(novelty_report), 4)
+    if supported == 0:
+        cause = "no_support"
+    elif novel == 0:
+        cause = "not_novel"
+    else:
+        cause = "low_score"
+    return {
+        "score": score,
+        "threshold": threshold,
+        "support_ratio": supported,
+        "novel_ratio": novel,
+        "cause": cause,
+    }

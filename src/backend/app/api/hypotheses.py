@@ -40,10 +40,26 @@ async def get_hypothesis_tree(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[HypothesisNodeRead]:
-    """拉平返回 run 的全部节点（父子由前端按 parent_id 拼装）。"""
+    """拉平返回 run 的全部节点（父子由前端按 parent_id 拼装）。
+
+    被剪节点带上剪枝原因（``prune`` / ``prune_reason``），取自 checkpoint 的决策留痕。
+    """
     run = await _viewable_run(session, voyage_id, user)
     nodes = await tree_service.tree_for_run(session, run.id)
-    return [HypothesisNodeRead.model_validate(n) for n in nodes]
+    decisions = ((run.checkpoint or {}).get("discovery") or {}).get("decisions") or []
+    pruned: dict[str, dict] = {}
+    for decision in decisions:
+        if isinstance(decision, dict) and decision.get("decision") == "pruned":
+            pruned.setdefault(str(decision.get("node_id")), decision)
+    out = []
+    for node in nodes:
+        read = HypothesisNodeRead.model_validate(node)
+        decision = pruned.get(str(node.id)) if node.status == "pruned" else None
+        if decision is not None:
+            read.prune = decision.get("prune") or None
+            read.prune_reason = str(decision.get("why") or "") or None
+        out.append(read)
+    return out
 
 
 @router.get("/{voyage_id}/tournament")

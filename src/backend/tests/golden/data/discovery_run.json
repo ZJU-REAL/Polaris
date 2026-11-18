@@ -339,6 +339,8 @@
       "kind": "hypothesis",
       "novelty_report": null,
       "parent_id": null,
+      "prune": null,
+      "prune_reason": null,
       "run_id": "<uuid-6>",
       "score": 0.8,
       "statement": "围绕「structured agent planning」的核心假设（fake root）",
@@ -413,6 +415,8 @@
         ]
       },
       "parent_id": "<uuid-8>",
+      "prune": null,
+      "prune_reason": null,
       "run_id": "<uuid-6>",
       "score": 0.25,
       "statement": "机制假设（fake A）：structured agent planning；父假设：围绕「structu 依赖显式规划机制",
@@ -487,6 +491,8 @@
         ]
       },
       "parent_id": "<uuid-8>",
+      "prune": null,
+      "prune_reason": null,
       "run_id": "<uuid-6>",
       "score": 0.25,
       "statement": "证据闭环假设（fake B）：structured agent planning；父假设：围绕「structu 需要检索增强验证",

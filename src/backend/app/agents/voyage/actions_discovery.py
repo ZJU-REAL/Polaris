@@ -151,17 +151,23 @@ def _record_decision(
     node_id: str | None,
     why: str,
     round_no: int | None = None,
+    prune: dict[str, Any] | None = None,
 ) -> None:
-    """每轮决策留痕（哪个节点、为什么）：SSE 不持久，恢复与审计都要靠它。"""
-    _state(ctx)["decisions"].append(
-        {
-            "action": action,
-            "round": round_no,
-            "decision": decision,
-            "node_id": node_id,
-            "why": why,
-        }
-    )
+    """每轮决策留痕（哪个节点、为什么）：SSE 不持久，恢复与审计都要靠它。
+
+    ``prune``：自动剪枝的结构化原因（:func:`pipeline.prune_reason`），与 ``why`` 的
+    中文句子并存——以前的记录只有 ``why``。
+    """
+    entry: dict[str, Any] = {
+        "action": action,
+        "round": round_no,
+        "decision": decision,
+        "node_id": node_id,
+        "why": why,
+    }
+    if prune is not None:
+        entry["prune"] = prune
+    _state(ctx)["decisions"].append(entry)
 
 
 def _account_node_usage(ctx: ActionContext, node_id: str, usage: dict[str, Any]) -> None:
@@ -446,6 +452,9 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                                 f"{pipeline.MIN_VIABLE_SCORE}，自动剪枝"
                             ),
                             round_no=round_no,
+                            prune=pipeline.prune_reason(
+                                item["grounding"], item["novelty_report"], item["score"]
+                            ),
                         )
                         await ctx.log(
                             f"低分剪枝：{item['statement'][:80]}（score={item['score']}）"
@@ -584,6 +593,11 @@ async def discovery_summarize(ctx: ActionContext, params: dict[str, Any]) -> dic
         for d in state["decisions"]
         if d.get("decision") == "pruned" and d.get("node_id")
     }
+    prune_details = {
+        str(d.get("node_id")): d["prune"]
+        for d in state["decisions"]
+        if d.get("decision") == "pruned" and d.get("node_id") and d.get("prune")
+    }
     # 锦标赛终榜（深度模式 #653；基础模式为空 dict，下面所有分支都退化为原行为，
     # golden 链因此逐字节不变）
     standings = (state.get("tournament") or {}).get("nodes") or {}
@@ -641,6 +655,7 @@ async def discovery_summarize(ctx: ActionContext, params: dict[str, Any]) -> dic
                 "statement": n.statement,
                 "score": n.score,
                 "reason": prune_reasons.get(str(n.id), "随父分支级联剪枝"),
+                "prune": prune_details.get(str(n.id)),
             }
             for n in nodes
             if n.status == "pruned"
