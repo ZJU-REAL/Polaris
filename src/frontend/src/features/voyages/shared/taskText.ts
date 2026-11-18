@@ -177,3 +177,148 @@ export function stepLabel(step: StepLike): string {
   if (known) return tr(known.zh, known.en);
   return stripImplementationNote(step.title) || step.action;
 }
+
+const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+const en = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+
+/**
+ * 一步做完后的结果，一句人话：步骤卡默认只显示这一句，原始数据收在「详情」里。
+ * 文献和实验的步骤另有更细的摘要（StepCard 里的 wikiStepFriendly / experimentStepFriendly），
+ * 这里管其余的；认不出的动作返回 null（卡片上就只有名字和状态）。
+ */
+export function stepResult(action: string, obs: Record<string, unknown>): string | null {
+  switch (action) {
+    case 'forge.read_context':
+      return tr(`读了 ${n(obs.papers)} 篇论文、${n(obs.concepts)} 个概念`, `Read ${en(n(obs.papers), 'paper')} and ${en(n(obs.concepts), 'concept')}`);
+    case 'forge.collect_signals': {
+      const total = n(obs.concept_holes) + n(obs.trends) + n(obs.limitations);
+      return tr(`找到 ${total} 条线索`, `Found ${en(total, 'lead')}`);
+    }
+    case 'forge.gap_analysis':
+      return tr(`归纳出 ${n(obs.gaps)} 个研究空白`, `Identified ${en(n(obs.gaps), 'research gap')}`);
+    case 'forge.generate':
+      return tr(`提出 ${n(obs.generated)} 个想法`, `Proposed ${en(n(obs.generated), 'idea')}`);
+    case 'forge.score':
+      return tr(`给 ${n(obs.succeeded)} 个想法打了分`, `Scored ${en(n(obs.succeeded), 'idea')}`);
+    case 'forge.dedup':
+      return n(obs.dropped) > 0
+        ? tr(`去掉 ${n(obs.dropped)} 个重复的想法`, `Removed ${en(n(obs.dropped), 'duplicate')}`)
+        : tr('没有重复的想法', 'No duplicates');
+    case 'forge.persist':
+      return tr(`保存了 ${n(obs.inserted)} 个想法`, `Saved ${en(n(obs.inserted), 'idea')}`);
+    case 'review.pair':
+      return tr(`${n(obs.participants)} 个想法，分成 ${n(obs.pairs)} 组对比`, `${en(n(obs.participants), 'idea')} in ${en(n(obs.pairs), 'pair')}`);
+    case 'review.match':
+      return obs.winner === 'a' || obs.winner === 'b'
+        ? tr('已分出胜负', 'A winner was picked')
+        : tr('对比完成', 'Debate finished');
+    case 'review.summarize':
+      return n(obs.failed) > 0
+        ? tr(`完成 ${n(obs.matches)} 场对比，${n(obs.failed)} 场没有完成`, `${en(n(obs.matches), 'debate')} finished, ${n(obs.failed)} did not`)
+        : tr(`完成 ${n(obs.matches)} 场对比`, `${en(n(obs.matches), 'debate')} finished`);
+    case 'hypothesis.seed':
+      return typeof obs.statement === 'string' && obs.statement ? obs.statement : null;
+    case 'hypothesis.expand': {
+      const children = Array.isArray(obs.children) ? obs.children.length : 0;
+      return tr(`提出 ${children} 个新假设`, `Proposed ${en(children, 'new hypothesis', 'new hypotheses')}`);
+    }
+    case 'discovery.summarize':
+      return tr(`共 ${n(obs.node_count)} 个假设`, `${en(n(obs.node_count), 'hypothesis', 'hypotheses')} in total`);
+    case 'discovery.write_ideas':
+      return n(obs.duplicates) > 0
+        ? tr(`写成 ${n(obs.ideas)} 个想法，${n(obs.duplicates)} 个与已有的重复`, `Wrote ${en(n(obs.ideas), 'idea')}; ${n(obs.duplicates)} duplicated existing ones`)
+        : tr(`写成 ${n(obs.ideas)} 个想法`, `Wrote ${en(n(obs.ideas), 'idea')}`);
+    case 'daily.fetch':
+      return tr(`获取到 ${n(obs.fetched)} 篇`, `Fetched ${en(n(obs.fetched), 'paper')}`);
+    case 'daily.upsert':
+      return tr(`新增 ${n(obs.created)} 篇，${n(obs.merged)} 篇是重复的`, `${en(n(obs.created), 'new paper')}, ${n(obs.merged)} duplicates`);
+    case 'daily.cleanup':
+      return tr(`清理了 ${n(obs.expired)} 篇`, `Cleared ${en(n(obs.expired), 'paper')}`);
+    case 'daily.embed':
+      return n(obs.failed) > 0
+        ? tr(`${n(obs.embedded)} 篇建好了索引，${n(obs.failed)} 篇没有成功`, `${n(obs.embedded)} indexed, ${n(obs.failed)} failed`)
+        : tr(`${n(obs.embedded)} 篇建好了索引`, `${n(obs.embedded)} indexed`);
+    case 'wiki.daily_digest':
+      return tr(`简报写好了，涉及 ${n(obs.kept)} 篇论文`, `Digest written, covering ${en(n(obs.kept), 'paper')}`);
+    case 'wiki.trend_synthesize':
+      return tr(`总结出 ${n(obs.trends)} 个趋势`, `Summarised ${en(n(obs.trends), 'trend')}`);
+    case 'daily.sync_libraries':
+      return obs.triggered ? tr('已开始更新文献库', 'Library updates started') : tr('没有需要更新的文献库', 'No libraries to update');
+    case 'artifact.write':
+      return typeof obs.artifact === 'string' ? tr(`生成了 ${obs.artifact}`, `Wrote ${obs.artifact}`) : null;
+    default:
+      return null;
+  }
+}
+
+/** 任务状态 → 状态点的色调。 */
+export function taskTone(status: string): 'active' | 'warn' | 'err' | 'ok' | 'idle' {
+  switch (status) {
+    case 'paused_ask':
+    case 'paused_gate':
+      return 'warn';
+    case 'paused_error':
+    case 'failed':
+      return 'err';
+    case 'done':
+      return 'ok';
+    case 'cancelled':
+      return 'idle';
+    default:
+      return 'active';
+  }
+}
+
+export interface TaskStatusInput {
+  status: string;
+  /** 排了自动重试时的时刻 */
+  retry_at?: string | null;
+}
+
+export interface StepStatusInput extends StepLike {
+  status: string;
+}
+
+/**
+ * 任务页顶上的那一句话：现在在做什么 / 在等你什么 / 结果如何。
+ * steps 是没作废的步骤，按执行顺序。
+ */
+export function taskStatusLine(task: TaskStatusInput, steps: StepStatusInput[]): string {
+  const total = steps.length;
+  const at = steps.findIndex((s) => s.status === 'running' || s.status === 'verifying');
+  const next = at >= 0 ? at : steps.findIndex((s) => s.status === 'pending' || s.status === 'failed');
+  const cur = next >= 0 ? steps[next] : undefined;
+  const where = cur ? tr(`（第 ${next + 1} 步，共 ${total} 步）`, ` (step ${next + 1} of ${total})`) : '';
+  switch (task.status) {
+    case 'planning':
+      return tr('正在安排步骤', 'Working out the steps');
+    case 'executing':
+    case 'verifying':
+      return cur ? tr(`正在${stepLabel(cur)}${where}`, `${stepLabel(cur)}${where}`) : tr('正在进行', 'In progress');
+    case 'replanning':
+      return tr('正在调整后面的步骤', 'Adjusting the remaining steps');
+    case 'paused_ask':
+      return tr('等你回答一个问题，回答后继续', 'Waiting for your answer, then it continues');
+    case 'paused_gate':
+      return tr('等你审批，批准后继续', 'Waiting for your approval, then it continues');
+    case 'paused_error':
+      if (task.retry_at) {
+        return cur
+          ? tr(`「${stepLabel(cur)}」遇到问题，稍后自动重试`, `“${stepLabel(cur)}” hit a problem and will retry shortly`)
+          : tr('遇到问题，稍后自动重试', 'Hit a problem and will retry shortly');
+      }
+      return cur
+        ? tr(`停在「${stepLabel(cur)}」这一步，需要你处理`, `Stopped at “${stepLabel(cur)}” and needs you`)
+        : tr('出错停下了，需要你处理', 'Stopped on an error and needs you');
+    case 'done':
+      return tr(`已完成，共 ${total} 步`, `Done, ${total} ${total === 1 ? 'step' : 'steps'}`);
+    case 'failed':
+      return cur
+        ? tr(`没有完成，停在「${stepLabel(cur)}」`, `Didn’t finish. It stopped at “${stepLabel(cur)}”.`)
+        : tr('没有完成', 'Didn’t finish');
+    case 'cancelled':
+      return tr('已取消', 'Cancelled');
+    default:
+      return task.status;
+  }
+}

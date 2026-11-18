@@ -12,6 +12,7 @@ import { VoyageActions } from '../../components/ui/VoyageActions';
 import { DiscoveryCreateButton } from './discovery';
 import { fmtDuration, fmtFullTime, fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { taskTitle } from './shared/taskText';
 
 /* ============================================================
    /voyages — AI 任务列表：状态/类型过滤 + 行（类型徽章/目标/
@@ -56,16 +57,16 @@ interface KindMeta {
 }
 
 export const KIND_META: Record<string, KindMeta> = {
-  wiki_bootstrap: { zh: '初始建库', en: 'Library build', icon: 'book', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
-  wiki_ingest: { zh: '文献库更新', en: 'Library update', icon: 'refresh', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
+  wiki_bootstrap: { zh: '检索文献', en: 'Find papers', icon: 'book', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
+  wiki_ingest: { zh: '更新文献库', en: 'Library update', icon: 'refresh', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
   idea_forge: { zh: '生成想法', en: 'Idea generation', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
   idea_review: { zh: '想法评审', en: 'Idea review', icon: 'scale', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
   idea_proposal: { zh: '研究方案', en: 'Research plan', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
   experiment: { zh: '实验', en: 'Experiment', icon: 'flask', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)' },
-  paper_writing: { zh: '论文起草', en: 'Paper draft', icon: 'pen', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
-  paper_review: { zh: '论文评审', en: 'Paper review', icon: 'check', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
-  presentation: { zh: '论文汇报', en: 'Slides', icon: 'chart', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
-  discovery: { zh: '假设探索', en: 'Hypothesis search', icon: 'compass', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
+  paper_writing: { zh: '起草稿件', en: 'Manuscript draft', icon: 'pen', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
+  paper_review: { zh: '稿件评审', en: 'Manuscript review', icon: 'check', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
+  presentation: { zh: '汇报幻灯片', en: 'Slides', icon: 'chart', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
+  discovery: { zh: '寻找假设', en: 'Hypothesis search', icon: 'compass', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
   daily_feed_sync: { zh: '每日新论文', en: 'Daily papers', icon: 'refresh', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
 };
 
@@ -147,11 +148,10 @@ export function VoyageRow({ v, first }: { v: VoyageRead; first?: boolean }) {
           title={v.goal}
           style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         >
-          {v.goal}
+          {taskTitle(v)}
         </div>
         {/* 元信息并入标题下一行：窄屏不再把标题列挤成 0 宽 */}
         <div className="row gap8" style={{ marginTop: 5, fontSize: 12, color: 'var(--text-3)', flexWrap: 'wrap' }}>
-          <KindBadge kind={v.kind} />
           <span title={fmtFullTime(v.created_at)}>{fmtRelative(v.created_at)}</span>
           <StepProgress v={v} />
           <span

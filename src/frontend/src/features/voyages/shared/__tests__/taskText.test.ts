@@ -1,6 +1,56 @@
 import { describe, expect, it } from 'vitest';
 import { setLang } from '../../../../lib/i18n';
-import { stepLabel, stripImplementationNote, taskTitle } from '../taskText';
+import { stepLabel, stepResult, stripImplementationNote, taskStatusLine, taskTitle, taskTone } from '../taskText';
+
+describe('one-line step results', () => {
+  it('turns the raw observation into a sentence', () => {
+    expect(stepResult('forge.read_context', { papers: 20, concepts: 2 })).toBe('读了 20 篇论文、2 个概念');
+    expect(stepResult('forge.generate', { requested: 8, generated: 8 })).toBe('提出 8 个想法');
+    expect(stepResult('forge.dedup', { dropped: 0 })).toBe('没有重复的想法');
+    expect(stepResult('review.summarize', { matches: 4, failed: 0 })).toBe('完成 4 场对比');
+    expect(stepResult('hypothesis.expand', { children: ['a', 'b'] })).toBe('提出 2 个新假设');
+    expect(stepResult('discovery.write_ideas', { ideas: 5, duplicates: 0 })).toBe('写成 5 个想法');
+    expect(stepResult('daily.upsert', { created: 433, merged: 139 })).toBe('新增 433 篇，139 篇是重复的');
+  });
+
+  it('says nothing for a step it does not know, rather than dumping the data', () => {
+    expect(stepResult('plugin.something', { anything: 1 })).toBeNull();
+  });
+});
+
+describe('the status line at the top of a task', () => {
+  const steps = [
+    { action: 'wiki.search_candidates', title: '按查询词检索 arXiv', status: 'passed' },
+    { action: 'wiki.score_relevance', title: '相关性打分（LLM）', status: 'running' },
+    { action: 'wiki.compile', title: 'Librarian 编译 wiki 页', status: 'pending' },
+  ];
+
+  it('says what is happening now, in plain words', () => {
+    expect(taskStatusLine({ status: 'executing' }, steps)).toBe('正在筛选相关论文（第 2 步，共 3 步）');
+    expect(taskStatusLine({ status: 'planning' }, [])).toBe('正在安排步骤');
+  });
+
+  it('says what it needs from you', () => {
+    expect(taskStatusLine({ status: 'paused_ask' }, steps)).toBe('等你回答一个问题，回答后继续');
+    expect(taskStatusLine({ status: 'paused_gate' }, steps)).toBe('等你审批，批准后继续');
+    const failed = [steps[0]!, { ...steps[1]!, status: 'failed' }, steps[2]!];
+    expect(taskStatusLine({ status: 'paused_error' }, failed)).toBe('停在「筛选相关论文」这一步，需要你处理');
+    // 排了自动重试：不需要你
+    expect(taskStatusLine({ status: 'paused_error', retry_at: '2026-11-18T10:00:00Z' }, failed)).toBe(
+      '「筛选相关论文」遇到问题，稍后自动重试',
+    );
+  });
+
+  it('says how it ended', () => {
+    const done = steps.map((s) => ({ ...s, status: 'passed' }));
+    expect(taskStatusLine({ status: 'done' }, done)).toBe('已完成，共 3 步');
+    expect(taskStatusLine({ status: 'cancelled' }, steps)).toBe('已取消');
+    expect(taskTone('done')).toBe('ok');
+    expect(taskTone('paused_ask')).toBe('warn');
+    expect(taskTone('failed')).toBe('err');
+    expect(taskTone('executing')).toBe('active');
+  });
+});
 
 /* 任务和步骤给人看的名字：不带内部名、不带实现细节，中英各一份。 */
 

@@ -1,53 +1,48 @@
 import { useMemo, useRef, useState } from 'react';
-import { TaskStatus } from './shared/StatusDot';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
 import { Icon } from '../../components/ui/Icon';
 import { VoyageActions } from '../../components/ui/VoyageActions';
 import { Timeline, TimelineItem } from '../../components/ui/Timeline';
 import { toast } from '../../components/ui/Toast';
 import { useShell } from '../../app/AppShell';
 import { topicPath } from '../../app/project';
-import { useDirections } from '../deepresearch/directions';
-import { fmtDuration, fmtTime, fmtTokens } from '../../lib/format';
+import { errorText } from '../../lib/errors';
+import { fmtTokens } from '../../lib/format';
 import { tr } from '../../lib/i18n';
-import {
-  api,
-  ApiError,
-  VOYAGE_TERMINAL,
-  type VoyageStepRead,
-} from '../../lib/api';
-import { KindBadge } from './VoyagesPage';
+import { api, ApiError, VOYAGE_TERMINAL, type VoyageStepRead } from '../../lib/api';
+import { useDirections } from '../deepresearch/directions';
+import { useNow } from '../deepresearch/hooks';
+import { InlineQuestion } from '../deepresearch/InlineQuestion';
+import { elapsedText } from '../deepresearch/phase';
 import { DiscoveryPanel } from './discovery';
-import { ActivityBar } from './shared/ActivityBar';
+import { ParkedRunNotice } from './shared/ParkedRunNotice';
 import { PlanEventCard, StepCard } from './shared/StepCard';
-import {
-  asObj,
-  buildTimelineEntries,
-  byListOrder,
-  enCount,
-  num,
-  stepMarker,
-  stepTokenCount,
-} from './shared/stepUtils';
+import { asObj, buildTimelineEntries, byListOrder, num, stepMarker, stepTokenCount } from './shared/stepUtils';
+import { taskStatusLine, taskTitle, taskTone } from './shared/taskText';
 import { TaskTerminal, type TerminalExtraEntry } from './shared/terminal';
 import { useVoyageChannel } from './shared/useVoyageChannel';
 import { openAskOf, useVoyageMessages } from './shared/useVoyageMessages';
 import { messageNode } from './shared/AskBlock';
 import { ConsoleComposer } from './shared/ConsoleComposer';
+import '../deepresearch/deepresearch.css';
+import './task.css';
 
 /* ============================================================
-   /voyages/:id — 任务详情：循环感知的活动状态 + 步骤时间线 + SSE 实时。
-   体现背后 agent 的规划 → 执行 → 校验 → 按结果调整计划循环：
-   - 顶部显示当前活动的一句话（而非线性四段进度条）与执行方式徽标；
-   - 步骤卡展示验收标准、判定理由、来源（第几次调整新增）、尝试记录；
-   - 时间线按 plan_history 插入计划调整分隔条目，解释为什么多出新步骤。
-   活动状态订阅 /voyages/{id}/events，事件与 TanStack Query 缓存合并。
-   共享组件（StepCard / ActivityBar / TaskTerminal / useVoyageChannel）
-   在 ./shared/ 下，与实验运行台共用。
+   /voyages/:id — 一个任务的页面。读起来是一张进度单，不是控制台：
+
+   · 顶上一句话：现在在做什么 / 在等你什么 / 结果如何，以及用了多久；
+   · 需要你的时候（AI 提问、审批、出错停下），要做的事就在这句话下面，一个主按钮；
+   · 步骤：每步一行名字 + 状态 + 一句结果；时间、用量、验收标准、尝试记录、原始数据在「详情」里；
+   · 日志默认收起，点「显示日志」才出来（给想看过程、想给 AI 留一句话的人）。
+
+   任务和步骤的名字由界面按类型 / 动作名给出（shared/taskText.ts），不显示引擎写给日志的标题。
+   状态订阅 /voyages/{id}/events，事件与 TanStack Query 缓存合并。
+   StepCard / TaskTerminal / useVoyageChannel 在 ./shared/ 下，与实验页共用。
    ============================================================ */
 
-// —— 论文分享 PPT（kind=presentation）：完成后下载产物 ——
+// —— 汇报幻灯片（kind=presentation）：完成后下载 ——
 
 function PresentationDownload({ voyageId, goal }: { voyageId: string; goal: string }) {
   const downloadMutation = useMutation({
@@ -64,66 +59,38 @@ function PresentationDownload({ voyageId, goal }: { voyageId: string; goal: stri
       toast(
         e instanceof ApiError && e.message === 'FILE_NOT_READY'
           ? tr('文件还没生成，请稍后再试', 'The file isn’t ready yet. Try again shortly.')
-          : `${tr('下载失败：', 'Download failed: ')}${e instanceof Error ? e.message : String(e)}`,
+          : `${tr('无法下载：', 'Couldn’t download: ')}${errorText(e)}`,
         'error',
       ),
   });
   return (
-    <button
-      className="btn btn-primary"
-      disabled={downloadMutation.isPending}
-      onClick={() => downloadMutation.mutate()}
-    >
+    <button className="btn btn-primary sm" disabled={downloadMutation.isPending} onClick={() => downloadMutation.mutate()}>
       <Icon name="download" size={13} />
-      {downloadMutation.isPending ? tr('下载中…', 'Downloading…') : tr('下载 PPT', 'Download PPT')}
+      {downloadMutation.isPending ? tr('下载中…', 'Downloading…') : tr('下载幻灯片', 'Download slides')}
     </button>
   );
 }
 
-// —— 文献任务（wiki_bootstrap / wiki_ingest）：整体结果汇总卡 ——
-
-/** 只用来决定要不要渲染建库摘要卡；不含每日新论文（它没有这种 observation）。
-    「这个任务归实验室还是归课题」用 lib/api 的 isLabScopedTask，别拿这个判。 */
-const WIKI_RUN_KINDS = new Set(['wiki_bootstrap', 'wiki_ingest']);
-
-/** 文献任务的整体结果卡：从各步 observation 汇总本次新增/编译数量。 */
-function WikiRunSummary({ steps }: { steps: VoyageStepRead[] }) {
-  const obsOf = (action: string) =>
-    asObj(steps.find((s) => s.action === action && s.status === 'passed')?.observation);
+/** 检索文献的任务：这次的结果，一句话（各步结果里的数字加起来）。没有可说的返回 null。 */
+function surveyResultText(steps: VoyageStepRead[]): string | null {
+  const obsOf = (action: string) => asObj(steps.find((s) => s.action === action && s.status === 'passed')?.observation);
   const search = obsOf('wiki.search_candidates');
   const snowball = obsOf('wiki.snowball');
   const score = obsOf('wiki.score_relevance');
   const compile = obsOf('wiki.compile');
-  const link = obsOf('wiki.link_concepts');
   if (!search && !compile) return null;
-
-  const stats: { label: string; value: number }[] = [];
-  if (search || snowball) stats.push({ label: tr('新收录论文', 'New papers'), value: num(search?.inserted) + num(snowball?.inserted) });
-  if (score) stats.push({ label: tr('相关论文', 'Relevant'), value: num(score.succeeded) - num(score.excluded) });
-  if (compile) stats.push({ label: tr('生成解读', 'Summaries'), value: num(compile.succeeded) });
-  if (link) stats.push({ label: tr('新增概念', 'New concepts'), value: num(link.concepts_promoted) });
-  if (stats.length === 0) return null;
-
-  return (
-    <div className="card card-pad" style={{ marginBottom: 20 }}>
-      <div className="row" style={{ marginBottom: 10 }}>
-        <span className="section-h">
-          {tr('本次结果', 'This run')}
-        </span>
-      </div>
-      <div className="row" style={{ gap: 28, flexWrap: 'wrap' }}>
-        {stats.map((s) => (
-          <div key={s.label}>
-            <div className="mono" style={{ fontSize: 22, fontWeight: 600, lineHeight: 1.2 }}>{s.value}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>{s.label}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  const parts: string[] = [];
+  if (search || snowball) {
+    const added = num(search?.inserted) + num(snowball?.inserted);
+    parts.push(tr(`新收录 ${added} 篇`, `${added} new ${added === 1 ? 'paper' : 'papers'}`));
+  }
+  if (score) {
+    const relevant = num(score.succeeded) - num(score.excluded);
+    parts.push(tr(`${relevant} 篇相关`, `${relevant} relevant`));
+  }
+  if (compile) parts.push(tr(`写了 ${num(compile.succeeded)} 篇解读`, `${num(compile.succeeded)} summarised`));
+  return parts.length > 0 ? parts.join(' · ') : null;
 }
-
-// —— 页面 ——
 
 export function VoyageDetailPage() {
   const { id = '' } = useParams();
@@ -132,6 +99,7 @@ export function VoyageDetailPage() {
   const { openGates } = useShell();
   const { byProject, byLibrary } = useDirections();
   const [showObsolete, setShowObsolete] = useState(false);
+  const [showLog, setShowLog] = useState(false);
 
   const { data: voyage, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['voyage', id, showObsolete],
@@ -147,18 +115,17 @@ export function VoyageDetailPage() {
       void queryClient.invalidateQueries({ queryKey: ['voyage', id] });
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
     },
-    onError: (err) => toast(`${tr('重试失败：', 'Retry failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('无法重试：', 'Couldn’t retry: ')}${errorText(err)}`, 'error'),
   });
 
   const active = !!voyage && !VOYAGE_TERMINAL.has(voyage.status);
 
-  // 对话流（用户建议 / AI 提问）+ 终端 SSE 实时通道
+  // 对话流（你留的话 / AI 的提问）+ 日志的实时通道。日志收起时通道照样开着：
+  // 任务和步骤的状态也是从这里来的。
   const { messages, handleExtraEvent } = useVoyageMessages(id);
-  const { terminal, live, clearTerminal, historyLoading, historyError } = useVoyageChannel(
-    id,
-    active,
-    { onExtraEvent: handleExtraEvent },
-  );
+  const { terminal, live, clearTerminal, historyLoading, historyError } = useVoyageChannel(id, active, {
+    onExtraEvent: handleExtraEvent,
+  });
   const openAsk = openAskOf(voyage, messages);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const extraEntries = useMemo<TerminalExtraEntry[]>(() => {
@@ -169,36 +136,32 @@ export function VoyageDetailPage() {
     }
     return out;
   }, [messages]);
-  const focusComposer = () => {
-    composerRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    composerRef.current?.focus();
-  };
+  const now = useNow(30_000, active);
 
   if (isLoading) {
     return (
-      <div className="page fadeup">
-        <div className="empty" style={{ padding: 80 }}>{tr('加载中…', 'Loading…')}</div>
+      <div className="page fadeup task-page">
+        <LoadingState rows={5} />
       </div>
     );
   }
   if (isError || !voyage) {
     const notFound = error instanceof ApiError && error.status === 404;
     return (
-      <div className="page fadeup">
-        <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>
-            {notFound ? tr('任务不存在', 'Task not found') : tr('无法加载任务', 'Couldn’t load this task')}
-          </div>
-          <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 18 }}>
-            {notFound
-              ? tr('它可能已被删除。', 'It may have been deleted.')
-              : tr('请确认本机引擎在运行，然后重试。', 'Make sure the local engine is running, then retry.')}
-          </div>
-          <div className="row gap8" style={{ justifyContent: 'center' }}>
-            <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-            <button className="btn btn-ghost" onClick={() => navigate('/activity')}>{tr('查看全部任务', 'View all tasks')}</button>
-          </div>
-        </div>
+      <div className="page fadeup task-page">
+        <ErrorState
+          title={
+            notFound
+              ? tr('找不到这个任务，可能已被删除', 'This task no longer exists.')
+              : tr('无法加载任务，请确认本机引擎正在运行', 'Couldn’t load this task. Check that the local engine is running.')
+          }
+          onRetry={notFound ? undefined : () => void refetch()}
+          action={
+            <Link className="btn btn-ghost sm" to="/activity">
+              {tr('查看全部任务', 'View all tasks')}
+            </Link>
+          }
+        />
       </div>
     );
   }
@@ -211,100 +174,101 @@ export function VoyageDetailPage() {
     : { to: '/activity', label: tr('任务与待办', 'Activity') };
 
   const steps = [...(voyage.steps ?? [])].sort(byListOrder);
+  const liveSteps = steps.filter((s) => s.status !== 'obsolete');
   const planEvents = voyage.plan_history ?? [];
-  const entries = buildTimelineEntries(steps, planEvents);
+  // 计划是怎么调整的（哪一步之后加了哪些步骤）默认不画：对多数人这是过程噪音，勾上才显示
+  const entries = buildTimelineEntries(steps, showObsolete ? planEvents : []);
   const totalTokens = steps.reduce((acc, s) => acc + (stepTokenCount(s.tokens) ?? 0), 0);
   const planAdjusted = (voyage.plan_iteration ?? 0) > 0;
+  const passed = liveSteps.filter((s) => s.status === 'passed').length;
+  const result = voyage.kind.startsWith('wiki_') ? surveyResultText(steps) : null;
+  const meta = [
+    elapsedText(voyage.created_at, active ? null : voyage.updated_at, now),
+    liveSteps.length > 0 && active ? tr(`已完成 ${passed}/${liveSteps.length} 步`, `${passed} of ${liveSteps.length} steps done`) : '',
+    totalTokens > 0 ? `${fmtTokens(totalTokens)} tokens` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  // 出错停下、且没有排自动重试：重试是这一页的主动作
+  const stuck = voyage.status === 'paused_error';
 
   return (
-    <div className="page fadeup" style={{ maxWidth: 920 }}>
-      {/* 页头 */}
-      <div className="row" style={{ alignItems: 'flex-start', marginBottom: 20 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="h-eyebrow row gap8">
-            {/* 返回：任务属于哪个课题就回哪个课题（判据与面包屑同一份）；不属于任何课题的
-                （独立文献库的检索、每日新论文）回全部任务。 */}
-            <span className="row gap6" style={{ cursor: 'pointer' }} onClick={() => navigate(back.to)}>
-              ← {back.label}
-            </span>
-            {live && (
-              <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-                <span className="dot pulse" />
-                {tr('实时', 'Live')}
-              </span>
-            )}
-          </div>
-          <h1 className="h-title" style={{ fontSize: 21 }}>{voyage.goal}</h1>
-          <div className="row gap8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
-            <KindBadge kind={voyage.kind} />
-            <TaskStatus status={voyage.status} />
-            {planAdjusted && (
-              <span
-                className="pill sm"
-                style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
-                title={tr('执行中按结果调整过计划', 'The plan changed based on results')}
-              >
-                {tr(`计划调整 ${voyage.plan_iteration} 次`, `Plan adjusted ${enCount(voyage.plan_iteration ?? 0, 'time')}`)}
-              </span>
-            )}
-            <span className="mono muted" style={{ fontSize: 11 }}>
-              {tr('创建', 'Created')} {fmtTime(voyage.created_at)} · {tr('耗时', 'took')} {fmtDuration(voyage.created_at, active ? null : voyage.updated_at)}
-            </span>
-            {totalTokens > 0 && (
-              <span className="mono muted" style={{ fontSize: 11 }}>· {fmtTokens(totalTokens)} tokens</span>
-            )}
+    <div className="page fadeup task-page">
+      <Link className="task-back" to={back.to}>
+        ← {back.label}
+      </Link>
+      <div className="task-head">
+        <h1 className="task-title" title={voyage.goal}>
+          {taskTitle(voyage)}
+        </h1>
+        <div className="task-actions">
+          {voyage.kind === 'presentation' && voyage.status === 'done' && (
+            <PresentationDownload voyageId={voyage.id} goal={voyage.goal} />
+          )}
+          {/* 取消 / 删除；重试在下面的说明旁边（紧挨着出了什么事，那里更好理解） */}
+          <VoyageActions voyage={voyage} showResume={false} onDone={() => navigate(back.to)} />
+        </div>
+      </div>
+
+      {/* —— 一句话：在做什么 / 等你什么 / 结果如何 —— */}
+      <div className="task-status" data-task-status={voyage.status}>
+        {/* 只要一个状态点：那句话本身已经说了是完成、在等还是出错，不再重复一个状态词 */}
+        <span className={`task-dot is-${taskTone(voyage.status)}`} aria-hidden="true" />
+        <span className="task-status-text">{taskStatusLine(voyage, liveSteps)}</span>
+        {meta && <span className="task-status-meta">{meta}</span>}
+      </div>
+      {result && <div className="task-result">{result}</div>}
+
+      {/* —— 需要你的时候：要做的事就在这里 —— */}
+      {openAsk && active && (
+        <InlineQuestion
+          voyageId={id}
+          ask={openAsk}
+          onAnswered={() => {
+            void queryClient.invalidateQueries({ queryKey: ['voyage', id] });
+            void queryClient.invalidateQueries({ queryKey: ['voyage-messages', id] });
+            void queryClient.invalidateQueries({ queryKey: ['voyages'] });
+          }}
+        />
+      )}
+      {voyage.status === 'paused_gate' && (
+        <div className="dr-attn">
+          <div className="dr-attn-text">{tr('这一步需要你审批', 'This step needs your approval')}</div>
+          <div className="dr-attn-sub">{tr('批准后任务从这里继续。', 'The task continues from here once you approve.')}</div>
+          <div className="dr-attn-actions">
+            <button type="button" className="btn btn-primary sm" onClick={() => openGates(null)}>
+              {tr('查看审批', 'Review')}
+            </button>
           </div>
         </div>
-        {/* 取消 / 删除；续跑在下方 ActivityBar 里（紧挨报错说明，那里更好理解） */}
-        <VoyageActions voyage={voyage} showResume={false} onDone={() => navigate(back.to)} />
-        {voyage.kind === 'presentation' && voyage.status === 'done' && (
-          <PresentationDownload voyageId={voyage.id} goal={voyage.goal} />
-        )}
-      </div>
+      )}
+      {stuck && (
+        <div className="task-parked">
+          <ParkedRunNotice
+            error={voyage.last_error}
+            retryAt={voyage.retry_at}
+            retryAttempt={voyage.retry_attempt}
+            onRetry={() => resumeMutation.mutate()}
+            retrying={resumeMutation.isPending}
+          />
+        </div>
+      )}
 
-      {/* 当前活动（循环感知：执行中的任务可能反复经过 执行→校验→调整计划） */}
-      <div className="card card-pad" style={{ marginBottom: 20 }}>
-        <ActivityBar
-          voyage={voyage}
-          steps={steps}
-          onOpenGates={() => openGates(null)}
-          onResume={() => resumeMutation.mutate()}
-          resuming={resumeMutation.isPending}
-          onReply={focusComposer}
-        />
-      </div>
-
-      {/* 文献任务：本次同步结果汇总 */}
-      {WIKI_RUN_KINDS.has(voyage.kind) && <WikiRunSummary steps={steps} />}
-
-      {/* 假设探索：假设树（树视图 + 方案报告，树是任务的一等产物，逐轮长出来） */}
+      {/* 寻找假设：假设树和报告是这类任务的结果，放在步骤前面 */}
       {voyage.kind === 'discovery' && <DiscoveryPanel voyage={voyage} />}
 
-      {/* 本次任务使用的技能（启动时快照，中途改技能不影响） */}
-
-      {/* 步骤时间线（任务板：清单序渲染，计划调整插入分隔条目，作废步骤可选显示） */}
-      <div className="row" style={{ marginBottom: 12 }}>
-        <span className="section-h">
-          {tr('步骤', 'Steps')}
-        </span>
+      {/* —— 步骤 —— */}
+      <div className="task-sec-head">
+        <h2 className="task-sec-title">{tr('步骤', 'Steps')}</h2>
         {planAdjusted && (
-          <label
-            className="row gap6"
-            style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-3)', cursor: 'pointer', userSelect: 'none' }}
-          >
-            <input
-              type="checkbox"
-              checked={showObsolete}
-              onChange={(e) => setShowObsolete(e.target.checked)}
-            />
-            {tr('显示已作废步骤', 'Show dropped steps')}
+          <label className="task-sec-aside">
+            <input type="checkbox" checked={showObsolete} onChange={(e) => setShowObsolete(e.target.checked)} />
+            {tr('显示计划的调整', 'Show plan changes')}
           </label>
         )}
       </div>
       {entries.length === 0 ? (
-        <div className="card card-pad empty" style={{ padding: 40 }}>
-          {tr('正在规划步骤…', 'Planning steps…')}
-        </div>
+        <div className="task-empty">{tr('正在安排步骤…', 'Working out the steps…')}</div>
       ) : (
         <Timeline>
           {entries.map((entry, i) => {
@@ -314,8 +278,8 @@ export function VoyageDetailPage() {
                 <TimelineItem
                   key={`plan-${entry.event.iteration}`}
                   marker={<Icon name="refresh" size={12} />}
-                  markerBg="var(--accent-soft)"
-                  markerColor="var(--accent-text)"
+                  markerBg="var(--surface-2)"
+                  markerColor="var(--text-3)"
                   last={last}
                 >
                   <PlanEventCard event={entry.event} />
@@ -325,30 +289,51 @@ export function VoyageDetailPage() {
             const m = stepMarker(entry.step);
             return (
               <TimelineItem key={entry.step.id} marker={entry.index} markerBg={m.bg} markerColor={m.color} last={last}>
-                <StepCard step={entry.step} planEvents={planEvents} />
+                <StepCard step={entry.step} planEvents={planEvents} showProvenance={showObsolete} />
               </TimelineItem>
             );
           })}
         </Timeline>
       )}
 
-      {/* 运行日志终端：结构化日志 + 大模型流式输出 + 对话混排，常驻显示 */}
-      <TaskTerminal
-        state={terminal}
-        live={live}
-        onClear={clearTerminal}
-        extraEntries={extraEntries}
-        historyLoading={historyLoading}
-        historyError={historyError}
-        footer={
-          <ConsoleComposer
-            voyageId={id}
-            openAsk={openAsk}
-            disabled={!!voyage && VOYAGE_TERMINAL.has(voyage.status)}
-            inputRef={composerRef}
+      {/* —— 日志：默认收起 —— */}
+      <div className="task-log">
+        <button
+          type="button"
+          className="btn btn-ghost sm"
+          data-log-toggle
+          aria-expanded={showLog}
+          onClick={() => setShowLog((s) => !s)}
+        >
+          <Icon name="chevDown" size={12} style={{ transform: showLog ? 'rotate(180deg)' : 'none' }} />
+          {showLog ? tr('隐藏日志', 'Hide log') : tr('显示日志', 'Show log')}
+        </button>
+        {!showLog && active && (
+          <span className="task-log-hint">
+            {tr('日志里可以给 AI 留一句话，它会在下一步之前看到。', 'In the log you can leave a note for the AI. It reads it before the next step.')}
+          </span>
+        )}
+        {showLog && (
+          <TaskTerminal
+            state={terminal}
+            live={live}
+            onClear={clearTerminal}
+            extraEntries={extraEntries}
+            historyLoading={historyLoading}
+            historyError={historyError}
+            // 任务结束后没有「下一步」可以留言了：不放一个禁用的输入框
+            footer={!active ? undefined :
+              <ConsoleComposer
+                voyageId={id}
+                // 提问已经在页面上方回答；这里只留「给 AI 留一句话」
+                openAsk={null}
+                disabled={VOYAGE_TERMINAL.has(voyage.status)}
+                inputRef={composerRef}
+              />
+            }
           />
-        }
-      />
+        )}
+      </div>
     </div>
   );
 }

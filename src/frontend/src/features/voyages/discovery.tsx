@@ -109,12 +109,12 @@ export function DiscoveryCreateButton({ projectId }: { projectId: string | null 
         onClick={() => setOpen(true)}
       >
         <Icon name="compass" size={13} />
-        {tr('新建假设探索', 'New hypothesis search')}
+        {tr('单独寻找假设', 'Look for hypotheses')}
       </button>
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title={tr('新建假设探索', 'New hypothesis search')}
+        title={tr('单独寻找假设', 'Look for hypotheses')}
         sub={tr(
           'AI 围绕这个方向提出假设，并逐轮展开最有希望的分支。',
           'The AI proposes hypotheses on this direction and expands the most promising ones each round.',

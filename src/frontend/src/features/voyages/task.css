@@ -1,0 +1,79 @@
+/* 任务页（/voyages/:id）和步骤卡。和课题时间线同一套说法：平、安静，
+   靠字号和留白分层；颜色只给状态点和唯一的主按钮。 */
+
+.task-page { max-width: 860px; }
+
+.task-back {
+  display: inline-block; max-width: 100%; margin-bottom: var(--sp-2);
+  font-size: var(--fs-sm); color: var(--text-3); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.task-back:hover { color: var(--accent-text); }
+
+.task-head { display: flex; align-items: flex-start; gap: var(--sp-3); }
+.task-title {
+  flex: 1; min-width: 0; margin: 0; font-size: var(--fs-page); font-weight: 600; line-height: var(--lh-tight);
+  letter-spacing: -0.01em; color: var(--text); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.task-actions { flex-shrink: 0; display: flex; align-items: center; gap: var(--sp-2); }
+
+/* 一句话状态：点 + 状态词 + 在做什么 + 用了多久 */
+.task-status {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px var(--sp-3); margin-top: var(--sp-3);
+  font-size: var(--fs-body); line-height: var(--lh-body);
+}
+.task-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; align-self: center; margin-right: -4px; background: var(--muted-dot); }
+.task-dot.is-active { background: var(--accent); }
+.task-dot.is-warn { background: var(--warn); }
+.task-dot.is-err { background: var(--danger); }
+.task-dot.is-ok { background: var(--ok); }
+.task-status-text { color: var(--text); font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.step-error-more {
+  padding: 0; border: 0; background: transparent; cursor: pointer; white-space: nowrap;
+  font-family: var(--sans); font-size: var(--fs-sm); color: inherit; text-decoration: underline; text-underline-offset: 2px;
+}
+.task-status-meta { color: var(--text-3); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.task-result { margin-top: 4px; font-size: var(--fs-body); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.task-page > .dr-ask, .task-page > .dr-attn, .task-parked { margin-top: var(--sp-4); max-width: none; }
+
+.task-sec-head { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-6) 0 var(--sp-3); }
+.task-sec-title { margin: 0; font-size: var(--fs-title); font-weight: 600; color: var(--text); }
+.task-sec-aside {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+  font-size: var(--fs-sm); color: var(--text-3);
+}
+.task-empty { font-size: var(--fs-body); color: var(--text-3); padding: 6px 2px; }
+
+.task-log { margin-top: var(--sp-6); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); }
+.task-log-hint { font-size: var(--fs-sm); color: var(--text-3); }
+.task-log > :not(button):not(.task-log-hint) { flex-basis: 100%; min-width: 0; }
+
+/* —— 步骤卡 —— */
+.step-card { padding: 11px 14px; }
+.step-title { font-size: var(--fs-body); font-weight: 600; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.step-note { font-size: var(--fs-sm); color: var(--text-3); }
+.step-note.is-warn { color: var(--warn-tx); }
+.step-result {
+  margin-top: 4px; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.step-result.is-warn { color: var(--warn-tx); }
+.step-result.is-error { color: var(--danger-tx); }
+.step-result.is-quiet { color: var(--text-3); font-size: var(--fs-sm); }
+.step-toggle {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; padding: 0;
+  border: 0; background: transparent; cursor: pointer;
+  font-family: var(--sans); font-size: var(--fs-sm); color: var(--text-3);
+}
+.step-toggle:hover { color: var(--text); }
+.step-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.step-details { margin-top: 6px; padding-top: 8px; border-top: 0.5px solid var(--border); }
+.step-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--sp-3);
+  font-size: var(--fs-sm); color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 768px) {
+  .task-head { flex-wrap: wrap; }
+}

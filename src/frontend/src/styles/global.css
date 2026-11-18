@@ -363,7 +363,7 @@ input {
 /* 各段都不换行。第一段（研究 / 论文）和分隔符不压；中间的段是课题名，可能很长，
    先截它（保留至少几个字）；末段是「我在哪一页」，最后才截。 */
 .crumb a, .crumb .sep { white-space: nowrap; flex-shrink: 0; }
-.crumb a:not(:first-child) { flex-shrink: 8; min-width: 4em; overflow: hidden; text-overflow: ellipsis; }
+.crumb a:not(:first-child) { flex-shrink: 1000; min-width: 3em; overflow: hidden; text-overflow: ellipsis; }
 .crumb b { min-width: 2em; flex-shrink: 1; }
 /* 末段可能是实体名（如库名），过长时截断，别把顶栏右侧挤没 */
 .crumb b {
@@ -389,7 +389,7 @@ input {
   border-radius: 50%; background: var(--accent);
 }
 
-.searchbox { min-width: 0; flex-shrink: 1; overflow: hidden;
+.searchbox { flex-shrink: 0; overflow: hidden; white-space: nowrap;
   display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 11px;
   background: var(--surface-2); border: 0.5px solid var(--border-2); border-radius: 8px;
   color: var(--text-3); font-size: 13px; min-width: 200px; cursor: text;

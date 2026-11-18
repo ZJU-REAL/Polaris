@@ -12,6 +12,8 @@ import type {
 } from '../../../lib/api';
 import { asObj, enCount, num, obsoleteReasonOf, PLAN_SOURCE, stepTokenCount } from './stepUtils';
 import { StatusDot, TaskStatus } from './StatusDot';
+import '../task.css';
+import { stepLabel, stepResult } from './taskText';
 
 /* ============================================================
    步骤卡（StepCard）与其子块：验收标准 / 判定 / 尝试记录 / 原始观测 /
@@ -249,17 +251,7 @@ function StepPaperList({ papers, total }: { papers: PaperBrief[]; total?: number
 
 export function WikiStepSummary({ friendly }: { friendly: WikiStepFriendly }) {
   return (
-    <div
-      style={{
-        marginTop: 10,
-        padding: '9px 12px',
-        background: 'var(--surface-2)',
-        borderRadius: 9,
-        fontSize: 13,
-        lineHeight: 1.6,
-        color: 'var(--text)',
-      }}
-    >
+    <div className="step-result">
       {friendly.text}
       <StepPaperList papers={friendly.papers} total={friendly.papersTotal} />
       {friendly.concepts && friendly.concepts.length > 0 && (
@@ -311,8 +303,8 @@ function checkText(c: VoyageAcceptanceCheck): string {
 }
 
 /** 验收标准区：这一步"怎样算通过"，默认收起。 */
-export function AcceptanceBlock({ acceptance }: { acceptance: VoyageAcceptance }) {
-  const [open, setOpen] = useState(false);
+export function AcceptanceBlock({ acceptance, defaultOpen = false }: { acceptance: VoyageAcceptance; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   const checks = acceptance.checks ?? [];
   if (checks.length === 0 && !acceptance.text) return null;
   return (
@@ -572,17 +564,7 @@ export function experimentStepFriendly(action: string, obs: Record<string, unkno
 export function ExperimentStepSummary({ friendly }: { friendly: ExperimentStepFriendly }) {
   const warn = friendly.tone === 'warn';
   return (
-    <div
-      style={{
-        marginTop: 10,
-        padding: '9px 12px',
-        background: 'var(--surface-2)',
-        borderRadius: 9,
-        fontSize: 13,
-        lineHeight: 1.6,
-        color: warn ? 'var(--warn-tx)' : 'var(--text)',
-      }}
-    >
+    <div className={'step-result' + (warn ? ' is-warn' : '')}>
       {friendly.text}
       {friendly.items && friendly.items.length > 0 && (
         <div className="col" style={{ gap: 6, marginTop: 8 }}>
@@ -604,8 +586,8 @@ export function ExperimentStepSummary({ friendly }: { friendly: ExperimentStepFr
 
 // —— 尝试记录（attempts 归档）——
 
-export function AttemptsBlock({ attempts }: { attempts: VoyageStepAttempt[] }) {
-  const [open, setOpen] = useState(false);
+export function AttemptsBlock({ attempts, defaultOpen = false }: { attempts: VoyageStepAttempt[]; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <div style={{ marginTop: 8 }}>
       <button
@@ -692,6 +674,25 @@ export function realCommand(value: unknown): string | null {
   return text;
 }
 
+const ERROR_PREVIEW = 180;
+
+/**
+ * 引擎原样给出的报错。短的直接显示；长的（一整段 SQL、一屏堆栈）只显示开头，
+ * 其余点开再看——一面红墙盖住整张卡，谁也读不出哪句是重点。
+ */
+export function LongError({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  if (text.length <= ERROR_PREVIEW) return <>{text}</>;
+  return (
+    <>
+      {open ? text : `${text.slice(0, ERROR_PREVIEW).trimEnd()}…`}{' '}
+      <button type="button" className="step-error-more" onClick={() => setOpen((o) => !o)}>
+        {open ? tr('收起', 'Show less') : tr('显示完整报错', 'Show the full error')}
+      </button>
+    </>
+  );
+}
+
 function FailureEvidenceCard({ failure }: { failure: Record<string, unknown> }) {
   const command = realCommand(failure.command_display);
   const meta = [
@@ -708,9 +709,9 @@ function FailureEvidenceCard({ failure }: { failure: Record<string, unknown> }) 
   const raw = [stderr && `stderr:\n${stderr}`, stdout && `stdout:\n${stdout}`].filter(Boolean).join('\n\n');
   return (
     <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, background: 'var(--danger-bg)', color: 'var(--danger-tx)' }}>
-      <div style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>
+      <div style={{ fontWeight: 500, overflowWrap: 'anywhere' }}>
         {failure.phase && failure.phase !== 'unknown' ? `${String(failure.phase)} · ` : ''}
-        {String(failure.message ?? failure.exception_type ?? tr('命令执行失败', 'Command failed'))}
+        <LongError text={String(failure.message ?? failure.exception_type ?? tr('命令执行失败', 'Command failed'))} />
       </div>
       {meta.length > 0 && (
         <div className="mono" style={{ marginTop: 5, fontSize: 11, overflowWrap: 'anywhere' }}>
@@ -731,43 +732,66 @@ function FailureEvidenceCard({ failure }: { failure: Record<string, unknown> }) 
   );
 }
 
-export function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvents: VoyagePlanEvent[] }) {
+/**
+ * 步骤卡。默认只有三样：这一步叫什么、做得怎么样（状态）、一句结果。
+ * 时间、用量、验收标准、每次尝试的记录和原始数据都在「详情」里——想查的人点开，
+ * 不想查的人看到的是一张读得懂的进度单，而不是控制台。
+ * 出错的原因不收起来：那是用户需要知道的事。
+ */
+export function StepCard({
+  step,
+  planEvents,
+  showProvenance = true,
+}: {
+  step: VoyageStepRead;
+  planEvents: VoyagePlanEvent[];
+  /** 是否标出「后来加入」的步骤（任务页默认不标，勾了「显示计划的调整」才标） */
+  showProvenance?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
   const obs = asObj(step.observation);
   const failure = obs ? asObj(obs.failure) : null;
-  const friendly = obs ? wikiStepFriendly(step.action, obs) : null;
-  const expFriendly = obs && step.action.startsWith('experiment.') ? experimentStepFriendly(step.action, obs) : null;
+  // 结果只在这一步做成之后说；出错的一步说的是出了什么错，不是「新收录 0 篇」
+  const succeeded = step.status === 'passed' || step.status === 'skipped';
+  const friendly = obs && succeeded ? wikiStepFriendly(step.action, obs) : null;
+  const expFriendly =
+    obs && step.action.startsWith('experiment.') && (succeeded || typeof obs.error === 'string')
+      ? experimentStepFriendly(step.action, obs)
+      : null;
+  const plain = obs && succeeded && !friendly && !expFriendly ? stepResult(step.action, obs) : null;
   const obsolete = step.status === 'obsolete';
   const planIter = step.provenance?.plan_iteration ?? 0;
   const gateKind = step.requires_gate ? GATE_KIND[step.requires_gate] : null;
   const signal = obs ? asObj(obs.plan_signal) : null;
   const signalText = signal ? planSignalText(signal) : null;
   const attempts = step.attempts ?? [];
+  const tokens = stepTokenCount(step.tokens) ?? 0;
+  const label = stepLabel(step);
+  // 还没开始的步骤没有什么可看的详情（只有一条验收标准），不放这个开关
+  const hasDetails =
+    step.status !== 'pending' &&
+    (!!step.started_at || tokens > 0 || !!step.acceptance || attempts.length > 1 || (step.observation !== null && step.observation !== undefined));
   return (
-    <div className="card" style={{ padding: '14px 16px', opacity: obsolete ? 0.55 : 1 }}>
+    <div className="card step-card" data-step-status={step.status} style={{ opacity: obsolete ? 0.55 : 1 }}>
       <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-        <span title={step.action} style={{ fontSize: 13, fontWeight: 600, textDecoration: obsolete ? 'line-through' : 'none' }}>
-          {step.title}
+        <span className="step-title" style={{ textDecoration: obsolete ? 'line-through' : 'none' }}>
+          {label}
         </span>
-        {planIter > 0 && (
+        {showProvenance && planIter > 0 && (
           <span
-            style={{ fontSize: 12, color: 'var(--text-3)' }}
+            className="step-note"
             title={tr('不在最初的计划里，调整计划时加入', 'Not in the original plan; added when the plan changed')}
           >
-            {tr(`第 ${planIter} 次调整加入`, `Added in revision ${planIter}`)}
+            {tr('后来加入', 'Added later')}
           </span>
         )}
         {step.requires_gate && (
-          <span
-            className="pill sm"
-            style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}
-            title={tr('到这一步会暂停，等你批准后继续', 'Pauses here until you approve')}
-          >
-            <Icon name="gate" size={11} />
-            {tr(`需审批：${gateKind ? gateKind.zh : step.requires_gate}`, `Needs approval: ${gateKind ? gateKind.en : step.requires_gate}`)}
+          <span className="step-note is-warn" title={tr('到这一步会暂停，等你批准后继续', 'Pauses here until you approve')}>
+            {tr(`需要审批：${gateKind ? gateKind.zh : step.requires_gate}`, `Needs approval: ${gateKind ? gateKind.en : step.requires_gate}`)}
           </span>
         )}
         {step.attempt > 1 && (
-          <span style={{ fontSize: 12, color: 'var(--warn-tx)' }} title={tr('出错后已自动重试', 'Retried after an error')}>
+          <span className="step-note is-warn" title={tr('出错后已自动重试', 'Retried after an error')}>
             {tr(`第 ${step.attempt} 次尝试`, `Attempt ${step.attempt}`)}
           </span>
         )}
@@ -775,67 +799,58 @@ export function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvent
           <TaskStatus status={step.status} />
         </div>
       </div>
-      <div className="row gap10" style={{ marginTop: 8, flexWrap: 'wrap' }}>
-        {step.verdict && !(step.verdict.passed && step.status === 'passed') && (
-          <StatusDot
-            tone={step.verdict.passed ? 'ok' : 'err'}
-            label={step.verdict.passed ? tr('校验通过', 'Check passed') : tr('校验未通过', 'Check failed')}
-            title={step.verdict.reason}
-          />
-        )}
-        {(stepTokenCount(step.tokens) ?? 0) > 0 && (
-          <span className="mono muted" style={{ fontSize: 11 }}>
-            <Icon name="cpu" size={11} style={{ display: 'inline-block', verticalAlign: '-1.5px', marginRight: 4 }} />
-            {fmtTokens(stepTokenCount(step.tokens))} tokens
-          </span>
-        )}
-        {step.started_at && (
-          <span className="mono muted" style={{ fontSize: 11 }}>
-            {fmtTime(step.started_at)} · {step.finished_at ? `${tr('耗时', 'took')} ${fmtDuration(step.started_at, step.finished_at)}` : tr('进行中', 'in progress')}
-          </span>
-        )}
-      </div>
-      {/* 判定理由：通过与否都展示（通过时用弱色）。
-          reason 是后端原样透传的错误文本，可能整段是一条没有断点的长 URL
-          （如 arXiv 检索失败时的 query 串）。overflow-wrap 默认 normal 时这种
-          token 会直接溢出盒子而不是换行，把卡片撑破，故显式允许任意位置断行。 */}
-      {step.verdict?.reason && !step.verdict.passed && !failure && (
-        <div
-          style={{
-            marginTop: 8,
-            fontSize: 12,
-            color: step.verdict.passed ? 'var(--text-3)' : 'var(--danger-tx)',
-            lineHeight: 1.5,
-            overflowWrap: 'anywhere',
-          }}
-        >
-          {tr('理由：', 'Reason: ')}
-          {step.verdict.reason}
-        </div>
-      )}
-      {/* 作废步骤：补一行为什么被作废 */}
-      {obsolete && (
-        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
-          {obsoleteReasonOf(step, planEvents)}
-        </div>
-      )}
-      {/* 分析步骤的因果摘要：这一步的结论如何改变了后续计划 */}
-      {signalText && (
-        <div
-          className="row gap6"
-          style={{ marginTop: 10, padding: '8px 12px', background: 'var(--accent-soft)', color: 'var(--accent-text)', borderRadius: 8, fontSize: 13, lineHeight: 1.5, alignItems: 'flex-start' }}
-        >
-          <Icon name="compass" size={13} style={{ flexShrink: 0, marginTop: 2 }} />
-          {/* 同上：signalText 会拼进 observation.error 的原文 */}
-          <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{signalText}</span>
-        </div>
-      )}
+
+      {/* —— 一句结果 —— */}
       {friendly && <WikiStepSummary friendly={friendly} />}
       {expFriendly && !(failure && typeof obs?.error === 'string') && <ExperimentStepSummary friendly={expFriendly} />}
+      {plain && <div className="step-result">{plain}</div>}
+      {/* 作废步骤：为什么被作废 */}
+      {obsolete && <div className="step-result is-quiet">{obsoleteReasonOf(step, planEvents)}</div>}
+      {/* 这一步的结论如何改变了后面的计划 */}
+      {signalText && <div className="step-result is-quiet">{signalText}</div>}
+
+      {/* —— 出错的原因：不收起 ——
+          reason 是引擎原样给出的报错，可能整段是一条没有断点的长 URL，显式允许任意位置断行。 */}
+      {step.verdict?.reason && !step.verdict.passed && !failure && (
+        <div className="step-result is-error">
+          <LongError text={step.verdict.reason} />
+        </div>
+      )}
       {failure && <FailureEvidenceCard failure={failure} />}
-      {step.acceptance && <AcceptanceBlock acceptance={step.acceptance} />}
-      {attempts.length > 1 && <AttemptsBlock attempts={attempts} />}
-      <ObservationBlock observation={step.observation} compact={!!friendly || !!expFriendly} />
+
+      {hasDetails && (
+        <button type="button" className="step-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          <Icon name="chevDown" size={11} style={{ transform: open ? 'rotate(180deg)' : 'none' }} />
+          {open ? tr('收起详情', 'Hide details') : tr('详情', 'Details')}
+        </button>
+      )}
+      {open && (
+        <div className="step-details">
+          {(step.started_at || tokens > 0) && (
+            <div className="step-meta">
+              {step.started_at && (
+                <span>
+                  {fmtTime(step.started_at)}
+                  {' · '}
+                  {step.finished_at
+                    ? `${tr('用时', 'took')} ${fmtDuration(step.started_at, step.finished_at)}`
+                    : tr('进行中', 'in progress')}
+                </span>
+              )}
+              {tokens > 0 && <span>{fmtTokens(tokens)} tokens</span>}
+              {step.verdict && !(step.verdict.passed && step.status === 'passed') && (
+                <StatusDot
+                  tone={step.verdict.passed ? 'ok' : 'err'}
+                  label={step.verdict.passed ? tr('校验通过', 'Check passed') : tr('校验未通过', 'Check failed')}
+                />
+              )}
+            </div>
+          )}
+          {step.acceptance && <AcceptanceBlock acceptance={step.acceptance} defaultOpen />}
+          {attempts.length > 1 && <AttemptsBlock attempts={attempts} defaultOpen />}
+          <ObservationBlock observation={step.observation} compact />
+        </div>
+      )}
     </div>
   );
 }
