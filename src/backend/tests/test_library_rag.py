@@ -230,6 +230,45 @@ async def test_qa_api_end_to_end_over_the_full_pipeline(client, monkeypatch):
     assert resp.status_code == 404
 
 
+async def test_qa_says_unavailable_when_the_model_is_busy(client, monkeypatch):
+    """模型一时不可用（503 / 限流 / 断线）：503 LLM_UNAVAILABLE，而不是 500。
+    不是暂时性的失败（比如密钥不对）照常往上抛。"""
+    import anthropic
+    import httpx
+
+    from app.core.llm.errors import LLMAuthError, LLMOverloadedError
+
+    headers, library_id, _ids = await _setup(client, papers=("A",))
+    request = httpx.Request("POST", "http://gw.test/v1/messages")
+    failures = [
+        LLMOverloadedError("HTTP 503"),
+        anthropic.InternalServerError(
+            "No available accounts",
+            response=httpx.Response(503, request=request),
+            body=None,
+        ),
+    ]
+
+    async def busy(*_args, **_kwargs):
+        raise failures.pop(0)
+
+    monkeypatch.setattr(library_rag, "answer", busy)
+    for _ in range(2):
+        resp = await client.post(
+            f"/api/libraries/{library_id}/qa", json={"question": "hi"}, headers=headers
+        )
+        assert resp.status_code == 503 and resp.json()["detail"] == "LLM_UNAVAILABLE"
+
+    async def bad_key(*_args, **_kwargs):
+        raise LLMAuthError("HTTP 401")
+
+    monkeypatch.setattr(library_rag, "answer", bad_key)
+    with pytest.raises(LLMAuthError):
+        await client.post(
+            f"/api/libraries/{library_id}/qa", json={"question": "hi"}, headers=headers
+        )
+
+
 async def test_library_papers_sort_by_when_they_were_added(client):
     """库内论文按入库时间排序（「最新收录」视图）：以前 sort=-created_at 被 422 挡掉。"""
     from datetime import UTC, datetime, timedelta

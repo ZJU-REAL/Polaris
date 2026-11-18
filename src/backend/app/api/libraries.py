@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import current_active_user
 from app.api.chat_stream import chat_stream_response
 from app.core.db import get_session
+from app.core.llm.errors import classify as classify_llm_error
 from app.core.llm.router import get_llm_router
 from app.core.queue import TaskQueue, get_task_queue
 from app.core.redis import get_redis_dep
@@ -1255,6 +1256,14 @@ async def library_qa(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="DB_MIGRATION_REQUIRED: 请先执行数据库迁移（make migrate）",
         ) from e
+    except Exception as e:
+        # 模型或向量服务一时不可用（503、限流、连接断开）：说「稍后再试」，不是 500 堆栈
+        typed = classify_llm_error(e)
+        if typed is not None and typed.transient:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM_UNAVAILABLE"
+            ) from e
+        raise
     return LibraryQaResponse(**result)
 
 
