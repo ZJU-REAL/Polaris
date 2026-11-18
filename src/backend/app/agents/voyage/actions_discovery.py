@@ -400,58 +400,16 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                     for q in gen["trace"]["queries"]
                 ]
                 # 先算后写：每个候选把 ground/novelty/feasibility/score 全部算完，
-                # 再统一落库——管线再长，树的被杀窗口也不随之变宽（见函数 docstring）
-                computed: list[dict[str, Any]] = []
-                for cand in candidates:
-                    grounded = await pipeline.ground(
-                        session,
-                        ctx.llm,
-                        library_id=library_id,
-                        statement=cand["statement"],
-                        **identity,
-                    )
-                    nov = await pipeline.novelty(
-                        session,
-                        ctx.llm,
-                        library_id=library_id,
-                        statement=cand["statement"],
-                        grounding=grounded["grounding"],
-                        **identity,
-                    )
-                    feas = await pipeline.feasibility(
-                        session,
-                        ctx.llm,
-                        library_id=library_id,
-                        statement=cand["statement"],
-                        grounding=grounded["grounding"],
-                        **identity,
-                    )
-                    child_usage = {"prompt_tokens": 0, "completion_tokens": 0}
-                    for part in (grounded, nov, feas):
-                        child_usage["prompt_tokens"] += int(
-                            part["usage"].get("prompt_tokens", 0) or 0
-                        )
-                        child_usage["completion_tokens"] += int(
-                            part["usage"].get("completion_tokens", 0) or 0
-                        )
-                    computed.append(
-                        {
-                            "statement": cand["statement"],
-                            "grounding": grounded["grounding"],
-                            "novelty_report": nov["report"],
-                            "feasibility": feas["feasibility"],
-                            "score": pipeline.score_hypothesis(
-                                grounded["grounding"], nov["report"]
-                            ),
-                            "usage": child_usage,
-                            # 接地/查新的查询此刻还没有节点 id 可挂（先算后写），
-                            # 落库后再补上归属
-                            "queries": [
-                                {"phase": "ground", **q} for q in grounded["trace"]["queries"]
-                            ]
-                            + [{"phase": "novelty", **q} for q in nov["trace"]["queries"]],
-                        }
-                    )
+                # 再统一落库——管线再长，树的被杀窗口也不随之变宽（见函数 docstring）。
+                # 候选之间并发（限流），接地 / 查新的查询此刻还没有节点 id 可挂，
+                # 落库后再补上归属
+                computed = await pipeline.evaluate_candidates(
+                    session,
+                    ctx.llm,
+                    library_id=library_id,
+                    statements=[cand["statement"] for cand in candidates],
+                    **identity,
+                )
                 pruned_children: list[str] = []
                 for item in computed:
                     node = await tree_service.create_node(
@@ -721,12 +679,17 @@ async def discovery_summarize(ctx: ActionContext, params: dict[str, Any]) -> dic
 # ---- 假设 → 想法 ----
 
 WRITEUP_STAGE = "hyp_writeup"
+# 写作是照着已经判定好的证据把四段写清楚，不是开放推理：保持中档（实测「研究与
+# 知识工作」中档与高档质量持平，而这里一次输出近四千 token，高档的钱是实打实的）。
+WRITEUP_EFFORT = "medium"
 # 一次探索最多写这么多个想法。默认 4 轮 × 每轮 4 个子假设最多长出 16 个，用户要的是
 # 一份能挑的短名单，不是把整棵树倒给他
 MAX_IDEAS = 8
 # 叶子不够这个数时，用已经被细化过的父假设补足（它们也有文献支持，只是有了更具体的
 # 版本）。少于三个想法的结果让「挑选」这一步失去意义
 MIN_IDEAS_TARGET = 3
+# 同时在写的草案数（每个一次模型调用）。与一轮扩展的并发上限同一个理由：网关会 503
+WRITEUP_CONCURRENCY = 6
 
 WRITEUP_SYSTEM_PROMPT = """\
 POLARIS_HYP_WRITEUP
@@ -974,17 +937,21 @@ async def _write_up(
     返回 None——想法照样入库，只是正文待补充：假设和它的证据才是这一步的产物。
     网络、限流、密钥这类失败照常上抛，整步重试，已写好的想法不会重复写。"""
     try:
-        result = await ctx.llm.complete_json(
+        result = await pipeline.retry_transient(
             WRITEUP_STAGE,
-            [
-                Message(role="system", content=WRITEUP_SYSTEM_PROMPT),
-                Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
-            ],
-            schema=IdeaWriteup,
-            user_id=ctx.run.created_by,
-            project_id=ctx.run.project_id,
-            library_id=ctx.run.library_id,
-            voyage_id=ctx.run.id,
+            lambda: ctx.llm.complete_json(
+                WRITEUP_STAGE,
+                [
+                    Message(role="system", content=WRITEUP_SYSTEM_PROMPT),
+                    Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
+                ],
+                schema=IdeaWriteup,
+                effort=WRITEUP_EFFORT,
+                user_id=ctx.run.created_by,
+                project_id=ctx.run.project_id,
+                library_id=ctx.run.library_id,
+                voyage_id=ctx.run.id,
+            ),
         )
     except (LLMSchemaError, LLMTruncatedError, LLMRefusalError):
         return None
@@ -1046,6 +1013,42 @@ async def discovery_write_ideas(ctx: ActionContext, params: dict[str, Any]) -> d
             titles = {str(pid): (title or "") for pid, title in rows}
     written: list[str] = []
     duplicates: list[dict[str, Any]] = []
+
+    # 草案之间互不依赖：先并发把还没写过的全部写出来（限流），再逐个去重、入库。
+    # 以前是写一个存一个，7 个想法排队 6 分钟；入库仍然逐个提交，重放语义不变。
+    pending: list[HypothesisNode] = []
+    async with get_sessionmaker()() as session:
+        for node in selected:
+            recorded = ledger.get(str(node.id))
+            if isinstance(recorded, dict) and recorded.get("duplicate"):
+                continue
+            if await _existing_idea_for_node(session, ctx.run.id, str(node.id)) is None:
+                pending.append(node)
+    gate = asyncio.Semaphore(WRITEUP_CONCURRENCY)
+
+    async def draft(node: HypothesisNode) -> IdeaWriteup | None:
+        async with gate:
+            return await _write_up(
+                ctx,
+                _writeup_payload(
+                    node,
+                    _evidence_entries(node, titles),
+                    language=language,
+                    library_paper_count=library_paper_count,
+                ),
+                usage,
+            )
+
+    results = await asyncio.gather(*(draft(n) for n in pending), return_exceptions=True)
+    drafts: dict[str, IdeaWriteup | None] = {}
+    failure: BaseException | None = None
+    for node, result in zip(pending, results, strict=True):
+        if isinstance(result, BaseException):
+            # 网络 / 限流这类失败：写成的照样入库，最后再抛，重跑这一步只补没写成的
+            failure = failure or result
+        else:
+            drafts[str(node.id)] = result
+
     for node in selected:
         node_id = str(node.id)
         async with get_sessionmaker()() as session:
@@ -1059,15 +1062,11 @@ async def discovery_write_ideas(ctx: ActionContext, params: dict[str, Any]) -> d
             duplicates.append({"node_id": node_id, **recorded})
             continue
 
+        if node_id not in drafts:
+            continue  # 这一个的草案调用失败了（见上），留给重跑
         evidence = _evidence_entries(node, titles)
         unsupported = _unsupported_subclaims(node)
-        writeup = await _write_up(
-            ctx,
-            _writeup_payload(
-                node, evidence, language=language, library_paper_count=library_paper_count
-            ),
-            usage,
-        )
+        writeup = drafts[node_id]
         if writeup is None:
             await ctx.log(f"这条假设的草案没写出来，先只存假设和依据：{node.statement[:60]}")
         title = (writeup.title if writeup else node.statement).strip()[:80] or node.statement[:80]
@@ -1171,6 +1170,9 @@ async def discovery_write_ideas(ctx: ActionContext, params: dict[str, Any]) -> d
             ledger[node_id] = {"idea_id": str(idea.id), "duplicate": False}
             written.append(str(idea.id))
             await ctx.log(f"写入想法：{title}", level="success")
+
+    if failure is not None:
+        raise failure
 
     async with get_sessionmaker()() as session:
         session.add(

@@ -45,7 +45,7 @@ from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper, PaperChunk
 from app.models.paper_citation import PaperCitation
 from app.services import chunks as chunks_service
-from app.services.embedding import embed_query
+from app.services.embedding import embed_queries, embed_query
 from app.services.papers import PAPER_STATUS_GROUPS
 
 logger = logging.getLogger(__name__)
@@ -211,6 +211,45 @@ async def _search_round(
 # answer() 完整流水线里的 LLM 环节（查询扩展/重排/作答）**不在**此复用面之内——
 # 接地与查新要的是「同样输入永远同样证据集」，不能混进判断性环节。
 retrieve_round = _search_round
+
+
+async def retrieve_many(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    queries: list[str],
+    user_id: uuid.UUID | None,
+    project_id: uuid.UUID | None,
+    limit: int = TOP_K,
+) -> list[list[PaperChunk]]:
+    """一批查询的严格语义检索，结果与逐条 ``retrieve_round(strict=True)`` 相同。
+
+    区别只在向量化：整批查询**一次**请求向量模型（假设探索一轮有几十条查询，逐条
+    就是几十次往返）。与 strict 模式同样不降级：向量用不了抛
+    :class:`RetrievalUnavailableError`，没有命中的查询如实返回空列表。
+    """
+    if not queries:
+        return []
+    try:
+        vectors, space = await embed_queries(
+            session, queries, user_id=user_id, project_id=project_id, library_id=library_id
+        )
+        out: list[list[PaperChunk]] = []
+        for vector in vectors:
+            rows = await chunks_service.semantic_search_chunks(
+                session,
+                library_ids=[library_id],
+                query_vector=vector,
+                space=space,
+                limit=limit,
+            )
+            out.append([chunk for chunk, _score in rows])
+        return out
+    except NotImplementedError as e:
+        raise _retrieval_unavailable(e) from e
+    except Exception as e:  # noqa: BLE001 — 归类成带 transient 的检索错误再抛
+        await session.rollback()
+        raise _retrieval_unavailable(e) from e
 
 
 def _merge_hits(

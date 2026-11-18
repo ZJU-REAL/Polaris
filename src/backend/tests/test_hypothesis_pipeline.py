@@ -127,17 +127,21 @@ def test_sanitize_grounding_downgrades_out_of_set_citations():
     """越界校验：id 不在该子命题自己的检索集内 → 丢弃；没剩合法 id → speculation。"""
     subclaims = ["s0", "s1", "s2"]
     retrieved = [
-        [{"paper_id": "p-a", "title": "A", "snippet": "snip-a"}],
-        [{"paper_id": "p-b", "title": "B", "snippet": "snip-b"}],
+        [
+            {"id": "c1", "paper_id": "p-a", "title": "A", "snippet": "snip-a"},
+            {"id": "c3", "paper_id": "p-a", "title": "A", "snippet": "snip-a-unpicked"},
+        ],
+        [{"id": "c2", "paper_id": "p-b", "title": "B", "snippet": "snip-b"}],
         [],
     ]
     items = [
-        # 合法引用 + 一条越界 id（越界的被静默丢弃，合法的保留）
-        {"index": 0, "stance": "support", "paper_ids": ["p-a", "p-forged"]},
-        # 全部越界（含跨子命题引用 p-a：不在 s1 自己的检索集里也算越界）→ speculation
-        {"index": 1, "stance": "refute", "paper_ids": ["p-a", "p-forged"]},
+        # 合法引用 + 一条越界编号（越界的被静默丢弃，合法的保留）。同一篇论文的另一段
+        # c3 没被选中：证据里只回填选中的那一段，不是这篇论文的所有片段
+        {"index": 0, "stance": "support", "evidence_ids": ["c1", "c99"]},
+        # 全部越界（含跨子命题引用 c1：不在 s1 自己的检索集里也算越界）→ speculation
+        {"index": 1, "stance": "refute", "evidence_ids": ["c1", "c99"]},
         # 乱写的立场 → speculation
-        {"index": 2, "stance": "definitely-true", "paper_ids": []},
+        {"index": 2, "stance": "definitely-true", "evidence_ids": []},
     ]
     out = pipeline.sanitize_grounding(subclaims, retrieved, items)
     assert out[0] == {
@@ -154,7 +158,7 @@ def test_sanitize_grounding_downgrades_out_of_set_citations():
 
 def test_sanitize_grounding_missing_item_is_speculation():
     """LLM 漏答某条子命题：诚实缺省为 speculation，而不是报错或编造。"""
-    retrieved = [[{"paper_id": "p", "title": "", "snippet": "x"}]]
+    retrieved = [[{"id": "c1", "paper_id": "p", "title": "", "snippet": "x"}]]
     out = pipeline.sanitize_grounding(["s0"], retrieved, [])
     assert out == [
         {
@@ -545,6 +549,7 @@ async def test_embedding_failure_is_typed_by_whether_a_retry_can_help(
         raise failure
 
     monkeypatch.setattr(library_rag, "embed_query", _fail)
+    monkeypatch.setattr(library_rag, "embed_queries", _fail)
     async with get_sessionmaker()() as session:
         with pytest.raises(library_rag.RetrievalUnavailableError) as exc:
             await pipeline.ground(session, LLMRouter(), library_id=library_id, statement="s")
@@ -569,10 +574,11 @@ def _support_grounding(ids) -> list[dict]:
     return [{"subclaim": DIRECTION, "stance": "support", "paper_ids": [str(ids["A"])]}]
 
 
-async def test_novelty_degrades_to_uncertain_only_when_the_model_cannot_judge(client):
+async def test_novelty_degrades_to_uncertain_only_when_the_model_cannot_judge(client, monkeypatch):
+    monkeypatch.setattr(pipeline, "TRANSIENT_RETRY_DELAYS", ())
     library_id, ids = await _setup(client)
     fake = FakeProvider()
-    fake.fail_next(LLMSchemaError("still invalid after the repair"), schema=pipeline.NoveltyOut)
+    fake.fail_next(LLMSchemaError("still invalid after the repair"), schema=pipeline.JudgementOut)
     async with get_sessionmaker()() as session:
         result = await pipeline.novelty(
             session,
@@ -584,7 +590,7 @@ async def test_novelty_degrades_to_uncertain_only_when_the_model_cannot_judge(cl
         entry = result["report"]["subclaims"][0]
         assert entry["verdict"] == "uncertain" and entry["judged"] is False
         # 限流不是「判断不出来」：这一步没跑成，原样抛出去让上层重试
-        fake.fail_next(LLMRateLimitedError("HTTP 429"), schema=pipeline.NoveltyOut)
+        fake.fail_next(LLMRateLimitedError("HTTP 429"), schema=pipeline.JudgementOut)
         with pytest.raises(LLMRateLimitedError):
             await pipeline.novelty(
                 session,
@@ -620,8 +626,9 @@ async def test_feasibility_keeps_signals_when_the_risk_note_cannot_be_written(cl
             )
 
 
-async def test_generate_and_ground_failures_are_typed_not_invalid_json(client):
+async def test_generate_and_ground_failures_are_typed_not_invalid_json(client, monkeypatch):
     """生成与接地没有降级路径：模型调用失败就是这一步失败，错误带着是否可重试。"""
+    monkeypatch.setattr(pipeline, "TRANSIENT_RETRY_DELAYS", ())
     library_id, _ids = await _setup(client)
     fake = FakeProvider()
     async with get_sessionmaker()() as session:
@@ -631,7 +638,7 @@ async def test_generate_and_ground_failures_are_typed_not_invalid_json(client):
                 session, _router_with(fake), library_id=library_id, direction=DIRECTION
             )
         assert exc.value.transient is True
-        fake.fail_next(LLMSchemaError("bad shape"), schema=pipeline.GroundOut)
+        fake.fail_next(LLMSchemaError("bad shape"), schema=pipeline.JudgementOut)
         with pytest.raises(LLMSchemaError) as exc:
             await pipeline.ground(session, _router_with(fake), library_id=library_id, statement="s")
         assert exc.value.transient is False
@@ -647,14 +654,17 @@ def test_output_schemas_reject_empty_statements_and_unknown_labels():
         pipeline.GenerateOut.model_validate({"candidates": [{"statement": "  ", "rationale": ""}]})
     with pytest.raises(ValidationError):
         pipeline.SubclaimsOut.model_validate({"subclaims": []})
-    with pytest.raises(ValidationError):
-        pipeline.GroundOut.model_validate(
-            {"items": [{"index": 0, "stance": "maybe", "paper_ids": []}]}
-        )
-    with pytest.raises(ValidationError):
-        pipeline.NoveltyOut.model_validate(
-            {"items": [{"index": 0, "verdict": "new", "paper_ids": []}]}
-        )
+    item = {
+        "index": 0,
+        "stance": "support",
+        "stance_evidence_ids": [],
+        "verdict": "novel",
+        "verdict_evidence_ids": [],
+    }
+    pipeline.JudgementOut.model_validate({"items": [item]})
+    for bad in ({"stance": "maybe"}, {"verdict": "new"}):
+        with pytest.raises(ValidationError):
+            pipeline.JudgementOut.model_validate({"items": [{**item, **bad}]})
     out = pipeline.GenerateOut.model_validate(
         {"candidates": [{"statement": "  trimmed  ", "rationale": "r"}]}
     )
@@ -672,8 +682,7 @@ def test_every_schema_is_accepted_by_structured_outputs():
         SeedOut,
         pipeline.GenerateOut,
         pipeline.SubclaimsOut,
-        pipeline.GroundOut,
-        pipeline.NoveltyOut,
+        pipeline.JudgementOut,
         pipeline.RiskNoteOut,
         CompareOut,
     ):
@@ -708,3 +717,175 @@ async def test_evidence_snippets_carry_up_to_1500_chars(client):
         )
     snippet = result["grounding"][0]["snippets"][0]
     assert len(snippet) == 1_500
+
+
+# ---- 证据池、合并判定与并发（费用与耗时的三处改动各有守卫）----
+
+
+class _Recorder(FakeProvider):
+    """记下每次结构化调用的要素，并统计同时在途的调用数。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[dict] = []
+        self.in_flight = 0
+        self.peak = 0
+
+    async def complete_structured(self, messages, *, model, schema, **kwargs):
+        import asyncio
+
+        self.calls.append(
+            {
+                "schema": schema,
+                "user": next(m.text for m in reversed(messages) if m.role == "user"),
+                "effort": kwargs.get("effort"),
+            }
+        )
+        self.in_flight += 1
+        self.peak = max(self.peak, self.in_flight)
+        try:
+            await asyncio.sleep(0.01)  # 让并发的调用真的交错
+            return await super().complete_structured(messages, model=model, schema=schema, **kwargs)
+        finally:
+            self.in_flight -= 1
+
+
+async def test_each_snippet_is_sent_once_and_subclaims_only_list_ids(client):
+    """证据池按片段去重：两条子命题、接地与查新各一轮都捞到同一段，原文只出现一次；
+    子命题那里只列编号。"""
+    library_id, _ids = await _setup(client)
+    fake = _Recorder()
+    async with get_sessionmaker()() as session:
+        grounded = await pipeline.ground(
+            session, _router_with(fake), library_id=library_id, statement=f"关于 {DIRECTION} 的假设"
+        )
+    judge = next(c for c in fake.calls if c["schema"] is pipeline.JudgementOut)
+    evidence = grounded["evidence"]
+    pool_text, task = judge["user"].rsplit("</evidence>", 1)
+    assert judge["user"].startswith(evidence.pool.render())
+    assert pool_text.count("agent planning verification with tree") == 1
+    # 四轮检索（2 条子命题 × 接地 / 查新）命中的片段位远多于去重后的池
+    slots = sum(len(x) for x in evidence.ground + evidence.novelty)
+    assert slots > len(evidence.pool) > 0
+    assert "agent planning verification with tree" not in task
+    items = json.loads(task)["items"]
+    assert [i["index"] for i in items] == [0, 1]
+    assert all(i["ground_candidates"] and i["novelty_candidates"] for i in items)
+    assert judge["effort"] == pipeline.JUDGE_EFFORT
+
+
+async def test_grounding_and_novelty_are_judged_in_one_call(client):
+    """接地与查新共用一次判定调用：证据池只发一遍（以前两次调用各发一遍，占假设阶段
+    四分之三的费用）。随后取查新结论不再调模型，也不再检索。"""
+    library_id, ids = await _setup(client)
+    fake = _Recorder()
+    statement = f"关于 {DIRECTION} 的假设"
+    async with get_sessionmaker()() as session:
+        grounded = await pipeline.ground(
+            session, _router_with(fake), library_id=library_id, statement=statement
+        )
+        calls_after_ground = len(fake.calls)
+        nov = await pipeline.novelty(
+            session,
+            _router_with(fake),
+            library_id=library_id,
+            statement=statement,
+            grounding=grounded["grounding"],
+            evidence=grounded["evidence"],
+        )
+    assert [c["schema"] for c in fake.calls] == [pipeline.SubclaimsOut, pipeline.JudgementOut]
+    assert len(fake.calls) == calls_after_ground
+    assert nov["usage"] == {"prompt_tokens": 0, "completion_tokens": 0}
+    report = nov["report"]["subclaims"]
+    assert [r["verdict"] for r in report] == ["novel", "uncertain"]
+    assert [r["judged"] for r in report] == [True, True]
+    assert report[0]["paper_ids"] == [str(ids["A"])]
+    assert all(q["query"].startswith("已有研究") for q in nov["trace"]["queries"])
+
+
+def test_verdict_evidence_outside_the_subclaims_own_candidates_is_dropped():
+    """查新结论引用的片段只能来自该子命题自己的查新候选；没有候选的子命题不算判过。"""
+    evidence = pipeline.HypothesisEvidence(["s0", "s1"])
+    evidence.novelty = [[{"id": "c1", "paper_id": "p-a", "title": "", "snippet": "x"}], []]
+    items = [
+        pipeline.JudgementItemOut(
+            index=0,
+            stance="speculation",
+            stance_evidence_ids=[],
+            verdict="known",
+            verdict_evidence_ids=["c1", "c9"],
+        ),
+        pipeline.JudgementItemOut(
+            index=1,
+            stance="speculation",
+            stance_evidence_ids=[],
+            verdict="novel",
+            verdict_evidence_ids=["c1"],
+        ),
+    ]
+    assert pipeline._collect_verdicts(evidence, items) == {0: ("known", ["p-a"])}
+
+
+async def test_candidates_are_evaluated_concurrently_within_the_limit(client):
+    """一轮的候选并发评估：同时在途的调用不超过上限；结果与逐条调用一致。"""
+    library_id, ids = await _setup(client)
+    statements = [f"关于 {DIRECTION} 的假设 {i}" for i in range(4)]
+    fake = _Recorder()
+    async with get_sessionmaker()() as session:
+        out = await pipeline.evaluate_candidates(
+            session, _router_with(fake), library_id=library_id, statements=statements, concurrency=2
+        )
+        single = await pipeline.ground(
+            session, LLMRouter(), library_id=library_id, statement=statements[0]
+        )
+    assert [o["statement"] for o in out] == statements
+    assert 1 < fake.peak <= 2
+    assert out[0]["grounding"] == single["grounding"]
+    assert all(o["score"] == 0.25 for o in out)  # 替身的确定性中间态
+    assert all(o["grounding"][0]["paper_ids"] == [str(ids["A"])] for o in out)
+    assert all(o["novelty_report"]["subclaims"][0]["verdict"] == "novel" for o in out)
+    assert all(o["feasibility"]["risk_note"] for o in out)
+    assert all(o["usage"]["prompt_tokens"] > 0 for o in out)
+    assert [q["phase"] for q in out[0]["queries"]] == ["ground", "ground", "novelty", "novelty"]
+    # 每条候选三次调用：拆子命题、判定（接地 + 查新）、风险论证
+    schemas = [c["schema"] for c in fake.calls]
+    assert schemas.count(pipeline.SubclaimsOut) == 4
+    assert schemas.count(pipeline.JudgementOut) == 4
+    assert schemas.count(pipeline.RiskNoteOut) == 4
+
+
+async def test_a_candidate_that_will_be_pruned_gets_no_risk_note(client):
+    """分数低于保留线的候选一定被剪、不会写成想法：不再为它调风险论证。"""
+    library_id, _ids = await _setup(client, indexed=False)  # 检索不到任何片段
+    fake = _Recorder()
+    async with get_sessionmaker()() as session:
+        (out,) = await pipeline.evaluate_candidates(
+            session, _router_with(fake), library_id=library_id, statements=["冰川沉积物定年"]
+        )
+    assert out["score"] == 0.0
+    assert [e["stance"] for e in out["grounding"]] == ["speculation", "speculation"]
+    assert all(e["judged"] is False for e in out["novelty_report"]["subclaims"])
+    assert out["feasibility"]["risk_note"] == pipeline.RISK_NOTE_SKIPPED
+    assert out["feasibility"]["signals"]["grounded_paper_count"] == 0
+    assert [c["schema"] for c in fake.calls] == [pipeline.SubclaimsOut]  # 只有拆子命题那一次
+
+
+async def test_a_transient_failure_is_retried_before_the_round_fails(client, monkeypatch):
+    """并发的十几次调用里有一次撞上 503：退避重试这一次，而不是整轮重来。"""
+    monkeypatch.setattr(pipeline, "TRANSIENT_RETRY_DELAYS", (0.0, 0.0))
+    library_id, _ids = await _setup(client)
+    fake = FakeProvider()
+    fake.fail_next(LLMOverloadedError("HTTP 503"), schema=pipeline.JudgementOut)
+    fake.fail_next(LLMRateLimitedError("HTTP 429"), schema=pipeline.JudgementOut)
+    async with get_sessionmaker()() as session:
+        result = await pipeline.ground(
+            session, _router_with(fake), library_id=library_id, statement=f"关于 {DIRECTION} 的假设"
+        )
+        assert result["grounding"][0]["stance"] == "support"
+        # 用完重试次数仍然失败：原样抛出，交给上层
+        for _ in range(3):
+            fake.fail_next(LLMOverloadedError("HTTP 503"), schema=pipeline.JudgementOut)
+        with pytest.raises(LLMOverloadedError):
+            await pipeline.ground(
+                session, _router_with(fake), library_id=library_id, statement="另一条假设"
+            )

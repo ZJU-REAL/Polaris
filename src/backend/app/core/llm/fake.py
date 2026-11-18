@@ -96,7 +96,6 @@ _DISCOVERY_SUMMARY_MARKER = "POLARIS_DISCOVERY_SUMMARY"
 # 选证据两次调用共用一个 marker，靠 user payload 里有无 "retrieved" 区分。
 _HYP_GENERATE_MARKER = "POLARIS_HYP_GENERATE"
 _HYP_GROUND_MARKER = "POLARIS_HYP_GROUND"
-_HYP_NOVELTY_MARKER = "POLARIS_HYP_NOVELTY"
 _HYP_FEASIBILITY_MARKER = "POLARIS_HYP_FEASIBILITY"
 _HYP_WRITEUP_MARKER = "POLARIS_HYP_WRITEUP"  # 假设写成想法草案（actions_discovery）
 _RESEARCH_BRIEF_MARKER = "POLARIS_RESEARCH_BRIEF"  # 研究方向 → 检索简报
@@ -523,8 +522,6 @@ class FakeProvider(LLMProvider):
             return FakeProvider._respond_hyp_generate(last_user)
         if _HYP_GROUND_MARKER in full_text:
             return FakeProvider._respond_hyp_ground(last_user)
-        if _HYP_NOVELTY_MARKER in full_text:
-            return FakeProvider._respond_hyp_novelty(last_user)
         if _HYP_FEASIBILITY_MARKER in full_text:
             return FakeProvider._respond_hyp_feasibility()
         if _HYP_COMPARE_MARKER in full_text:
@@ -1420,9 +1417,12 @@ class FakeProvider(LLMProvider):
     @staticmethod
     def _respond_hyp_ground(last_user: str) -> str:
         """接地：拆分调用（payload 无 "items"）固定拆 2 条回显 statement 的子命题；
-        选证据调用（payload 带 retrieved）第一条选检索首 id 表 support、其余一律
-        speculation——保证 score=0.25 的确定性中间态（novel½ × support½）。"""
-        payload = FakeProvider._payload_of(last_user)
+        判定调用（items 每条带 ground_candidates / novelty_candidates——检索到的片段
+        编号；接地与查新一次判完）第一条选首个候选表 support 且 novel、其余一律
+        speculation / uncertain——保证 score=0.25 的确定性中间态（novel½ × support½）。"""
+        # 判定调用的消息是「<evidence> 证据池 </evidence> + JSON」：原文里可能有花括号，
+        # 只解析证据池之后的那段
+        payload = FakeProvider._payload_of(last_user.rsplit("</evidence>", 1)[-1])
         if not isinstance(payload.get("items"), list):
             statement = str(payload.get("statement") or "")[:50]
             return json.dumps(
@@ -1438,34 +1438,16 @@ class FakeProvider(LLMProvider):
         for i, item in enumerate(payload["items"]):
             if not isinstance(item, dict):
                 continue
-            retrieved = [r for r in (item.get("retrieved") or []) if isinstance(r, dict)]
-            if i == 0 and retrieved:
-                out.append(
-                    {
-                        "index": item.get("index"),
-                        "stance": "support",
-                        "paper_ids": [str(retrieved[0].get("paper_id"))],
-                    }
-                )
-            else:
-                out.append({"index": item.get("index"), "stance": "speculation", "paper_ids": []})
-        return json.dumps({"items": out}, ensure_ascii=False)
-
-    @staticmethod
-    def _respond_hyp_novelty(last_user: str) -> str:
-        """查新：第一条 novel（引证据首 id）、其余 uncertain（确定性）。"""
-        payload = FakeProvider._payload_of(last_user)
-        out = []
-        for i, item in enumerate(payload.get("items") or []):
-            if not isinstance(item, dict):
-                continue
-            evidence = [e for e in (item.get("evidence") or []) if isinstance(e, dict)]
-            novel = i == 0
+            ground = [str(c) for c in (item.get("ground_candidates") or [])]
+            novelty = [str(c) for c in (item.get("novelty_candidates") or [])]
+            first = i == 0
             out.append(
                 {
                     "index": item.get("index"),
-                    "verdict": "novel" if novel else "uncertain",
-                    "paper_ids": [str(evidence[0].get("paper_id"))] if novel and evidence else [],
+                    "stance": "support" if first and ground else "speculation",
+                    "stance_evidence_ids": ground[:1] if first else [],
+                    "verdict": "novel" if first else "uncertain",
+                    "verdict_evidence_ids": novelty[:1] if first else [],
                 }
             )
         return json.dumps({"items": out}, ensure_ascii=False)

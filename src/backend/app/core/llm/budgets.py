@@ -111,6 +111,8 @@ HYPOTHESIS_EVIDENCE_PER_SUBCLAIM = 12
 HYPOTHESIS_INSPIRATIONS_PER_ROUTE = 8
 #: 方法类比 / 未连接概念对 / 开放缺口三路燃料各取几条。
 HYPOTHESIS_FUELS_PER_ROUTE = 8
+#: 一轮扩展里同时在途的模型调用上限（各候选的接地 / 查新 / 风险论证并发跑）。
+HYPOTHESIS_EVALUATE_CONCURRENCY = 6
 #: 灵感与证据片段的截断长度（字符）。
 HYPOTHESIS_SNIPPET_CHARS = 1_500
 

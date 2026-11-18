@@ -338,6 +338,54 @@ async def test_write_up_failure_still_stores_the_hypothesis_and_its_evidence(
     assert idea.evidence and idea.evidence[0]["stance"] == "support"
 
 
+async def test_one_failed_draft_does_not_lose_the_others_and_is_retried_alone(
+    client, queue_stub, monkeypatch
+):
+    """草案并发写：一个草案的调用反复被限流，写成的那个照样入库、这一步报错；重跑只补
+    没写成的那一个。偶发的一次限流由退避重试接住，这一步根本不失败。"""
+    from app.core.llm.errors import LLMRateLimitedError
+
+    monkeypatch.setattr(pipeline, "TRANSIENT_RETRY_DELAYS", (0.0,))
+    project_id, library_id, _headers = await _make_workspace(client)
+    original = FakeProvider._respond_hyp_writeup
+    state = {"calls": 0, "fail": 2}  # 第一个草案连续两次被限流（首次 + 一次重试）
+
+    def _limited(last_user: str) -> str:
+        state["calls"] += 1
+        if "fake A" in last_user and state["fail"] > 0:
+            state["fail"] -= 1
+            raise LLMRateLimitedError("HTTP 429 gateway_concurrency_limit")
+        return original(last_user)
+
+    monkeypatch.setattr(FakeProvider, "_respond_hyp_writeup", staticmethod(_limited))
+    run_id = await _make_run(project_id, library_id, direction="同一方向", max_expansions=1)
+    await _engine().run(run_id)
+    # 引擎对可重试的失败会自动重排这一步；不管它重排没有，此刻至少另一个已经入库
+    assert len(await _ideas(project_id)) >= 1
+
+    state["calls"] = 0
+    result = await _replay_write_ideas(run_id)
+    ideas = await _ideas(project_id)
+    assert result["ideas"] == 2 and len(ideas) == 2
+    assert state["calls"] <= 1  # 只补没写成的那一个（引擎已经补过就是 0）
+
+    # 偶发一次限流：退避后重试成功，一步之内写完
+    state.update(calls=0, fail=1)
+    project2, library2, _h = await _make_workspace(client)
+    run2 = await _make_run(project2, library2, direction="另一个方向", max_expansions=1)
+    await _engine().run(run2)
+    async with get_sessionmaker()() as session:
+        step = (
+            await session.execute(
+                select(VoyageStep).where(
+                    VoyageStep.run_id == run2, VoyageStep.action == "discovery.write_ideas"
+                )
+            )
+        ).scalar_one()
+        assert step.status == "passed" and step.attempt <= 1
+    assert len(await _ideas(project2)) == 2 and state["fail"] == 0
+
+
 def test_english_direction_writes_english_headings():
     content = actions_discovery._idea_content({"motivation": "m"}, ["claim one"], "en")
     assert content.startswith("## Motivation\n\nm")

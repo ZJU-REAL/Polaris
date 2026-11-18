@@ -116,13 +116,37 @@ async def embed_query(
 
     写入侧（embed_documents）不做这个转换：那里必须响亮地失败，不能悄悄跳过。
     """
+    vectors, space = await embed_queries(
+        session,
+        [text],
+        user_id=user_id,
+        project_id=project_id,
+        library_id=library_id,
+        voyage_id=voyage_id,
+    )
+    return vectors[0], space
+
+
+async def embed_queries(
+    session: AsyncSession,
+    texts: Sequence[str],
+    *,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
+    voyage_id: uuid.UUID | None = None,
+) -> tuple[list[list[float]], EmbeddingSpace]:
+    """一批检索用文本一次向量化（:func:`embed_query` 的批量版，语义相同）。
+
+    假设探索一轮有几十条检索查询；逐条调就是几十次往返，合成一次请求结果完全一样。
+    """
     space = await active_space(session)
     if space is None:
         raise NotImplementedError("no embedding space yet — nothing has been embedded")
     try:
-        vectors, space = await embed_documents(
+        return await embed_documents(
             session,
-            [text],
+            list(texts),
             user_id=user_id,
             project_id=project_id,
             library_id=library_id,
@@ -130,7 +154,6 @@ async def embed_query(
         )
     except EmbeddingSpaceMismatchError as e:
         raise NotImplementedError(f"semantic search unavailable: {e}") from e
-    return vectors[0], space
 
 
 # ---- 写入 ----
