@@ -110,6 +110,10 @@ class IdeaRead(BaseModel):
     research_type: str | None  # method | benchmark | analysis | survey | application | theory
     trashed_at: datetime | None = None  # 非空即在回收站
     created_at: datetime
+    # 写出这个想法的任务（假设探索）；任务已删或不是任务写的为空
+    source_voyage_id: uuid.UUID | None = None
+    # 来路说明，见 models/idea.py；novelty_scope="library" = 新颖性只对照了文献库
+    origin: dict[str, Any] | None = None
 
 
 class ParentPaperBrief(BaseModel):

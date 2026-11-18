@@ -117,11 +117,15 @@ STAGES = (
     "hyp_feasibility",
     # 假设锦标赛两两对比（#653）：短 JSON 判定（短档）
     "hyp_compare",
+    # 假设写成想法草案（discovery.write_ideas）：一次一个假设，四段正文 + 评分
+    "hyp_writeup",
+    # 研究方向 → 检索简报（services/research_runs.py）：标题、英文关键词、分类、来源
+    "research_brief",
 )
 
 # ---- 插件命名空间环节（#736，设计报告 §19） ----
 #
-# 上面的 STAGES 元组是内置集合，保持 38 项不动；学科包/插件要挂自己的 LLM 环节时
+# 上面的 STAGES 元组是内置集合，不随插件变动；学科包/插件要挂自己的 LLM 环节时
 # 不再改核心表，而是在运行时注册一个三段式名字 ``plugin:<pack>:<stage>``。
 # 段字符集限 [a-z0-9-]：环节名会进 model_routes / llm_usage / llm_call_logs 的
 # stage 列和前端表格，放开大小写/下划线只会带来「同名不同串」的对账地狱。
@@ -308,6 +312,7 @@ _SHORT_CALL_STAGES = frozenset(
         "hyp_novelty",  # 假设查新逐条判定：短 JSON（#648）
         "hyp_feasibility",  # 假设可行性风险论证：短 JSON（#648）
         "hyp_compare",  # 假设锦标赛两两对比：短 JSON（#653）
+        "research_brief",  # 一句方向 → 一份短的结构化简报
     }
 )
 
@@ -335,6 +340,7 @@ _MEDIUM_CALL_STAGES = frozenset(
         "rag_answer",
         "hyp_generate",
         "hyp_ground",
+        "hyp_writeup",  # 假设写成想法：输入带原文片段、输出四段正文，与 hyp_generate 同档
         # 骨架抽取（#661）：一次吃约 2.4 万字正文、产四字段 JSON——比短 JSON 环节
         # 重得多（extract 短档喂的是单页级片段），但也没有长档的理由：
         # enrich 链逐篇串行，卡死一篇就堵住整条补全队列

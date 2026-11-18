@@ -12,6 +12,7 @@
 import json
 import uuid
 
+import pytest
 from sqlalchemy import select
 
 from app.agents.voyage.engine import VoyageEngine
@@ -23,6 +24,8 @@ from app.services import hypothesis_tournament as tournament
 from app.services import hypothesis_tree as tree_service
 from tests.conftest import RecordingBus
 from tests.test_voyage_discovery import _make_workspace, _tree
+
+pytestmark = pytest.mark.usefixtures("small_library_ok")
 
 # ---- 服务层（直接驱动 run_tournament，树用 tree_service 手搭） ----
 

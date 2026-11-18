@@ -80,9 +80,17 @@ INSPIRATION_PER_ROUTE = budgets.HYPOTHESIS_INSPIRATIONS_PER_ROUTE  # 引文远�
 FUEL_PER_ROUTE = budgets.HYPOTHESIS_FUELS_PER_ROUTE  # 三路燃料各取几条（#670）
 SNIPPET_CHARS = budgets.HYPOTHESIS_SNIPPET_CHARS  # 灵感与证据片段的截断长度
 DENSITY_LIMIT = 50  # 相关片段密度统计的计数上限（信号要的是量级，不是全量）
-# expand 后低于此分自动剪枝（actions_discovery 消费）。0.15 = 「不到一半子命题
-# 新颖 × 不到一半有支持」量级以下：两个维度都不及格的假设不值得占用后续预算
-MIN_VIABLE_SCORE = 0.15
+# expand 后低于此分自动剪枝（actions_discovery 消费）。
+#
+# score = 新颖子命题占比 × 有文献支持的子命题占比。有支持的子命题多半会被判成
+# 「已知」或「不确定」，新颖的那一两条恰恰落在没有依据的部分，所以真实模型下一个
+# 像样的假设也就 0.1–0.25：六条子命题里四条有支持、一条新颖 = 0.111。以前的 0.15
+# 是在每个假设最多五条子命题、替身回答的分数上定的，换成真实模型后一轮扩展出的
+# 子假设大半被剪（实测 12 篇的库：0.25 / 0.22 / 0.16 留下，0.14 / 0.11 / 0.11 / 0.08
+# 被剪，其中 0.14 那条六条子命题有五条带文献支持）。0.10 这条线的含义是：
+# 至少有一条新颖的子命题，并且多数子命题有文献支持；一条新颖都没有（0 分）、
+# 或者只有一半以下有支持的，照旧剪掉。
+MIN_VIABLE_SCORE = 0.10
 
 # 「模型给不出这段判断」的三种失败：结构两次都不对、写不完、拒答。查新与风险论证
 # 遇到它们按既有约定降级（见各自的函数）；网络、限流、密钥这类失败不在其中——
@@ -140,8 +148,11 @@ citation_far=引文图远端、diverse=多样窗口片段）。输入可能还�
 - method_analogies：同目的异机制的做法（purpose 相近、mechanism 不同的方法卡）；
 - unconnected_pairs：尚未被共同研究的概念组合（经桥概念间接相连的 A、C）；
 - open_gaps：文献指出的未解问题（gap/矛盾/负结果的原文归纳）。
-请把方向与灵感/燃料**组合**成最多 n 个彼此不同、可检验的研究假设（鼓励跨片段、
+请把方向与灵感/燃料**组合**成 n 个彼此不同、可检验的研究假设（鼓励跨片段、
 跨燃料组合，而不是逐条改写；有燃料时优先消费燃料——它们是库里最值得下注的线索）。
+输入若带 existing 节，那是这次探索里已经提出过的假设（包括正在细化的父假设）：
+每个新候选都要和它们、也和彼此有实质区别——换一个机制、对象、条件或检验方式，
+不要改写、缩写或拼接已有的陈述。尽量给满 n 个；确实想不出实质不同的再少给。
 输出 JSON：{"candidates": [{"statement": "假设陈述（一句话，可检验）", \
 "rationale": "一句话依据（引用了哪路灵感或燃料）"}]}"""
 
@@ -515,11 +526,16 @@ async def generate(
     library_id: uuid.UUID,
     direction: str,
     n_candidates: int = DEFAULT_CANDIDATES,
+    existing: list[str] | None = None,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """三路灵感 → 一次 LLM 组合出 n 个候选 → 去重。
+
+    ``existing``：这次探索里已经提出过的假设陈述。给了就随输入交给模型，要求新候选
+    与它们有实质区别——不给的时候，细化一个父假设常常只拿回它的几种改写，去重折叠
+    之后一轮只剩一个子假设（真实模型实测）。
 
     返回 {"candidates": [{statement, rationale}], "usage": {...}, "trace": {...}}；
     candidates 已去重，数量 ≤ n_candidates（可能因折叠更少）。trace 是确定性
@@ -564,6 +580,9 @@ async def generate(
     if fuel_sections:
         # 全空时不加键：无燃料的 payload 与纯检索路逐字节一致（行为等价判据）
         payload["fuels"] = fuel_sections
+    known = [str(x).strip() for x in (existing or []) if str(x).strip()]
+    if known:
+        payload["existing"] = known
     out = await _complete_json(
         llm,
         GENERATE_STAGE,
@@ -610,7 +629,9 @@ def sanitize_grounding(
     - paper_ids 逐条与**该子命题自己的**检索集求交，越界 id 直接丢弃；
     - 立场是 support/refute 但没剩下任何合法 id → 降为 speculation——
       「有立场没证据」和编造引文一样不可信；
-    - snippets 回填所选论文在检索集里的片段，证据卡（D5）直接可用。
+    - snippets 回填所选论文在检索集里的片段，证据卡（D5）直接可用；
+      snippet_paper_ids 与 snippets 等长、逐位对应，说明每段出自哪篇论文
+      （一篇论文可能有多段入选，只凭 paper_ids 的顺序对不上）。
     """
     by_index: dict[int, dict[str, Any]] = {}
     for item in items:
@@ -629,8 +650,16 @@ def sanitize_grounding(
         if stance not in ("support", "refute") or not ids:
             stance, ids = "speculation", []
         chosen = set(ids)
-        snippets = [entry["snippet"] for entry in pool if entry["paper_id"] in chosen]
-        out.append({"subclaim": subclaim, "stance": stance, "paper_ids": ids, "snippets": snippets})
+        picked = [entry for entry in pool if entry["paper_id"] in chosen]
+        out.append(
+            {
+                "subclaim": subclaim,
+                "stance": stance,
+                "paper_ids": ids,
+                "snippets": [entry["snippet"] for entry in picked],
+                "snippet_paper_ids": [entry["paper_id"] for entry in picked],
+            }
+        )
     return out
 
 

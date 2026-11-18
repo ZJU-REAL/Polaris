@@ -98,6 +98,7 @@ _HYP_GENERATE_MARKER = "POLARIS_HYP_GENERATE"
 _HYP_GROUND_MARKER = "POLARIS_HYP_GROUND"
 _HYP_NOVELTY_MARKER = "POLARIS_HYP_NOVELTY"
 _HYP_FEASIBILITY_MARKER = "POLARIS_HYP_FEASIBILITY"
+_HYP_WRITEUP_MARKER = "POLARIS_HYP_WRITEUP"  # 假设写成想法草案（actions_discovery）
 # 锦标赛两两对比（services/hypothesis_tournament.py，#653）。system prompt 里有
 # "winner" 字样，会撞 debate 裁判的 _JUDGE_MARKER——必须先于它判断
 _HYP_COMPARE_MARKER = "POLARIS_HYP_COMPARE"
@@ -507,6 +508,8 @@ class FakeProvider(LLMProvider):
             return FakeProvider._respond_paper_reviewer(full_text)
         # 假设管线四 marker（#648）：user payload 内嵌检索片段（可能撞任意通用
         # marker），须先于通用 marker 判断
+        if _HYP_WRITEUP_MARKER in full_text:
+            return FakeProvider._respond_hyp_writeup(last_user)
         if _HYP_GENERATE_MARKER in full_text:
             return FakeProvider._respond_hyp_generate(last_user)
         if _HYP_GROUND_MARKER in full_text:
@@ -1455,6 +1458,31 @@ class FakeProvider(LLMProvider):
                 }
             )
         return json.dumps({"items": out}, ensure_ascii=False)
+
+    @staticmethod
+    def _respond_hyp_writeup(last_user: str) -> str:
+        """假设写成想法：回显假设陈述的确定性草案（标题随陈述变，去重才有东西可比）。"""
+        payload = FakeProvider._payload_of(last_user)
+        statement = str(payload.get("statement") or "")
+        evidence = [e for e in (payload.get("evidence") or []) if isinstance(e, dict)]
+        unsupported = payload.get("unsupported") or []
+        return json.dumps(
+            {
+                "title": f"想法（fake）：{statement[:60]}",
+                "motivation": f"（fake 动机）依据 {len(evidence)} 条有文献支持的子命题。",
+                "method": f"（fake 方法）围绕假设展开：{statement[:80]}",
+                "experiments": f"（fake 实验）检验 {len(unsupported)} 条尚无依据的子命题。",
+                "risks": "（fake 风险）库内证据规模有限。",
+                "scores": {"novelty": 6, "feasibility": 7, "operability": 6, "impact": 5},
+                "rationale": {
+                    "novelty": "（fake）库内未见相同提法",
+                    "feasibility": "（fake）有文献托底",
+                    "operability": "（fake）步骤明确",
+                    "impact": "（fake）中等",
+                },
+            },
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _respond_hyp_compare(last_user: str) -> str:

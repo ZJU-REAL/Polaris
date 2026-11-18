@@ -153,12 +153,12 @@
           },
           "<uuid-8>": {
             "completion_tokens": 91,
-            "prompt_tokens": 489
+            "prompt_tokens": 535
           }
         },
         "total": {
           "completion_tokens": 347,
-          "prompt_tokens": 2514
+          "prompt_tokens": 2560
         }
       },
       "branches": [
@@ -365,6 +365,9 @@
           "paper_ids": [
             "<uuid-4>"
           ],
+          "snippet_paper_ids": [
+            "<uuid-4>"
+          ],
           "snippets": [
             "Structured Agent Planning Probe\nProbe, Golden\nSynthetic record one: structured agent planning with verifiable checkpoints for the deterministic golden harness."
           ],
@@ -373,6 +376,7 @@
         },
         {
           "paper_ids": [],
+          "snippet_paper_ids": [],
           "snippets": [],
           "stance": "speculation",
           "subclaim": "机制假设（fake A）：structured agent planning；父假设：围绕「stru 的边界子命题（fake s2）"
@@ -426,6 +430,9 @@
           "paper_ids": [
             "<uuid-4>"
           ],
+          "snippet_paper_ids": [
+            "<uuid-4>"
+          ],
           "snippets": [
             "Structured Agent Planning Probe\nProbe, Golden\nSynthetic record one: structured agent planning with verifiable checkpoints for the deterministic golden harness."
           ],
@@ -434,6 +441,7 @@
         },
         {
           "paper_ids": [],
+          "snippet_paper_ids": [],
           "snippets": [],
           "stance": "speculation",
           "subclaim": "证据闭环假设（fake B）：structured agent planning；父假设：围绕「st 的边界子命题（fake s2）"
@@ -467,6 +475,133 @@
       "updated_at": "<ts>"
     }
   ],
+  "idea_detail": {
+    "content": "## Motivation\n\n（fake 动机）依据 1 条有文献支持的子命题。\n\n## Method\n\n（fake 方法）围绕假设展开：机制假设（fake A）：structured agent planning；父假设：围绕「structu 依赖显式规划机制\n\n## Experiments\n\n（fake 实验）检验 1 条尚无依据的子命题。\n\n## Risks\n\n（fake 风险）库内证据规模有限。\n\n## Not yet supported by the literature\n\n- 机制假设（fake A）：structured agent planning；父假设：围绕「stru 的边界子命题（fake s2）",
+    "created_at": "<ts>",
+    "depth": "sketch",
+    "elo_rating": 1200.0,
+    "evidence": [
+      {
+        "paper_id": "<uuid-4>",
+        "snippet": "Structured Agent Planning Probe\nProbe, Golden\nSynthetic record one: structured agent planning with verifiable checkpoints for the deterministic golden harness.",
+        "source": "library",
+        "stance": "support",
+        "title": "Structured Agent Planning Probe",
+        "url": null,
+        "why": "机制假设（fake A）：structured agent planning；父假设：围绕「stru 的机制子命题（fake s1）"
+      }
+    ],
+    "goal": null,
+    "id": "<uuid-14>",
+    "origin": {
+      "kind": "discovery",
+      "library_id": "<uuid-2>",
+      "library_paper_count": 2,
+      "node_id": "<uuid-10>",
+      "novel_ratio": 0.5,
+      "novelty_scope": "library",
+      "pipeline_score": 0.25,
+      "support_ratio": 0.5,
+      "unsupported_subclaims": [
+        "机制假设（fake A）：structured agent planning；父假设：围绕「stru 的边界子命题（fake s2）"
+      ]
+    },
+    "parent_paper_ids": [
+      "<uuid-4>"
+    ],
+    "parent_papers": [
+      {
+        "id": "<uuid-4>",
+        "title": "Structured Agent Planning Probe"
+      }
+    ],
+    "project_id": "<uuid-3>",
+    "research_type": null,
+    "score_rationale": {
+      "feasibility": "（fake）有文献托底",
+      "impact": "（fake）中等",
+      "novelty": "（fake）库内未见相同提法 Novelty is judged against your library only.",
+      "operability": "（fake）步骤明确"
+    },
+    "scores": {
+      "feasibility": 7,
+      "impact": 5,
+      "novelty": 6,
+      "operability": 6
+    },
+    "seed_idea": null,
+    "source_voyage_id": "<uuid-6>",
+    "status": "candidate",
+    "summary": "机制假设（fake A）：structured agent planning；父假设：围绕「structu 依赖显式规划机制",
+    "title": "想法（fake）：机制假设（fake A）：structured agent planning；父假设：围绕「structu 依赖显式规划",
+    "trashed_at": null
+  },
+  "ideas": [
+    {
+      "created_at": "<ts>",
+      "depth": "sketch",
+      "elo_rating": 1200.0,
+      "id": "<uuid-15>",
+      "origin": {
+        "kind": "discovery",
+        "library_id": "<uuid-2>",
+        "library_paper_count": 2,
+        "node_id": "<uuid-11>",
+        "novel_ratio": 0.5,
+        "novelty_scope": "library",
+        "pipeline_score": 0.25,
+        "support_ratio": 0.5,
+        "unsupported_subclaims": [
+          "证据闭环假设（fake B）：structured agent planning；父假设：围绕「st 的边界子命题（fake s2）"
+        ]
+      },
+      "project_id": "<uuid-3>",
+      "research_type": null,
+      "scores": {
+        "feasibility": 7,
+        "impact": 5,
+        "novelty": 6,
+        "operability": 6
+      },
+      "source_voyage_id": "<uuid-6>",
+      "status": "candidate",
+      "summary": "证据闭环假设（fake B）：structured agent planning；父假设：围绕「structu 需要检索增强验证",
+      "title": "想法（fake）：证据闭环假设（fake B）：structured agent planning；父假设：围绕「structu 需要检索",
+      "trashed_at": null
+    },
+    {
+      "created_at": "<ts>",
+      "depth": "sketch",
+      "elo_rating": 1200.0,
+      "id": "<uuid-14>",
+      "origin": {
+        "kind": "discovery",
+        "library_id": "<uuid-2>",
+        "library_paper_count": 2,
+        "node_id": "<uuid-10>",
+        "novel_ratio": 0.5,
+        "novelty_scope": "library",
+        "pipeline_score": 0.25,
+        "support_ratio": 0.5,
+        "unsupported_subclaims": [
+          "机制假设（fake A）：structured agent planning；父假设：围绕「stru 的边界子命题（fake s2）"
+        ]
+      },
+      "project_id": "<uuid-3>",
+      "research_type": null,
+      "scores": {
+        "feasibility": 7,
+        "impact": 5,
+        "novelty": 6,
+        "operability": 6
+      },
+      "source_voyage_id": "<uuid-6>",
+      "status": "candidate",
+      "summary": "机制假设（fake A）：structured agent planning；父假设：围绕「structu 依赖显式规划机制",
+      "title": "想法（fake）：机制假设（fake A）：structured agent planning；父假设：围绕「structu 依赖显式规划",
+      "trashed_at": null
+    }
+  ],
   "library_index_rebuild": {
     "abstract_vectors_copied": 0,
     "chunks_created": 2,
@@ -494,7 +629,7 @@
     "budget": null,
     "created_at": "<ts>",
     "created_by": "<uuid-1>",
-    "cursor": 3,
+    "cursor": 4,
     "goal": "structured agent planning",
     "id": "<uuid-6>",
     "kind": "discovery",
@@ -546,6 +681,20 @@
         "requires_gate": null,
         "title": "汇总假设树",
         "wrapup": true
+      },
+      {
+        "acceptance": "留下来的假设已写入课题的想法列表（重复的不重复写）",
+        "action": "discovery.write_ideas",
+        "checks": [
+          {
+            "kind": "no_error"
+          }
+        ],
+        "on_failure": null,
+        "params": {},
+        "requires_gate": null,
+        "title": "把假设写成想法",
+        "wrapup": true
       }
     ],
     "plan_history": [
@@ -559,7 +708,7 @@
         "trigger_step": "生成根假设"
       },
       {
-        "added": 1,
+        "added": 2,
         "at": "<ts>",
         "iteration": 2,
         "obsoleted": 0,
@@ -668,18 +817,19 @@
               "node_id": "<uuid-8>",
               "plan_signal": {
                 "decision": "summarize",
+                "emit_ideas": true,
                 "reason": "扩展数已达上限（1/1），转入汇总"
               },
               "round": 1,
               "usage": {
                 "completion_tokens": 320,
-                "prompt_tokens": 2465
+                "prompt_tokens": 2511
               }
             },
             "started_at": "<ts>",
             "tokens": {
               "completion_tokens": 320,
-              "prompt_tokens": 2465
+              "prompt_tokens": 2511
             },
             "verdict": {
               "passed": true,
@@ -697,12 +847,13 @@
           "node_id": "<uuid-8>",
           "plan_signal": {
             "decision": "summarize",
+            "emit_ideas": true,
             "reason": "扩展数已达上限（1/1），转入汇总"
           },
           "round": 1,
           "usage": {
             "completion_tokens": 320,
-            "prompt_tokens": 2465
+            "prompt_tokens": 2511
           }
         },
         "params": {
@@ -719,7 +870,7 @@
         "title": "第 1 轮扩展假设",
         "tokens": {
           "completion_tokens": 320,
-          "prompt_tokens": 2465
+          "prompt_tokens": 2511
         },
         "verdict": {
           "passed": true,
@@ -795,13 +946,89 @@
           "passed": true,
           "reason": "确定性检查全部通过（no_error）"
         }
+      },
+      {
+        "acceptance": {
+          "checks": [
+            {
+              "kind": "no_error"
+            }
+          ],
+          "text": "留下来的假设已写入课题的想法列表（重复的不重复写）"
+        },
+        "action": "discovery.write_ideas",
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "finished_at": "<ts>",
+            "observation": {
+              "duplicate_detail": [],
+              "duplicates": 0,
+              "idea_ids": [
+                "<uuid-14>",
+                "<uuid-15>"
+              ],
+              "ideas": 2,
+              "selected": 2,
+              "usage": {
+                "completion_tokens": 245,
+                "prompt_tokens": 871
+              }
+            },
+            "started_at": "<ts>",
+            "tokens": {
+              "completion_tokens": 245,
+              "prompt_tokens": 871
+            },
+            "verdict": {
+              "passed": true,
+              "reason": "确定性检查全部通过（no_error）"
+            }
+          }
+        ],
+        "finished_at": "<ts>",
+        "id": "<uuid-13>",
+        "observation": {
+          "duplicate_detail": [],
+          "duplicates": 0,
+          "idea_ids": [
+            "<uuid-14>",
+            "<uuid-15>"
+          ],
+          "ideas": 2,
+          "selected": 2,
+          "usage": {
+            "completion_tokens": 245,
+            "prompt_tokens": 871
+          }
+        },
+        "params": {},
+        "provenance": {
+          "plan_iteration": 1,
+          "wrapup": true
+        },
+        "rank": 300.0,
+        "requires_gate": null,
+        "seq": 3,
+        "started_at": "<ts>",
+        "status": "passed",
+        "title": "把假设写成想法",
+        "tokens": {
+          "completion_tokens": 245,
+          "prompt_tokens": 871
+        },
+        "verdict": {
+          "passed": true,
+          "reason": "确定性检查全部通过（no_error）"
+        }
       }
     ],
     "updated_at": "<ts>",
     "usage": {
-      "completion_tokens": 366,
-      "prompt_tokens": 2609,
-      "total_tokens": 2975
+      "completion_tokens": 611,
+      "prompt_tokens": 3592,
+      "total_tokens": 4203
     }
   }
 }

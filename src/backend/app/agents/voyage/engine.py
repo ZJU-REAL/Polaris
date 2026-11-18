@@ -27,6 +27,7 @@ voyage_steps 行，run.plan 只是派生快照），调度规则 = 按 rank 取�
 """
 
 import asyncio
+import copy
 import logging
 import uuid
 from typing import Any
@@ -1129,10 +1130,14 @@ class VoyageEngine:
             run.checkpoint = checkpoint
             await session.commit()
 
+        # 动作拿到的是深拷贝。checkpoint 是普通 JSON 列，SQLAlchemy 靠「新值 != 旧值」
+        # 判断要不要写库；动作就地改嵌套字典（checkpoint["discovery"]["ideas"][...] = ...）
+        # 时，浅拷贝让旧值跟着一起变，两边永远相等，这一步的 checkpoint 就不落库——
+        # 只有碰巧同一步还加了顶层键、或随后有计划调整时才被顺带写进去。
         ctx = ActionContext(
             run=run,
             llm=self._llm,
-            checkpoint=checkpoint,
+            checkpoint=copy.deepcopy(checkpoint),
             bus=self._bus,
             step_id=step_row.id,
         )

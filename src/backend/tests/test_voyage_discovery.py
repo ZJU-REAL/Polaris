@@ -36,6 +36,8 @@ from tests.conftest import (
 )
 from tests.vector_helpers import ensure_space, index_chunks
 
+pytestmark = pytest.mark.usefixtures("small_library_ok")
+
 # ---- 纯函数：计划模板 + 确定性分支表 ----
 
 
@@ -69,8 +71,12 @@ def test_discovery_signal_edits_idempotent():
 
     edit = discovery_signal_edits({"decision": "summarize", "reason": "上限已到"}, rows)
     nodes = edit["edits"][0]["nodes"]
-    assert [n["action"] for n in nodes] == ["discovery.summarize"]
-    assert nodes[0]["wrapup"] is True  # 预算耗尽也要能把树落成产物
+    # 汇总之后接着把假设写成想法；两步都标 wrapup，预算耗尽也要能把树落成产物
+    assert [n["action"] for n in nodes] == ["discovery.summarize", "discovery.write_ideas"]
+    assert all(n["wrapup"] is True for n in nodes)
+    # 创建时显式关掉写想法的任务只汇总
+    only_summary = discovery_signal_edits({"decision": "summarize", "emit_ideas": False}, rows)
+    assert [n["action"] for n in only_summary["edits"][0]["nodes"]] == ["discovery.summarize"]
 
     rows.append(_RowStub("discovery.summarize", "pending"))
     assert discovery_signal_edits({"decision": "summarize"}, rows) is None
@@ -215,6 +221,7 @@ async def test_discovery_create_api_normalizes_params(client, queue_stub):
         assert params["library_id"] == str(library_id)
         assert params["max_expansions"] == 4
         assert params["tournament"] is False
+        assert params["emit_ideas"] is True  # 默认把留下来的假设写成想法
         assert run.library_id == library_id
 
     # direction/library_id 缺失、max_expansions 非法 → 422（引擎端不再兜底坏参数）
@@ -276,11 +283,12 @@ async def test_discovery_pipeline_run(client, queue_stub):
             .scalars()
             .all()
         )
-        # 计划由信号逐步长出来：seed → expand(1) → summarize，全部通过
+        # 计划由信号逐步长出来：seed → expand(1) → summarize → write_ideas，全部通过
         assert [s.action for s in steps] == [
             "hypothesis.seed",
             "hypothesis.expand",
             "discovery.summarize",
+            "discovery.write_ideas",
         ]
         assert all(s.status == "passed" for s in steps)
 
@@ -336,7 +344,12 @@ async def test_discovery_pipeline_run(client, queue_stub):
         # 每轮决策留痕：动作、选中节点、为什么
         state = (run.checkpoint or {})["discovery"]
         decisions = state["decisions"]
-        assert [d["decision"] for d in decisions] == ["expand", "summarize", "summarized"]
+        assert [d["decision"] for d in decisions] == [
+            "expand",
+            "summarize",
+            "summarized",
+            "ideas_written",
+        ]
         assert all(d["why"] for d in decisions)
         assert decisions[1]["node_id"] == str(root.id)  # 第 1 轮扩的就是根
 

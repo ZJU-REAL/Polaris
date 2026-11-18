@@ -15,7 +15,6 @@ review 流水线（docs/task-system.md §7（原 api-m3.md §3））：
 
 import asyncio
 import json
-import math
 import re
 import uuid
 from datetime import timedelta
@@ -39,8 +38,9 @@ from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project
 from app.models.review import ReviewMessage, ReviewSession
 from app.schemas.idea import FORGE_SIGNALS
+from app.services import idea_dedup
 from app.services.concepts import library_concept_ids
-from app.services.embedding import embed_documents, idea_vectors, upsert_idea_vector
+from app.services.embedding import embed_documents, upsert_idea_vector
 from app.services.libraries import (
     dedupe_member_rows,
     get_source_library_ids,
@@ -62,7 +62,6 @@ DEFAULT_FORGE_KNOBS: dict[str, Any] = {
 DEFAULT_ROUNDS = 2
 
 _MAX_JSON_ATTEMPTS = 3  # 首次 + 重试 2 次
-_RERANK_CONFIRM_SCORE = 0.5  # 余弦超阈后 rerank 复核的确认线
 _SCORE_DIMS = ("novelty", "feasibility", "operability", "impact")
 
 GAP_SYSTEM_PROMPT = """\
@@ -183,15 +182,10 @@ async def _complete_json(
     raise ValueError(f"LLM 连续输出非法 JSON：{last_error}")
 
 
-def cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    norm_a = math.sqrt(sum(x * x for x in a)) or 1.0
-    norm_b = math.sqrt(sum(x * x for x in b)) or 1.0
-    return dot / (norm_a * norm_b)
-
-
-def _idea_text(title: str, summary: str | None) -> str:
-    return f"{title}\n{summary or ''}"[:2000]
+# 去重的算法在 services/idea_dedup.py（假设探索写想法时也用它）；这两个名字留在这里
+# 是因为本模块和 actions_wiki 一直从这里取。
+cosine_similarity = idea_dedup.cosine_similarity
+_idea_text = idea_dedup.idea_text
 
 
 def _idea_markdown(item: dict[str, Any]) -> str:
@@ -806,88 +800,44 @@ async def forge_dedup(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
             ctx.checkpoint["forge_dedup_done"] = True
             return {"candidates": len(candidates), "dropped": 0, "skipped_reason": "no embedding"}
 
-        # 库内既有 idea：激活空间下无向量的现场补嵌并落库。
-        # 回收站里的不参与：用户把一个想法扔掉，正是不想再看到它，结果它却留在去重基准里
-        # 把新生成的近似想法判成重复——扔得越多，越生不出东西，而且没有任何提示。
-        # 顺带省掉给这些死记录现场补向量的那一趟嵌入调用。
-        existing = (
-            (
-                await session.execute(
-                    select(Idea).where(
-                        Idea.project_id == ctx.run.project_id,
-                        Idea.status != "rejected",
-                        Idea.trashed_at.is_(None),
-                    )
-                )
-            )
-            .scalars()
-            .all()
+        # 库内既有 idea（未淘汰、不在回收站）：激活空间下无向量的现场补嵌并落库
+        existing_entries = await idea_dedup.existing_idea_entries(
+            session,
+            project_id=ctx.run.project_id,
+            space=space,
+            user_id=ctx.run.created_by,
+            voyage_id=ctx.run.id,
         )
-        known = await idea_vectors(session, [i.id for i in existing], space)
-        pending = [i for i in existing if i.id not in known]
-        if pending:
-            try:
-                vectors, _ = await embed_documents(
-                    session,
-                    [_idea_text(i.title, i.summary) for i in pending],
-                    user_id=ctx.run.created_by,
-                    project_id=ctx.run.project_id,
-                    voyage_id=ctx.run.id,
-                )
-                for idea, vector in zip(pending, vectors, strict=True):
-                    await upsert_idea_vector(session, idea.id, vector, space)
-                    known[idea.id] = vector
-                await session.commit()
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 — 既有 idea 补嵌失败则跳过比对
-                await session.rollback()
-        existing_entries = [
-            (f"库内想法「{i.title}」", _idea_text(i.title, i.summary), known[i.id])
-            for i in existing
-            if i.id in known
-        ]
-
-    async def confirmed_duplicate(text: str, other_text: str, cosine: float) -> tuple[bool, float]:
-        """余弦超阈的对用 rerank 复核；rerank 不可用时以余弦为准。"""
-        try:
-            ranked = await ctx.llm.rerank(
-                text,
-                [other_text],
-                user_id=ctx.run.created_by,
-                project_id=ctx.run.project_id,
-                voyage_id=ctx.run.id,
-            )
-            score = float(ranked[0][1]) if ranked else 0.0
-            return score >= _RERANK_CONFIRM_SCORE, score
-        except NotImplementedError:
-            return True, cosine
-        except Exception:  # noqa: BLE001 — rerank 异常降级为余弦判定
-            return True, cosine
 
     dropped: list[dict[str, Any]] = []
-    kept: list[tuple[str, str, list[float]]] = list(existing_entries)
+    kept: list[idea_dedup.DedupEntry] = list(existing_entries)
     for cand, text, vector in zip(candidates, cand_texts, cand_vectors, strict=True):
-        duplicate_of: str | None = None
-        for label, other_text, other_vector in kept:
-            cosine = cosine_similarity(vector, other_vector)
-            if cosine <= threshold:
-                continue
-            is_dup, rerank_score = await confirmed_duplicate(text, other_text, cosine)
-            if is_dup:
-                duplicate_of = label
-                dropped.append(
-                    {
-                        "title": cand["title"],
-                        "duplicate_of": label,
-                        "cosine": round(cosine, 4),
-                        "rerank_score": round(rerank_score, 4),
-                    }
+        match = await idea_dedup.find_duplicate(
+            ctx.llm,
+            text=text,
+            vector=vector,
+            kept=kept,
+            threshold=threshold,
+            user_id=ctx.run.created_by,
+            project_id=ctx.run.project_id,
+            voyage_id=ctx.run.id,
+        )
+        if match is not None:
+            dropped.append(
+                {
+                    "title": cand["title"],
+                    "duplicate_of": match.entry.label,
+                    "cosine": round(match.cosine, 4),
+                    "rerank_score": round(match.rerank_score, 4),
+                }
+            )
+        else:
+            kept.append(
+                idea_dedup.DedupEntry(
+                    label=f"本批候选「{cand['title']}」", text=text, vector=vector
                 )
-                break
-        if duplicate_of is None:
-            kept.append((f"本批候选「{cand['title']}」", text, vector))
-        cand["duplicate"] = duplicate_of is not None
+            )
+        cand["duplicate"] = match is not None
 
     ctx.checkpoint["forge_candidates"] = candidates
     ctx.checkpoint["forge_dedup_done"] = True

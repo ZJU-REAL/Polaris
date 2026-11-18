@@ -53,7 +53,7 @@ grounded citations for the deterministic golden harness.}
 
 DIRECTION = "structured agent planning"
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("small_library_ok")]
 
 
 async def test_discovery_chain_matches_golden(client, queue_stub, monkeypatch):
@@ -184,6 +184,19 @@ async def test_discovery_chain_matches_golden(client, queue_stub, monkeypatch):
     # 三路燃料合法为空，generate 行为与纯检索路等价（有燃料的差异走常规测试）。
     # 断言「节存在且为空」钉住这条降级路径本身。
     assert disclosure["fuels"] == {"methods": [], "concept_pairs": [], "gaps": []}
+
+    # 留下来的假设已经写成课题里的想法：列表 + 第一个想法的详情（证据、来路、正文）
+    ideas = await step(
+        "ideas",
+        await client.get(f"/api/projects/{project['id']}/ideas?sort=-created_at", headers=headers),
+        200,
+    )
+    assert ideas, "探索结束后课题里必须有想法"
+    await step(
+        "idea_detail",
+        await client.get(f"/api/ideas/{ideas[-1]['id']}", headers=headers),
+        200,
+    )
 
     rendered = json.dumps(transcript, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if os.environ.get("POLARIS_GOLDEN") == "record":

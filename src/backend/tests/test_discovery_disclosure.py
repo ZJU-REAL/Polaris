@@ -29,6 +29,8 @@ from tests.conftest import (
 )
 from tests.vector_helpers import index_chunks
 
+pytestmark = pytest.mark.usefixtures("small_library_ok")
+
 # ---- 纯函数：伪造一次两轮探索的完整现场 ----
 
 ROOT, CHILD_A, CHILD_B, GRANDCHILD = "n-root", "n-a", "n-b", "n-ba"
@@ -381,13 +383,15 @@ async def test_artifact_endpoint_whitelist_and_visibility(client, queue_stub):
 
 
 @pytest.mark.asyncio
-async def test_artifact_endpoint_404_before_summarize(client, queue_stub):
+async def test_artifact_endpoint_404_before_summarize(client, queue_stub, monkeypatch):
     """还没跑到汇总的 run：产物尚未产出，404（前端据此降级为推断视图）。"""
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
     project_id, library_id = await make_project_with_library(
         client, headers, name="empty-lib", statement="s"
     )
+    # 这条用例只看「任务建了、产物还没有」；库是空的，绕开建任务时的库大小检查
+    monkeypatch.setattr("app.services.voyages.MIN_CORPUS_PAPERS", 0)
     resp = await client.post(
         "/api/voyages",
         json={

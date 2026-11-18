@@ -172,7 +172,11 @@ async def test_forge_full_pipeline(client, queue_stub):
         "research_type",
         "trashed_at",
         "created_at",
+        "source_voyage_id",
+        "origin",
     }
+    # 想法生成写的想法没有「来自哪次探索」
+    assert all(i["source_voyage_id"] is None and i["origin"] is None for i in items)
     assert all(i["depth"] == "sketch" for i in items)
     for sort in ("elo", "-created_at", "score"):
         resp = await client.get(f"/api/projects/{project_id}/ideas?sort={sort}", headers=headers)

@@ -29,7 +29,8 @@ class VoyageCreate(BaseModel):
         这个库，没有库的 discovery 无从接地——可见性由 API 层校验）；
         max_expansions 默认 4（0..MAX，整数）；tournament 默认 False——True 时
         每轮扩展后对头部假设跑两两对比锦标赛、按胜率混合重排 score（#653），
-        深度换成本，默认关。"""
+        深度换成本，默认关；emit_ideas 默认 True——汇总之后把留下来的假设写成
+        课题里的想法（discovery.write_ideas）。"""
         if self.kind != "discovery":
             return self
         params = dict(self.params or {})
@@ -48,6 +49,8 @@ class VoyageCreate(BaseModel):
             raise ValueError(f"max_expansions 必须在 0..{MAX_DISCOVERY_EXPANSIONS} 之间")
         params["max_expansions"] = raw
         params["tournament"] = bool(params.get("tournament", False))
+        # 探索结束后把留下来的假设写成想法（默认写；显式 false 才只留树）
+        params["emit_ideas"] = params.get("emit_ideas") is not False
         self.params = params
         return self
 

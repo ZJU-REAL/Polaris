@@ -224,6 +224,20 @@ def discovery_summarize_node() -> dict:
     }
 
 
+def discovery_write_ideas_node() -> dict:
+    """把留下来的假设写成想法。同样标 wrapup：预算耗尽时树已经长出来了，
+    不把它变成想法，这次探索就白花了。"""
+    return {
+        "title": "把假设写成想法",
+        "action": "discovery.write_ideas",
+        "params": {},
+        "acceptance": "留下来的假设已写入课题的想法列表（重复的不重复写）",
+        "checks": [{"kind": "no_error"}],
+        "requires_gate": None,
+        "wrapup": True,
+    }
+
+
 def discovery_signal_edits(signal: dict[str, Any], active_rows: list[Any]) -> dict[str, Any] | None:
     """hypothesis.seed / hypothesis.expand 的 plan_signal → 追加下一步（幂等）。
 
@@ -251,12 +265,14 @@ def discovery_signal_edits(signal: dict[str, Any], active_rows: list[Any]) -> di
     if decision == "summarize":
         if "discovery.summarize" in pending_actions:
             return None
+        nodes = [discovery_summarize_node()]
+        # 默认汇总完接着写想法；只有任务创建时显式关掉（emit_ideas=false）才不写
+        if signal.get("emit_ideas") is not False:
+            nodes.append(discovery_write_ideas_node())
         return {
             "finish": False,
             "reason": str(signal.get("reason") or "") or "扩展结束，汇总假设树",
-            "edits": [
-                {"op": "add_nodes", "insert_after": None, "nodes": [discovery_summarize_node()]}
-            ],
+            "edits": [{"op": "add_nodes", "insert_after": None, "nodes": nodes}],
         }
     return None
 

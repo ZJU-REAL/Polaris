@@ -145,6 +145,8 @@ def test_sanitize_grounding_downgrades_out_of_set_citations():
         "stance": "support",
         "paper_ids": ["p-a"],
         "snippets": ["snip-a"],
+        # 每段片段出自哪篇论文，与 snippets 逐位对应
+        "snippet_paper_ids": ["p-a"],
     }
     assert out[1]["stance"] == "speculation" and out[1]["paper_ids"] == []
     assert out[2]["stance"] == "speculation"
@@ -154,7 +156,15 @@ def test_sanitize_grounding_missing_item_is_speculation():
     """LLM 漏答某条子命题：诚实缺省为 speculation，而不是报错或编造。"""
     retrieved = [[{"paper_id": "p", "title": "", "snippet": "x"}]]
     out = pipeline.sanitize_grounding(["s0"], retrieved, [])
-    assert out == [{"subclaim": "s0", "stance": "speculation", "paper_ids": [], "snippets": []}]
+    assert out == [
+        {
+            "subclaim": "s0",
+            "stance": "speculation",
+            "paper_ids": [],
+            "snippets": [],
+            "snippet_paper_ids": [],
+        }
+    ]
 
 
 def test_score_hypothesis_is_product_of_ratios():

@@ -3,18 +3,67 @@
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.embedding_space import active_space
+from app.models.library_direction import LibraryPaper
+from app.models.paper import PaperChunk
 from app.models.project import Project
 from app.models.user import User
+from app.models.vectors import PaperChunkVector
 from app.models.voyage import LIBRARY_KINDS, TERMINAL_STATUSES, VoyageRun
 from app.schemas.voyage import VoyageCreate
+from app.services.papers import PAPER_STATUS_GROUPS
 
 
 class VoyageAlreadyFinishedError(Exception):
     """对终态航程执行 cancel。"""
+
+
+# 假设探索至少要这么多篇「库内、且已建好语义索引」的论文。少于它时每条子命题都检索
+# 不到几段像样的证据，整棵树不是全靠推测就是全靠同一两篇论文，而任务照样显示完成。
+MIN_CORPUS_PAPERS = 5
+
+
+class LibraryTooSmallError(Exception):
+    """文献库里可检索的论文不够做假设探索。``count`` 是当前有几篇。"""
+
+    def __init__(self, count: int) -> None:
+        super().__init__(f"library has {count} indexed papers, needs {MIN_CORPUS_PAPERS}")
+        self.count = count
+
+
+async def indexed_library_paper_count(session: AsyncSession, library_id: uuid.UUID) -> int:
+    """库内论文里有多少篇能被语义检索到（至少一段正文在当前向量空间下有向量）。
+
+    只数「库内」状态的成员（候选、被排除、回收站里的不算），和假设探索的检索边界
+    是同一个口径。平台还没建过任何向量时是 0。
+    """
+    space = await active_space(session)
+    if space is None:
+        return 0
+    stmt = (
+        select(func.count(func.distinct(LibraryPaper.paper_id)))
+        .select_from(LibraryPaper)
+        .join(PaperChunk, PaperChunk.paper_id == LibraryPaper.paper_id)
+        .join(PaperChunkVector, PaperChunkVector.chunk_id == PaperChunk.id)
+        .where(
+            LibraryPaper.library_id == library_id,
+            LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+            PaperChunkVector.space == space.key,
+        )
+    )
+    return int((await session.execute(stmt)).scalar_one() or 0)
+
+
+async def ensure_library_can_ground(session: AsyncSession, library_id: uuid.UUID) -> int:
+    """假设探索的前置条件：不够 :data:`MIN_CORPUS_PAPERS` 篇就抛 LibraryTooSmallError。"""
+    count = await indexed_library_paper_count(session, library_id)
+    if count < MIN_CORPUS_PAPERS:
+        raise LibraryTooSmallError(count)
+    return count
 
 
 async def create_voyage(

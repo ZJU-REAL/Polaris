@@ -56,3 +56,11 @@ class Idea(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     seed_idea_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("ideas.id", ondelete="SET NULL")
     )
+    # 这个想法是哪次任务写出来的（假设探索写想法时记；任务删掉后置空）
+    source_voyage_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("voyage_runs.id", ondelete="SET NULL"), index=True
+    )
+    # 来路说明。假设探索写的想法：{kind: "discovery", node_id, pipeline_score,
+    # support_ratio, novel_ratio, novelty_scope: "library", library_id,
+    # library_paper_count}。novelty_scope="library" 表示新颖性只对照了这个文献库。
+    origin: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)

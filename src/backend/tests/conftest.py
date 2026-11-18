@@ -474,6 +474,13 @@ async def register_and_login(
 
 
 @pytest.fixture
+def small_library_ok(monkeypatch):
+    """假设探索要求库里至少 5 篇可检索的论文；这些用例钉的是两篇论文的小库上的
+    确定性结果，把门槛降到 2。门槛本身在 test_discovery_ideas.py 里测。"""
+    monkeypatch.setattr("app.services.voyages.MIN_CORPUS_PAPERS", 2)
+
+
+@pytest.fixture
 def claude_settings(monkeypatch):
     """让这条用例「有 Claude key」：``claude_settings(LITELLM_API_KEY=..., ...)``。
 

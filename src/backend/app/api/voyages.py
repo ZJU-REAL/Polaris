@@ -85,6 +85,11 @@ async def create_voyage(
         )
         if library is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
+        # 库里可检索的论文太少就不建任务：否则它会照常跑完，交出一棵没有依据的树
+        try:
+            await voyages_service.ensure_library_can_ground(session, library.id)
+        except voyages_service.LibraryTooSmallError as e:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_TOO_SMALL") from e
     run = await voyages_service.create_voyage(session, created_by=user.id, data=data)
     await queue.enqueue("run_voyage", str(run.id))
     return VoyageRead.model_validate(run)

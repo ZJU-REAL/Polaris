@@ -9,8 +9,9 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "c7a1e4d9b3f2"  # 待处理的想法晋级/投稿审批自动通过（不再自己审批自己）
-SELF_APPROVAL_REVISION = HEAD_REVISION
+HEAD_REVISION = "c7e1a4b93d26"  # 想法记下是哪次任务写的、来路是什么
+IDEA_ORIGIN_REVISION = HEAD_REVISION
+SELF_APPROVAL_REVISION = "c7a1e4d9b3f2"  # 待处理的想法晋级/投稿审批自动通过（不再自己审批自己）
 WIKI_EVIDENCE_REVISION = "b2f6d1c93e47"  # 解读的证据定位信息单独一列，不再嵌在正文里 (#873)
 TERMINAL_LOG_PK_REVISION = "9a4c2e7b1d58"  # SQLite：voyage_terminal_logs.id 改成 INTEGER 主键
 USER_ROWS_MERGE_REVISION = "7d2e4f9a1b63"  # 单用户：别的用户行的数据并到本地用户 (#850)
@@ -670,7 +671,17 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         engine.dispose()
     assert "evidence" in wiki_columns
 
-    # 先退掉「待处理审批自动通过」：只动数据，退回是空操作。
+    # 想法的来路两列在 head 上，外键与索引都在
+    assert {"source_voyage_id", "origin"} <= columns["ideas"]
+    assert "ix_ideas_source_voyage_id" in _index_names(db_path, "ideas")
+
+    # 先退掉想法的来路两列。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == SELF_APPROVAL_REVISION
+    assert not {"source_voyage_id", "origin"} & columns["ideas"]
+
+    # 再退掉「待处理审批自动通过」：只动数据，退回是空操作。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == WIKI_EVIDENCE_REVISION

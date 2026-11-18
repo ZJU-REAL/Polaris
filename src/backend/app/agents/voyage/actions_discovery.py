@@ -7,7 +7,10 @@
   services/hypothesis_pipeline.py）：generate 产最多 4 个子候选，逐个
   ground → novelty → feasibility → score 写进节点，低分自动剪枝；
 - ``hypothesis.prune``：显式剪枝入口，写 score 并级联剪枝（留痕不删）；
-- ``discovery.summarize``：把整棵树（含被剪分支）汇总成研究方案产物后收束。
+- ``discovery.summarize``：把整棵树（含被剪分支）汇总成研究方案产物后收束；
+- ``discovery.write_ideas``：把留下来的假设写成课题里的想法（证据与立场原样带上），
+  汇总之后跑。没有它，探索的结果只是任务里的两个 JSON 产物，进不了想法列表，
+  也就到不了实验。
 
 params.tournament=True 时是深度模式（#653）：每轮扩展落库后跑一场锦标赛
 （services/hypothesis_tournament.py）——score 前 6 的 open|expanded 假设两两
@@ -24,7 +27,9 @@ checkpoint["discovery"]["node_usage"]（只记不限；不动 hypothesis_nodes �
 避免与并行迁移抢 alembic 链——树可视化要用时 D5 再决定是否上迁移）。
 """
 
+import asyncio
 import json
+import re
 import uuid
 from typing import Any
 
@@ -35,12 +40,18 @@ from app.agents.voyage.actions import ActionContext, register
 from app.core.db import get_sessionmaker
 from app.core.llm import budgets
 from app.core.llm.base import Message
+from app.core.llm.errors import LLMRefusalError, LLMSchemaError, LLMTruncatedError
+from app.models.activity import Activity
 from app.models.hypothesis import HypothesisNode
+from app.models.idea import Idea
+from app.models.paper import Paper
 from app.models.voyage import VoyageRun
-from app.services import discovery_disclosure
+from app.services import discovery_disclosure, idea_dedup
 from app.services import hypothesis_pipeline as pipeline
 from app.services import hypothesis_tournament as tournament_service
 from app.services import hypothesis_tree as tree_service
+from app.services import voyages as voyages_service
+from app.services.embedding import embed_documents, upsert_idea_vector
 
 # LLM 环节：结构化 JSON 生成，走中档耐心（core/llm/router.py 的 _MEDIUM_CALL_STAGES）
 _STAGE = "discovery_plan"
@@ -104,6 +115,12 @@ def _max_expansions(ctx: ActionContext) -> int:
 
 def _tournament_enabled(ctx: ActionContext) -> bool:
     return bool(_params_of(ctx).get("tournament"))
+
+
+def _emit_ideas(ctx: ActionContext) -> bool:
+    """汇总之后要不要把假设写成想法。默认写——只有创建时显式传了 false 才不写，
+    所以这个参数出现之前建的任务恢复后也会写。"""
+    return _params_of(ctx).get("emit_ideas") is not False
 
 
 def _direction(ctx: ActionContext) -> str:
@@ -196,10 +213,10 @@ async def _next_signal(session, ctx: ActionContext) -> tuple[dict[str, Any], str
     best = await tree_service.best_open_node(session, ctx.run.id)
     if best is None:
         why = "树上已无 open 节点，转入汇总"
-        return {"decision": "summarize", "reason": why}, why
+        return {"decision": "summarize", "reason": why, "emit_ideas": _emit_ideas(ctx)}, why
     if done >= limit:
         why = f"扩展数已达上限（{done}/{limit}），转入汇总"
-        return {"decision": "summarize", "reason": why}, why
+        return {"decision": "summarize", "reason": why, "emit_ideas": _emit_ideas(ctx)}, why
     why = f"第 {done + 1}/{limit} 轮扩展：当前最优 open 节点 {best.id}（score={best.score}）"
     return {"decision": "expand", "next_round": done + 1}, why
 
@@ -359,13 +376,17 @@ async def hypothesis_expand(ctx: ActionContext, params: dict[str, Any]) -> dict[
                     "project_id": ctx.run.project_id,
                     "voyage_id": ctx.run.id,
                 }
-                # 方向语境 = run 方向 + 被扩展节点的陈述：候选要围绕这个分支细化
+                # 方向语境 = run 方向 + 被扩展节点的陈述：候选要围绕这个分支细化。
+                # 树上已有的假设一并交给模型，要求新候选与它们有实质区别——否则细化
+                # 一个父假设拿回来的常常只是它的几种改写
+                tree_now = await tree_service.tree_for_run(session, ctx.run.id)
                 gen = await pipeline.generate(
                     session,
                     ctx.llm,
                     library_id=library_id,
                     direction=f"{_direction(ctx)}；父假设：{target.statement}",
                     n_candidates=_MAX_CHILDREN,
+                    existing=[n.statement for n in tree_now if n.kind == "hypothesis"],
                     **identity,
                 )
                 candidates = gen["candidates"][:_MAX_CHILDREN]
@@ -695,3 +716,492 @@ async def discovery_summarize(ctx: ActionContext, params: dict[str, Any]) -> dic
         why=f"汇总 {len(nodes)} 个节点（{stats}）",
     )
     return {"node_count": len(nodes), "stats": stats, "usage": usage}
+
+
+# ---- 假设 → 想法 ----
+
+WRITEUP_STAGE = "hyp_writeup"
+# 一次探索最多写这么多个想法。默认 4 轮 × 每轮 4 个子假设最多长出 16 个，用户要的是
+# 一份能挑的短名单，不是把整棵树倒给他
+MAX_IDEAS = 8
+# 叶子不够这个数时，用已经被细化过的父假设补足（它们也有文献支持，只是有了更具体的
+# 版本）。少于三个想法的结果让「挑选」这一步失去意义
+MIN_IDEAS_TARGET = 3
+
+WRITEUP_SYSTEM_PROMPT = """\
+POLARIS_HYP_WRITEUP
+你把一条已经对照文献检验过的研究假设，写成一份研究想法草案。输入是一个 JSON：
+- statement：假设陈述；language：全文用哪种语言写（zh 或 en）；
+- evidence：有文献依据的子命题。每条有 subclaim、stance（support 支持 / refute 反驳）
+  和 papers（title + snippet，原文片段）；
+- unsupported：没有任何文献依据的子命题——只是推测；
+- novelty：逐条子命题的查新结论（known 已有 / novel 未见 / uncertain 说不准）。
+  查新只对照了用户自己的文献库，没有查库外的工作；
+- signals：确定性统计（有支持的子命题占比、新颖子命题占比、依据文献数、库内论文数）；
+- risk_note：已有的可行性风险论证。
+
+写作规则：
+1. 凡是写成「已有研究表明」「已被证实」的内容，必须能在 evidence 的片段里找到。
+   不要补充片段里没有的事实、数字、数据集或文献。
+2. unsupported 里的子命题是这个想法里尚待验证的部分：可以写成要检验的假设或实验
+   目标，不能写成已有结论，也不要替它们找依据。
+3. evidence 里立场为 refute 的内容必须写进 risks。
+4. experiments 写怎样检验这条假设（重点是 unsupported 的部分），不要编造结果。
+5. scores 四项都是 0–10 的整数。novelty 只能依据 novelty 与 signals 判断，并在
+   rationale.novelty 里说明新颖性只对照了用户的文献库；feasibility 参考 signals
+   与 risk_note。
+6. title 不超过 80 个字符，不要以「想法：」之类的前缀开头。
+"""
+
+
+class IdeaScoresOut(BaseModel):
+    novelty: int
+    feasibility: int
+    operability: int
+    impact: int
+
+
+class IdeaRationaleOut(BaseModel):
+    novelty: str
+    feasibility: str
+    operability: str
+    impact: str
+
+
+class IdeaWriteup(BaseModel):
+    title: pipeline.NonEmptyStr
+    motivation: str
+    method: str
+    experiments: str
+    risks: str
+    scores: IdeaScoresOut
+    rationale: IdeaRationaleOut
+
+
+_CJK_RE = re.compile(r"[一-鿿]")
+_NOVELTY_SCOPE_NOTE = {
+    "zh": "新颖性只对照你的文献库判断。",
+    "en": "Novelty is judged against your library only.",
+}
+_UNSUPPORTED_HEADING = {
+    "zh": ("尚无文献依据的部分", "（每条子命题都在文献库里找到了依据。）"),
+    "en": (
+        "Not yet supported by the literature",
+        "(Every sub-claim has supporting evidence in the library.)",
+    ),
+}
+_SECTION_HEADINGS = {
+    "zh": (
+        ("动机", "motivation"),
+        ("方法概述", "method"),
+        ("预期实验", "experiments"),
+        ("风险", "risks"),
+    ),
+    "en": (
+        ("Motivation", "motivation"),
+        ("Method", "method"),
+        ("Experiments", "experiments"),
+        ("Risks", "risks"),
+    ),
+}
+_SECTION_PLACEHOLDER = {"zh": "（待补充）", "en": "(to be written)"}
+
+
+def _idea_language(ctx: ActionContext) -> str:
+    """想法用哪种语言写：创建时指定的优先，否则看研究方向里有没有中文。"""
+    raw = str(_params_of(ctx).get("language") or "").strip().lower()
+    if raw in ("zh", "en"):
+        return raw
+    return "zh" if _CJK_RE.search(_direction(ctx)) else "en"
+
+
+def _has_support(node: HypothesisNode) -> bool:
+    return any(isinstance(e, dict) and e.get("stance") == "support" for e in (node.grounding or []))
+
+
+def select_idea_nodes(
+    nodes: list[HypothesisNode], *, limit: int = MAX_IDEAS, floor: int = MIN_IDEAS_TARGET
+) -> list[HypothesisNode]:
+    """哪些假设值得写成想法（纯函数）。
+
+    合格 = 非根的假设节点、没被剪掉、至少一条子命题有文献支持。被剪掉的不写：
+    剪枝线（pipeline.MIN_VIABLE_SCORE）已经把「一条新颖的都没有」和「多数子命题
+    没有依据」的挡在外面了。根不写：它是探索的起点，没有经过接地和查新。
+
+    优先叶子：一个假设被细化出了合格的子假设，就写更具体的子假设，不写它自己——
+    否则同一个想法会以粗细两个版本各出现一次。按分数从高到低取前 ``limit`` 个
+    （同分取先建的，与汇总的排序一致）。
+
+    凑不够 ``floor`` 个时，用被跳过的父假设补足：探索很窄（每轮只留下一个子假设）
+    的时候，只写叶子会让用户只拿到一两个想法，而树上明明还有带依据的假设。
+    """
+
+    def order(n: HypothesisNode) -> tuple[float, int]:
+        return (-(n.score if n.score is not None else -1.0), n.seq)
+
+    qualified = [
+        n
+        for n in nodes
+        if n.kind == "hypothesis"
+        and n.parent_id is not None
+        and n.status != "pruned"
+        and _has_support(n)
+    ]
+    refined = {n.parent_id for n in qualified}
+    chosen = sorted((n for n in qualified if n.id not in refined), key=order)[:limit]
+    if len(chosen) < floor:
+        chosen_ids = {n.id for n in chosen}
+        spare = sorted((n for n in qualified if n.id not in chosen_ids), key=order)
+        chosen.extend(spare[: floor - len(chosen)])
+    return chosen
+
+
+def _evidence_entries(node: HypothesisNode, titles: dict[str, str]) -> list[dict[str, Any]]:
+    """节点的接地结果 → 想法的依据文献：每条（子命题, 论文）一项，立场与原文片段带上。"""
+    out: list[dict[str, Any]] = []
+    for entry in node.grounding or []:
+        if not isinstance(entry, dict) or entry.get("stance") not in ("support", "refute"):
+            continue
+        paper_ids = [str(p) for p in (entry.get("paper_ids") or [])]
+        snippets = [str(x) for x in (entry.get("snippets") or [])]
+        owners = [str(x) for x in (entry.get("snippet_paper_ids") or [])]
+        by_paper: dict[str, str] = {}
+        if len(owners) == len(snippets):
+            for owner, snippet in zip(owners, snippets, strict=True):
+                by_paper.setdefault(owner, snippet)
+        else:
+            # 这个字段出现之前落库的节点：只能按位置对（一篇一段时是对的）
+            for owner, snippet in zip(paper_ids, snippets, strict=False):
+                by_paper.setdefault(owner, snippet)
+        for pid in paper_ids:
+            out.append(
+                {
+                    "paper_id": pid,
+                    "title": titles.get(pid, ""),
+                    "url": None,
+                    "why": str(entry.get("subclaim") or ""),
+                    "source": "library",
+                    "stance": entry["stance"],
+                    "snippet": by_paper.get(pid, ""),
+                }
+            )
+    return out
+
+
+def _unsupported_subclaims(node: HypothesisNode) -> list[str]:
+    return [
+        str(e.get("subclaim") or "")
+        for e in (node.grounding or [])
+        if isinstance(e, dict) and e.get("stance") not in ("support", "refute")
+    ]
+
+
+def _ratios(node: HypothesisNode) -> tuple[float, float]:
+    """(有支持的子命题占比, 新颖子命题占比)——分数的两个因子，原样给界面看。"""
+    grounding = [e for e in (node.grounding or []) if isinstance(e, dict)]
+    support = sum(1 for e in grounding if e.get("stance") == "support")
+    support_ratio = round(support / len(grounding), 4) if grounding else 0.0
+    return support_ratio, round(pipeline.novelty_ratio(node.novelty_report or {}), 4)
+
+
+def _writeup_payload(
+    node: HypothesisNode,
+    evidence: list[dict[str, Any]],
+    *,
+    language: str,
+    library_paper_count: int,
+) -> dict[str, Any]:
+    """写想法那次调用的输入。只放有依据的证据：没有依据的子命题单列在 unsupported，
+    模型看不到任何可以拿来替它们圆的材料。"""
+    grouped: dict[tuple[str, str], list[dict[str, str]]] = {}
+    for item in evidence:
+        grouped.setdefault((item["why"], item["stance"]), []).append(
+            {"title": item["title"], "snippet": item["snippet"]}
+        )
+    support_ratio, novel_ratio = _ratios(node)
+    signals = dict(((node.feasibility or {}).get("signals")) or {})
+    return {
+        "statement": node.statement,
+        "language": language,
+        "evidence": [
+            {"subclaim": subclaim, "stance": stance, "papers": papers}
+            for (subclaim, stance), papers in grouped.items()
+        ],
+        "unsupported": _unsupported_subclaims(node),
+        "novelty": [
+            {"subclaim": e.get("subclaim"), "verdict": e.get("verdict")}
+            for e in ((node.novelty_report or {}).get("subclaims") or [])
+            if isinstance(e, dict)
+        ],
+        "signals": {
+            "support_ratio": support_ratio,
+            "novel_ratio": novel_ratio,
+            "grounded_paper_count": signals.get("grounded_paper_count"),
+            "library_paper_count": library_paper_count,
+        },
+        "risk_note": str((node.feasibility or {}).get("risk_note") or ""),
+    }
+
+
+def _clamp_int_score(raw: Any) -> int:
+    try:
+        return max(0, min(10, int(raw)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _idea_content(sections: dict[str, Any], unsupported: list[str], language: str) -> str:
+    """想法正文：四段 + 末尾单列「尚无文献依据的部分」。
+
+    最后一节不经模型，由代码把没有依据的子命题逐字列出：一句话的假设展开成四段后
+    很容易读起来比它的证据更确定，这一节让读的人一眼看到哪些部分还只是推测。
+    """
+    placeholder = _SECTION_PLACEHOLDER[language]
+    parts = [
+        f"## {heading}\n\n{str(sections.get(key) or '').strip() or placeholder}"
+        for heading, key in _SECTION_HEADINGS[language]
+    ]
+    heading, none_text = _UNSUPPORTED_HEADING[language]
+    body = "\n".join(f"- {s}" for s in unsupported if s.strip()) or none_text
+    parts.append(f"## {heading}\n\n{body}")
+    return "\n\n".join(parts)
+
+
+async def _write_up(
+    ctx: ActionContext, payload: dict[str, Any], usage: dict[str, int]
+) -> IdeaWriteup | None:
+    """一个假设一次调用。模型给不出合格的草案（结构两次都不对、写不完、拒答）时
+    返回 None——想法照样入库，只是正文待补充：假设和它的证据才是这一步的产物。
+    网络、限流、密钥这类失败照常上抛，整步重试，已写好的想法不会重复写。"""
+    try:
+        result = await ctx.llm.complete_json(
+            WRITEUP_STAGE,
+            [
+                Message(role="system", content=WRITEUP_SYSTEM_PROMPT),
+                Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
+            ],
+            schema=IdeaWriteup,
+            user_id=ctx.run.created_by,
+            project_id=ctx.run.project_id,
+            library_id=ctx.run.library_id,
+            voyage_id=ctx.run.id,
+        )
+    except (LLMSchemaError, LLMTruncatedError, LLMRefusalError):
+        return None
+    usage["prompt_tokens"] += int(result.usage.get("prompt_tokens", 0) or 0)
+    usage["completion_tokens"] += int(result.usage.get("completion_tokens", 0) or 0)
+    return result.data
+
+
+async def _existing_idea_for_node(session, run_id: uuid.UUID, node_id: str) -> Idea | None:
+    """这次任务是否已经为这个节点写过想法（重放 / 恢复时靠它不重复写）。"""
+    rows = (
+        (await session.execute(select(Idea).where(Idea.source_voyage_id == run_id))).scalars().all()
+    )
+    for idea in rows:
+        if isinstance(idea.origin, dict) and str(idea.origin.get("node_id")) == node_id:
+            return idea
+    return None
+
+
+@register("discovery.write_ideas")
+async def discovery_write_ideas(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
+    """把留下来的假设写成课题里的想法（选哪些见 :func:`select_idea_nodes`）。
+
+    每个假设：一次模型调用写出标题、四段正文和四维评分 → 与课题里**这次探索之外**
+    的想法去重（与想法生成同一套：向量余弦过 0.85 再用重排复核）→ 入库。假设陈述原样作为
+    想法的概述，接地时选中的每条（子命题, 论文）连同立场和原文片段进 ``evidence``。
+
+    不夸大（设计 Q6）：写作调用只拿到有文献依据的证据；没有依据的子命题只以
+    「尚待验证」的名义给它，并由代码在正文末尾逐字单列一节。新颖性分数的理由里
+    固定带一句「只对照你的文献库」，``origin.novelty_scope`` 也记着 ``library``。
+
+    可重放：每写完一个就提交。再跑这一步时，已经为某个节点写过想法（按
+    ``source_voyage_id`` + ``origin.node_id`` 查）就跳过，不再调模型；上次判成重复的
+    从 checkpoint 里认出来，同样跳过。
+    """
+    if ctx.run.project_id is None:
+        raise ValueError("假设探索任务没有所属课题，无法写入想法")
+    state = _state(ctx)
+    ledger = state.setdefault("ideas", {})
+    language = _idea_language(ctx)
+    usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    library_id = _require_library_id(ctx)
+    async with get_sessionmaker()() as session:
+        nodes = await tree_service.tree_for_run(session, ctx.run.id)
+        selected = select_idea_nodes(nodes)
+        library_paper_count = await voyages_service.indexed_library_paper_count(session, library_id)
+        paper_ids = {
+            uuid.UUID(str(pid))
+            for n in selected
+            for e in (n.grounding or [])
+            if isinstance(e, dict)
+            for pid in (e.get("paper_ids") or [])
+        }
+        titles: dict[str, str] = {}
+        if paper_ids:
+            rows = (
+                await session.execute(select(Paper.id, Paper.title).where(Paper.id.in_(paper_ids)))
+            ).all()
+            titles = {str(pid): (title or "") for pid, title in rows}
+    written: list[str] = []
+    duplicates: list[dict[str, Any]] = []
+    for node in selected:
+        node_id = str(node.id)
+        async with get_sessionmaker()() as session:
+            already = await _existing_idea_for_node(session, ctx.run.id, node_id)
+        if already is not None:
+            ledger[node_id] = {"idea_id": str(already.id), "duplicate": False}
+            written.append(str(already.id))
+            continue
+        recorded = ledger.get(node_id)
+        if isinstance(recorded, dict) and recorded.get("duplicate"):
+            duplicates.append({"node_id": node_id, **recorded})
+            continue
+
+        evidence = _evidence_entries(node, titles)
+        unsupported = _unsupported_subclaims(node)
+        writeup = await _write_up(
+            ctx,
+            _writeup_payload(
+                node, evidence, language=language, library_paper_count=library_paper_count
+            ),
+            usage,
+        )
+        if writeup is None:
+            await ctx.log(f"这条假设的草案没写出来，先只存假设和依据：{node.statement[:60]}")
+        title = (writeup.title if writeup else node.statement).strip()[:80] or node.statement[:80]
+        scores: dict[str, int] | None = None
+        rationale: dict[str, str] | None = None
+        if writeup is not None:
+            scores = {k: _clamp_int_score(v) for k, v in writeup.scores.model_dump().items()}
+            rationale = {k: str(v).strip() for k, v in writeup.rationale.model_dump().items()}
+            note = _NOVELTY_SCOPE_NOTE[language]
+            if note not in rationale["novelty"]:
+                rationale["novelty"] = f"{rationale['novelty']} {note}".strip()
+        content = _idea_content(writeup.model_dump() if writeup else {}, unsupported, language)
+        support_ratio, novel_ratio = _ratios(node)
+        parent_paper_ids = list(dict.fromkeys(item["paper_id"] for item in evidence))
+        text = idea_dedup.idea_text(title, node.statement)
+
+        async with get_sessionmaker()() as session:
+            vector: list[float] | None = None
+            space = None
+            try:
+                vectors, space = await embed_documents(
+                    session,
+                    [text],
+                    user_id=ctx.run.created_by,
+                    project_id=ctx.run.project_id,
+                    voyage_id=ctx.run.id,
+                )
+                vector = vectors[0]
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — 嵌入不可用：不去重、不存向量，想法照写
+                await session.rollback()
+            match = None
+            if vector is not None and space is not None:
+                # 只和这次探索之外的想法比（以前的探索、想法生成、手写的）。同一次探索里
+                # 的假设在生成时已经互相去过重，而且兄弟假设围绕同一个父假设展开，
+                # 向量天然很近——再拿它们互相比，一棵树常常只剩一个想法。
+                own = {uuid.UUID(i) for i in written}
+                existing = [
+                    entry
+                    for entry in await idea_dedup.existing_idea_entries(
+                        session,
+                        project_id=ctx.run.project_id,
+                        space=space,
+                        user_id=ctx.run.created_by,
+                        voyage_id=ctx.run.id,
+                    )
+                    if entry.idea_id not in own
+                ]
+                match = await idea_dedup.find_duplicate(
+                    ctx.llm,
+                    text=text,
+                    vector=vector,
+                    kept=existing,
+                    user_id=ctx.run.created_by,
+                    project_id=ctx.run.project_id,
+                    voyage_id=ctx.run.id,
+                )
+            if match is not None:
+                ledger[node_id] = {
+                    "idea_id": str(match.entry.idea_id) if match.entry.idea_id else None,
+                    "duplicate": True,
+                    "duplicate_of": match.entry.label,
+                    "cosine": round(match.cosine, 4),
+                }
+                duplicates.append({"node_id": node_id, **ledger[node_id]})
+                await ctx.log(f"与已有想法重复，未重复写入：{title}")
+                continue
+            idea = Idea(
+                project_id=ctx.run.project_id,
+                title=title,
+                summary=node.statement,
+                content=content,
+                scores=scores,
+                score_rationale=rationale,
+                status="candidate",
+                depth="sketch",
+                evidence=evidence,
+                parent_paper_ids=parent_paper_ids,
+                source_voyage_id=ctx.run.id,
+                origin={
+                    "kind": "discovery",
+                    "node_id": node_id,
+                    "pipeline_score": node.score,
+                    "support_ratio": support_ratio,
+                    "novel_ratio": novel_ratio,
+                    # 新颖性只对照了这个文献库，没有查库外的工作——界面凡是显示
+                    # 新颖性分数的地方都按这个字段加一句说明
+                    "novelty_scope": "library",
+                    "library_id": str(library_id),
+                    "library_paper_count": library_paper_count,
+                    "unsupported_subclaims": unsupported,
+                },
+            )
+            session.add(idea)
+            await session.flush()
+            if vector is not None and space is not None:
+                await upsert_idea_vector(session, idea.id, vector, space)
+            # 写一个提交一个：后面的假设调模型失败时，前面写好的不丢，重放也不重复写
+            await session.commit()
+            ledger[node_id] = {"idea_id": str(idea.id), "duplicate": False}
+            written.append(str(idea.id))
+            await ctx.log(f"写入想法：{title}", level="success")
+
+    async with get_sessionmaker()() as session:
+        session.add(
+            Activity(
+                project_id=ctx.run.project_id,
+                actor="agent:discovery",
+                kind="discovery.ideas_written",
+                message=f"假设探索完成：{len(written)} 个想法入库",
+                payload={
+                    "voyage_id": str(ctx.run.id),
+                    "written": len(written),
+                    "duplicates": len(duplicates),
+                },
+            )
+        )
+        await session.commit()
+    _record_decision(
+        ctx,
+        action="discovery.write_ideas",
+        decision="ideas_written",
+        node_id=None,
+        why=(
+            f"选中 {len(selected)} 个假设：写入 {len(written)} 个想法，"
+            f"{len(duplicates)} 个与已有想法重复"
+        ),
+    )
+    return {
+        "selected": len(selected),
+        "ideas": len(written),
+        "duplicates": len(duplicates),
+        "idea_ids": written,
+        "duplicate_detail": duplicates,
+        "usage": usage,
+    }
