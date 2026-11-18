@@ -2,8 +2,17 @@ import { useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { api, type LibraryQaResponse } from '../../lib/api';
+import { api, ApiError, type LibraryQaResponse } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { errorText } from '../../lib/errors';
+
+/** 引擎这边出错时多半是模型服务没响应（引擎把上游的 503 报成了 500），照这个说。 */
+function qaErrorText(e: unknown): string {
+  if (e instanceof ApiError && e.status >= 500 && !/^[A-Z][A-Z0-9_]{2,}/.test(e.message)) {
+    return tr('没能回答：模型服务暂时没有响应，请稍后再问一次', 'Couldn’t answer: the model service didn’t respond. Try again shortly.');
+  }
+  return `${tr('没能回答：', 'Couldn’t answer: ')}${errorText(e)}`;
+}
 
 /* ============================================================
    库级深度问答（agentic RAG，#644）：一问一答、证据先行。
@@ -119,7 +128,7 @@ export function LibraryQaTab({
           {mutation.isPending ? tr('正在回答…', 'Answering…') : tr('提问', 'Ask')}
         </button>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--text-4)' }}>
+      <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
         {tr(
           '翻遍全库找证据后作答，只依据下方列出的证据。',
           'Searches the whole library and answers only from the evidence listed below.',
@@ -128,8 +137,7 @@ export function LibraryQaTab({
 
       {mutation.isError && (
         <div className="card" style={{ padding: 12, color: 'var(--danger-tx, #c00)', fontSize: 12 }}>
-          {tr('无法回答：', 'Couldn’t answer: ')}
-          {mutation.error instanceof Error ? mutation.error.message : String(mutation.error)}
+          {qaErrorText(mutation.error)}
         </div>
       )}
 
