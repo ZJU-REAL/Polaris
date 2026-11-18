@@ -27,11 +27,21 @@ export interface DesktopConfig {
    * 一期后随回退一起删。electron store 只放纯壳偏好（窗口状态）。
    */
   marketEndpoint: string;
+  /** 联网设置：首启安装（下载 Python、装依赖）用的代理与镜像策略。见 network.ts。 */
+  network: StoredNetwork;
+}
+
+export interface StoredNetwork {
+  /** 代理地址；空串 = 不指定（沿用环境变量 / 系统代理）。 */
+  proxy: string;
+  /** auto = 官方源不通再换国内镜像；on = 先用镜像；off = 不用镜像。 */
+  mirror: 'auto' | 'on' | 'off';
 }
 
 const DEFAULTS: DesktopConfig = {
   window: { width: 1440, height: 900, maximized: false },
   marketEndpoint: MARKET_ENDPOINT_DEFAULT,
+  network: { proxy: '', mirror: 'auto' },
 };
 
 let cache: DesktopConfig | null = null;
@@ -51,10 +61,14 @@ export function readConfig(): DesktopConfig {
         typeof raw.marketEndpoint === 'string' && raw.marketEndpoint
           ? raw.marketEndpoint
           : DEFAULTS.marketEndpoint,
+      network: {
+        proxy: typeof raw.network?.proxy === 'string' ? raw.network.proxy : '',
+        mirror: raw.network?.mirror === 'on' || raw.network?.mirror === 'off' ? raw.network.mirror : 'auto',
+      },
     };
   } catch {
     // 首次启动或文件损坏：回默认值，不阻断启动
-    cache = { ...DEFAULTS, window: { ...DEFAULTS.window } };
+    cache = { ...DEFAULTS, window: { ...DEFAULTS.window }, network: { ...DEFAULTS.network } };
   }
   return cache;
 }

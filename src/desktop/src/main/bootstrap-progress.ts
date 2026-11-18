@@ -27,8 +27,11 @@ export const SAMPLE_INTERVAL_MS = 2000;
 /** 只在这两个阶段量盘：venv 几秒就完，engine 阶段不再落大文件。 */
 const SAMPLED_PHASES = new Set(['python', 'install']);
 
-/** 量盘时跳过的子目录：venv 里的文件是 uv 从缓存 clone/硬链过去的，算进来会重复计数。 */
-const SKIP_DIRS = new Set(['venv']);
+/**
+ * 量盘时跳过的子目录：venv 里的文件是 uv 从缓存 clone/硬链过去的，算进来会重复计数。
+ * 新环境装在 venv.next 里、装好才对调成 venv（venv.prev 是对调时的旧环境），三个都跳过。
+ */
+const SKIP_DIRS = new Set(['venv', 'venv.next', 'venv.prev']);
 
 // CSI（颜色/光标）与 OSC（终端标题/超链接）序列
 // eslint-disable-next-line no-control-regex
