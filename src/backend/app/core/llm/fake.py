@@ -99,6 +99,7 @@ _HYP_GROUND_MARKER = "POLARIS_HYP_GROUND"
 _HYP_NOVELTY_MARKER = "POLARIS_HYP_NOVELTY"
 _HYP_FEASIBILITY_MARKER = "POLARIS_HYP_FEASIBILITY"
 _HYP_WRITEUP_MARKER = "POLARIS_HYP_WRITEUP"  # 假设写成想法草案（actions_discovery）
+_RESEARCH_BRIEF_MARKER = "POLARIS_RESEARCH_BRIEF"  # 研究方向 → 检索简报
 # 锦标赛两两对比（services/hypothesis_tournament.py，#653）。system prompt 里有
 # "winner" 字样，会撞 debate 裁判的 _JUDGE_MARKER——必须先于它判断
 _HYP_COMPARE_MARKER = "POLARIS_HYP_COMPARE"
@@ -508,6 +509,8 @@ class FakeProvider(LLMProvider):
             return FakeProvider._respond_paper_reviewer(full_text)
         # 假设管线四 marker（#648）：user payload 内嵌检索片段（可能撞任意通用
         # marker），须先于通用 marker 判断
+        if _RESEARCH_BRIEF_MARKER in full_text:
+            return FakeProvider._respond_research_brief(last_user)
         if _HYP_WRITEUP_MARKER in full_text:
             return FakeProvider._respond_hyp_writeup(last_user)
         if _HYP_GENERATE_MARKER in full_text:
@@ -1458,6 +1461,35 @@ class FakeProvider(LLMProvider):
                 }
             )
         return json.dumps({"items": out}, ensure_ascii=False)
+
+    @staticmethod
+    def _respond_research_brief(last_user: str) -> str:
+        """研究方向 → 简报：回显方向的确定性简报（中文方向也给英文关键词）。"""
+        m = re.search(r"研究方向：(.+)", last_user)
+        direction = m.group(1).strip() if m else "research direction"
+        zh = re.search(r"[\u4e00-\u9fff]", direction) is not None
+        return json.dumps(
+            {
+                "title": f"{direction[:24]}（fake 课题）",
+                "language": "zh" if zh else "en",
+                "statement": f"（fake 简报）围绕「{direction[:60]}」的研究范围。",
+                "questions": ["（fake）问题一", "（fake）问题二", "（fake）问题三"],
+                "include_keywords": [
+                    "agent planning",
+                    "verification workflow",
+                    "retrieval augmented generation",
+                    "中文关键词会被丢掉",
+                ],
+                "exclude_keywords": [],
+                "arxiv_categories": ["cs.CL", "not a category!"],
+                "discipline": "no-such-pack",
+                "sources": ["arxiv", "no-such-source"],
+                "in_scope": ["（fake）范围内"],
+                "out_of_scope": ["（fake）范围外"],
+                "months_back": 30,
+            },
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _respond_hyp_writeup(last_user: str) -> str:

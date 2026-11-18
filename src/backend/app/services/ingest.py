@@ -468,6 +468,13 @@ async def reclaim_stale_paused_ingests(session: AsyncSession) -> list[uuid.UUID]
     return [run.id for run in runs]
 
 
+def library_cadence(library: DirectionLibrary) -> str | None:
+    """库的同步节奏：收录配置里的优先，没有再看展示用的那一列。"""
+    definition = library.definition if isinstance(library.definition, dict) else {}
+    raw = definition.get("cadence") or library.cadence
+    return str(raw).strip().lower() if raw else None
+
+
 async def find_due_daily_libraries(session: AsyncSession) -> list[DirectionLibrary]:
     """每日增量的对象，**直接按文献库选**：已 bootstrap、无任务在跑。
 
@@ -502,6 +509,10 @@ async def find_due_daily_libraries(session: AsyncSession) -> list[DirectionLibra
     for library in libraries:
         state = library.ingest_state or {}
         if not state.get("watermark"):
+            continue
+        # 节奏设成「手动」的库不自动同步。「研究」建的库都是手动：用户只问了一次，
+        # 不该从此每天替他检索、打分、花钱（想保持更新可以在库设置里改回每日）
+        if library_cadence(library) == "manual":
             continue
         if library.id in auto_today:
             continue

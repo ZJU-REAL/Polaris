@@ -39,6 +39,7 @@ from app.api import (
     presentations,
     projects,
     publications,
+    research,
     resources,
     search,
     shelf,
@@ -79,6 +80,7 @@ api_router.include_router(interdisciplinary.suggestion_router)
 api_router.include_router(integration_tokens.router)
 api_router.include_router(wiki.router)
 api_router.include_router(ideas.router)
+api_router.include_router(research.router)
 api_router.include_router(search.router)
 api_router.include_router(shelf.router)
 api_router.include_router(daily.router)

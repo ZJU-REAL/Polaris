@@ -616,42 +616,63 @@ async def _search_generic_sources(
     until: datetime,
     limit: int,
     errors: list[str],
+    failures: list[dict[str, str]] | None = None,
+    counts: dict[str, int] | None = None,
 ) -> int:
-    """arXiv 以外的源走注册表的通用 search，一次取完；返回抓到的条数。
+    """arXiv 以外的源走注册表的通用 search；返回抓到的条数。
+
+    **每个关键词短语各查一次**，结果合并（靠去重挡掉重复的），和 arXiv 那条路的
+    「任一关键词命中」同一个意思。以前是把全部短语用空格拼成一个查询：这些源把
+    查询里的词当作都要出现，六个短语拼起来就成了一句几乎没有论文能同时满足的长
+    查询——实测 OpenAlex 对拼接后的查询只回 10 篇，而且多数不相干。
 
     它们没有分页续跑——限流问题集中在 arXiv，别的源没这个包袱。时间窗只能按年
-    （``SourceSearchRequest`` 只有年份），窗口内按相关性取前 N 篇，靠去重挡掉已有的。
-    单个源失败记进 ``errors``，不拖垮其余源。
+    （``SourceSearchRequest`` 只有年份），窗口内按相关性取，每个源合计不超过它的份额。
+    单个源失败记进 ``errors``（给人看的一句话）和 ``failures``（结构化的
+    ``{source, error}``，研究据此判断「是不是每个来源都连不上」），不拖垮其余源；
+    失败之前已经拿到的照样算数。``counts`` 记每个源各拿到几条。
     """
     if not source_ids or not terms:
         return 0
     from app.schemas.literature_discovery import SourceSearchRequest
 
-    query = " ".join(terms)
     per_source = max(1, limit // len(source_ids))
+    per_term = max(1, -(-per_source // len(terms)))  # 向上取整：短语多时每个至少要 1 篇
     fetched = 0
     for source_id in source_ids:
         adapter = literature_sources.get_source(source_id)
         if adapter is None:
             errors.append(f"{source_id}：当前不可用")
+            if failures is not None:
+                failures.append({"source": source_id, "error": "unavailable"})
             continue
+        got = 0
         try:
-            page = await adapter.search(
-                SourceSearchRequest(
-                    query=query,
-                    start_year=since.year,
-                    end_year=until.year,
-                    limit=per_source,
+            for term in terms:
+                if got >= per_source:
+                    break
+                page = await adapter.search(
+                    SourceSearchRequest(
+                        query=term,
+                        start_year=since.year,
+                        end_year=until.year,
+                        limit=min(per_term, per_source - got),
+                    )
                 )
-            )
+                for item in page.items:
+                    await inserter.insert(_entry_from_candidate(item), source_id)
+                await inserter.session.flush()
+                got += len(page.items)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:  # noqa: BLE001 — 单个源失败不拖垮其余
             logger.warning("library search failed for %s", source_id, exc_info=True)
             errors.append(f"{source_id}：{type(e).__name__}")
-            continue
-        for item in page.items:
-            await inserter.insert(_entry_from_candidate(item), source_id)
-        await inserter.session.flush()
-        fetched += len(page.items)
+            if failures is not None:
+                failures.append({"source": source_id, "error": f"{type(e).__name__}: {e}"[:300]})
+        fetched += got
+        if counts is not None and got:
+            counts[source_id] = counts.get(source_id, 0) + got
     return fetched
 
 
@@ -929,6 +950,14 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         # 本次哪些源失败了。收集起来进诊断——静默少一个源，表现是库收不到东西
         # 而界面上毫无线索
         source_errors: list[str] = []
+        # 同一批失败的结构化版本 [{source, error}]，和每个源各拿到几条：随诊断落进
+        # checkpoint。只有一句话的版本时，上层没法判断「是不是每个来源都连不上」
+        source_failures: list[dict[str, str]] = []
+        source_counts: dict[str, int] = {}
+        if fetched_total and "arxiv" in sources:
+            source_counts["arxiv"] = fetched_total  # 续跑：之前几页都是 arXiv 的
+        arxiv_error: Exception | None = None
+        other_sources = [s for s in sources if s != "arxiv"]
 
         def _checkpoint(*, done: bool) -> dict[str, Any]:
             return {
@@ -983,15 +1012,28 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             # 页大小问客户端要，别写死：下面拿 len(entries) < page_size 判末页，
             # 一旦要的比客户端肯给的多，第一页就会被误判成末页，搜索静默截断。
             page_size = min(arxiv.page_size, arxiv_limit - next_start)
-            entries = await arxiv.search_page(
-                categories=categories,
-                keywords=terms,
-                exclude=exclude,
-                since=since,
-                until=until,
-                start=next_start,
-                limit=page_size,
-            )
+            try:
+                entries = await arxiv.search_page(
+                    categories=categories,
+                    keywords=terms,
+                    exclude=exclude,
+                    since=since,
+                    until=until,
+                    start=next_start,
+                    limit=page_size,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — 见下
+                # arXiv 失败（限流最常见）而库还配了别的来源：先记下，去查别的来源。
+                # 以前这里直接让整步失败——OpenAlex 明明能返回一百篇，一次 arXiv 的
+                # 429 就让整次检索停下。别的来源也什么都没拿到时再原样抛出（见后面），
+                # 断点还在，重试会从这一页接着来。
+                if not (other_sources and terms):
+                    raise
+                logger.warning("arXiv search failed; continuing with other sources", exc_info=True)
+                arxiv_error = e
+                break
             if not entries:
                 await _persist_checkpoint(done=True)
                 break
@@ -1001,6 +1043,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                     inserted_page += 1
             await session.flush()
             fetched_total += len(entries)
+            source_counts["arxiv"] = source_counts.get("arxiv", 0) + len(entries)
             inserted_total += inserted_page
             next_start += len(entries)
             if inserted_page:
@@ -1017,7 +1060,6 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 break
 
         # —— arXiv 以外的源：走注册表的通用 search ——
-        other_sources = [s for s in sources if s != "arxiv"]
         if other_sources and not terms:
             # 以前这里静默跳过：选了 arXiv 分类 + PubMed、没填关键词的库，PubMed
             # 一篇都不会去查，界面上看不出来（arXiv 能只按分类检索，别的源不能）
@@ -1033,7 +1075,18 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             until=until,
             limit=max(1, generic_limit),
             errors=source_errors,
+            failures=source_failures,
+            counts=source_counts,
         )
+        if arxiv_error is not None:
+            if fetched_total == 0:
+                # 别的来源也一篇没拿到：这一步就是没做成。原样抛出 arXiv 的错误，
+                # 由引擎按它的性质重试；不落「完成」的断点
+                raise arxiv_error
+            source_errors.append(f"arxiv：{type(arxiv_error).__name__}（已用其他来源的结果继续）")
+            source_failures.append(
+                {"source": "arxiv", "error": f"{type(arxiv_error).__name__}: {arxiv_error}"[:300]}
+            )
         inserted_here = len(new_papers) - before
         inserted_total += inserted_here
         if inserted_here:
@@ -1072,6 +1125,9 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         "cap_hit": cap_hit,
         "status": "warning" if messages else "ok",
         "messages": messages,
+        # 哪些来源失败了 [{source, error}]、每个来源各拿到几条
+        "source_errors": source_failures,
+        "source_counts": source_counts,
     }
     ctx.checkpoint["ingest_search_stats"] = diagnostics
     # 新水位线 = 本次检索时刻，由最后一步 wiki.update_watermark 落库
@@ -1360,9 +1416,11 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
     rejected_ids: list[str] = []
     digest_excluded: list[dict[str, Any]] = []
     scored_brief: list[dict[str, Any]] = []
+    first_error: BaseException | None = None
     for paper_id, result in zip(paper_ids, results, strict=True):
         if isinstance(result, BaseException):
             failed.append({"id": str(paper_id), "error": f"{type(result).__name__}: {result}"})
+            first_error = first_error or result
             continue
         if result is None:
             continue
@@ -1382,6 +1440,13 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         if len(scored_brief) < _OBS_LIST_CAP:
             scored_brief.append(result)
 
+    if first_error is not None and succeeded == 0:
+        # 一篇都没打成（模型连不上、密钥失效……）：这一步就是没做成，原样抛出让引擎按
+        # 错误的性质处理（临时故障会自动重试）。单篇失败隔离是为了「个别论文出错不拖累
+        # 整批」，不是为了让一次全军覆没的打分显示成通过——实测模型网关断开时，整条
+        # 检索任务一路「完成」，库里 20 篇候选一篇没筛，界面上看不出任何问题。
+        # 候选都还在 candidate 状态，重试会从头再打。
+        raise first_error
     # 成员行删掉之后，去重集合就挡不住它们了：而 since_last 的扫描窗口和上次同步那天
     # 是重叠的，不记一笔的话今天淘汰的几百篇明天会再花一次 LLM。所以在库上留一份
     # 「判过且没通过」的名单（只存 id，有上限，够覆盖重叠窗口即可）。

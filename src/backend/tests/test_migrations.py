@@ -9,8 +9,9 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "c7e1a4b93d26"  # 想法记下是哪次任务写的、来路是什么
-IDEA_ORIGIN_REVISION = HEAD_REVISION
+HEAD_REVISION = "d4a8f20c6b19"  # 研究：一个方向一行，记着走到哪个阶段
+RESEARCH_RUNS_REVISION = HEAD_REVISION
+IDEA_ORIGIN_REVISION = "c7e1a4b93d26"  # 想法记下是哪次任务写的、来路是什么
 SELF_APPROVAL_REVISION = "c7a1e4d9b3f2"  # 待处理的想法晋级/投稿审批自动通过（不再自己审批自己）
 WIKI_EVIDENCE_REVISION = "b2f6d1c93e47"  # 解读的证据定位信息单独一列，不再嵌在正文里 (#873)
 TERMINAL_LOG_PK_REVISION = "9a4c2e7b1d58"  # SQLite：voyage_terminal_logs.id 改成 INTEGER 主键
@@ -675,7 +676,39 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"source_voyage_id", "origin"} <= columns["ideas"]
     assert "ix_ideas_source_voyage_id" in _index_names(db_path, "ideas")
 
-    # 先退掉想法的来路两列。
+    # 研究表在 head 上：一个课题一行、幂等键唯一、按状态有索引
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            inspector = inspect(conn)
+            research_columns = {c["name"] for c in inspector.get_columns("research_runs")}
+            research_uniques = {
+                tuple(u["column_names"]) for u in inspector.get_unique_constraints("research_runs")
+            }
+    finally:
+        engine.dispose()
+    assert {
+        "project_id",
+        "library_id",
+        "direction",
+        "brief",
+        "phase",
+        "status",
+        "attention",
+        "phases",
+        "client_key",
+        "created_by",
+    } <= research_columns
+    assert {("project_id",), ("client_key",)} <= research_uniques
+    assert "ix_research_runs_status" in _index_names(db_path, "research_runs")
+
+    # 先退掉研究表。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == IDEA_ORIGIN_REVISION
+    assert "research_runs" not in columns["_tables"]
+
+    # 再退掉想法的来路两列。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == SELF_APPROVAL_REVISION

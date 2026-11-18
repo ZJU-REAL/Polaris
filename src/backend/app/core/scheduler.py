@@ -55,6 +55,10 @@ def default_jobs() -> list[PeriodicJob]:
         # 因临时性故障停住的航程到点自动重试。重试时刻存在库里，这里只负责到点去看；
         # 开机 30 秒后先看一次，关机期间过点的那些就在这时补上。
         PeriodicJob("retry_paused_voyages", 60, 30, tasks.retry_paused_voyages),
+        # 研究（方向 → 文献 → 假设 → 想法）每分钟对一遍账。阶段之间平时由任务收尾时
+        # 直接推进；这里兜住绕过引擎的那些：重启时掐断的、用户在任务页直接取消或
+        # 恢复的、确定范围失败后的再试。开机 20 秒后先看一次。
+        PeriodicJob("reconcile_research_runs", 60, 20, tasks.reconcile_research_runs),
         PeriodicJob(
             "watch_unanswered_managed_commands", 300, 50, tasks.watch_unanswered_managed_commands
         ),

@@ -28,6 +28,7 @@ WORKER_FUNCTIONS = frozenset(
         "translate_literature_hit",
         "zotero_import",
         "full_export",
+        "research_advance",
     }
 )
 

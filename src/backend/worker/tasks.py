@@ -11,6 +11,7 @@
   评审员×3/聚合在 actions_review + services/paper_review 内部）
 """
 
+import asyncio
 import logging
 import uuid
 from typing import Any
@@ -59,19 +60,28 @@ def _make_engine() -> VoyageEngine:
     return VoyageEngine(event_bus=EventBus(get_redis()))
 
 
-async def _drive_voyage(run_id: str, *, resume: bool, reset_attempts: bool = True) -> None:
+async def _drive_voyage(
+    ctx: dict[str, Any], run_id: str, *, resume: bool, reset_attempts: bool = True
+) -> None:
     """驱动一条航程，并保证它不会悬在「在跑」状态却没人驱动。
 
     引擎自己会接住驱动过程里漏出来的异常并把航程停到 paused_error。这里是它外面的
     最后一层：引擎都没建起来、或者引擎停航程的那一步也失败了，就在这里再停一次。
-    停机取消（CancelledError）不拦——那条航程留在在途状态，下次启动由对账接手。"""
+    停机取消（CancelledError）不拦——那条航程留在在途状态，下次启动由对账接手。
+
+    收尾：这条航程如果是某次研究当前阶段的任务，就推进那次研究（文献检索完了接着
+    找假设，等等）。每一次驱动都走到这里，不管航程是跑完、出错停下还是在等人。"""
     rid = uuid.UUID(run_id)
+    shutting_down = False
     try:
         engine = _make_engine()
         if resume:
             await engine.resume(rid, reset_attempts=reset_attempts)
         else:
             await engine.run(rid)
+    except asyncio.CancelledError:
+        shutting_down = True  # 停机：数据库马上要关，不在这时候推进研究
+        raise
     except Exception as e:  # noqa: BLE001 — 兜底，见上
         logger.exception("voyage %s driver failed outside the engine", run_id)
         from app.agents.voyage.engine import park_run
@@ -80,18 +90,67 @@ async def _drive_voyage(run_id: str, *, resume: bool, reset_attempts: bool = Tru
             await park_run(get_sessionmaker(), EventBus(get_redis()), rid, exc=e)
         except Exception:  # noqa: BLE001 — 真停不下来：留给对账的次数上限
             logger.exception("could not pause voyage %s after its driver failed", run_id)
+    finally:
+        if not shutting_down:
+            await _advance_research_for_voyage(ctx, rid)
+
+
+async def _advance_research_for_voyage(ctx: dict[str, Any], voyage_id: uuid.UUID) -> None:
+    """航程收尾时调：它属于某次研究就推进那次研究。出错只记日志——每分钟的对账
+    （reconcile_research_runs）会再来一次，不该因为这里失败让驱动任务报错。"""
+    from app.services import research_runs
+
+    try:
+        async with get_sessionmaker()() as session:
+            research_id = await research_runs.find_by_voyage(session, voyage_id)
+            if research_id is not None:
+                await research_runs.advance(session, research_id, _enqueue_of(ctx))
+    except Exception:  # noqa: BLE001 — 见上
+        logger.exception("could not advance the research run of voyage %s", voyage_id)
+
+
+def _enqueue_of(ctx: dict[str, Any]) -> Any:
+    redis = ctx.get("redis") if isinstance(ctx, dict) else None
+    return getattr(redis, "enqueue_job", None)
+
+
+async def research_advance(ctx: dict[str, Any], research_run_id: str) -> None:
+    """推进一次研究（创建、重试这些接口入队到这里；确定范围要调模型，不放在请求里做）。"""
+    from app.services import research_runs
+
+    async with get_sessionmaker()() as session:
+        await research_runs.advance(session, uuid.UUID(research_run_id), _enqueue_of(ctx))
+
+
+async def reconcile_research_runs(ctx: dict[str, Any]) -> list[str]:
+    """定时任务（每分钟）：把每次没被停止的研究对一遍账。
+
+    advance 是幂等的，状态没变就什么也不做。它兜住不经过航程收尾的那些变化：引擎
+    重启、用户在任务页直接取消或恢复了那条航程、确定范围失败后的再试、用户选定了
+    想法。一次研究出错不影响其余的。返回这次看过的研究 id。"""
+    from app.services import research_runs
+
+    async with get_sessionmaker()() as session:
+        ids = await research_runs.active_run_ids(session)
+    for research_id in ids:
+        try:
+            async with get_sessionmaker()() as session:
+                await research_runs.advance(session, research_id, _enqueue_of(ctx))
+        except Exception:  # noqa: BLE001 — 一次研究出错不拖累其余的
+            logger.exception("could not advance research run %s", research_id)
+    return [str(i) for i in ids]
 
 
 async def run_voyage(ctx: dict[str, Any], run_id: str) -> None:
     """驱动一次新航程（POST /voyages 入队）。"""
-    await _drive_voyage(run_id, resume=False)
+    await _drive_voyage(ctx, run_id, resume=False)
 
 
 async def resume_voyage(ctx: dict[str, Any], run_id: str, reset_attempts: bool = True) -> None:
     """从断点恢复航程（闸门批准、回答提问、重试、对账认领都入队到这里）。
 
     ``reset_attempts=False`` 由对账传：见 VoyageEngine.resume。"""
-    await _drive_voyage(run_id, resume=True, reset_attempts=reset_attempts)
+    await _drive_voyage(ctx, run_id, resume=True, reset_attempts=reset_attempts)
 
 
 RECONCILE_STALE_MINUTES = 30  # 周期回收：终端无动静超过这个时长才算僵死

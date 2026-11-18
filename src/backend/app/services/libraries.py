@@ -418,9 +418,13 @@ async def create_library(
     keywords: dict[str, Any] | None = None,
     monthly_budget: int | None = None,
     discipline: str | None = None,
-    created_by: uuid.UUID,
+    created_by: uuid.UUID | None,
+    origin_project_id: uuid.UUID | None = None,
 ) -> DirectionLibrary:
-    """用户独立新建方向文献库（P10；``project_id`` 恒为 NULL——不属于任何课题，靠关联被消费）。
+    """新建方向文献库。用户独立新建的库 ``project_id`` 为 NULL——不属于任何课题，
+    靠关联被消费。``origin_project_id`` 给「研究」用：一个方向自带一个库，库回指它的
+    课题，按课题找库（``get_library_for_project``、``POST /projects/{id}/ingest``）
+    才找得到。
 
     新库即刻可用。创建者记为 ``submitted_by``（只是记录，不再用于任何权限判断）。
 
@@ -453,7 +457,7 @@ async def create_library(
         monthly_budget=monthly_budget,
         discipline=discipline or None,  # 空串按「通用」存，不是一个叫 "" 的学科
         submitted_by=created_by,  # 归属人单列（#734 起 created_by 副本列已删）
-        project_id=None,
+        project_id=origin_project_id,
     )
     session.add(library)
     await session.flush()

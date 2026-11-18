@@ -55,6 +55,8 @@ def test_every_periodic_job_is_scheduled():
         "watch_unanswered_managed_commands",
         # 后加的：临时性故障停住的任务到点自动重试
         "retry_paused_voyages",
+        # 研究每分钟对一遍账（阶段之间的推进兜底）
+        "reconcile_research_runs",
     }
 
 

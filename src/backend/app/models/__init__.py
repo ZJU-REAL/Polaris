@@ -63,6 +63,7 @@ from app.models.paper_extraction import PaperExtraction
 from app.models.project import Project
 from app.models.publication import UserAuthorProfile, UserPublication
 from app.models.research_digest import LibraryResearchDigest
+from app.models.research_run import ResearchRun
 from app.models.resource import Resource, ResourceLease
 from app.models.review import ReviewMessage, ReviewSession
 from app.models.ssh_credential import ConnectionCredential, SSHCredential
@@ -73,6 +74,7 @@ from app.models.vectors import IdeaVector, PaperChunkVector, PaperVector
 from app.models.voyage import VoyageMessage, VoyageRun, VoyageStep
 
 __all__ = [
+    "ResearchRun",
     "Activity",
     "BuddyMemory",
     "ChatBotConfig",
