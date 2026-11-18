@@ -8,7 +8,6 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import Project
-from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectUpdate
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -117,12 +116,6 @@ async def get_project(
     """
     stmt = select(Project).where(Project.id == project_id, in_my_projects(Project.id, user_id))
     return (await session.execute(stmt)).scalar_one_or_none()
-
-
-def can_manage_project(project: Project, user: User) -> bool:
-    """PATCH / 删除权限：项目 owner。成员机制移除（#625）后可见性==归属，
-    这里恒等于「够得着就能管」，留着是给 API 层一个显式的管理判据出口。"""
-    return project.owner_id == user.id
 
 
 async def update_project(session: AsyncSession, project: Project, data: ProjectUpdate) -> Project:

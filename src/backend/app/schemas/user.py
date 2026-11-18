@@ -6,8 +6,6 @@ from typing import Any
 from fastapi_users import schemas
 from pydantic import BaseModel, Field
 
-USERNAME_PATTERN = r"^[a-z0-9_]{3,32}$"
-
 
 class UserRead(schemas.BaseUser[uuid.UUID]):
     display_name: str
@@ -25,12 +23,6 @@ class UserUpdate(BaseModel):
     """PATCH /users/me：本人能改的只有显示名。"""
 
     display_name: str | None = Field(default=None, max_length=255)
-
-
-class UsernameUpdate(BaseModel):
-    """本人设置用户名（只能改一次）。"""
-
-    username: str = Field(pattern=USERNAME_PATTERN)
 
 
 class ManagedCommandWatchdogUserUpdate(BaseModel):

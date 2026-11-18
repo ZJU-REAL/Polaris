@@ -69,8 +69,6 @@ async def _managed_project(session: AsyncSession, project_id: uuid.UUID, user: U
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
-    if not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="PROJECT_FORBIDDEN")
     return project
 
 

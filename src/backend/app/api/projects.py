@@ -25,13 +25,6 @@ async def _get_my_project(session: AsyncSession, project_id: uuid.UUID, user: Us
     return project
 
 
-async def _get_managed_project(session: AsyncSession, project_id: uuid.UUID, user: User) -> Project:
-    project = await _get_my_project(session, project_id, user)
-    if not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="PROJECT_FORBIDDEN")
-    return project
-
-
 @router.get("", response_model=list[ProjectRead])
 async def list_projects(
     session: AsyncSession = Depends(get_session),
@@ -68,7 +61,7 @@ async def update_project(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> ProjectRead:
-    project = await _get_managed_project(session, project_id, user)
+    project = await _get_my_project(session, project_id, user)
     project = await projects_service.update_project(session, project, data)
     return ProjectRead.model_validate(project)
 
@@ -80,7 +73,7 @@ async def delete_project(
     user: User = Depends(current_active_user),
 ) -> None:
     """删除研究方向（owner / 平台 admin），方向下的论文、概念、任务等一并删除。"""
-    project = await _get_managed_project(session, project_id, user)
+    project = await _get_my_project(session, project_id, user)
     await projects_service.delete_project(session, project)
 
 

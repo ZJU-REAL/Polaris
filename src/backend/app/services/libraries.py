@@ -161,34 +161,6 @@ async def ensure_membership(
     return membership, True
 
 
-async def membership_for_project(
-    session: AsyncSession, *, project_id: uuid.UUID, paper_id: uuid.UUID
-) -> LibraryPaper | None:
-    """课题关联库并集里该论文的成员行（工具层「论文是否在本课题语料内」的统一检查）。
-
-    跨库同一论文取确定性视角（相关性高的库优先，见 ``membership_rank``）；
-    课题没有任何关联库或论文不在其中 → None（视为不在语料内，不报错）。
-    """
-    library_ids = await get_source_library_ids(session, project_id)
-    if not library_ids:
-        return None
-    rows = (
-        (
-            await session.execute(
-                select(LibraryPaper).where(
-                    LibraryPaper.library_id.in_(library_ids),
-                    LibraryPaper.paper_id == paper_id,
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not rows:
-        return None
-    return min(rows, key=membership_rank)
-
-
 async def find_pool_paper(
     session: AsyncSession,
     *,

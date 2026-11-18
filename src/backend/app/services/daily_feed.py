@@ -1294,24 +1294,6 @@ async def set_like(
     return {"entry_id": entry_id, **likes[entry_id]}
 
 
-async def list_likers(session: AsyncSession, *, entry_id: uuid.UUID) -> list[dict[str, Any]]:
-    entry = await session.get(DailyFeedEntry, entry_id)
-    if entry is None:
-        raise DailyEntryNotFoundError(str(entry_id))
-    rows = (
-        await session.execute(
-            select(User.id, User.display_name, User.avatar_path, DailyFeedLike.created_at)
-            .join(DailyFeedLike, DailyFeedLike.user_id == User.id)
-            .where(DailyFeedLike.entry_id == entry_id)
-            .order_by(DailyFeedLike.created_at.desc())
-        )
-    ).all()
-    return [
-        {"id": uid, "display_name": name, "has_avatar": bool(avatar), "liked_at": at}
-        for uid, name, avatar, at in rows
-    ]
-
-
 async def list_my_liked(
     session: AsyncSession, *, user_id: uuid.UUID, page: int = 1, size: int = 20
 ) -> tuple[list[dict[str, Any]], int]:

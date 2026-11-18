@@ -17,10 +17,6 @@ class DailyLiker(BaseModel):
     has_avatar: bool
 
 
-class DailyLikerFull(DailyLiker):
-    liked_at: datetime
-
-
 class DailyLikeState(BaseModel):
     """一篇论文的点赞汇总（点/取消赞后返回，供前端乐观更新对账）。"""
 

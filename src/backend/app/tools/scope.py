@@ -80,8 +80,7 @@ async def membership_in_scope(
     """这篇论文在本次范围内的成员行；不在范围内返回 None。
 
     这是「能不能看这篇」的唯一检查点：范围由 :func:`library_ids_for` 算出，越权
-    在那一步就已经挡住了。跨库同一篇取确定性视角（相关性高的库优先），与
-    ``membership_for_project`` 同规则。
+    在那一步就已经挡住了。跨库同一篇取确定性视角（相关性高的库优先）。
     """
     library_ids = await library_ids_for(session, ctx)
     if not library_ids:

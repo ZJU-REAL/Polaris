@@ -33,7 +33,6 @@ from app.schemas.daily import (
     DailyCollectTask,
     DailyCompileResult,
     DailyDay,
-    DailyLikerFull,
     DailyLikeState,
     DailyPage,
     DailyPaperDetail,
@@ -264,19 +263,6 @@ async def unlike_paper(
     except daily_service.DailyEntryNotFoundError as exc:
         raise _NOT_FOUND from exc
     return DailyLikeState(**state)
-
-
-@router.get("/papers/{entry_id}/likers", response_model=list[DailyLikerFull])
-async def list_likers(
-    entry_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> list[DailyLikerFull]:
-    try:
-        rows = await daily_service.list_likers(session, entry_id=entry_id)
-    except daily_service.DailyEntryNotFoundError as exc:
-        raise _NOT_FOUND from exc
-    return [DailyLikerFull(**r) for r in rows]
 
 
 @router.get("/papers/{entry_id}/collections", response_model=DailyCollectionsRead)

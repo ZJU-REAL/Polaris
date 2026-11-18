@@ -201,14 +201,6 @@ async def delete_template(
     tmpl = await templates_service.get_db_template(session, str(template_id))
     if tmpl is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="TEMPLATE_NOT_FOUND")
-    allowed = tmpl.created_by == user.id
-    if not allowed and tmpl.project_id is not None:
-        project = await projects_service.get_project(
-            session, project_id=tmpl.project_id, user_id=user.id
-        )
-        allowed = project is not None and projects_service.can_manage_project(project, user)
-    if not allowed:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="NOT_ALLOWED")
     await templates_service.delete_template(session, tmpl)
 
 
@@ -416,12 +408,12 @@ async def update_manuscript(
 
 
 async def _manage_manuscript_project(session: AsyncSession, manuscript: Manuscript, user: User):
-    """稿件所属项目 + 管理权限校验（回收站/删除用）。"""
+    """稿件所属课题（回收站/删除用）；不存在 → 404。"""
     project = await projects_service.get_project(
         session, project_id=manuscript.project_id, user_id=user.id
     )
-    if project is None or not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_REQUIRED")
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     return project
 
 
@@ -467,12 +459,10 @@ async def batch_manuscripts(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> BatchResult:
-    """批量：trash 移入回收站 / restore 恢复 / delete 永久删除。仅项目管理者可操作。"""
+    """批量：trash 移入回收站 / restore 恢复 / delete 永久删除。"""
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
-    if not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_REQUIRED")
     if data.action == "trash":
         n = await manuscripts_service.trash_manuscripts(
             session, project_id=project_id, ids=data.ids
@@ -498,8 +488,6 @@ async def empty_manuscript_trash(
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
-    if not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_REQUIRED")
     n = await manuscripts_service.purge_manuscripts(session, project_id=project_id, ids=None)
     return BatchResult(affected=n)
 

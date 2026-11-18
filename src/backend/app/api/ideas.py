@@ -171,14 +171,6 @@ async def list_ideas(
     return [IdeaRead.model_validate(i) for i in ideas]
 
 
-async def _manage_idea_project(session: AsyncSession, project_id: uuid.UUID, user: User) -> Project:
-    """项目 + 管理权限（回收站/删除用）。"""
-    project = await _member_project(session, project_id, user)
-    if not projects_service.can_manage_project(project, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_REQUIRED")
-    return project
-
-
 @router.delete("/ideas/{idea_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_idea(
     idea_id: uuid.UUID,
@@ -188,7 +180,7 @@ async def delete_idea(
 ) -> None:
     """默认移入回收站；permanent=true 永久删除（级联其实验）。仅项目管理者。"""
     idea = await _member_idea(session, idea_id, user)
-    await _manage_idea_project(session, idea.project_id, user)
+    await _member_project(session, idea.project_id, user)
     if permanent:
         await session.delete(idea)
         await session.commit()
@@ -203,7 +195,7 @@ async def restore_idea(
     user: User = Depends(current_active_user),
 ) -> IdeaRead:
     idea = await _member_idea(session, idea_id, user)
-    await _manage_idea_project(session, idea.project_id, user)
+    await _member_project(session, idea.project_id, user)
     await ideas_service.restore_ideas(session, project_id=idea.project_id, ids=[idea.id])
     await session.refresh(idea)
     return IdeaRead.model_validate(idea)
@@ -216,7 +208,7 @@ async def batch_ideas(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> BatchResult:
-    await _manage_idea_project(session, project_id, user)
+    await _member_project(session, project_id, user)
     if data.action == "trash":
         n = await ideas_service.trash_ideas(session, project_id=project_id, ids=data.ids)
     elif data.action == "restore":
@@ -232,7 +224,7 @@ async def empty_idea_trash(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> BatchResult:
-    await _manage_idea_project(session, project_id, user)
+    await _member_project(session, project_id, user)
     n = await ideas_service.purge_ideas(session, project_id=project_id, ids=None)
     return BatchResult(affected=n)
 

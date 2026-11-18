@@ -484,7 +484,7 @@ async def test_every_tool_module_resolves_scope_the_same_way(client, agent_on):
         if path.name == "scope.py":  # 范围解析自己就住在这儿
             continue
         text = path.read_text(encoding="utf-8")
-        if "membership_for_project" in text or "get_source_library_ids" in text:
+        if "get_source_library_ids" in text:
             offenders.append(path.name)
     assert offenders == [], f"这些模块还在按课题解析范围：{offenders}"
 

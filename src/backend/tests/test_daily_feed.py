@@ -257,9 +257,6 @@ async def test_like_toggle_facepile_and_sort(client, monkeypatch):
     assert resp.json()["items"][0]["title"] == "Hot Paper"
     assert resp.json()["items"][0]["like_count"] == 1
 
-    # 完整名单
-    resp = await client.get(f"/api/daily/papers/{eid}/likers", headers=ha)
-    assert resp.status_code == 200 and len(resp.json()) == 1
     resp = await client.get("/api/daily/liked", headers=ha)
     assert resp.json()["total"] == 1
 

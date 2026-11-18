@@ -72,26 +72,6 @@ async def test_patch_me_only_changes_display_name(client):
     assert resp.status_code == 422
 
 
-async def test_username_change_once_then_locked(client):
-    token = await register_and_login(client)
-    h = {"Authorization": f"Bearer {token}"}
-    me = (await client.get("/api/users/me", headers=h)).json()
-    assert me["username_locked"] is False
-
-    # 格式非法
-    resp = await client.patch("/api/users/me/username", json={"username": "AB"}, headers=h)
-    assert resp.status_code == 422
-
-    resp = await client.patch("/api/users/me/username", json={"username": "trinity"}, headers=h)
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["username"] == "trinity"
-    assert resp.json()["username_locked"] is True
-
-    resp = await client.patch("/api/users/me/username", json={"username": "morpheus"}, headers=h)
-    assert resp.status_code == 400
-    assert resp.json()["detail"] == "USERNAME_LOCKED"
-
-
 async def test_session_lifetime_is_configurable_and_long_by_default():
     """会话默认 30 天；过期了前端收到 401 会自动再取一次本地会话。"""
     from app.api.auth import get_jwt_strategy
