@@ -39,7 +39,7 @@ async def _owned(session: AsyncSession, run_id: uuid.UUID, user: User) -> Resear
     return run
 
 
-def _direction(raw: str) -> str:
+def _direction(raw: str | None) -> str:
     """方向原文：去掉首尾空白后 1..2000 个字，否则 422 DIRECTION_INVALID。"""
     text = (raw or "").strip()
     if not 1 <= len(text) <= 2000:
@@ -84,14 +84,30 @@ async def create_research(
     queue: TaskQueue = Depends(get_task_queue),
 ) -> ResearchRunRead:
     """开始一次研究。新建回 201；同一个 client_key（或 60 秒内同样的方向）回 200 和
-    原来那一条。"""
-    run, created = await research_service.create_run(
-        session,
-        user_id=user.id,
-        direction=_direction(data.direction),
-        client_key=data.client_key,
-        brief=data.brief,
-    )
+    原来那一条。
+
+    带 ``project_id`` = 在已有的课题上开始，不新建课题；方向可以不填（用课题的陈述，
+    没有就用课题名）。课题不是自己的回 404 PROJECT_NOT_FOUND，课题已经有一次研究回
+    409 RESEARCH_ALREADY_EXISTS。
+    """
+    if data.project_id is not None and not (data.direction or "").strip():
+        direction = None  # 由课题的陈述 / 名字补上
+    else:
+        direction = _direction(data.direction)
+    try:
+        run, created = await research_service.create_run(
+            session,
+            user_id=user.id,
+            direction=direction,
+            client_key=data.client_key,
+            brief=data.brief,
+            project_id=data.project_id,
+        )
+    except research_service.ResearchError as e:
+        code = (
+            status.HTTP_404_NOT_FOUND if e.code == "PROJECT_NOT_FOUND" else status.HTTP_409_CONFLICT
+        )
+        raise HTTPException(code, detail=e.code) from e
     if created:
         await _kick(queue, run.id)
     else:

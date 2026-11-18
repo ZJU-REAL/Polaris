@@ -41,7 +41,9 @@ class ResearchBrief(BriefDraft):
 
     max_papers: int = Field(default=200, ge=5, le=500)  # 最多检索并筛选多少篇
     compile_top_n: int = Field(default=60, ge=5, le=200)  # 给相关度最高的多少篇写解读
-    relevance_threshold: float = Field(default=0.7, ge=0.0, le=1.0)  # 相关度达到多少才留下
+    # 相关度达到多少才留下。0.5 = 「密切相关」起算；写解读按分数从高到低取前
+    # compile_top_n 篇，所以更相关的仍然优先
+    relevance_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class ResearchBriefInput(BaseModel):
@@ -78,7 +80,12 @@ class BriefRequest(BaseModel):
 
 
 class ResearchCreate(BaseModel):
-    direction: str
+    # 不带 project_id 时必填（长度在接口里校验，同上）；带了可以不填，默认用课题的
+    # 陈述，没有陈述用课题名
+    direction: str | None = None
+    # 在已有的课题上开始研究（不新建课题）。课题已经有一次研究时回 409
+    # RESEARCH_ALREADY_EXISTS；不是自己的课题回 404 PROJECT_NOT_FOUND
+    project_id: uuid.UUID | None = None
     client_key: str | None = Field(default=None, min_length=1, max_length=64)
     brief: ResearchBriefInput | None = None
 
@@ -88,7 +95,7 @@ class ResearchRetry(BaseModel):
     brief: ResearchBriefInput | None = None
     #: 明确重做哪个阶段；不给 = 重试当前阶段
     phase: Literal["survey", "hypotheses"] | None = None
-    #: 放宽后重新检索（相关度门槛 0.5、回溯 60 个月）。不给时，只在上次「相关的太少」
+    #: 放宽后重新检索（相关度门槛 0.35、回溯 60 个月）。不给时，只在上次「相关的太少」
     #: 的情况下自动放宽
     broaden: bool | None = None
 
@@ -159,7 +166,8 @@ class LastErrorRead(BaseModel):
 
 
 class SurveyProgress(BaseModel):
-    found: int = 0  # 检索到的
+    fetched: int = 0  # 各来源返回的条数之和（去重前）
+    found: int = 0  # 取进来筛选的候选（去重后；筛掉的也算在内）
     screened: int = 0  # 已判断过相关度的
     kept: int = 0  # 留下的
     summarised: int = 0  # 已写好解读的
@@ -176,7 +184,19 @@ class TopPaper(BaseModel):
 
 class SourceResult(BaseModel):
     source: str
-    fetched: int = 0
+    fetched: int = 0  # 这个来源返回了多少条
+    selected: int | None = None  # 其中多少篇被取进来筛选（旧的检索方式不分，为空）
+    error: str | None = None
+
+
+class SearchQuery(BaseModel):
+    """检索时向一个来源发的一次请求。"""
+
+    source: str
+    query: str
+    sort: str = ""
+    window: str = ""
+    returned: int = 0
     error: str | None = None
 
 
@@ -193,6 +213,7 @@ class SurveyRead(BaseModel):
     top_papers: list[TopPaper] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)  # 检索的提示（哪个来源失败了等）
     sources: list[SourceResult] = Field(default_factory=list)  # 各来源这次拿到多少
+    queries: list[SearchQuery] = Field(default_factory=list)  # 这次检索发出的每一条查询
     usage: UsageRead = Field(default_factory=UsageRead)
 
 

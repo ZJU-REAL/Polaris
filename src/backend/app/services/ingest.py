@@ -104,6 +104,8 @@ async def create_ingest_voyage(
     created_by: uuid.UUID | None,
     query_terms: list[str] | None = None,
     time_range: str | None = None,
+    skip_digest: bool = False,
+    strategy: str | None = None,
 ) -> VoyageRun:
     """建 ingest voyage（互斥检查 + Activity 落记录），由调用方入队 run_voyage。
 
@@ -121,19 +123,26 @@ async def create_ingest_voyage(
     kind = "wiki_ingest" if mode == "incremental" else "wiki_bootstrap"
     target_name = project.name if project is not None else library.name
     goal = f"{MODE_LABELS[mode]}：{target_name}"
+    params: dict[str, Any] = {
+        "mode": mode,
+        "knobs": knobs.model_dump(),
+        "query_terms": query_terms or None,
+        "time_range": time_range,
+    }
+    if strategy:
+        # 检索方式：survey = 调研检索（按相关度、多条查询、沿引用扩展）。不给就是
+        # 原来的建库检索；只在给了的时候写进参数，存量任务的参数一字不变
+        params["strategy"] = strategy
+    if skip_digest:
+        # 不生成简报和趋势（「研究」的文献检索用：后面找假设不读这两样）。只在为真时
+        # 才写这个键，其余任务的 params 和以前一字不差
+        params["skip_digest"] = True
     run = VoyageRun(
         kind=kind,
         goal=goal,
         status="planning",
         cursor=0,
-        checkpoint={
-            "params": {
-                "mode": mode,
-                "knobs": knobs.model_dump(),
-                "query_terms": query_terms or None,
-                "time_range": time_range,
-            }
-        },
+        checkpoint={"params": params},
         budget=budget,
         library_id=library.id,
         created_by=created_by,

@@ -207,6 +207,23 @@ def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
         ("综合滚动趋势", "wiki.trend_synthesize", "滚动趋势快照已更新"),
         ("记录同步进度", "wiki.update_watermark", "文献库同步状态已更新"),
     ]
+    if params.get("strategy") == "survey" and mode == "search":
+        # 调研检索：按相关度查多个来源；第一遍筛完再沿引用关系找一批并补筛
+        steps[0] = ("按相关度检索各文献来源", "wiki.search_candidates", "候选论文已入库")
+        steps.insert(
+            2,
+            (
+                "沿引用关系扩展并筛选",
+                "wiki.expand_citations",
+                "最相关论文的参考文献与施引文献已筛选",
+            ),
+        )
+    if params.get("skip_digest") is True:
+        # 「研究」的文献检索：后面找假设不读简报和趋势，这两步不跑（之后想看可以在
+        # 文献库里单独生成今日简报）
+        steps = [
+            step for step in steps if step[1] not in ("wiki.daily_digest", "wiki.trend_synthesize")
+        ]
     return [
         {
             "title": title,

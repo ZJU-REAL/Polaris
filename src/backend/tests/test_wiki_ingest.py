@@ -556,17 +556,16 @@ class _CrashOnNthRelevance(FakeProvider):
     """模拟 worker 在第 N 次相关性打分时被杀（CancelledError 不被逐篇 try/except 吞掉）。"""
 
     def __init__(self, crash_at: int) -> None:
+        super().__init__()
         self.relevance_calls = 0
         self.crash_at = crash_at
 
-    async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, images=None):
+    async def complete(self, messages, *, model, **kwargs):
         if any('"score"' in m.content for m in messages):
             self.relevance_calls += 1
             if self.relevance_calls == self.crash_at:
                 raise asyncio.CancelledError("simulated worker kill")
-        return await super().complete(
-            messages, model=model, temperature=temperature, max_tokens=max_tokens, images=images
-        )
+        return await super().complete(messages, model=model, **kwargs)
 
 
 async def test_resume_does_not_rescore(client, queue_stub, wiki_mocks):
@@ -613,17 +612,16 @@ class _BreakOneRelevance(FakeProvider):
     其余并发任务照常打分（failed 结构不变、最终计数与串行一致）。"""
 
     def __init__(self, break_marker: str) -> None:
+        super().__init__()
         self.break_marker = break_marker
 
-    async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, images=None):
+    async def complete(self, messages, *, model, **kwargs):
         full = "\n".join(m.content for m in messages)
         if '"score"' in full and self.break_marker in full:
             from app.core.llm.base import CompletionResult
 
             return CompletionResult(content="(not json)", model=model, finish_reason="stop")
-        return await super().complete(
-            messages, model=model, temperature=temperature, max_tokens=max_tokens, images=images
-        )
+        return await super().complete(messages, model=model, **kwargs)
 
 
 async def test_concurrent_scoring_failure_isolation(client, queue_stub, wiki_mocks):
@@ -647,7 +645,9 @@ async def test_concurrent_scoring_failure_isolation(client, queue_stub, wiki_moc
     assert detail["status"] == "done", detail
     score_obs = detail["steps"][1]["observation"]  # 0 检索 / 1 打分
     assert len(score_obs["failed"]) == 1  # 恰好坏掉的那一篇进 failed
-    assert score_obs["failed"][0]["error"].startswith("ValueError")
+    # 结构化输出下「回了不合格式的东西」是 LLMSchemaError；批尾补试过一次仍不行才算失败
+    assert score_obs["failed"][0]["error"].startswith("LLMSchemaError")
+    assert score_obs["retried"] == 1
     assert score_obs["succeeded"] == 2  # 其余 2 篇并发打分照常完成（3 候选 − 1 失败）
     assert score_obs["processed"] == 3
 

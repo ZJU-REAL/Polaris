@@ -528,7 +528,7 @@ async def test_one_direction_runs_from_post_to_ideas(client, live_queue, literat
     assert (brief["max_papers"], brief["compile_top_n"], brief["relevance_threshold"]) == (
         200,
         60,
-        0.7,
+        0.5,
     )
     # 课题改成了简报里的标题，库同名、回指课题、节奏是手动
     assert detail["name"] == brief["title"]
@@ -544,7 +544,7 @@ async def test_one_direction_runs_from_post_to_ideas(client, live_queue, literat
         params = survey.checkpoint["params"]
         assert survey.kind == "wiki_bootstrap" and survey.status == "done"
         assert params["query_terms"] == brief["include_keywords"]
-        assert params["knobs"]["relevance_threshold"] == 0.7
+        assert params["knobs"]["relevance_threshold"] == 0.5
         assert params["knobs"]["months_back"] == 36
         discovery = await session.get(VoyageRun, uuid.UUID(detail["hypotheses"]["voyage_id"]))
         assert discovery.kind == "discovery" and discovery.status == "done"
@@ -556,8 +556,9 @@ async def test_one_direction_runs_from_post_to_ideas(client, live_queue, literat
     assert survey["state"] == "done" and survey["step_title"] is None
     assert survey["step_action"] is None  # 任务结束后没有「正在做的一步」
     assert survey["progress"] == {
-        "found": 6,  # 不相关的那篇被排除后成员行直接删掉
-        "screened": 6,
+        "fetched": 28,  # 三条查询 + 一遍近期的，各回 7 条（去重前）
+        "found": 7,  # 取进来筛选的：被筛掉的那篇也算，虽然它的成员行已经删掉
+        "screened": 7,
         "kept": 6,
         "summarised": 6,
         "to_summarise": 6,
@@ -565,7 +566,13 @@ async def test_one_direction_runs_from_post_to_ideas(client, live_queue, literat
     assert len(survey["top_papers"]) == 6
     assert survey["top_papers"][0]["title"].startswith("Verifiable Agent Workflow Study")
     assert survey["top_papers"][0]["relevance"] == 0.88 and survey["top_papers"][0]["tldr"]
-    assert survey["sources"] == [{"source": "arxiv", "fetched": 7, "error": None}]
+    assert survey["sources"] == [
+        {"source": "arxiv", "fetched": 28, "selected": 7, "error": None}
+    ]
+    # 每一条查询都按相关度排、各自留了记录
+    assert [q["sort"] for q in survey["queries"]] == ["relevance"] * 4
+    assert survey["queries"][0]["query"] == 'ti:"agent planning" OR abs:"agent planning"'
+    assert all(q["returned"] == 7 and q["source"] == "arxiv" for q in survey["queries"])
     assert survey["usage"]["total_tokens"] > 0
 
     # 假设与想法
@@ -1012,7 +1019,7 @@ async def test_too_few_relevant_then_retry_broadens(client, queue_stub, literatu
     assert run.attention["action"] == "broaden"
     assert run.attention["counts"] == {"found": 3, "relevant": 2}  # 检索到 3 篇，留下 2 篇
 
-    # 界面发 {broaden: true}（不带参数的重试在这种情况下也一样）：门槛 0.5、回溯 60 个月
+    # 界面发 {broaden: true}（不带参数的重试在这种情况下也一样）：门槛 0.35、回溯 60 个月
     resp = await client.post(
         f"/api/research/{run_id}/retry", json={"broaden": True}, headers=headers
     )
@@ -1022,7 +1029,7 @@ async def test_too_few_relevant_then_retry_broadens(client, queue_stub, literatu
     async with get_sessionmaker()() as session:
         voyage = await session.get(VoyageRun, uuid.UUID(run.phases["survey"]["voyage_id"]))
         knobs = voyage.checkpoint["params"]["knobs"]
-    assert knobs["relevance_threshold"] == 0.5 and knobs["months_back"] == 60
+    assert knobs["relevance_threshold"] == 0.35 and knobs["months_back"] == 60
 
 
 async def test_failed_survey_step_needs_attention_and_retry_resumes_it(
@@ -1111,49 +1118,58 @@ async def test_transient_failure_with_a_pending_auto_retry_still_counts_as_runni
 
 
 class _DeadArxiv:
+    """连不上的 arXiv 客户端（调研检索用 search_relevance）。"""
+
     page_size = 100
 
-    async def search_page(self, **_kwargs):
+    async def search_relevance(self, *_args, **_kwargs):
         raise httpx.ConnectError("arxiv is unreachable")
 
 
-def _candidate(i: int):
-    return SimpleNamespace(
-        title=f"OpenAlex Agent Workflow Paper {i}",
-        doi=f"10.1000/oa.{i}",
-        authors=[{"name": "A"}],
-        abstract="agent verification workflow",
-        year=2026,
-        venue="OA",
-        url=f"https://example.org/{i}",
-        metadata={},
-    )
+def _oa_row(i: int) -> dict:
+    return {
+        "openalex_id": f"https://openalex.org/W{i}",
+        "title": f"OpenAlex Agent Workflow Paper {i}",
+        "doi": f"10.1000/oa.{i}",
+        "authors": [{"name": "A"}],
+        "abstract": "agent verification workflow",
+        "year": 2026,
+        "published": "2026-03-01",
+        "venue": "OA",
+        "url": f"https://example.org/{i}",
+        "cited_by_count": 10 * i,
+        "referenced_works": [],
+    }
 
 
 class _OpenAlexStub:
-    def __init__(self, items=None, error=None):
-        self.items, self.error = list(items or []), error
+    """OpenAlex 客户端的替身：每条查询都回同一批；也能整个连不上。"""
+
+    def __init__(self, rows=None, error=None):
+        self.rows, self.error = list(rows or []), error
         self.queries: list[str] = []
 
-    async def search(self, request):
-        self.queries.append(request.query)
+    async def search_works(self, query, *, limit=5, **_kwargs):
+        self.queries.append(query)
         if self.error is not None:
             raise self.error
-        page, self.items = self.items[: request.limit], self.items[request.limit :]
-        return SimpleNamespace(items=page)
+        return self.rows[:limit]
+
+    async def find_work(self, **_kwargs):
+        return None
+
+    async def works_by_ids(self, _ids):
+        return []
+
+    async def citing_works(self, _id, **_kwargs):
+        return []
 
 
 async def _search_step(monkeypatch, queue_stub, client, *, openalex) -> tuple[str, VoyageRun]:
     """建一次研究（来源 arXiv + OpenAlex，arXiv 连不上），只跑检索那一步。"""
-    sources = actions_wiki.literature_sources
-    real_get = sources.get_source
     monkeypatch.setattr(actions_wiki, "_configured_sources", lambda _kw: ["arxiv", "openalex"])
-    monkeypatch.setattr(sources, "require_source", lambda *_a, **_k: _DeadArxiv())
-    monkeypatch.setattr(
-        sources,
-        "get_source",
-        lambda sid, **kw: openalex if sid == "openalex" else real_get(sid, **kw),
-    )
+    monkeypatch.setattr(actions_wiki, "get_arxiv_client", lambda: _DeadArxiv())
+    monkeypatch.setattr(actions_wiki, "get_openalex_client", lambda: openalex)
     headers = await _login(client)
     run_id = (
         await client.post("/api/research", json={"direction": DIRECTION}, headers=headers)
@@ -1168,20 +1184,26 @@ async def _search_step(monkeypatch, queue_stub, client, *, openalex) -> tuple[st
 async def test_arxiv_failure_is_soft_when_another_source_returned_results(
     client, queue_stub, literature, monkeypatch
 ):
-    openalex = _OpenAlexStub(items=[_candidate(i) for i in range(6)])
+    openalex = _OpenAlexStub(rows=[_oa_row(i) for i in range(6)])
     _run_id, voyage = await _search_step(monkeypatch, queue_stub, client, openalex=openalex)
-    # 每个关键词短语各查一次（拼成一句长查询的话，这些来源几乎什么都搜不到）
-    assert openalex.queries == [
-        "agent planning",
-        "verification workflow",
-        "retrieval augmented generation",
-    ]
+    # 每条查询各查一次（拼成一句长查询的话，这些来源几乎什么都搜不到）；
+    # 前几条再在回溯窗口里查一遍，保证有近期的
+    keywords = ["agent planning", "verification workflow", "retrieval augmented generation"]
+    assert openalex.queries == keywords + keywords
     stats = voyage.checkpoint["ingest_search_stats"]
-    assert stats["source_fetched"] == 6 and stats["inserted"] == 6
-    assert stats["source_counts"] == {"openalex": 6}
+    assert stats["strategy"] == "survey"
+    assert stats["selected"] == 6 and stats["inserted"] == 6  # 六条查询回的是同样六篇
+    assert stats["source_fetched"] == 36 and stats["source_counts"] == {"openalex": 36}
+    assert stats["source_selected"] == {"openalex": 6}
     assert [e["source"] for e in stats["source_errors"]] == ["arxiv"]
     assert "ConnectError" in stats["source_errors"][0]["error"]
     assert any("arxiv" in m for m in stats["messages"])
+    # 每一次请求都留了记录：来源、查询、排序、时间窗、回了几条
+    logged = [q for q in stats["queries"] if q["source"] == "openalex"]
+    assert [q["query"] for q in logged] == keywords + keywords
+    assert all(q["sort"] == "relevance" and q["returned"] == 6 for q in logged)
+    assert logged[0]["window"].startswith("2016-") and logged[3]["window"].startswith("2023-")
+    assert [q for q in stats["queries"] if q["source"] == "arxiv"][0]["error"]
     async with get_sessionmaker()() as session:
         first = (
             await session.execute(
@@ -1189,20 +1211,21 @@ async def test_arxiv_failure_is_soft_when_another_source_returned_results(
             )
         ).scalars().first()
     assert first.action == "wiki.search_candidates" and first.status == "passed"
+    assert first.observation["queries"] == stats["queries"]
 
 
-async def test_arxiv_failure_fails_the_step_when_nothing_else_came_back(
+async def test_search_fails_the_step_when_every_source_is_unreachable(
     client, queue_stub, literature, monkeypatch
 ):
-    """别的来源也没拿到东西：这一步失败（临时故障 → 排自动重试），不是带着零篇「完成」。"""
+    """每个来源都连不上：这一步失败（临时故障 → 排自动重试），不是带着零篇「完成」。"""
     run_id, voyage = await _search_step(
         monkeypatch, queue_stub, client, openalex=_OpenAlexStub(error=httpx.ReadTimeout("slow"))
     )
     assert voyage.status == "paused_error"
-    assert voyage.checkpoint["last_error"]["transient"] is True
+    error = voyage.checkpoint["last_error"]
+    assert error["transient"] is True and error["code"] == "NETWORK"
     assert voyage.checkpoint["auto_retry"]["next_at"]
     assert "ingest_search_stats" not in voyage.checkpoint
-    assert voyage.checkpoint["arxiv_search_resume"]["done"] is False  # 断点还在
     run = await _advance(run_id, queue_stub)
     assert run.status == "running"  # 还在等自动重试
 

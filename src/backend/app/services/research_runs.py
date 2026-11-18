@@ -32,19 +32,22 @@ from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.voyage.failures import MESSAGES as FAILURE_MESSAGES
 from app.agents.voyage.failures import (
     auto_retry_attempt,
     auto_retry_due_at,
     classify_failure,
     clear_auto_retry,
 )
+from app.core.db import is_busy_error
 from app.core.llm.base import Message
 from app.models.base import utcnow
 from app.models.hypothesis import HypothesisNode
 from app.models.idea import Idea
-from app.models.library_direction import DirectionLibrary, LibraryPaper
+from app.models.library_direction import DirectionLibrary, LibraryPaper, TopicSourceLibrary
 from app.models.paper import Paper
 from app.models.project import Project
 from app.models.research_run import ResearchRun
@@ -65,6 +68,7 @@ from app.schemas.research import (
     ResearchIdea,
     ResearchRunDetail,
     ResearchRunRead,
+    SearchQuery,
     SourceResult,
     SurveyProgress,
     SurveyRead,
@@ -91,8 +95,11 @@ DISCOVERY_ROUNDS = 4
 # 没带幂等键时：同一个人 60 秒内提交同样的方向，算同一次（双击、重发）
 DUPLICATE_WINDOW_SECONDS = 60
 # 「相关的太少」之后放宽重新检索用的两个值
-BROADEN_THRESHOLD = 0.5
+BROADEN_THRESHOLD = 0.35
 BROADEN_MONTHS = 60
+# 还没筛的候选不超过这么多（或不超过找到的两成）时，不算「筛选没做完」：个别论文
+# 打分失败不该挡住整次研究
+UNSCREENED_TOLERANCE = 3
 # 课题的临时名字：方向原文的前这么多个字（确定范围后换成简报里的标题）
 PROVISIONAL_NAME_CHARS = 40
 MONTHS_BACK_CHOICES = (12, 36, 60)
@@ -227,8 +234,11 @@ def classify_survey(stats: dict[str, Any] | None, facts: Facts) -> dict[str, Any
     fetched = int(stats.get("source_fetched", 0) or 0)
     # 「找到多少篇」取这次检索拿到的数：判为不相关的论文会从库里移走，库里的总数
     # 在筛选之后只剩留下的那些
-    counts = {"found": max(fetched, facts.papers_found), "relevant": facts.papers_kept}
-    if facts.papers_kept < MIN_CORPUS_PAPERS and facts.papers_unscreened > 0:
+    # 调研检索另记了「取进来筛选的」篇数（各来源返回的条数之和里有大量重复）
+    taken = int(stats.get("selected", fetched) or 0)
+    counts = {"found": max(taken, facts.papers_found), "relevant": facts.papers_kept}
+    tolerated = max(UNSCREENED_TOLERANCE, int(counts["found"] * 0.2))
+    if facts.papers_kept < MIN_CORPUS_PAPERS and facts.papers_unscreened > tolerated:
         # 还有候选没筛过：不是「相关的太少」，是筛选这一步没做完。放宽范围帮不上忙
         return _attention(
             "SURVEY_FAILED",
@@ -422,9 +432,21 @@ def _clean_list(raw: Any, *, limit: int) -> list[str]:
 
 
 def selectable_sources() -> list[str]:
+    """用户可以选的来源：登记过、能检索的全部（没配密钥的也在里面）。"""
     from app.services.literature import sources as literature_sources
 
     return [sid for sid, _ in literature_sources.sources_with_capability("search")]
+
+
+async def usable_sources(session: AsyncSession) -> list[str]:
+    """现在真的能用、可以默认推荐的来源：必须有密钥的（CORE、SciVerse）和没有密钥
+    基本每次被限流的（Semantic Scholar）没配密钥就不在里面。密钥看「设置 → 文献检索」
+    里配的，其次环境变量。"""
+    from app.services import literature_settings
+    from app.services.literature import sources as literature_sources
+
+    runtime = await literature_settings.get_runtime_settings(session)
+    return literature_sources.usable_search_sources(runtime)
 
 
 def _is_complete(overrides: dict[str, Any]) -> bool:
@@ -455,11 +477,21 @@ async def finalize_brief(
     discipline = str(data.get("discipline") or "").strip() or None
     if discipline not in known_disciplines():
         discipline = None
-    available = selectable_sources()
-    sources = [s for s in _clean_list(data.get("sources"), limit=8) if s in available]
+    # 模型推荐的、默认的来源只认现在能用的；用户自己点名的照用（哪怕没配密钥：
+    # 那个来源会很快失败并如实报出来），排到最后
+    usable = await usable_sources(session)
+    selectable = selectable_sources()
+    chosen = overrides.get("sources")
+    if chosen is not None:
+        picked = [s for s in _clean_list(chosen, limit=8) if s in selectable]
+        sources = [s for s in picked if s in usable] + [s for s in picked if s not in usable]
+    else:
+        sources = [s for s in _clean_list(draft.get("sources"), limit=8) if s in usable]
     if not sources:
         defaults = await libraries_service.default_library_sources(session, discipline)
-        sources = [s for s in defaults if s in available]
+        sources = [s for s in defaults if s in usable]
+    if not sources:
+        sources = [s for s in ("openalex", "arxiv", "crossref") if s in usable]
     include = [
         k for k in _clean_list(data.get("include_keywords"), limit=8) if not _CJK_RE.search(k)
     ]
@@ -513,7 +545,7 @@ async def derive_brief(
     if _is_complete(overrides):
         return await finalize_brief(session, direction, {}, overrides)
     packs = "、".join(sorted(known_disciplines())) or "（无）"
-    sources = "、".join(selectable_sources()) or "（无）"
+    sources = "、".join(await usable_sources(session)) or "（无）"
     result = await get_llm_router().complete_json(
         BRIEF_STAGE,
         [
@@ -607,6 +639,9 @@ async def _start_survey(
             knobs=knobs,
             created_by=run.created_by,
             query_terms=list(brief.include_keywords) or None,
+            # 找假设不读简报和趋势，这两步不跑：少等两步、少花两次模型调用
+            skip_digest=True,
+            strategy="survey",
         )
     run.phases = _with_phase_voyage(run, "survey", voyage.id, broadened=broaden)
     run.phase, run.status, run.attention = "survey", "running", None
@@ -691,14 +726,113 @@ async def _start_hypotheses(
 
 def _plan_error_record(exc: BaseException) -> dict[str, Any]:
     found = classify_failure(exc)
+    # 给人看的一句话：异常自带的说明优先；临时故障（连不上、限流、本地库正忙）用
+    # 错误码对应的短句——原始报错可能是一大段 SQL，放进 detail
+    message = found.user_message or (
+        FAILURE_MESSAGES.get(found.code) if found.transient else None
+    )
     return {
         "code": found.code,
-        "message": found.user_message or str(exc)[:300],
+        "message": message or str(exc)[:300],
+        "detail": str(exc)[:500],
         "transient": found.transient,
         # 密钥不对、没配模型、请求本身不被接受：再试也一样，不必等三次
         "fatal": found.code in AUTH_CODES or found.code in ("BAD_REQUEST", "LLM_BAD_REQUEST"),
         "at": utcnow().isoformat(),
     }
+
+
+async def _create_research_library(
+    session: AsyncSession,
+    run: ResearchRun,
+    project: Project,
+    brief: ResearchBrief,
+    *,
+    origin: bool,
+) -> DirectionLibrary:
+    """按简报建这次研究自己的库（不提交）。``origin``：库回指课题——一个课题只能有
+    一个回指它的库，课题已经有了就不能再回指。"""
+    fields = _library_fields(brief)
+    library = await libraries_service.create_library(
+        session,
+        name=project.name,
+        statement=fields["statement"],
+        cadence=fields["cadence"],
+        keywords=fields["keywords"],
+        discipline=fields["discipline"],
+        created_by=run.created_by,
+        origin_project_id=run.project_id if origin else None,
+    )
+    definition = dict(library.definition or {})
+    for key in ("questions", "in_scope", "out_of_scope"):
+        definition[key] = fields[key]
+    library.definition = definition
+    return library
+
+
+def _fill_missing_definition(library: DirectionLibrary, brief: ResearchBrief) -> None:
+    """沿用已有的库时，只补它没配的那几项，让检索有东西可用；配过的一律不动。
+
+    - 陈述：没有才补；
+    - 包括关键词、来源：没有才补；
+    - arXiv 分类：只在库既没有关键词也没有分类时补——库只配了关键词是「不限分类」
+      的意思，替它加上分类会把以后的同步也收窄。
+
+    排除词、节奏、学科、评分标准不碰。这次检索用的查询词另由任务参数带上（简报里的
+    关键词），不靠改库的配置。
+    """
+    current = libraries_service.library_definition(library)
+    definition = dict(current)
+    keywords = dict(current.get("keywords") or {})
+    had_include = bool(keywords.get("include"))
+    had_categories = bool(keywords.get("arxiv_categories"))
+    if not str(definition.get("statement") or "").strip() and brief.statement:
+        definition["statement"] = brief.statement
+        library.statement = brief.statement
+    if not had_include and brief.include_keywords:
+        keywords["include"] = list(brief.include_keywords)
+    if not had_include and not had_categories and brief.arxiv_categories:
+        keywords["arxiv_categories"] = list(brief.arxiv_categories)
+    if not [s for s in keywords.get("sources") or [] if str(s).strip()] and brief.sources:
+        keywords["sources"] = list(brief.sources)
+    definition["keywords"] = keywords
+    if definition != current or not isinstance(library.definition, dict):
+        library.definition = definition  # 整体赋值：JSON 列不跟踪原地修改
+
+
+async def _library_for_existing_topic(
+    session: AsyncSession, run: ResearchRun, project: Project, brief: ResearchBrief
+) -> tuple[DirectionLibrary, bool]:
+    """在已有课题上开始研究时用哪个库（不提交）。返回 (库, 是不是沿用的)。
+
+    课题的库 = 关联的库 + 回指它的那个库（去重）。正好一个就沿用它：论文留着，检索
+    到的新论文加进去。没有或不止一个就新建一个，加进课题的关联里——原来的关联一条
+    都不动。
+    """
+    link_ids = await libraries_service.get_source_library_ids(session, project.id)
+    linked = await libraries_service.get_source_libraries(session, project.id)
+    origin = (
+        await session.execute(
+            select(DirectionLibrary).where(DirectionLibrary.project_id == project.id)
+        )
+    ).scalar_one_or_none()
+    candidates = {lib.id: lib for lib in linked}
+    if origin is not None:
+        candidates.setdefault(origin.id, origin)
+    if len(candidates) == 1:
+        library = next(iter(candidates.values()))
+        _fill_missing_definition(library, brief)
+        reused = True
+    else:
+        library = await _create_research_library(
+            session, run, project, brief, origin=origin is None
+        )
+        reused = False
+    if library.id not in link_ids:
+        # 只加这一条：原来的关联行原样留着（连建立时间都不动）
+        session.add(TopicSourceLibrary(topic_id=project.id, library_id=library.id))
+        await session.flush()
+    return library, reused
 
 
 async def _run_plan(session: AsyncSession, run: ResearchRun, enqueue: Enqueue | None) -> bool:
@@ -722,37 +856,38 @@ async def _run_plan(session: AsyncSession, run: ResearchRun, enqueue: Enqueue | 
                 project_id=run.project_id,
             )
             run.brief = brief.model_dump()
-            # 用户这期间自己改过名字就不动（和当初起的临时名字对比）
-            if project.name == plan.get("provisional_name"):
+            # 用户这期间自己改过名字就不动（和当初起的临时名字对比）。在已有课题上
+            # 开始的研究没有临时名字，课题名一律不动
+            provisional = plan.get("provisional_name")
+            if not plan.get("existing_project") and provisional and project.name == provisional:
                 project.name = brief.title[:255]
             await session.commit()
         brief = ResearchBrief.model_validate(run.brief)
         if run.library_id is None:
-            library = (
-                await session.execute(
-                    select(DirectionLibrary).where(DirectionLibrary.project_id == run.project_id)
+            if plan.get("existing_project"):
+                library, reused = await _library_for_existing_topic(session, run, project, brief)
+            else:
+                reused = False
+                library = (
+                    await session.execute(
+                        select(DirectionLibrary).where(
+                            DirectionLibrary.project_id == run.project_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if library is None:
+                    library = await _create_research_library(
+                        session, run, project, brief, origin=True
+                    )
+                await libraries_service.set_source_libraries(
+                    session, topic_id=run.project_id, library_ids=[library.id]
                 )
-            ).scalar_one_or_none()
-            if library is None:
-                fields = _library_fields(brief)
-                library = await libraries_service.create_library(
-                    session,
-                    name=project.name,
-                    statement=fields["statement"],
-                    cadence=fields["cadence"],
-                    keywords=fields["keywords"],
-                    discipline=fields["discipline"],
-                    created_by=run.created_by,
-                    origin_project_id=run.project_id,
-                )
-                definition = dict(library.definition or {})
-                for key in ("questions", "in_scope", "out_of_scope"):
-                    definition[key] = fields[key]
-                library.definition = definition
-            await libraries_service.set_source_libraries(
-                session, topic_id=run.project_id, library_ids=[library.id]
-            )
             run.library_id = library.id
+            if reused:
+                # 记下来：这个库不是这次研究建的，连带删除时不能删它
+                phases = copy.deepcopy(run.phases) if isinstance(run.phases, dict) else {}
+                phases["plan"] = {**(phases.get("plan") or {}), "reused_library": True}
+                run.phases = phases
             await session.commit()
         await _start_survey(session, run, brief, enqueue)
         return True
@@ -795,8 +930,21 @@ async def _apply(session: AsyncSession, run: ResearchRun, decision: Decision) ->
         decision.attention,
     ):
         return
-    run.phase, run.status, run.attention = decision.phase, decision.status, decision.attention
-    await session.commit()
+    run_id = run.id
+    for attempt in range(3):
+        run.phase, run.status, run.attention = decision.phase, decision.status, decision.attention
+        try:
+            await session.commit()
+            return
+        except OperationalError as exc:
+            # 本地库正忙：这是一次很小、重做也无害的写，退一步再试，不让推进因此失败
+            await session.rollback()
+            if not is_busy_error(exc) or attempt == 2:
+                raise
+            await asyncio.sleep(0.2 * (attempt + 1))
+            run = await session.get(ResearchRun, run_id, populate_existing=True)
+            if run is None:
+                return
 
 
 async def advance(
@@ -869,23 +1017,38 @@ async def create_run(
     session: AsyncSession,
     *,
     user_id: uuid.UUID,
-    direction: str,
+    direction: str | None,
     client_key: str | None,
     brief: ResearchBriefInput | None,
+    project_id: uuid.UUID | None = None,
 ) -> tuple[ResearchRun, bool]:
     """建一次研究（课题 + 这一行）。返回 (行, 是否新建)。
 
     幂等：同一个 client_key 再来返回原来那一行；没带 key 时，同一个人 60 秒内提交
     同样的方向（忽略空白和大小写）、且那次没被停止，也返回原来那一行。
+
+    带 ``project_id`` = 在已有的课题上开始，不新建课题（见
+    :func:`_create_run_on_project`）；这时 ``direction`` 可以为空。
     """
-    direction = direction.strip()
+    direction = (direction or "").strip()
     if client_key:
         existing = (
             await session.execute(select(ResearchRun).where(ResearchRun.client_key == client_key))
         ).scalar_one_or_none()
         if existing is not None:
             return existing, False
-    else:
+    if project_id is not None:
+        return await _create_run_on_project(
+            session,
+            user_id=user_id,
+            project_id=project_id,
+            direction=direction,
+            client_key=client_key,
+            brief=brief,
+        )
+    if not direction:
+        raise ValueError("direction is required")
+    if not client_key:
         cutoff = utcnow() - timedelta(seconds=DUPLICATE_WINDOW_SECONDS)
         recent = (
             (
@@ -921,6 +1084,73 @@ async def create_run(
     )
     session.add(run)
     await session.commit()
+    await session.refresh(run)
+    return run, True
+
+
+async def _create_run_on_project(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID,
+    direction: str,
+    client_key: str | None,
+    brief: ResearchBriefInput | None,
+) -> tuple[ResearchRun, bool]:
+    """在已有的课题上开始研究：不新建课题、不改课题名。
+
+    - 课题不是这个人的 → ``PROJECT_NOT_FOUND``；
+    - 方向没填 → 用课题的陈述，没有陈述用课题名（最多 2000 字）；
+    - 课题已经有一次研究 → ``RESEARCH_ALREADY_EXISTS``（一个课题只有一次研究）。
+      例外和新建时一样：没带幂等键、60 秒内、方向相同、那次没被停止，算同一次提交，
+      返回原来那一行。
+    """
+    project = (
+        await session.execute(
+            select(Project).where(
+                Project.id == project_id, projects_service.in_my_projects(Project.id, user_id)
+            )
+        )
+    ).scalar_one_or_none()
+    if project is None:
+        raise ResearchError("PROJECT_NOT_FOUND")
+    if not direction:
+        direction = ((project.statement or "").strip() or project.name.strip())[:2000].strip()
+    existing = (
+        await session.execute(select(ResearchRun).where(ResearchRun.project_id == project.id))
+    ).scalar_one_or_none()
+    if existing is not None:
+        cutoff = utcnow() - timedelta(seconds=DUPLICATE_WINDOW_SECONDS)
+        created_at = existing.created_at
+        if created_at is not None and created_at.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=None)
+        if (
+            not client_key
+            and existing.status != "cancelled"
+            and created_at is not None
+            and created_at >= cutoff
+            and _normalize(existing.direction) == _normalize(direction)
+        ):
+            return existing, False
+        raise ResearchError("RESEARCH_ALREADY_EXISTS")
+    overrides = brief.model_dump(exclude_none=True) if brief is not None else {}
+    run = ResearchRun(
+        project_id=project.id,
+        direction=direction,
+        phase="plan",
+        status="running",
+        # existing_project：课题不是这次研究建的——确定范围时不改它的名字，连带删除
+        # 时不删它
+        phases={"plan": {"attempts": 0, "existing_project": True, "overrides": overrides}},
+        client_key=client_key,
+        created_by=user_id,
+    )
+    session.add(run)
+    try:
+        await session.commit()
+    except IntegrityError as exc:  # 两个请求同时来：另一个先建好了
+        await session.rollback()
+        raise ResearchError("RESEARCH_ALREADY_EXISTS") from exc
     await session.refresh(run)
     return run, True
 
@@ -968,7 +1198,7 @@ async def retry_run(
 
     - 确定范围：次数清零再来（给了简报就用它）；
     - 检索文献：任务停在出错状态就从断点接着跑；否则新建一条检索任务（旧的留在
-      history 里）。上次是「相关的太少」时自动放宽（门槛 0.5、回溯 60 个月）；
+      history 里）。上次是「相关的太少」时自动放宽（门槛 0.35、回溯 60 个月）；
     - 寻找假设：同上，接着跑或新建一条；
     - 给了改过的简报（或 phase="survey"）：不管现在在哪个阶段，都回到检索文献。
 
@@ -1024,7 +1254,9 @@ async def retry_run(
                 merged = await finalize_brief(session, run.direction, dict(run.brief), overrides)
                 run.brief = merged.model_dump()
                 library = await session.get(DirectionLibrary, run.library_id)
-                if library is not None:
+                # 沿用的是课题原有的库：它的收录设置是用户自己的，改简报不去覆盖
+                reused = bool(_phase_state(run, "plan").get("reused_library"))
+                if library is not None and not reused:
                     await libraries_service.update_library(
                         session, library=library, fields=_library_fields(merged)
                     )
@@ -1063,7 +1295,8 @@ async def more_ideas(
 
 async def delete_run(session: AsyncSession, run: ResearchRun, *, purge: bool = False) -> None:
     """删掉这次研究的记录。默认只删这一行：课题、文献库、论文和想法都留着，在原来的
-    页面里照常能用。``purge=True`` 连课题和它的文献库一起删。
+    页面里照常能用。``purge=True`` 连课题和它的文献库一起删——只删这次研究自己建的：
+    在已有课题上开始的研究不删课题，沿用课题原有的库时不删库。
 
     当前阶段的任务还没结束就先取消它——留一条没人管的任务在跑没有意义。
     """
@@ -1072,15 +1305,19 @@ async def delete_run(session: AsyncSession, run: ResearchRun, *, purge: bool = F
         if voyage is not None and voyage.status not in TERMINAL_STATUSES:
             await voyages_service.cancel_voyage(session, voyage)
         project_id, library_id = run.project_id, run.library_id
+        # 只删这次研究自己建的：在已有课题上开始的不删课题，沿用的库不删库
+        plan = _phase_state(run, "plan")
+        own_project = not plan.get("existing_project")
+        own_library = not plan.get("reused_library")
         await session.delete(run)
         await session.commit()
         if purge:
-            if library_id is not None:
+            if library_id is not None and own_library:
                 library = await session.get(DirectionLibrary, library_id)
                 if library is not None:
                     await libraries_service.delete_library(session, library=library, force=True)
                     await session.commit()
-            project = await session.get(Project, project_id)
+            project = await session.get(Project, project_id) if own_project else None
             if project is not None:
                 await projects_service.delete_project(session, project)
     _locks.pop(run.id, None)
@@ -1229,9 +1466,15 @@ async def _survey_read(
     counts = await ingest_service.library_paper_counts(session, run.library_id)
     kept = counts["library"]
     top_n = brief.compile_top_n if brief is not None else kept
+    stats = (voyage.checkpoint or {}).get("ingest_search_stats") if voyage is not None else None
+    stats = stats if isinstance(stats, dict) else {}
+    # 「找到」= 取进来筛选的候选数。判为不相关的论文会从库里移走，所以不能只数库里
+    # 现在的条目——30 篇候选筛完留下 1 篇，以前这里显示「找到 6」
+    found = max(counts["total"], int(stats.get("inserted") or 0))
     out.progress = SurveyProgress(
-        found=counts["total"],
-        screened=counts["total"] - counts["candidate"],
+        found=found,
+        fetched=max(found, int(stats.get("source_fetched") or 0)),
+        screened=found - counts["candidate"],
         kept=kept,
         summarised=counts["compiled"],
         to_summarise=min(top_n, kept),
@@ -1252,8 +1495,7 @@ async def _survey_read(
         TopPaper(id=p.id, title=p.title, year=p.year, tldr=p.tldr, relevance=score)
         for p, score in rows
     ]
-    stats = (voyage.checkpoint or {}).get("ingest_search_stats") if voyage is not None else None
-    if isinstance(stats, dict):
+    if stats:
         out.notes = [str(m) for m in (stats.get("messages") or [])]
         errors = {
             str(e.get("source")): str(e.get("error") or "")
@@ -1261,10 +1503,22 @@ async def _survey_read(
             if isinstance(e, dict)
         }
         fetched = stats.get("source_counts") if isinstance(stats.get("source_counts"), dict) else {}
+        selected = stats.get("source_selected")
+        selected = selected if isinstance(selected, dict) else {}
         names = list(dict.fromkeys([*fetched, *errors]))
         out.sources = [
-            SourceResult(source=s, fetched=int(fetched.get(s, 0) or 0), error=errors.get(s))
+            SourceResult(
+                source=s,
+                fetched=int(fetched.get(s, 0) or 0),
+                selected=int(selected[s]) if s in selected else None,
+                error=errors.get(s),
+            )
             for s in names
+        ]
+        out.queries = [
+            SearchQuery.model_validate(q)
+            for q in (stats.get("queries") or [])
+            if isinstance(q, dict)
         ]
     return out
 

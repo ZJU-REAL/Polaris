@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
@@ -32,11 +33,11 @@ from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.daily_feed import DailyFeedEntry
 from app.models.library_direction import DirectionLibrary, LibraryPaper
-from app.models.paper import Paper, new_paper
+from app.models.paper import Paper, PaperChunk, new_paper
 from app.models.research_digest import LibraryResearchDigest
 from app.models.voyage import VoyageRun, VoyageStep
 from app.schemas.ingest import TIME_RANGE_DAYS
-from app.services import file_projection
+from app.services import file_projection, literature_settings
 from app.services.affiliations import (
     apply_author_affiliations,
     extract_author_affiliations_llm,
@@ -50,6 +51,7 @@ from app.services.chunks import (
 from app.services.concepts import link_all_paper_concepts
 from app.services.dedup import pool_dedup_key
 from app.services.embedding import (
+    chunks_with_vector,
     embed_documents,
     embed_query,
     paper_vectors,
@@ -65,14 +67,19 @@ from app.services.libraries import (
     rejected_paper_ids,
     remember_rejected,
 )
-from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
+from app.services.literature import (
+    get_arxiv_client,
+    get_openalex_client,
+    get_s2_client,
+    survey_search,
+)
 from app.services.literature import sources as literature_sources
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
 from app.services.paper_enrich import paper_embedding_text
 from app.services.paper_identifiers import semantic_scholar_ref
 from app.services.paper_wiki import upsert_wiki
-from app.services.papers import delete_membership_hard
+from app.services.papers import PAPER_STATUS_GROUPS, delete_membership_hard
 from app.services.relevance import (
     build_direction_query,
     build_relevance_context,
@@ -198,14 +205,31 @@ def _ingest_billing_owner(library: DirectionLibrary) -> uuid.UUID | None:
     return library.submitted_by
 
 
-def _parse_iso(value: str | None) -> datetime | None:
-    if not value:
+def _parse_iso(value: Any) -> datetime | None:
+    """来源给的发表日期 → datetime；认不出来返回 None，**任何输入都不抛错**。
+
+    各来源给的形状不一样：ISO 字符串、只有年月的字符串、Crossref 的
+    ``{"date-parts": [[2024, 5]]}``、null、数字。以前只接字符串，Crossref 的每条记录
+    都在这里抛 TypeError，这个来源每次都整个失败。
+    """
+    if not value or isinstance(value, bool):
         return None
-    try:
-        dt = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if not isinstance(value, str):
+        from app.services.literature.multi_source import date_parts_iso
+
+        value = date_parts_iso(value) if isinstance(value, dict | list | tuple) else None
+        if not value:
+            return None
+    text = value.strip().replace("Z", "+00:00")
+    for candidate in (text, f"{text}-01", f"{text}-01-01"):  # 2024-05、2024 也认
+        try:
+            dt = datetime.fromisoformat(candidate)
+        except ValueError:
+            continue
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+    return None
 
 
 async def _existing_keys(
@@ -607,6 +631,32 @@ class _LibraryInserter:
         return True
 
 
+#: 通用来源一次检索最多花多久（每个来源各算）。到点就用已经拿到的，记成它的一条错误
+_SOURCE_TIME_BUDGET_S = 90.0
+
+
+async def _settle_after_failure(inserter: _LibraryInserter) -> None:
+    """一个来源中途失败：把它已经插进来的那几篇提交掉；提交不了就回滚，并把没落库的
+    从「新加入」清单里拿掉（回滚后再碰那些对象会出错）。"""
+    from sqlalchemy import inspect as sa_inspect
+
+    session = inserter.session
+    try:
+        await session.commit()
+        return
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        await session.rollback()
+    kept: list[Paper] = []
+    for paper in inserter.new_papers:
+        if sa_inspect(paper).persistent:
+            await session.refresh(paper)
+            kept.append(paper)
+    inserter.new_papers[:] = kept
+    await session.commit()
+
+
 async def _search_generic_sources(
     inserter: _LibraryInserter,
     *,
@@ -618,6 +668,7 @@ async def _search_generic_sources(
     errors: list[str],
     failures: list[dict[str, str]] | None = None,
     counts: dict[str, int] | None = None,
+    runtime_settings: dict[str, Any] | None = None,
 ) -> int:
     """arXiv 以外的源走注册表的通用 search；返回抓到的条数。
 
@@ -627,53 +678,93 @@ async def _search_generic_sources(
     查询——实测 OpenAlex 对拼接后的查询只回 10 篇，而且多数不相干。
 
     它们没有分页续跑——限流问题集中在 arXiv，别的源没这个包袱。时间窗只能按年
-    （``SourceSearchRequest`` 只有年份），窗口内按相关性取，每个源合计不超过它的份额。
-    单个源失败记进 ``errors``（给人看的一句话）和 ``failures``（结构化的
-    ``{source, error}``，研究据此判断「是不是每个来源都连不上」），不拖垮其余源；
-    失败之前已经拿到的照样算数。``counts`` 记每个源各拿到几条。
+    （``SourceSearchRequest`` 只有年份），窗口内按相关性取。单个源失败记进
+    ``errors``（给人看的一句话）和 ``failures``（结构化的 ``{source, error}``，研究据此
+    判断「是不是每个来源都连不上」），不拖垮其余源；失败之前已经拿到的照样算数。
+    ``counts`` 记每个源各拿到几条。
+
+    **篇数怎么分**：先每个源一份（``limit`` 均分）。有的源失败了、或者没拿满它那一份，
+    空出来的名额再由拿满了的源补（第二遍，多要一截）——以前不补：三个源坏了两个，
+    填 30 只进来 10 篇。
+
+    **每次出网之前先提交**。以前插完一批只 flush，写事务一直开到整个函数结束：
+    SQLite 同一时刻只有一个写者，这个事务开着去等下一个来源的 HTTP（被限流时一等
+    几十秒），同时在跑的别的任务全都卡在写锁上，等过超时就是 database is locked。
+    提前提交的论文不会重复：去重按库里已有的条目。
     """
     if not source_ids or not terms:
         return 0
     from app.schemas.literature_discovery import SourceSearchRequest
 
+    session = inserter.session
     per_source = max(1, limit // len(source_ids))
-    per_term = max(1, -(-per_source // len(terms)))  # 向上取整：短语多时每个至少要 1 篇
-    fetched = 0
-    for source_id in source_ids:
-        adapter = literature_sources.get_source(source_id)
-        if adapter is None:
-            errors.append(f"{source_id}：当前不可用")
-            if failures is not None:
-                failures.append({"source": source_id, "error": "unavailable"})
-            continue
-        got = 0
-        try:
-            for term in terms:
-                if got >= per_source:
-                    break
-                page = await adapter.search(
-                    SourceSearchRequest(
-                        query=term,
-                        start_year=since.year,
-                        end_year=until.year,
-                        limit=min(per_term, per_source - got),
-                    )
+    got: dict[str, int] = {}
+    adapters: dict[str, Any] = {}
+
+    async def search_source(source_id: str, quota: int, *, offset: int) -> None:
+        """向一个源再要 ``quota`` 篇（已经拿过 ``offset`` 篇：多要这么多，靠去重跳过）。"""
+        adapter = adapters[source_id]
+        per_term = max(1, -(-(quota + offset) // len(terms)))  # 向上取整
+        want = quota + offset
+        seen = 0
+        for term in terms:
+            if seen >= want:
+                break
+            await session.commit()  # 出网之前不留着写事务
+            page = await adapter.search(
+                SourceSearchRequest(
+                    query=term,
+                    start_year=since.year,
+                    end_year=until.year,
+                    limit=min(per_term, want - seen),
                 )
-                for item in page.items:
-                    await inserter.insert(_entry_from_candidate(item), source_id)
-                await inserter.session.flush()
-                got += len(page.items)
+            )
+            for item in page.items:
+                await inserter.insert(_entry_from_candidate(item), source_id)
+            await session.commit()
+            seen += len(page.items)
+            got[source_id] = max(got.get(source_id, 0), seen)  # 中途失败时已拿到的也算
+
+    async def guarded(source_id: str, quota: int, *, offset: int = 0) -> None:
+        try:
+            await asyncio.wait_for(
+                search_source(source_id, quota, offset=offset), timeout=_SOURCE_TIME_BUDGET_S
+            )
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — 单个源失败不拖垮其余
+            await _settle_after_failure(inserter)
             logger.warning("library search failed for %s", source_id, exc_info=True)
             errors.append(f"{source_id}：{type(e).__name__}")
             if failures is not None:
                 failures.append({"source": source_id, "error": f"{type(e).__name__}: {e}"[:300]})
-        fetched += got
-        if counts is not None and got:
-            counts[source_id] = counts.get(source_id, 0) + got
-    return fetched
+            failed.add(source_id)
+
+    failed: set[str] = set()
+    for source_id in source_ids:
+        adapter = literature_sources.search_adapter(source_id, runtime_settings)
+        if adapter is None:
+            errors.append(f"{source_id}：当前不可用")
+            if failures is not None:
+                failures.append({"source": source_id, "error": "unavailable"})
+            failed.add(source_id)
+            continue
+        adapters[source_id] = adapter
+        await guarded(source_id, per_source)
+
+    # 第二遍：空出来的名额交给拿满了自己那一份的源（没拿满的说明它已经没有更多了）
+    shortfall = limit - sum(got.values())
+    full = [s for s in source_ids if s not in failed and got.get(s, 0) >= per_source]
+    if shortfall > 0 and full and (failed or len(full) < len(source_ids)):
+        extra = max(1, -(-shortfall // len(full)))
+        for source_id in full:
+            await guarded(source_id, extra, offset=got[source_id])
+
+    if counts is not None:
+        for source_id, n in got.items():
+            if n:
+                counts[source_id] = counts.get(source_id, 0) + n
+    return sum(got.values())
 
 
 #: 库的 definition 里没有来源时用哪些。**只有存量库会走到这里**：新库在建库时就按
@@ -699,6 +790,179 @@ def _configured_sources(keywords_def: dict[str, Any]) -> list[str]:
 def _latest_source_date(entries: list[dict[str, Any]]) -> str | None:
     dates = [parsed for entry in entries if (parsed := _parse_iso(entry.get("published")))]
     return max(dates).isoformat() if dates else None
+
+
+class SourcesUnreachableError(RuntimeError):
+    """调研检索一篇都没拿到，而且每个来源都报了错：连不上，过一会儿再试可能就好。"""
+
+    transient = True
+    code = "NETWORK"
+    user_message = "文献来源都连不上"
+
+
+async def _insert_committed(inserter: _LibraryInserter, entry: dict[str, Any], source: str) -> bool:
+    """插一篇并立刻提交；撞上「别的任务刚好插了同一篇」就回滚再来一次（这次会命中池）。
+
+    逐篇提交：写锁每次只占几毫秒，几条研究同时建库也不会互相卡住。
+    """
+    for _attempt in range(2):
+        try:
+            inserted = await inserter.insert(entry, source)
+            await inserter.session.commit()
+            return inserted
+        except IntegrityError:
+            # 回滚会让会话里的对象过期；之前插进来的都已各自提交，重新读回来即可
+            await inserter.session.rollback()
+            for paper in inserter.new_papers:
+                await inserter.session.refresh(paper)
+            await inserter.session.commit()
+    return False
+
+
+def _entry_source(entry: dict[str, Any], sources: set[str]) -> str:
+    """这篇记成从哪个来源来的：有 arXiv 编号就记 arXiv（能下到全文），否则按字母序取一个。"""
+    if entry.get("arxiv_id") or "arxiv" in sources:
+        return "arxiv"
+    return sorted(sources)[0] if sources else "search"
+
+
+async def _insert_entries(
+    library_id: uuid.UUID, items: list[tuple[dict[str, Any], str]]
+) -> tuple[list[Paper], str | None]:
+    """把一批条目插进库（逐篇提交），返回 (新加入的论文, 这批里最新的发表日期)。"""
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, library_id)
+        arxiv_ids, dois, titles = await _existing_keys(session, library_id)
+        inserter = _LibraryInserter(
+            session,
+            library_id,
+            arxiv_ids=arxiv_ids,
+            dois=dois,
+            titles=titles,
+            rejected=rejected_paper_ids(library) if library is not None else frozenset(),
+        )
+        await session.commit()  # 上面只读；不留着事务
+        for entry, source in items:
+            if entry.get("arxiv_id"):
+                entry = entry | {"arxiv_id": normalize_arxiv_id(str(entry["arxiv_id"]))}
+            await _insert_committed(inserter, entry, source)
+        return list(inserter.new_papers), _latest_source_date([e for e, _ in items])
+
+
+async def _survey_search(
+    ctx: ActionContext,
+    *,
+    now: datetime,
+    library_id: uuid.UUID,
+    statement: str,
+    questions: list[str],
+    sources: list[str],
+    terms: list[str],
+    exclude: list[str],
+    limit: int,
+    months_back: int,
+    billing_user_id: uuid.UUID | None,
+    runtime_settings: dict[str, Any],
+) -> dict[str, Any]:
+    """调研检索（见 services/literature/survey_search.py）：写查询 → 各来源同时按相关度
+    查 → 合并排序取前 N → 入库。全程不带着数据库事务出网。"""
+    state = ctx.checkpoint.get("survey_search")
+    state = dict(state) if isinstance(state, dict) else {}
+    queries = [str(q) for q in (state.get("queries") or []) if str(q).strip()]
+    if not queries:  # 重试时沿用上次写好的查询，不再调模型
+        queries, plan_error = await survey_search.plan_queries(
+            ctx.llm,
+            statement=statement,
+            questions=questions,
+            keywords=terms,
+            user_id=billing_user_id,
+            project_id=ctx.run.project_id,
+            library_id=library_id,
+            voyage_id=ctx.run.id,
+        )
+        state = {"queries": queries, "plan_error": plan_error}
+        ctx.checkpoint["survey_search"] = state
+    await ctx.log(f"检索查询 {len(queries)} 条：" + "；".join(queries))
+
+    clients = {"arxiv": get_arxiv_client, "openalex": get_openalex_client}
+    adapters: dict[str, Any] = {}
+    for source_id in sources:
+        if source_id in clients and not (runtime_settings.get("provider_keys") or {}).get(
+            source_id
+        ):
+            adapters[source_id] = literature_sources.get_source(
+                source_id, client=clients[source_id]()
+            )
+        else:
+            adapters[source_id] = literature_sources.search_adapter(source_id, runtime_settings)
+    result = await survey_search.collect(
+        adapters, queries, limit=limit, months_back=months_back, now=now, exclude=exclude
+    )
+    query_log = [log.as_dict() for log in result.logs]
+    fetched_total = sum(result.fetched.values())
+    errored = {e["source"] for e in result.errors}
+    if fetched_total == 0 and sources and all(s in errored for s in sources):
+        detail = "; ".join(f"{e['source']}: {e['error']}" for e in result.errors)
+        raise SourcesUnreachableError(detail[:500])
+
+    new_papers, source_latest_at = await _insert_entries(
+        library_id,
+        [(cand.entry, _entry_source(cand.entry, cand.sources)) for cand in result.selected],
+    )
+    error_of = {e["source"]: e["error"] for e in result.errors}
+    for source_id in sources:
+        await ctx.log(
+            f"{source_id}：返回 {result.fetched.get(source_id, 0)} 条，"
+            f"选中 {result.selected_by_source.get(source_id, 0)} 篇"
+            + (f"，出错：{error_of[source_id]}" if source_id in error_of else "")
+        )
+
+    messages: list[str] = []
+    if fetched_total == 0:
+        messages.append("本次所有数据源均返回 0 篇；请复查检索配置、源站状态和时间窗口。")
+    if state.get("plan_error"):
+        messages.append(f"没能让模型写检索查询（{state['plan_error']}），这次只用了简报里的关键词。")
+    messages.extend(f"数据源失败——{e['source']}：{e['error']}" for e in result.errors)
+    foundation_since = now - timedelta(days=365 * survey_search.FOUNDATION_YEARS)
+    diagnostics = {
+        "strategy": "survey",
+        "source": ",".join(sources) if sources else "none",
+        "source_fetched": fetched_total,  # 各来源返回的条数之和（去重前）
+        "prescreened": result.unique,  # 去重后的候选
+        "query_found": result.unique,
+        "selected": len(result.selected),  # 取进来筛选的
+        "inserted": len(new_papers),  # 其中库里原来没有的
+        "window_since": foundation_since.isoformat(),
+        "recent_since": (now - timedelta(days=30 * max(1, months_back))).isoformat(),
+        "source_latest_at": source_latest_at,
+        "cap_hit": result.unique > limit,
+        "status": "warning" if messages else "ok",
+        "messages": messages,
+        "source_errors": result.errors,
+        "source_counts": {s: n for s, n in result.fetched.items() if n},
+        "source_selected": result.selected_by_source,
+        "queries": query_log,
+    }
+    ctx.checkpoint["ingest_search_stats"] = diagnostics
+    ctx.checkpoint["watermark_candidate"] = now.isoformat()
+    return {
+        "source": diagnostics["source"],
+        "strategy": "survey",
+        "found": result.unique,
+        "fetched": fetched_total,
+        "selected": len(result.selected),
+        "inserted": len(new_papers),
+        "new_papers": _paper_brief(new_papers),
+        "window_since": diagnostics["window_since"],
+        "mode": _mode(ctx),
+        "source_latest_at": source_latest_at,
+        "diagnostic_status": diagnostics["status"],
+        "diagnostic_messages": messages,
+        # 每一次请求：哪个来源、发的什么查询、怎么排的、时间窗、回了几条
+        "queries": query_log,
+        "source_counts": diagnostics["source_counts"],
+        "source_selected": result.selected_by_source,
+    }
 
 
 @register("wiki.search_candidates")
@@ -872,6 +1136,23 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         # 查询词优先用本次指定的；没指定就退回库配置里的「包括关键词」
         params = _params(ctx)
         terms = [t for t in (params.get("query_terms") or []) if str(t).strip()] or include
+        if params.get("strategy") == "survey" and (terms or definition.get("statement")):
+            # 调研检索（「研究」发起的）：按相关度、多条查询、各来源同时查。
+            # 出网之前把这个会话收掉——下面要等模型和几个来源，不该占着连接
+            survey_args = {
+                "library_id": library.id,
+                "statement": str(definition.get("statement") or library.name or ""),
+                "questions": [str(q) for q in (definition.get("questions") or [])],
+                "sources": sources,
+                "terms": [str(t) for t in terms],
+                "exclude": [str(t) for t in exclude],
+                "limit": limit,
+                "months_back": int(knobs["months_back"]),
+                "billing_user_id": _ingest_billing_owner(library),
+                "runtime_settings": await literature_settings.get_runtime_settings(session),
+            }
+            await session.commit()
+            return await _survey_search(ctx, now=now, **survey_args)
         days = TIME_RANGE_DAYS.get(str(params.get("time_range") or ""))
         if not categories and not terms:
             # 关键词、分类两头都空：查询会退化成「窗口内全 arXiv」的无界抓取，
@@ -1077,6 +1358,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             errors=source_errors,
             failures=source_failures,
             counts=source_counts,
+            runtime_settings=await literature_settings.get_runtime_settings(session),
         )
         if arxiv_error is not None:
             if fetched_total == 0:
@@ -1329,6 +1611,11 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
 
 @register("wiki.score_relevance")
 async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
+    return await _score_candidates(ctx)
+
+
+async def _score_candidates(ctx: ActionContext) -> dict[str, Any]:
+    """给库里所有还是候选的论文打相关性分（打分步骤和按引用扩展之后的补筛共用）。"""
     knobs = _knobs(ctx)
     threshold = float(knobs["relevance_threshold"])
 
@@ -1407,6 +1694,19 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
 
     results = await _gather_bounded(_LLM_CONCURRENCY, [score_one(mid) for mid in membership_ids])
     _reraise_if_cancelled(results)  # worker 被杀须上抛，不当作单篇失败
+    # 没打成的在这一批最后再试一次（模型偶发的超时、过载多半第二次就好）。全军覆没
+    # 就不试了：那是模型连不上，留给下面原样抛出、由引擎按错误性质重试
+    retry_at = [i for i, r in enumerate(results) if isinstance(r, Exception)]
+    retried = 0
+    if retry_at and len(retry_at) < len(results):
+        retried = len(retry_at)
+        progress["n"] -= retried
+        again = await _gather_bounded(
+            _LLM_CONCURRENCY, [score_one(membership_ids[i]) for i in retry_at]
+        )
+        _reraise_if_cancelled(again)
+        for i, outcome in zip(retry_at, again, strict=True):
+            results[i] = outcome
 
     # gather 后统一汇总（顺序按查询顺序，稳定；不在并发任务里改 ctx.checkpoint）
     succeeded = 0
@@ -1473,6 +1773,82 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         "threshold": threshold,
         "scored_papers": scored_brief,
         "failed": failed,
+        "retried": retried,
+    }
+
+
+# ---- 3b. 按引用关系扩展（调研检索专用）：从最相关的几篇找它们共同引用的工作 ----
+
+_EXPAND_SEEDS = 8
+
+
+@register("wiki.expand_citations")
+async def expand_citations(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
+    """第一遍筛选之后，从最相关的几篇出发沿引用关系再找一批候选，接着把它们也筛一遍。
+
+    关键词检索找到的是「说法对得上」的论文；一个问题绕不开的奠基工作常常用的是另一套
+    说法，但相关的论文都会引它。种子取这次筛出来分数最高的几篇，候选经 OpenAlex 的
+    参考文献与施引文献取得（每篇都是来源的真实记录）。扩展失败不让任务失败。
+    """
+    knobs = _knobs(ctx)
+    budget = max(10, min(60, int(knobs["max_papers"]) // 2))
+    state = ctx.checkpoint.get("citation_expand")
+    state = dict(state) if isinstance(state, dict) else {}
+    if not state.get("done"):
+        async with get_sessionmaker()() as session:
+            library = await _resolve_library(session, ctx)
+            if library is None:
+                raise ValueError(f"library not found for run: {ctx.run.id}")
+            library_id = library.id
+            rows = (
+                await session.execute(
+                    select(Paper.doi, Paper.arxiv_id, Paper.title)
+                    .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                    .where(
+                        LibraryPaper.library_id == library.id,
+                        LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+                        _scored_in_this_run(ctx),
+                    )
+                    .order_by(LibraryPaper.relevance_score.desc().nulls_last(), Paper.id)
+                    .limit(_EXPAND_SEEDS)
+                )
+            ).all()
+        seeds = [{"doi": doi, "arxiv_id": aid, "title": title} for doi, aid, title in rows]
+        stats: dict[str, Any] = {"seeds": len(seeds), "candidates": 0}
+        inserted: list[Paper] = []
+        if seeds:
+            openalex = literature_sources.require_source("openalex", client=get_openalex_client())
+            entries, stats = await survey_search.expand_by_citations(
+                openalex, seeds, limit=budget
+            )
+            inserted, _latest = await _insert_entries(
+                library_id, [(e, _entry_source(e, {"openalex"})) for e in entries]
+            )
+        state = {"done": True, **stats, "inserted": len(inserted)}
+        ctx.checkpoint["citation_expand"] = state
+        search_stats = ctx.checkpoint.get("ingest_search_stats")
+        if isinstance(search_stats, dict):
+            search_stats = dict(search_stats)
+            search_stats["expanded"] = state
+            # 「取进来筛选的」总数要把这一批算上，界面上的「找到」才对得上
+            search_stats["inserted"] = int(search_stats.get("inserted") or 0) + len(inserted)
+            ctx.checkpoint["ingest_search_stats"] = search_stats
+        await ctx.log(
+            f"按引用关系扩展：{state.get('seeds', 0)} 篇种子 → 候选 {state.get('candidates', 0)}"
+            f" → 新增 {len(inserted)}"
+        )
+    scored = await _score_candidates(ctx)
+    return {
+        "seeds": state.get("seeds", 0),
+        "seeds_found": state.get("seeds_found", 0),
+        "candidates": state.get("candidates", 0),
+        "inserted": state.get("inserted", 0),
+        "error": state.get("error"),
+        "processed": scored["processed"],
+        "succeeded": scored["succeeded"],
+        "excluded": scored["excluded"],
+        "scored_papers": scored["scored_papers"],
+        "failed": scored["failed"],
     }
 
 
@@ -1720,6 +2096,17 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
 
     results = await _gather_bounded(_LLM_CONCURRENCY, [compile_one(mid) for mid in membership_ids])
     _reraise_if_cancelled(results)  # worker 被杀须上抛，不当作单篇失败
+    # 没写成的在这一批最后再试一次（实测 20 篇里 7 篇因为模型的流被网关中途掐断而
+    # 失败，重来一次多半就好）。全军覆没就不试了：那是模型连不上
+    retry_at = [i for i, r in enumerate(results) if isinstance(r, Exception)]
+    if retry_at and len(retry_at) < len(results):
+        progress["n"] -= len(retry_at)
+        again = await _gather_bounded(
+            _LLM_CONCURRENCY, [compile_one(membership_ids[i]) for i in retry_at]
+        )
+        _reraise_if_cancelled(again)
+        for i, outcome in zip(retry_at, again, strict=True):
+            results[i] = outcome
 
     # gather 后统一汇总（顺序按查询顺序=相关度降序，稳定）
     compiled = 0
@@ -1750,6 +2137,92 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
 
 
 # ---- 6. 概念上链 + embedding ----
+
+_EMBED_BATCH = 64
+
+
+async def _index_kept_abstracts(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+    project_id: uuid.UUID | None,
+    voyage_id: uuid.UUID | None,
+) -> tuple[int, str | None]:
+    """给库内还没有任何可检索分段的论文建「标题 + 摘要」索引，返回 (建了几篇, 错误)。
+
+    每篇一个摘要块 + 一条论文级向量（块的向量是它的拷贝）。分批做，每批先调嵌入、
+    再写库并提交——不带着写事务等嵌入接口。嵌入失败只报在结果里，不让这一步失败。
+    """
+    space = await active_space(session)
+    papers = list(
+        (
+            await session.execute(
+                select(Paper)
+                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                .where(
+                    LibraryPaper.library_id == library_id,
+                    LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+                )
+                .order_by(LibraryPaper.relevance_score.desc().nulls_last(), Paper.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not papers:
+        return 0, None
+    chunk_rows = (
+        await session.execute(
+            select(PaperChunk.id, PaperChunk.paper_id).where(
+                PaperChunk.paper_id.in_([p.id for p in papers])
+            )
+        )
+    ).all()
+    with_vector = (
+        await chunks_with_vector(session, [cid for cid, _ in chunk_rows], space)
+        if space is not None and chunk_rows
+        else set()
+    )
+    searchable = {pid for cid, pid in chunk_rows if cid in with_vector}
+    has_chunk = {pid for _cid, pid in chunk_rows}
+    todo = [p for p in papers if p.id not in searchable and (p.title or p.abstract)]
+    if not todo:
+        return 0, None
+    indexed = 0
+    for start in range(0, len(todo), _EMBED_BATCH):
+        batch = todo[start : start + _EMBED_BATCH]
+        have = await papers_with_vector(session, [p.id for p in batch], space) if space else set()
+        need = [p for p in batch if p.id not in have]
+        await session.commit()  # 上面只读：调嵌入接口之前不留事务
+        try:
+            if need:
+                vectors, batch_space = await embed_documents(
+                    session,
+                    [paper_embedding_text(p) for p in need],
+                    user_id=user_id,
+                    project_id=project_id,
+                    library_id=library_id,
+                    voyage_id=voyage_id,
+                )
+                for paper, vector in zip(need, vectors, strict=True):
+                    await upsert_paper_vector(session, paper.id, vector, batch_space)
+            for paper in batch:
+                if paper.id not in has_chunk:
+                    await ensure_paper_chunks(session, paper)
+            await sync_abstract_chunk_vectors(session, paper_ids=[p.id for p in batch])
+            await session.commit()
+            indexed += len(batch)
+            space = space or await active_space(session)
+        except asyncio.CancelledError:
+            raise
+        except NotImplementedError:
+            await session.rollback()
+            return indexed, "provider does not support embeddings"
+        except Exception as e:  # noqa: BLE001 — 索引失败不影响这一步的其余结果
+            await session.rollback()
+            return indexed, f"{type(e).__name__}: {e}"
+    return indexed, None
 
 
 @register("wiki.link_concepts")
@@ -1809,6 +2282,17 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         await sync_abstract_chunk_vectors(session, paper_ids=[p.id for p in papers])
         await session.commit()
 
+        # 留在库里、但这次没轮到写解读的论文（超出 compile_top_n 的那些）：至少让它们
+        # 按摘要能被检索到。以前只有写了解读的那几十篇有索引——留下 60 篇，寻找假设时
+        # 能引用的只有 10–20 篇
+        abstract_indexed, abstract_index_error = await _index_kept_abstracts(
+            session,
+            library_id=library.id,
+            user_id=billing_user_id,
+            project_id=ctx.run.project_id,
+            voyage_id=ctx.run.id,
+        )
+
         # 分段向量：补齐缺失的 chunk embedding（文献问答检索底座）。
         # 最大化模式放开单次 2000 段的默认上限（否则大批量编译后向量长期欠账）
         embed_kwargs: dict[str, Any] = (
@@ -1840,6 +2324,9 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         "embed_error": embed_error,
         "chunks_embedded": chunks_embedded,
         "chunk_embed_error": chunk_embed_error,
+        # 没写解读、只按摘要建了索引的论文数
+        "abstract_indexed": abstract_indexed,
+        "abstract_index_error": abstract_index_error,
     }
 
 
@@ -1920,7 +2407,8 @@ async def update_watermark(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 .where(VoyageStep.run_id == ctx.run.id, VoyageStep.status == "obsolete")
             )
         ) or 0
-        if not truncated:
+        # 任务声明了不生成简报和趋势（params.skip_digest，「研究」的文献检索）时不查这一条
+        if not truncated and _params(ctx).get("skip_digest") is not True:
             digest = (
                 await session.execute(
                     select(LibraryResearchDigest).where(
