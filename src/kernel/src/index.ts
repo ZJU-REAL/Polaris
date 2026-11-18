@@ -78,11 +78,14 @@ export {
   type Scrubber,
 } from './log/rotating-log.ts'
 export {
+  AGENT_SHELL_ENV,
   ENGINE_LLM_ENV,
   SHELL_ENV_TIMEOUT_MS,
+  SHELL_MERGED_PATHS,
   SHELL_NETWORK_ENV,
   applyShellEnv,
   ensureShellEnv,
+  mergePathList,
   parseShellEnv,
   resolveShellEnv,
   runShell,

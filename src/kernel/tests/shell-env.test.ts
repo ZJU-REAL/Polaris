@@ -6,8 +6,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  AGENT_SHELL_ENV,
   ENGINE_LLM_ENV,
+  SHELL_MERGED_PATHS,
   applyShellEnv,
+  mergePathList,
   parseShellEnv,
   resolveShellEnv,
   runShell,
@@ -129,6 +132,46 @@ describe('resolveShellEnv / applyShellEnv', () => {
     }
     expect(await applyShellEnv({ env, platform: 'darwin', run: throwing, markers: M })).toEqual([])
     expect(env).toEqual({ SHELL: '/bin/zsh' })
+  })
+})
+
+describe('PATH from the login shell (local agents)', () => {
+  it('appends the shell entries the process lacks, keeping its own order first', () => {
+    expect(mergePathList('/usr/bin:/bin', '/opt/homebrew/bin:/usr/bin:/Users/me/.nvm/versions/node/v22/bin')).toBe(
+      '/usr/bin:/bin:/opt/homebrew/bin:/Users/me/.nvm/versions/node/v22/bin',
+    )
+    expect(mergePathList(undefined, '/a::/b')).toBe('/a:/b')
+    expect(mergePathList('/a', undefined)).toBe('/a')
+  })
+
+  it('merges PATH even though it is always set, and reports it only when it changed', async () => {
+    const shell = `${M.begin}PATH=/opt/homebrew/bin:/usr/bin
+OPENAI_API_KEY=sk-o
+${M.end}`
+    const env: NodeJS.ProcessEnv = { SHELL: '/bin/zsh', PATH: '/usr/bin:/bin' }
+    const applied = await applyShellEnv({
+      env,
+      platform: 'darwin',
+      names: AGENT_SHELL_ENV,
+      merge: SHELL_MERGED_PATHS,
+      run: fakeRunner(shell).run,
+      markers: M,
+    })
+    expect(applied.sort()).toEqual(['OPENAI_API_KEY', 'PATH'])
+    expect(env.PATH).toBe('/usr/bin:/bin:/opt/homebrew/bin')
+    const again = await applyShellEnv({
+      env,
+      platform: 'darwin',
+      names: [],
+      merge: SHELL_MERGED_PATHS,
+      run: fakeRunner(shell).run,
+      markers: M,
+    })
+    expect(again).toEqual([])
+  })
+
+  it('never hands an agent Polaris’s own Claude key', () => {
+    expect(AGENT_SHELL_ENV.some((n) => n.startsWith('ANTHROPIC') || n.startsWith('POLARIS'))).toBe(false)
   })
 })
 

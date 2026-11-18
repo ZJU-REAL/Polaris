@@ -6,7 +6,11 @@
    `export ANTHROPIC_API_KEY=…` there never reaches the engine child. Once
    per app launch, before the engine is spawned, we ask the user's login
    shell for its environment and copy over ONLY the names in ENGINE_LLM_ENV
-   that the process does not already have.
+   (and the network / local-agent lists below) that the process does not
+   already have. PATH is the one exception: it is always set, so the shell's
+   entries are appended to it — local agents (claude-agent-acp, codex-acp,
+   pi-acp…) live in Homebrew / npm / nvm directories a Dock-launched app
+   cannot see otherwise.
 
    Rules this module keeps:
    - never throws: timeout / non-zero exit / missing shell → nothing picked up;
@@ -58,6 +62,62 @@ export const SHELL_NETWORK_ENV = [
   'UV_PYTHON_INSTALL_MIRROR',
   'POLARIS_OUTBOUND_PROXY',
 ] as const
+
+/**
+ * Credentials and config dirs that local coding agents (Claude Code, Codex,
+ * pi, Gemini CLI…, connected over ACP) read from the environment. The engine
+ * passes each agent only the names its template lists (see the backend's
+ * services/acp/templates.py); picking them up here is what lets an agent
+ * started from the Dock log in the same way it does in the user's terminal.
+ * ANTHROPIC_* are deliberately not agent names: they are Polaris's own key,
+ * and Claude Code should keep using the user's own login.
+ */
+export const AGENT_SHELL_ENV = [
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME',
+  'CODEX_API_KEY',
+  'CODEX_PATH',
+  'OPENAI_API_KEY',
+  'OPENAI_BASE_URL',
+  'OPENAI_MODEL',
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
+  'GOOGLE_CLOUD_PROJECT',
+  'GOOGLE_CLOUD_LOCATION',
+  'GOOGLE_GENAI_USE_VERTEXAI',
+  'GOOGLE_APPLICATION_CREDENTIALS',
+  'DASHSCOPE_API_KEY',
+  'OPENROUTER_API_KEY',
+  'GROQ_API_KEY',
+  'XAI_API_KEY',
+  'MISTRAL_API_KEY',
+  'OPENCODE_CONFIG',
+  'KIMI_API_KEY',
+  'MOONSHOT_API_KEY',
+  'NVM_DIR',
+] as const
+
+/**
+ * Path-list variables that are always present but much shorter in a GUI app
+ * (Finder gives /usr/bin:/bin:/usr/sbin:/sbin). Rather than "fill if missing",
+ * the login shell's entries are appended to the ones the process already has,
+ * so CLIs installed via Homebrew, npm, nvm, Volta… are found by local agents.
+ * Existing entries keep their order and win.
+ */
+export const SHELL_MERGED_PATHS = ['PATH'] as const
+
+/** Append the entries of `extra` that `current` lacks; separator ':' (POSIX only). */
+export function mergePathList(current: string | undefined, extra: string | undefined): string {
+  const have = (current ?? '').split(':').filter(Boolean)
+  const seen = new Set(have)
+  for (const entry of (extra ?? '').split(':')) {
+    if (entry && !seen.has(entry)) {
+      seen.add(entry)
+      have.push(entry)
+    }
+  }
+  return have.join(':')
+}
 
 /** Upper bound on how long a slow shell (heavy rc files) may hold up engine start. */
 export const SHELL_ENV_TIMEOUT_MS = 4_000
@@ -184,6 +244,8 @@ export interface ShellEnvOptions {
   platform?: NodeJS.Platform
   /** Names to pick up. Default ENGINE_LLM_ENV. */
   names?: readonly string[]
+  /** Path-list names to merge (see SHELL_MERGED_PATHS). Default none. */
+  merge?: readonly string[]
   /** Default SHELL_ENV_TIMEOUT_MS. */
   timeoutMs?: number
   /** Injectable for tests; default spawns the real shell. */
@@ -208,8 +270,10 @@ export async function resolveShellEnv(options: ShellEnvOptions = {}): Promise<Re
     const platform = options.platform ?? process.platform
     if (platform === 'win32') return {}
     const names = options.names ?? ENGINE_LLM_ENV
+    const merge = options.merge ?? []
     const missing = names.filter((name) => !env[name])
-    if (!missing.length) return {}
+    const wanted = [...new Set([...missing, ...merge])]
+    if (!wanted.length) return {}
 
     const id = randomBytes(12).toString('hex')
     const markers = options.markers ?? { begin: `__POLARIS_ENV_BEGIN_${id}__`, end: `__POLARIS_ENV_END_${id}__` }
@@ -228,7 +292,7 @@ export async function resolveShellEnv(options: ShellEnvOptions = {}): Promise<Re
       },
     })
     if (typeof stdout !== 'string') return {}
-    return parseShellEnv(stdout, markers, missing)
+    return parseShellEnv(stdout, markers, wanted)
   } catch {
     return {}
   }
@@ -242,8 +306,17 @@ export async function applyShellEnv(options: ShellEnvOptions = {}): Promise<stri
   try {
     const env = options.env ?? process.env
     const found = await resolveShellEnv({ ...options, env })
+    const merge = new Set(options.merge ?? [])
     const applied: string[] = []
     for (const [name, value] of Object.entries(found)) {
+      if (merge.has(name)) {
+        const merged = mergePathList(env[name], value)
+        if (merged !== (env[name] ?? '')) {
+          env[name] = merged
+          applied.push(name)
+        }
+        continue
+      }
       if (env[name]) continue // set meanwhile: the process's own value still wins
       env[name] = value
       applied.push(name)
@@ -262,6 +335,9 @@ let pending: Promise<string[]> | null = null
  * the same promise and spawns nothing.
  */
 export function ensureShellEnv(): Promise<string[]> {
-  pending ??= applyShellEnv({ names: [...ENGINE_LLM_ENV, ...SHELL_NETWORK_ENV] })
+  pending ??= applyShellEnv({
+    names: [...ENGINE_LLM_ENV, ...SHELL_NETWORK_ENV, ...AGENT_SHELL_ENV],
+    merge: SHELL_MERGED_PATHS,
+  })
   return pending
 }
