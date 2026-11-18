@@ -156,7 +156,10 @@ class AcpSessionPool:
                         logger.info("ACP session/load 失败，改开新会话", exc_info=True)
                 if session_id is None:
                     session_id = await client.new_session(cwd, servers)
-            except BaseException:
+            except BaseException as exc:
+                # 进程的 stderr 随它一起没了；挂在异常上，上层据此分辨「要登录」还是「崩了」
+                with contextlib.suppress(Exception):
+                    exc.stderr_tail = client.stderr_tail  # type: ignore[attr-defined]
                 # 被取消时也得把进程关掉、令牌吊销掉（见 run_cleanup）
                 await run_cleanup(_close_and_unhook(client, hooks))
                 raise

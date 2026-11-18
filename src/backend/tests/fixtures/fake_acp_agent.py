@@ -17,7 +17,8 @@
 
 环境变量 FAKE_ACP_NO_LOAD=1 时不声明 loadSession；FAKE_ACP_NO_MCP=1 时不声明 HTTP MCP；
 FAKE_ACP_IMAGE=1 时声明能看图；FAKE_ACP_SLOW_NEW=<秒> 时 session/new 要等这么久才回；
-FAKE_ACP_IGNORE_TERM=1 时不理 SIGTERM（只能被 kill）。session/set_model 收到模型
+FAKE_ACP_IGNORE_TERM=1 时不理 SIGTERM（只能被 kill）；FAKE_ACP_AUTH_REQUIRED=1 时
+session/new 回 -32000「需要先登录」。session/set_model 收到模型
 ``broken`` 时回一个 ``"id": null`` 的错误。
 
 当模型用（#840）：提示词里有「plain language model」那句时，吐一段思考，再回答
@@ -296,6 +297,15 @@ def main() -> None:
                 }
             )
         elif method == "session/new":
+            if os.environ.get("FAKE_ACP_AUTH_REQUIRED"):
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "error": {"code": -32000, "message": "Authentication required"},
+                    }
+                )
+                continue
             if os.environ.get("FAKE_ACP_SLOW_NEW"):
                 threading.Event().wait(float(os.environ["FAKE_ACP_SLOW_NEW"]))
             counter[0] += 1

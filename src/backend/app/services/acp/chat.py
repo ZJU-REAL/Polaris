@@ -1,5 +1,8 @@
-"""助手对话接外部 agent 的胶水层（#836）：能选哪些 agent、工作目录、把 Polaris 的
+"""助手对话接本机智能体的胶水层（#836）：能选哪些智能体、工作目录、把 Polaris 的
 工具借给它、会话号落库。
+
+只在用户为一场对话**明确选了**某个智能体时才走这里；Polaris 自己的模型调用永远走
+Claude（core/llm/router.py），智能体不替它们答（core/llm/acp.py 留在树里，不挂载）。
 
 ## 能选哪些
 
@@ -56,26 +59,6 @@ async def resolve_agent(session: AsyncSession, backend: str) -> AcpAgent | None:
         if row.id == agent_id:
             return row
     return None
-
-
-async def agent_for_polaris_turn(session: AsyncSession, user: User) -> tuple[AcpAgent, str] | None:
-    """「Polaris」大脑这一轮实际会落在哪个外部 agent 上，以及路由上填的模型
-    （没有就 None，走原生循环）。
-
-    看的是助手环节（agent）的路由：显式指向 agent，或没配模型 API、由 agent 接管。
-    """
-    from app.core.llm.router import LLMNotConfiguredError, get_llm_router
-
-    try:
-        _provider, route = await get_llm_router().resolve("agent")
-    except (LLMNotConfiguredError, NotImplementedError):
-        return None
-    if route.acp is None:
-        return None
-    row = await session.get(AcpAgent, uuid.UUID(route.acp.agent_id))
-    if row is None or not row.enabled:
-        return None
-    return row, route.model or ""
 
 
 def live_session(conversation_id: uuid.UUID):  # noqa: ANN201 — LiveSession | None

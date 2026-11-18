@@ -142,11 +142,8 @@ class AcpChatLoop:
                     mcp_servers=self.mcp_factory,
                     resume_session_id=req.resume_session_id,
                 )
-        except AcpError as exc:
-            yield ErrorEvent(detail=_explain(req, exc), code="ACP_AGENT_UNAVAILABLE")
-            return
         except Exception as exc:  # noqa: BLE001 — 外部进程什么都可能抛
-            yield ErrorEvent(detail=f"{req.agent_name}: {exc}", code="ACP_AGENT_UNAVAILABLE")
+            yield _error(req, exc, stderr=getattr(exc, "stderr_tail", ""))
             return
         assert live is not None
         self.session_id = live.session_id
@@ -258,12 +255,13 @@ class AcpChatLoop:
             except AcpError as exc:
                 # 进程死在半路：下一轮重新拉起，别留一个僵尸会话在池子里。只关**这个**
                 # 会话——按 key 关的话，可能关掉另一轮刚为这个对话拉起的新会话
+                stderr = live.client.stderr_tail
                 await self.pool.close_if(key, live)
                 # 已经开了头的工具同样补上结尾，再报错（断线/取消时这里不能再 yield，
                 # 落库那边 _TurnTimeline 会给没结果的调用补一条）
                 for res in _unfinished(started):
                     yield res
-                yield ErrorEvent(detail=_explain(req, exc), code="ACP_AGENT_FAILED")
+                yield _error(req, exc, stderr=stderr)
                 return
             finally:
                 live.last_used = time.monotonic()
@@ -301,12 +299,25 @@ def _unfinished(started: dict[str, tuple[str, float, str]]) -> list[ToolResultEv
     return out
 
 
-def _explain(req: AcpTurnRequest, exc: AcpError) -> str:
-    if exc.code == "spawn-failed":
-        return (
-            f"{req.agent_name} could not be started: {exc}. Check it in Settings → Agent backends."
-        )
-    return f"{req.agent_name}: {exc}"
+#: 失败的种类 → 错误码。界面按码说人话（没装、要登录、超时、崩了），detail 留原话
+_ERROR_CODES = {
+    "not_installed": "ACP_AGENT_NOT_INSTALLED",
+    "needs_login": "ACP_AGENT_NEEDS_LOGIN",
+    "timeout": "ACP_AGENT_TIMEOUT",
+    "crashed": "ACP_AGENT_CRASHED",
+    "failed": "ACP_AGENT_FAILED",
+}
+
+
+def _error(req: AcpTurnRequest, exc: BaseException, *, stderr: str = "") -> ErrorEvent:
+    from app.services.acp.registry import failure_kind
+
+    kind = failure_kind(exc, stderr)
+    detail = f"{req.agent_name}: {exc}"
+    tail = stderr.strip().splitlines()[-1:] if stderr else []
+    if tail and kind in ("crashed", "failed") and tail[0] not in detail:
+        detail = f"{detail} ({tail[0][:300]})"
+    return ErrorEvent(detail=detail, code=_ERROR_CODES[kind])
 
 
 __all__ = ["AcpChatLoop", "AcpTurnRequest", "history_preface"]

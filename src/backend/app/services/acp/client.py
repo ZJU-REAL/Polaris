@@ -75,6 +75,8 @@ class AgentSpec:
     args: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
     permission_policy: PermissionPolicy = "deny"
+    #: 额外从引擎环境里带过去的变量名（模板声明的、这个智能体自己的凭据与配置）
+    passthrough: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -230,7 +232,7 @@ class AcpClient:
         #: 文件）；「总是允许」记进 _always_write
         self._write_grants: dict[str, list[_WriteGrant]] = {}
         self._always_write: set[str] = set()
-        env = {**inherited_env(), **spec.env}
+        env = {**inherited_env(extra=spec.passthrough), **spec.env}
         env["PATH"] = augmented_path(env.get("PATH", ""))
         self._conn = AcpConnection(
             spec.command,
@@ -649,12 +651,17 @@ _ENV_ALLOW_PREFIXES = ("LC_", "XDG_", "NODE_", "NPM_CONFIG_", "NVM_")
 _ENV_ALLOW_LOWER = frozenset({"http_proxy", "https_proxy", "no_proxy", "all_proxy"})
 
 
-def inherited_env(source: dict[str, str] | None = None) -> dict[str, str]:
+def inherited_env(
+    source: dict[str, str] | None = None, *, extra: tuple[str, ...] = ()
+) -> dict[str, str]:
+    """引擎环境里允许交给智能体的那部分。``extra``：这个智能体额外认的变量名。"""
     src = os.environ if source is None else source
+    wanted = frozenset(extra)
     out: dict[str, str] = {}
     for key, value in src.items():
         if (
             key in _ENV_ALLOW
+            or key in wanted
             or key.lower() in _ENV_ALLOW_LOWER
             or key.upper().startswith(_ENV_ALLOW_PREFIXES)
         ):
@@ -662,22 +669,45 @@ def inherited_env(source: dict[str, str] | None = None) -> dict[str, str]:
     return out
 
 
-#: 从图形界面启动（桌面端从 Finder 打开）时 PATH 很短，npm/Homebrew 装的 CLI 找不到。
-#: 把常见安装位置补在末尾——只补不改，用户自己的 PATH 仍然优先。
+#: 从图形界面启动（桌面端从访达打开）时 PATH 很短，npm/Homebrew 装的 CLI 找不到。
+#: 桌面端会先向登录 shell 要一份 PATH 合进来（src/kernel/src/shell-env.ts）；这里再把
+#: 常见安装位置补在末尾兜底——只补不改，已有的 PATH 仍然优先。
 _EXTRA_PATH_DIRS = (
     "~/.local/bin",
     "~/.npm-global/bin",
+    "~/.volta/bin",
     "~/.bun/bin",
     "~/.cargo/bin",
+    "~/Library/pnpm",
+    "~/.local/share/pnpm",
     "/opt/homebrew/bin",
     "/usr/local/bin",
 )
 
 
+def _version_key(name: str) -> tuple[int, ...]:
+    return tuple(int(x) if x.isdigit() else 0 for x in name.lstrip("v").split("."))
+
+
+def _nvm_bins() -> list[str]:
+    """nvm 装的 node：默认版本（``~/.nvm/alias/default``）的 bin，否则最新的那个。"""
+    root = os.path.expanduser(os.environ.get("NVM_DIR") or "~/.nvm")
+    versions = os.path.join(root, "versions", "node")
+    try:
+        names = sorted(os.listdir(versions), key=_version_key, reverse=True)
+    except OSError:
+        return []
+    alias = ""
+    with contextlib.suppress(OSError):
+        alias = Path(root, "alias", "default").read_text(encoding="utf-8").strip().lstrip("v")
+    preferred = [n for n in names if alias and n.lstrip("v").startswith(alias)]
+    chosen = (preferred or names)[:1]
+    return [os.path.join(versions, n, "bin") for n in chosen]
+
+
 def augmented_path(path: str) -> str:
     parts = [p for p in path.split(os.pathsep) if p]
-    for extra in _EXTRA_PATH_DIRS:
-        full = os.path.expanduser(extra)
+    for full in [os.path.expanduser(extra) for extra in _EXTRA_PATH_DIRS] + _nvm_bins():
         if full not in parts and os.path.isdir(full):
             parts.append(full)
     return os.pathsep.join(parts)
