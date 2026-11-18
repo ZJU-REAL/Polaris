@@ -12,10 +12,16 @@
 
 import uuid
 
+import pytest
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.agents.voyage import VoyageEngine
+from app.agents.voyage.actions_proposal import ProposalReviewOut, RelatedWorkOut
+from app.agents.voyage.tool_loop import _parse_args, _turn_schema
 from app.core.db import get_sessionmaker
+from app.core.llm.errors import LLMRateLimitedError, LLMSchemaError
+from app.core.llm.fake import FakeProvider
 from app.core.llm.router import LLMRouter
 from app.models.gate import Gate
 from app.models.idea import Idea
@@ -442,6 +448,70 @@ async def test_deep_seed_validation(client, queue_stub):
         assert any(e["source"] == "signal" for e in proposal.evidence)
     resp = await client.get(f"/api/ideas/{proposal.id}", headers=headers)
     assert resp.json()["seed_idea"] == {"id": sketch_id, "title": "草案想法"}
+
+
+async def _run_deep_with(client, provider: FakeProvider) -> dict:
+    """用给定的替身模型跑一遍不设闸门的深度生成，返回任务详情。"""
+    project_id, headers = await _setup_project(client)
+    await _seed_searchable_papers(project_id, STATEMENT, n=3)
+    resp = await client.post(
+        f"/api/projects/{project_id}/ideas/deep",
+        json={
+            "seed": {"type": "text", "value": "直通车"},
+            "knobs": {**KNOBS, "confirm_goal": False},
+        },
+        headers=headers,
+    )
+    run_id = resp.json()["id"]
+    router = LLMRouter()
+    router.override_provider(provider)
+    await VoyageEngine(event_bus=RecordingBus(), llm_router=router).run(uuid.UUID(run_id))
+    resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
+    return resp.json()
+
+
+async def test_deep_reviewer_without_usable_answer_scores_neutral(client, queue_stub):
+    """评审员的回答重问一次仍不合结构：这一维记中性分，不挡住整份方案入池。"""
+    provider = FakeProvider()
+    provider.fail_next(LLMSchemaError("proposal_review: bad shape"), schema=ProposalReviewOut)
+    detail = await _run_deep_with(client, provider)
+    assert detail["status"] == "done", detail
+    async with get_sessionmaker()() as session:
+        idea = (await session.execute(select(Idea).where(Idea.depth == "proposal"))).scalars().one()
+    # 第一个评审员（新颖性）没给出意见；其余三位照常
+    assert idea.scores["novelty"] == 5.0 and idea.scores["impact"] == 8.5
+    assert "未获有效意见" in idea.score_rationale["novelty"]
+
+
+async def test_deep_rate_limited_reviewer_is_retried_not_scored_neutral(client, queue_stub):
+    """限流不是「评审员没意见」：不记中性分，这一步按可重试的失败交给引擎重跑。"""
+    provider = FakeProvider()
+    provider.fail_next(LLMRateLimitedError("HTTP 429"), schema=ProposalReviewOut)
+    detail = await _run_deep_with(client, provider)
+    assert provider._failures == []  # 限流确实发生过
+    assert detail["status"] == "done", detail
+    async with get_sessionmaker()() as session:
+        idea = (await session.execute(select(Idea).where(Idea.depth == "proposal"))).scalars().one()
+    # 重跑后拿到的是评审员真正的分数，而不是限流那一次换来的中性分
+    assert idea.scores["novelty"] == 8.0
+    assert "未获有效意见" not in idea.score_rationale["novelty"]
+
+
+def test_tool_loop_turn_needs_a_tool_or_a_finish():
+    """工具循环的一轮回答：tool 和 finish 都空不合法（complete_json 会带着错误重问）。"""
+    turn = _turn_schema(RelatedWorkOut)
+    assert turn is _turn_schema(RelatedWorkOut)  # 同一个交付 schema 复用同一个回合 schema
+    with pytest.raises(ValidationError):
+        turn.model_validate({"tool": None, "args": None, "finish": None})
+    with pytest.raises(ValidationError):  # 交付物本身也按 schema 校验：正文不能为空
+        turn.model_validate(
+            {"tool": None, "args": None, "finish": {"content": " ", "extra_papers": []}}
+        )
+    call = turn.model_validate({"tool": "search_papers", "args": '{"query": "q"}', "finish": None})
+    assert call.finish is None and _parse_args(call.args) == {"query": "q"}
+    assert _parse_args(None) == {}
+    with pytest.raises(ValueError, match="JSON 对象"):
+        _parse_args("[1, 2]")
 
 
 async def test_deep_needs_differentiation_reworks_design(client, queue_stub):

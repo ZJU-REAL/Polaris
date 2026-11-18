@@ -561,8 +561,11 @@ class FakeProvider(LLMProvider):
             return json.dumps(
                 {
                     "sections": {
+                        "related_work": None,
                         "design": "（fake revision）已按必须修复清单调整设计。"
-                        + "补充了消融与统计检验细节（fake）。" * 5
+                        + "补充了消融与统计检验细节（fake）。" * 5,
+                        "experiments": None,
+                        "risks": None,
                     }
                 },
                 ensure_ascii=False,
@@ -1573,9 +1576,10 @@ class FakeProvider(LLMProvider):
         statement_match = re.search(r"研究方向：(.+)", full_text)
         statement = statement_match.group(1).strip() if statement_match else "研究方向（fake）"
         if "工具结果：" not in full_text and "请立即输出 finish" not in full_text:
+            # args 是 JSON 字符串（tool_loop 的回合 schema）
+            args = json.dumps({"query": statement[:40], "k": 5}, ensure_ascii=False)
             return json.dumps(
-                {"tool": "search_papers", "args": {"query": statement[:40], "k": 5}},
-                ensure_ascii=False,
+                {"tool": "search_papers", "args": args, "finish": None}, ensure_ascii=False
             )
         paper_ids = list(dict.fromkeys(re.findall(r'"paper_id": "([0-9a-fA-F-]{36})"', full_text)))[
             :3
@@ -1603,7 +1607,7 @@ class FakeProvider(LLMProvider):
         }
         if "GOAL_INVALID_TEST" in full_text:
             goal.pop("research_type")
-        return json.dumps({"finish": goal}, ensure_ascii=False)
+        return json.dumps({"tool": None, "args": None, "finish": goal}, ensure_ascii=False)
 
     @staticmethod
     def _respond_goal_refine(full_text: str) -> str:
@@ -1632,7 +1636,10 @@ class FakeProvider(LLMProvider):
             + "\n\n### 本工作与已有工作的差异\n\n"
             + "- 差异一：目标更聚焦（fake）\n- 差异二：评测更完备（fake）"
         )
-        return json.dumps({"finish": {"content": content, "extra_papers": []}}, ensure_ascii=False)
+        return json.dumps(
+            {"tool": None, "args": None, "finish": {"content": content, "extra_papers": []}},
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _respond_proposal_design(full_text: str) -> str:

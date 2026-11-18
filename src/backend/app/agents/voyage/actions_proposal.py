@@ -16,10 +16,12 @@
 """
 
 import asyncio
+import contextlib
 import json
 import uuid
-from typing import Any
+from typing import Annotated, Any, Literal, get_args
 
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 from sqlalchemy import select
 
 from app.agents.voyage import lit_tools
@@ -27,14 +29,18 @@ from app.agents.voyage.actions import ActionContext, register
 from app.agents.voyage.actions_ideas import (
     SCORE_SYSTEM_PROMPT,
     SECTION_STYLE_GUIDE,
+    IdeaScoreOut,
+    _ask,
     _get_project,
     _params,
+    _scores_of,
     _statement,
 )
-from app.agents.voyage.tool_loop import _extract_json, run_tool_loop
+from app.agents.voyage.tool_loop import TURN_FORMAT, run_tool_loop
 from app.core.db import get_sessionmaker
 from app.core.embedding_space import EmbeddingSpace
 from app.core.llm.base import Message
+from app.core.llm.errors import LLMRefusalError, LLMSchemaError, LLMTruncatedError
 from app.models.activity import Activity
 from app.models.gate import Gate
 from app.models.idea import RESEARCH_TYPES, Idea
@@ -69,53 +75,153 @@ _GROUNDING_EXCERPT_CHARS = 700  # grounding 论文 wiki 摘录
 _INTERNAL_SIMILAR_K = 5
 _EXTERNAL_SIMILAR_K = 5
 
-_MAX_JSON_ATTEMPTS = 3  # 首次 + 重试 2 次
-_SCORE_DIMS = ("novelty", "feasibility", "operability", "impact")
+_DIAGNOSIS_CHARS = 600  # 模型调用失败的说明并入验收诊断时的截断
+
+# 「模型给不出这段内容」的三种失败：结构重问一次仍然不对、写不完、拒答。各动作遇到
+# 它们按原来「产出不合法」的约定处理（验收不过带诊断重规划，或者评审记中性分）。
+# 网络、限流、密钥这类失败不在其中——那是这一步没跑成，原样抛出去由引擎按
+# code / transient 决定重试还是交给人。
+_NO_JUDGEMENT = (LLMSchemaError, LLMTruncatedError, LLMRefusalError)
 
 
-async def _complete_json(
-    ctx: ActionContext, *, stage: str, system: str, user: str, validate
-) -> Any:
-    """LLM JSON 请求：解析/校验失败重试（共 _MAX_JSON_ATTEMPTS 次），仍失败抛 ValueError。
+# ---- 各环节的输出 schema ----
+# 结构化输出接口不支持的约束（长度、数值范围）和下面的校验器由 complete_json 在
+# 本地用 Pydantic 再过一遍，不通过会带着校验错误重问一次。
 
-    这是从回答文字里切 JSON 的旧做法，原来放在 actions_ideas 里；那边已经改用结构化
-    输出，只剩本模块的调用点还在用，所以搬到这里。这些调用点迁完后连同它一起删。
-    """
-    last_error: Exception | None = None
-    for _attempt in range(_MAX_JSON_ATTEMPTS):
-        result = await ctx.llm.complete(
-            stage,
-            [
-                Message(role="system", content=system + ctx.evidence_guidance()),
-                Message(role="user", content=user),
-            ],
-            user_id=ctx.run.created_by,
-            project_id=ctx.run.project_id,
-            voyage_id=ctx.run.id,
-        )
-        try:
-            return validate(_extract_json(result.content))
-        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
-            last_error = e
-    raise ValueError(f"LLM 连续输出非法 JSON：{last_error}")
+NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-def _validate_scores(data: Any) -> tuple[dict[str, float], dict[str, str]]:
-    if not isinstance(data, dict):
-        raise ValueError("scores payload is not an object")
-    scores: dict[str, float] = {}
-    for dim in _SCORE_DIMS:
-        value = data.get(dim)
-        if not isinstance(value, int | float):
-            raise ValueError(f"missing numeric score: {dim}")
-        scores[dim] = min(10.0, max(0.0, float(value)))
-    raw_rationale = data.get("rationale")
-    rationale = (
-        {dim: str(raw_rationale.get(dim) or "") for dim in _SCORE_DIMS}
-        if isinstance(raw_rationale, dict)
-        else {}
-    )
-    return scores, rationale
+def _drop_blank(items: list[str]) -> list[str]:
+    return [item.strip() for item in items if item.strip()]
+
+
+def _need_one(items: list[str]) -> list[str]:
+    kept = _drop_blank(items)
+    if not kept:
+        raise ValueError("needs at least one non-empty item")
+    return kept
+
+
+CleanStrList = Annotated[list[str], AfterValidator(_drop_blank)]
+NonEmptyStrList = Annotated[list[str], AfterValidator(_need_one)]
+
+ResearchType = Literal["method", "benchmark", "analysis", "survey", "application", "theory"]
+assert get_args(ResearchType) == RESEARCH_TYPES  # 两处清单必须同步
+
+
+class GoalScopeOut(BaseModel):
+    in_scope: NonEmptyStrList
+    out_of_scope: CleanStrList
+
+
+class GoalGroundingOut(BaseModel):
+    paper_id: NonEmptyStr
+    why: NonEmptyStr
+
+
+class GoalResourcesOut(BaseModel):
+    compute: NonEmptyStr
+    data: NonEmptyStrList
+    time_weeks: float = Field(gt=0)
+
+
+class GoalOut(BaseModel):
+    """结构化研究目标。库内论文是否存在、grounding 篇数这些要查库的验收在
+    :func:`validate_goal` 里做。"""
+
+    research_type: ResearchType
+    task: NonEmptyStr
+    question: NonEmptyStr
+    objectives: NonEmptyStrList
+    scope: GoalScopeOut
+    success_criteria: NonEmptyStrList
+    grounding: list[GoalGroundingOut]
+    key_concepts: NonEmptyStrList
+    resources_needed: GoalResourcesOut
+
+
+class GoalRefineOut(BaseModel):
+    goal: GoalOut
+
+
+class ExtraPaperOut(BaseModel):
+    paper_id: str
+    why: str
+
+
+class RelatedWorkOut(BaseModel):
+    content: NonEmptyStr
+    extra_papers: list[ExtraPaperOut]
+
+
+class SmokePlanOut(BaseModel):
+    goal: str
+    steps: NonEmptyStrList
+    metric: NonEmptyStr
+    expected_signal: str
+    est_hours: float | None
+
+
+class ExperimentsOut(BaseModel):
+    content: NonEmptyStr
+    smoke_plan: SmokePlanOut
+
+
+class NoveltyComparisonOut(BaseModel):
+    title: str
+    difference: str
+
+
+class NoveltyCheckOut(BaseModel):
+    verdict: Literal["novel", "needs_differentiation", "duplicate"]
+    comparisons: list[NoveltyComparisonOut]
+    reason: str
+
+
+class RiskOut(BaseModel):
+    risk: str
+    mitigation: str
+
+
+def _usable_risks(risks: list[RiskOut]) -> list[RiskOut]:
+    kept = [r for r in risks if r.risk.strip()]
+    if len(kept) < 2 or any(not r.mitigation.strip() for r in kept):
+        raise ValueError("need at least 2 risks, each with a mitigation or fallback")
+    return kept
+
+
+class RisksOut(BaseModel):
+    risks: Annotated[list[RiskOut], AfterValidator(_usable_risks)]
+
+
+class ProposalTitleOut(BaseModel):
+    title: NonEmptyStr
+    summary: str
+    expected: str
+
+
+class ProposalReviewOut(BaseModel):
+    score: float
+    must_fix: CleanStrList
+    suggestions: CleanStrList
+
+
+class RevisedSectionsOut(BaseModel):
+    """作者修订：没改的章节是 null。字段与 ``SECTION_KEYS`` 一一对应。"""
+
+    related_work: str | None
+    design: str | None
+    experiments: str | None
+    risks: str | None
+
+
+class ProposalRevisionOut(BaseModel):
+    sections: RevisedSectionsOut
+
+
+def _why_not(e: Exception) -> str:
+    """失败说明并入验收诊断（诊断会回灌给重规划后的下一次尝试）。"""
+    return str(e)[:_DIAGNOSIS_CHARS]
 
 
 # ---- prompts（POLARIS_* 标记与 core/llm/fake.py 对齐） ----
@@ -131,9 +237,8 @@ POLARIS_GOAL_EXPLORE — 你是研究目标构建者，通过反复查阅项目�
 可用工具：
 %(tools)s
 
-每轮只输出一个 JSON 对象（不要输出其他文字或代码块围栏），二选一：
-1. 调用工具：{"tool": "工具名", "args": {...}}
-2. 探索充分后交付目标：{"finish": {goal}}
+%(turn_format)s
+探索充分后再交付，交付内容是研究目标 goal。
 
 goal 格式（所有字段必填）：
 {"research_type": "method|benchmark|analysis|survey|application|theory",
@@ -153,7 +258,7 @@ grounding 必须引用你检索到的真实库内论文（paper_id 取自检索�
 GOAL_REFINE_SYSTEM = """\
 POLARIS_GOAL_REFINE — 你是研究目标修订者。人工审批给出了修改意见，请把意见并入
 现有研究目标，保持未被意见触及的部分不变。
-只输出一个 JSON 对象：{"goal": {与原 goal 相同结构的完整对象}}
+输出 goal：与原 goal 相同结构的完整对象。
 """
 
 RELATED_WORK_SYSTEM = (
@@ -169,10 +274,11 @@ POLARIS_PROPOSAL_RELATED — 你是研究方案的「背景与相关工作」撰
 可用工具（需要补充检索时调用）：
 %(tools)s
 
-每轮只输出一个 JSON 对象，二选一：
-1. {"tool": "工具名", "args": {...}}
-2. {"finish": {"content": "markdown 正文",
-   "extra_papers": [{"paper_id": "补充引用的库内论文uuid", "why": "补充原因"}]}}
+%(turn_format)s
+交付内容：
+{"content": "markdown 正文",
+ "extra_papers": [{"paper_id": "补充引用的库内论文uuid", "why": "补充原因"}]}
+没有补充引用时 extra_papers 给空数组。
 
 content 的写法见下。
 """
@@ -216,11 +322,12 @@ EXPERIMENTS_SYSTEM = (
 POLARIS_PROPOSAL_EXPERIMENTS — 你是研究方案的「实验与评估计划」撰写者。
 实验设计必须与 success_criteria 对得上，并落到给定的资源画像内。
 
-只输出一个 JSON 对象：
+输出字段：
 {"content": "markdown 正文（baselines / datasets / metrics 含主指标 / ablations / 算力粗估）",
  "smoke_plan": {"goal": "最小验证实验要回答什么", "steps": ["1-3 天内可完成的步骤"],
                 "metric": "观察什么信号", "expected_signal": "什么结果算方向可行", "est_hours": 8}}
-smoke_plan 是「最小验证实验」：1-3 天能出信号、能低成本证伪方向的最小实验。
+smoke_plan 是「最小验证实验」：1-3 天能出信号、能低成本证伪方向的最小实验；
+est_hours 估不出来就给 null。
 
 content 的写法见下。
 """
@@ -231,7 +338,7 @@ NOVELTY_SYSTEM = """\
 POLARIS_NOVELTY_CHECK — 你是新颖性核查员。对照给出的相似工作清单（库内 + 外部检索），
 逐条论证本方案与它们的差异，并给出总判定。
 
-只输出一个 JSON 对象：
+输出字段：
 {"verdict": "novel" 或 "needs_differentiation" 或 "duplicate",
  "comparisons": [{"title": "相似工作标题", "difference": "本方案与它的本质差异；若无差异要明说"}],
  "reason": "总体判定理由"}
@@ -243,14 +350,14 @@ POLARIS_NOVELTY_CHECK — 你是新颖性核查员。对照给出的相似工作
 RISKS_SYSTEM = """\
 POLARIS_PROPOSAL_RISKS — 你是研究方案的「风险与备选方案」撰写者。
 必须覆盖新颖性核查与资源画像暴露的问题。
-只输出一个 JSON 对象：{"risks": [{"risk": "风险", "mitigation": "缓解措施或备选方案"}]}
+输出字段：{"risks": [{"risk": "风险", "mitigation": "缓解措施或备选方案"}]}
 至少给出 2 条。
 """
 
 TITLE_SYSTEM = """\
 POLARIS_PROPOSAL_TITLE — 你是研究方案的定稿者。基于研究目标与各节内容，产出标题、
 一句话概述和「预期成果与产出」。
-只输出一个 JSON 对象：
+输出字段：
 {"title": "研究方案标题", "summary": "一句话概述",
  "expected": "预期成果与产出的 markdown 正文（论文/数据集/代码/结论等）"}
 """
@@ -259,7 +366,7 @@ REVIEW_SYSTEM = """\
 POLARIS_PROPOSAL_REVIEW — 你是专职评审员「%(name)s」，只从一个维度评审这份研究方案：
 %(focus)s
 
-只输出一个 JSON 对象：
+输出字段：
 {"score": 0-10, "must_fix": ["不修复就不该立项的问题（没有就给空数组）"],
  "suggestions": ["改进建议"]}
 must_fix 只放真正致命的问题；一般性改进放 suggestions。
@@ -269,9 +376,9 @@ REVISE_SYSTEM = (
     """\
 POLARIS_PROPOSAL_REVISE — 你是研究方案的作者，评审员给出了必须修复的问题清单。
 针对 must_fix 修订对应章节，未涉及的章节不要改动。
-只输出一个 JSON 对象：
-{"sections": {"related_work|design|experiments|risks": "修订后的完整 markdown"}}
-只包含确实修订过的章节。
+输出字段：
+{"sections": {"related_work": ..., "design": ..., "experiments": ..., "risks": ...}}
+修订过的章节填修订后的完整 markdown，没有修订的章节填 null。
 
 修订后的章节写法见下。
 """
@@ -502,7 +609,7 @@ async def goal_explore(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
     opening = f"研究方向：{statement}\n{seed_text}"
     if params.get("diagnosis"):
         opening += f"\n上次构建目标未通过验收，诊断：{params['diagnosis']}\n请针对性修正。"
-    system = GOAL_EXPLORE_SYSTEM % {"tools": lit_tools.TOOL_SPECS}
+    system = GOAL_EXPLORE_SYSTEM % {"tools": lit_tools.TOOL_SPECS, "turn_format": TURN_FORMAT}
 
     try:
         finish, trace = await run_tool_loop(
@@ -513,10 +620,13 @@ async def goal_explore(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             tool_names=lit_tools.LIT_TOOL_NAMES,
             max_calls=int(knobs["max_tool_calls"]),
             label="目标构建",
+            finish_schema=GoalOut,
         )
-        goal = validate_goal(finish, library_ids=library_ids, library_size=library_size)
-    except ValueError as e:
-        return _self_check(False, f"目标构建失败：{e}")
+        goal = validate_goal(
+            finish.model_dump(), library_ids=library_ids, library_size=library_size
+        )
+    except (ValueError, *_NO_JUDGEMENT) as e:
+        return _self_check(False, f"目标构建失败：{_why_not(e)}")
 
     ctx.checkpoint["goal"] = goal
     ctx.checkpoint["goal_trace"] = trace
@@ -556,16 +666,15 @@ async def goal_refine(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
         f"审批意见：{comment or '（无，仅按重合详情调整方向）'}"
     )
 
-    def validate(data: Any) -> dict[str, Any]:
-        refined = data.get("goal") if isinstance(data, dict) else None
-        return validate_goal(refined, library_ids=library_ids, library_size=library_size)
-
     try:
-        refined_goal = await _complete_json(
-            ctx, stage="goal_explore", system=GOAL_REFINE_SYSTEM, user=user, validate=validate
+        refined = await _ask(
+            ctx, stage="goal_explore", system=GOAL_REFINE_SYSTEM, user=user, schema=GoalRefineOut
         )
-    except ValueError as e:
-        return _self_check(False, f"目标修订失败：{e}")
+        refined_goal = validate_goal(
+            refined.goal.model_dump(), library_ids=library_ids, library_size=library_size
+        )
+    except (ValueError, *_NO_JUDGEMENT) as e:
+        return _self_check(False, f"目标修订失败：{_why_not(e)}")
     ctx.checkpoint["goal"] = refined_goal
     gate_payload = dict(ctx.checkpoint.get("gate_payload") or {})
     gate_payload["goal"] = refined_goal
@@ -709,25 +818,23 @@ async def proposal_related_work(ctx: ActionContext, params: dict[str, Any]) -> d
         finish, trace = await run_tool_loop(
             ctx,
             stage="proposal",
-            system=RELATED_WORK_SYSTEM % {"tools": lit_tools.TOOL_SPECS},
+            system=RELATED_WORK_SYSTEM
+            % {"tools": lit_tools.TOOL_SPECS, "turn_format": TURN_FORMAT},
             opening=opening,
             tool_names=lit_tools.LIT_TOOL_NAMES,
             max_calls=6,
             label="相关工作",
+            finish_schema=RelatedWorkOut,
         )
-    except ValueError as e:
-        return _self_check(False, str(e))
-    content = str(finish.get("content") or "").strip()
-    if not content:
-        return _self_check(False, "related_work 正文为空")
+    except (ValueError, *_NO_JUDGEMENT) as e:
+        return _self_check(False, f"related_work 产出不合法：{_why_not(e)}")
+    content = finish.content
     missing = [pid for pid in grounding_ids if f"[[paper:{pid}]]" not in content]
     if missing:
         return _self_check(False, f"related_work 未覆盖 grounding 论文：{', '.join(missing[:5])}")
 
     # 补充引用的库内论文 → evidence
-    extra = [
-        e for e in (finish.get("extra_papers") or []) if isinstance(e, dict) and e.get("paper_id")
-    ]
+    extra = [e.model_dump() for e in finish.extra_papers if e.paper_id.strip()]
     if extra:
         ctx.checkpoint["evidence_library_extra"] = extra
     _set_section(ctx, "related_work", content)
@@ -780,37 +887,19 @@ async def proposal_experiments(ctx: ActionContext, params: dict[str, Any]) -> di
     if params.get("diagnosis"):
         user += f"\n上次未通过验收，诊断：{params['diagnosis']}"
 
-    def validate(data: Any) -> dict[str, Any]:
-        if not isinstance(data, dict):
-            raise ValueError("payload 不是对象")
-        content = str(data.get("content") or "").strip()
-        smoke = data.get("smoke_plan")
-        if not content:
-            raise ValueError("content 为空")
-        if not isinstance(smoke, dict):
-            raise ValueError("缺少 smoke_plan（最小验证实验）")
-        steps = [str(s).strip() for s in (smoke.get("steps") or []) if str(s).strip()]
-        metric = str(smoke.get("metric") or "").strip()
-        if not steps or not metric:
-            raise ValueError("smoke_plan 需含非空 steps 与 metric")
-        return {
-            "content": content,
-            "smoke_plan": {
-                "goal": str(smoke.get("goal") or "").strip(),
-                "steps": steps,
-                "metric": metric,
-                "expected_signal": str(smoke.get("expected_signal") or "").strip(),
-                "est_hours": smoke.get("est_hours"),
-            },
-        }
-
     try:
-        payload = await _complete_json(
-            ctx, stage="proposal", system=EXPERIMENTS_SYSTEM, user=user, validate=validate
+        out = await _ask(
+            ctx, stage="proposal", system=EXPERIMENTS_SYSTEM, user=user, schema=ExperimentsOut
         )
-    except ValueError as e:
-        return _self_check(False, f"experiments 产出不合法：{e}")
-    smoke = payload["smoke_plan"]
+    except _NO_JUDGEMENT as e:
+        return _self_check(False, f"experiments 产出不合法：{_why_not(e)}")
+    smoke = {
+        "goal": out.smoke_plan.goal.strip(),
+        "steps": out.smoke_plan.steps,
+        "metric": out.smoke_plan.metric,
+        "expected_signal": out.smoke_plan.expected_signal.strip(),
+        "est_hours": out.smoke_plan.est_hours,
+    }
     smoke_md = (
         "\n\n### 最小验证实验\n\n"
         f"- 目的：{smoke['goal'] or '（低成本证伪方向）'}\n"
@@ -818,7 +907,7 @@ async def proposal_experiments(ctx: ActionContext, params: dict[str, Any]) -> di
         + f"- 观察信号：{smoke['metric']}\n"
         f"- 可行判据：{smoke['expected_signal'] or '（见正文）'}\n"
     )
-    _set_section(ctx, "experiments", payload["content"] + smoke_md)
+    _set_section(ctx, "experiments", out.content + smoke_md)
     ctx.checkpoint["smoke_plan"] = smoke
     return _self_check(True, "experiments 含最小验证实验", smoke_steps=len(smoke["steps"]))
 
@@ -904,30 +993,17 @@ async def proposal_novelty_check(ctx: ActionContext, params: dict[str, Any]) -> 
         f"相似工作清单：\n{similar_block[:6000]}"
     )
 
-    def validate(data: Any) -> dict[str, Any]:
-        if not isinstance(data, dict) or data.get("verdict") not in (
-            "novel",
-            "needs_differentiation",
-            "duplicate",
-        ):
-            raise ValueError('expected {"verdict": "novel|needs_differentiation|duplicate"}')
-        comparisons = [
-            {"title": str(c.get("title") or ""), "difference": str(c.get("difference") or "")}
-            for c in (data.get("comparisons") or [])
-            if isinstance(c, dict) and c.get("title")
-        ]
-        return {
-            "verdict": str(data["verdict"]),
-            "comparisons": comparisons,
-            "reason": str(data.get("reason") or ""),
-        }
-
     try:
-        judged = await _complete_json(
-            ctx, stage="proposal", system=NOVELTY_SYSTEM, user=user, validate=validate
+        out = await _ask(
+            ctx, stage="proposal", system=NOVELTY_SYSTEM, user=user, schema=NoveltyCheckOut
         )
-    except ValueError as e:
-        return _self_check(False, f"novelty 判定不合法：{e}")
+    except _NO_JUDGEMENT as e:
+        return _self_check(False, f"novelty 判定不合法：{_why_not(e)}")
+    judged: dict[str, Any] = {
+        "verdict": out.verdict,
+        "comparisons": [c.model_dump() for c in out.comparisons if c.title],
+        "reason": out.reason,
+    }
 
     novelty = {
         **judged,
@@ -983,29 +1059,15 @@ async def proposal_risks(ctx: ActionContext, params: dict[str, Any]) -> dict[str
         f"实验计划概要：\n{_sections(ctx).get('experiments', '')[:2000]}"
     )
 
-    def validate(data: Any) -> list[dict[str, str]]:
-        risks = data.get("risks") if isinstance(data, dict) else None
-        if not isinstance(risks, list):
-            raise ValueError('expected {"risks": [...]}')
-        normalized = [
-            {
-                "risk": str(r.get("risk") or "").strip(),
-                "mitigation": str(r.get("mitigation") or "").strip(),
-            }
-            for r in risks
-            if isinstance(r, dict) and str(r.get("risk") or "").strip()
-        ]
-        if len(normalized) < 2 or any(not r["mitigation"] for r in normalized):
-            raise ValueError("至少 2 条风险且每条都要有缓解/备选方案")
-        return normalized
-
     try:
-        risks = await _complete_json(
-            ctx, stage="proposal", system=RISKS_SYSTEM, user=user, validate=validate
-        )
-    except ValueError as e:
-        return _self_check(False, f"risks 产出不合法：{e}")
-    content = "\n".join(f"- **风险**：{r['risk']}\n  - 缓解/备选：{r['mitigation']}" for r in risks)
+        risks = (
+            await _ask(ctx, stage="proposal", system=RISKS_SYSTEM, user=user, schema=RisksOut)
+        ).risks
+    except _NO_JUDGEMENT as e:
+        return _self_check(False, f"risks 产出不合法：{_why_not(e)}")
+    content = "\n".join(
+        f"- **风险**：{r.risk.strip()}\n  - 缓解/备选：{r.mitigation.strip()}" for r in risks
+    )
     _set_section(ctx, "risks", content)
     return _self_check(True, f"risks 共 {len(risks)} 条", risks=len(risks))
 
@@ -1122,16 +1184,8 @@ async def proposal_assemble(ctx: ActionContext, params: dict[str, Any]) -> dict[
     if missing:
         return _self_check(False, f"章节缺失，无法汇编：{', '.join(missing)}")
 
-    def validate_title(data: Any) -> dict[str, str]:
-        if not isinstance(data, dict) or not str(data.get("title") or "").strip():
-            raise ValueError('expected {"title": ...}')
-        return {
-            "title": str(data["title"]).strip()[:512],
-            "summary": str(data.get("summary") or "").strip(),
-            "expected": str(data.get("expected") or "").strip(),
-        }
-
-    meta = await _complete_json(
+    # 标题写不出来没有可用的降级：LLMError 原样抛出，这一步按失败处理
+    titled = await _ask(
         ctx,
         stage="proposal",
         system=TITLE_SYSTEM,
@@ -1139,25 +1193,31 @@ async def proposal_assemble(ctx: ActionContext, params: dict[str, Any]) -> dict[
             f"{_goal_context(goal)}\n\n各节概要：\n"
             + "\n".join(f"### {SECTION_TITLES.get(k, k)}\n{v[:800]}" for k, v in sections.items())
         ),
-        validate=validate_title,
+        schema=ProposalTitleOut,
     )
+    meta = {
+        "title": titled.title[:512],
+        "summary": titled.summary.strip(),
+        "expected": titled.expected.strip(),
+    }
     content = _compose_content(meta["title"], goal, sections, meta["expected"], [])
     ctx.checkpoint["proposal_expected"] = meta["expected"]
 
     # 四维自评（临时分，评审-修订后被终评覆盖）
     scores, rationale = None, None
-    try:
-        scores, rationale = await _complete_json(
-            ctx,
-            stage="proposal",
-            system=SCORE_SYSTEM_PROMPT,
-            user=f"想法标题:{meta['title']}\n一句话概述:{meta['summary']}\n详情:\n{content[:6000]}",
-            validate=_validate_scores,
+    with contextlib.suppress(*_NO_JUDGEMENT):  # 自评给不出来不阻塞入库（终评会补）
+        scores, rationale = _scores_of(
+            await _ask(
+                ctx,
+                stage="proposal",
+                system=SCORE_SYSTEM_PROMPT,
+                user=(
+                    f"想法标题:{meta['title']}\n一句话概述:{meta['summary']}\n"
+                    f"详情:\n{content[:6000]}"
+                ),
+                schema=IdeaScoreOut,
+            )
         )
-    except asyncio.CancelledError:
-        raise
-    except Exception:  # noqa: BLE001 — 自评失败不阻塞入库（终评会补）
-        pass
 
     evidence = await _build_evidence(ctx)
     seed = _seed(ctx)
@@ -1240,14 +1300,18 @@ def _review_message_text(review: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _validate_review(data: Any) -> dict[str, Any]:
-    if not isinstance(data, dict) or not isinstance(data.get("score"), int | float):
-        raise ValueError('expected {"score": number, ...}')
+def _review_of(out: ProposalReviewOut) -> dict[str, Any]:
     return {
-        "score": min(10.0, max(0.0, float(data["score"]))),
-        "must_fix": [str(m).strip() for m in (data.get("must_fix") or []) if str(m).strip()],
-        "suggestions": [str(s).strip() for s in (data.get("suggestions") or []) if str(s).strip()],
+        "score": min(10.0, max(0.0, out.score)),
+        "must_fix": out.must_fix,
+        "suggestions": out.suggestions,
     }
+
+
+def _patch_of(out: ProposalRevisionOut) -> dict[str, str]:
+    """修订结果 → {章节 key: 新正文}，只含确实改了的章节。"""
+    revised = {key: (getattr(out.sections, key) or "").strip() for key in SECTION_KEYS}
+    return {key: text for key, text in revised.items() if text}
 
 
 @register("proposal.review_revise")
@@ -1302,16 +1366,16 @@ async def proposal_review_revise(ctx: ActionContext, params: dict[str, Any]) -> 
             elif dim == "feasibility":
                 extra_context = "\n" + await _resources_profile(ctx)
             try:
-                reviews[dim] = await _complete_json(
-                    ctx,
-                    stage="proposal_review",
-                    system=REVIEW_SYSTEM % {"name": name, "focus": focus},
-                    user=f"研究方案全文：\n{content[:_PROPOSAL_REVIEW_CHARS]}{extra_context}",
-                    validate=_validate_review,
+                reviews[dim] = _review_of(
+                    await _ask(
+                        ctx,
+                        stage="proposal_review",
+                        system=REVIEW_SYSTEM % {"name": name, "focus": focus},
+                        user=f"研究方案全文：\n{content[:_PROPOSAL_REVIEW_CHARS]}{extra_context}",
+                        schema=ProposalReviewOut,
+                    )
                 )
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001 — 单评审员失败：中性分不设 must_fix
+            except _NO_JUDGEMENT as e:  # 单评审员给不出意见：中性分不设 must_fix
                 reviews[dim] = {
                     "score": 5.0,
                     "must_fix": [],
@@ -1339,22 +1403,22 @@ async def proposal_review_revise(ctx: ActionContext, params: dict[str, Any]) -> 
 
         # 作者修订（只改被点名的章节）
         try:
-            patch = await _complete_json(
-                ctx,
-                stage="proposal",
-                system=REVISE_SYSTEM,
-                user=(
-                    f"must_fix 清单：{json.dumps(must_fix_all, ensure_ascii=False)}\n\n"
-                    f"当前各章节：\n"
-                    + "\n\n".join(
-                        f"<<{key}>>\n{sections.get(key, '')[:3000]}" for key in SECTION_KEYS
-                    )
-                ),
-                validate=_validate_revision,
+            patch = _patch_of(
+                await _ask(
+                    ctx,
+                    stage="proposal",
+                    system=REVISE_SYSTEM,
+                    user=(
+                        f"must_fix 清单：{json.dumps(must_fix_all, ensure_ascii=False)}\n\n"
+                        f"当前各章节：\n"
+                        + "\n\n".join(
+                            f"<<{key}>>\n{sections.get(key, '')[:3000]}" for key in SECTION_KEYS
+                        )
+                    ),
+                    schema=ProposalRevisionOut,
+                )
             )
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001 — 修订失败：终止循环，剩余 must_fix 记遗留
+        except _NO_JUDGEMENT as e:  # 修订写不出来：终止循环，剩余 must_fix 记遗留
             await _log(ctx, f"修订调用失败，保留遗留问题：{type(e).__name__}")
             break
         for key, new_content in patch.items():
@@ -1415,18 +1479,6 @@ async def proposal_review_revise(ctx: ActionContext, params: dict[str, Any]) -> 
         leftovers=len(leftovers),
         scores=final_scores,
     )
-
-
-def _validate_revision(data: Any) -> dict[str, str]:
-    sections = data.get("sections") if isinstance(data, dict) else None
-    if not isinstance(sections, dict):
-        raise ValueError('expected {"sections": {...}}')
-    patch = {
-        key: str(value).strip()
-        for key, value in sections.items()
-        if key in SECTION_KEYS and str(value).strip()
-    }
-    return patch
 
 
 async def _persist_review_message(
