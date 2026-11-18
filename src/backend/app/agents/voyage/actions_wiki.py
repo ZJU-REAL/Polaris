@@ -120,10 +120,17 @@ def _unlimited(knobs: dict[str, Any]) -> bool:
 # observation 里给用户看的论文/概念清单上限（避免 observation JSON 过大）
 _OBS_LIST_CAP = 30
 
-# 打分/编译的逐篇 LLM 调用有界并发上限：底层走 LiteLLM（有速率限制），保守取 5。
+# 打分/编译的逐篇 LLM 调用有界并发上限：底层走 LiteLLM（有速率限制，并发高了回 503）。
+# 以前是 5：60 篇打分 130 秒；20 篇解读（每篇一次一两分钟的长流式调用）要 4 波、8.4 分钟。
+# 8 路下解读是 3 波；撞上限流的调用由各自的重试接住（打分批尾补试、流式整段重试）。
 # 每个并发任务用自己独立的 AsyncSession（见 _gather_bounded 调用点），逐篇 commit，
 # 断点续跑语义（按 Paper.status 幂等）保持不变。
-_LLM_CONCURRENCY = 5
+_LLM_CONCURRENCY = 8
+# 下载 PDF + 抽全文的并发上限（arXiv 对同一来源的并发下载不友好，取保守值）与单篇时限。
+# 实测 20 篇串行 11.4 分钟，其中一篇慢 PDF 独占 3 分钟；超时的那篇退化为只用摘要，
+# 不拖住其余论文，事后可以在论文页重新取全文。
+_FETCH_CONCURRENCY = 5
+_PDF_TIME_BUDGET_S = 120.0
 
 
 async def _gather_bounded(limit: int, coros: list[Any]) -> list[Any]:
@@ -921,7 +928,9 @@ async def _survey_search(
     if fetched_total == 0:
         messages.append("本次所有数据源均返回 0 篇；请复查检索配置、源站状态和时间窗口。")
     if state.get("plan_error"):
-        messages.append(f"没能让模型写检索查询（{state['plan_error']}），这次只用了简报里的关键词。")
+        messages.append(
+            f"没能让模型写检索查询（{state['plan_error']}），这次只用了简报里的关键词。"
+        )
     messages.extend(f"数据源失败——{e['source']}：{e['error']}" for e in result.errors)
     foundation_since = now - timedelta(days=365 * survey_search.FOUNDATION_YEARS)
     diagnostics = {
@@ -1818,9 +1827,7 @@ async def expand_citations(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         inserted: list[Paper] = []
         if seeds:
             openalex = literature_sources.require_source("openalex", client=get_openalex_client())
-            entries, stats = await survey_search.expand_by_citations(
-                openalex, seeds, limit=budget
-            )
+            entries, stats = await survey_search.expand_by_citations(openalex, seeds, limit=budget)
             inserted, _latest = await _insert_entries(
                 library_id, [(e, _entry_source(e, {"openalex"})) for e in entries]
             )
@@ -1862,14 +1869,19 @@ def _compile_limit(knobs: dict[str, Any]) -> int:
     return max(1, min(int(knobs["compile_top_n"]), int(knobs["max_papers"])))
 
 
+async def _download_full_text(arxiv: Any, paper: Paper) -> tuple[Path, Path]:
+    """下载一篇论文的 PDF 并抽出全文，返回 (pdf 路径, 文本路径)。"""
+    content = await arxiv.download_pdf(paper.arxiv_id)
+    pdf_path = save_pdf(str(paper.id), content)
+    txt_path = await extract_full_text(str(paper.id), pdf_path)
+    return pdf_path, txt_path
+
+
 @register("wiki.fetch_extract")
 async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     knobs = _knobs(ctx)
     top_n = _compile_limit(knobs)
     arxiv = literature_sources.require_source("arxiv", client=get_arxiv_client())
-    fetched = 0
-    degraded = 0
-    failed: list[dict[str, str]] = []
 
     async with get_sessionmaker()() as session:
         library = await _resolve_library(session, ctx)
@@ -1909,18 +1921,31 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                 raise
             except Exception:  # noqa: BLE001 — 日期回填尽力而为
                 logger.warning("published_at backfill failed", exc_info=True)
-        for paper in papers:
+        await session.commit()
+        targets = [(p.id, membership_of[p.id].id) for p in papers]
+        briefs = [{"id": str(p.id), "title": p.title} for p in papers[:_OBS_LIST_CAP]]
+        library_id = library.id
+
+    async def fetch_one(paper_id: uuid.UUID, membership_id: uuid.UUID) -> dict[str, Any] | None:
+        """单篇：独立 session 重新加载 → 取全文（限时）→ 机构 → 分段 → 候选图 → commit。"""
+        degraded = False
+        failed: list[dict[str, str]] = []
+        async with get_sessionmaker()() as session:
+            membership = await session.get(LibraryPaper, membership_id)
+            paper = await session.get(Paper, paper_id)
+            if membership is None or paper is None or membership.status != "scored":
+                return None  # 已处理过（断点续跑）：幂等跳过
             try:
                 if paper.full_text_path is None and paper.arxiv_id:
-                    content = await arxiv.download_pdf(paper.arxiv_id)
-                    pdf_path = save_pdf(str(paper.id), content)
-                    txt_path = await extract_full_text(str(paper.id), pdf_path)
+                    pdf_path, txt_path = await asyncio.wait_for(
+                        _download_full_text(arxiv, paper), timeout=_PDF_TIME_BUDGET_S
+                    )
                     paper.pdf_path = str(pdf_path)
                     paper.full_text_path = str(txt_path)
             except asyncio.CancelledError:
                 raise
-            except Exception as e:  # noqa: BLE001 — 下载/抽取失败降级用 abstract
-                degraded += 1
+            except Exception as e:  # noqa: BLE001 — 下载/抽取失败或超时：降级用摘要
+                degraded = True
                 failed.append({"id": str(paper.id), "error": f"{type(e).__name__}: {e}"})
             # 发表机构补充（高级检索用）：on_add 模式下优先 LLM 从全文标题页逐位作者解析
             # 机构（extract 内部已带失败兜底，返回 None 不写入）；on_compile 模式跳过该
@@ -1931,7 +1956,7 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                     llm=ctx.llm,
                     user_id=billing_user_id,
                     project_id=ctx.run.project_id,
-                    library_id=library.id,
+                    library_id=library_id,
                     voyage_id=ctx.run.id,
                 )
                 apply_author_affiliations(paper, mapping)
@@ -1966,6 +1991,9 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                 raise
             except Exception as e:  # noqa: BLE001
                 failed.append({"id": str(paper.id), "error": f"chunks: {type(e).__name__}: {e}"})
+            # 分段写完先提交：后面的抽图是几秒到几十秒的 CPU 活，别让并发的其他论文
+            # 一直等这把写锁
+            await session.commit()
             # 顺带提取候选图（基础信息 caption=null；筛选注释在 wiki.compile 后做）；
             # 失败不影响全文流程
             if paper.pdf_path and paper.figures is None:
@@ -1978,21 +2006,48 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                     failed.append(
                         {"id": str(paper.id), "error": f"figures: {type(e).__name__}: {e}"}
                     )
-            membership_of[paper.id].status = "fetched"  # 无全文也进入编译（退化用摘要）
+            membership.status = "fetched"  # 无全文也进入编译（退化用摘要）
             await session.commit()
             # 常驻文件投影（#719）：PDF 到手即建可辨认别名；幂等（已投影则秒过），
             # best-effort 不进 failed——投影失败不该算这篇论文抽取失败
             file_projection.project_paper_pdf(paper)
-            fetched += 1
+            return {"degraded": degraded, "failed": failed}
+
+    results = await _gather_bounded(
+        _FETCH_CONCURRENCY, [fetch_one(pid, mid) for pid, mid in targets]
+    )
+    _reraise_if_cancelled(results)
+    fetched = 0
+    degraded = 0
+    failed: list[dict[str, str]] = []
+    for (paper_id, _mid), result in zip(targets, results, strict=True):
+        if isinstance(result, BaseException):
+            failed.append({"id": str(paper_id), "error": f"{type(result).__name__}: {result}"})
+            continue
+        if result is None:
+            continue
+        fetched += 1
+        degraded += int(result["degraded"])
+        failed.extend(result["failed"])
+
+    async with get_sessionmaker()() as session:
+        pdf_ids = set(
+            (
+                await session.execute(
+                    select(Paper.id).where(
+                        Paper.id.in_([pid for pid, _ in targets]), Paper.pdf_path.is_not(None)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
 
     return {
-        "processed": len(papers),
+        "processed": len(targets),
         "succeeded": fetched,
         "degraded": degraded,
-        "fetched_papers": [
-            {"id": str(p.id), "title": p.title, "pdf": bool(p.pdf_path)}
-            for p in papers[:_OBS_LIST_CAP]
-        ],
+        "fetched_papers": [{**b, "pdf": uuid.UUID(b["id"]) in pdf_ids} for b in briefs],
         "failed": failed,
     }
 
@@ -2094,7 +2149,9 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             )
             return {"id": str(paper.id), "title": paper.title}
 
-    results = await _gather_bounded(_LLM_CONCURRENCY, [compile_one(mid) for mid in membership_ids])
+    results = await _gather_bounded(
+        _LLM_CONCURRENCY, [compile_one(mid) for mid in membership_ids]
+    )
     _reraise_if_cancelled(results)  # worker 被杀须上抛，不当作单篇失败
     # 没写成的在这一批最后再试一次（实测 20 篇里 7 篇因为模型的流被网关中途掐断而
     # 失败，重来一次多半就好）。全军覆没就不试了：那是模型连不上
@@ -2124,6 +2181,9 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             compiled_brief.append(result)
 
     ctx.checkpoint["compiled_count"] = int(ctx.checkpoint.get("compiled_count") or 0) + compiled
+    # 没写成解读的论文记在 checkpoint 上（它们的状态仍是 fetched，在论文页点「生成解读」
+    # 可以补）：调研进度据此如实显示「N 篇解读没写成」，而不是悄悄少几篇
+    ctx.checkpoint["compile_failed"] = [entry["id"] for entry in failed]
     # 常驻文件投影（#719）：本批有新解读才刷新，且整批只重建一次该库 vault——
     # 逐篇重建是 O(N²) 的读写量，批量场景按批收口（best-effort，DB wins）
     if compiled:

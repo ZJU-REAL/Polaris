@@ -2440,3 +2440,99 @@ async def test_the_search_cap_is_shared_across_sources(client, queue_stub, wiki_
     ]
     assert arxiv_sizes and max(arxiv_sizes) <= 5
     assert openalex_sizes == [5]
+
+
+# ---- 取全文并发 + 单篇时限；解读写不成的留痕 ----
+
+
+async def _bootstrap_run(client) -> tuple[str, dict, uuid.UUID]:
+    project_id, headers = await _setup_project(client)
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    return project_id, headers, uuid.UUID(resp.json()["id"])
+
+
+async def test_a_slow_pdf_falls_back_to_the_abstract_without_holding_the_rest(
+    client, queue_stub, wiki_mocks, monkeypatch
+):
+    """一篇 PDF 迟迟下不来：到时限就放手，这篇只用摘要进解读；其余论文的全文不受影响，
+    而且是并发取的（慢的那篇没有排在别人前面把大家都拖住）。"""
+    from app.agents.voyage import actions_wiki
+
+    in_flight = {"now": 0, "peak": 0}
+    real = actions_wiki._download_full_text
+
+    async def slow_for_one(arxiv, paper):
+        in_flight["now"] += 1
+        in_flight["peak"] = max(in_flight["peak"], in_flight["now"])
+        try:
+            if "Benchmark" in paper.title:
+                await asyncio.sleep(30)  # 远超时限
+            await asyncio.sleep(0.05)
+            return await real(arxiv, paper)
+        finally:
+            in_flight["now"] -= 1
+
+    monkeypatch.setattr(actions_wiki, "_download_full_text", slow_for_one)
+    monkeypatch.setattr(actions_wiki, "_PDF_TIME_BUDGET_S", 0.5)
+    project_id, headers, run_id = await _bootstrap_run(client)
+    engine, _bus = _make_engine()
+    await engine.run(run_id)
+
+    detail = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()
+    assert detail["status"] == "done", detail
+    fetch_obs = next(s for s in detail["steps"] if s["action"] == "wiki.fetch_extract")[
+        "observation"
+    ]
+    assert fetch_obs["processed"] == 2 and fetch_obs["succeeded"] == 2
+    assert fetch_obs["degraded"] == 1
+    assert [f["error"] for f in fetch_obs["failed"]] == ["TimeoutError: "]
+    assert sorted(p["pdf"] for p in fetch_obs["fetched_papers"]) == [False, True]
+    assert in_flight["peak"] == 2
+    async with get_sessionmaker()() as session:
+        rows = await project_paper_rows(session, project_id=project_id)
+        # 两篇都写了解读：慢的那篇没有全文，用的是摘要
+        assert sorted(m.status for _p, m in rows) == ["compiled", "compiled"]
+        assert sorted(p.full_text_path is not None for p, _m in rows) == [False, True]
+
+
+async def test_a_summary_that_cannot_be_written_is_recorded_not_dropped(
+    client, queue_stub, wiki_mocks, monkeypatch
+):
+    """解读两次都没写成：这篇留在「已取全文」，记在任务上，调研进度如实报一篇没写成。"""
+    from app.agents.voyage import actions_wiki
+    from app.core.llm.errors import LLMTransportError
+    from app.services import research_runs as research_service
+
+    real = actions_wiki.compile_paper
+
+    async def broken_for_one(paper, **kwargs):
+        if "Benchmark" in paper.title:
+            raise LLMTransportError("model stream ended before the final message")
+        return await real(paper, **kwargs)
+
+    monkeypatch.setattr(actions_wiki, "compile_paper", broken_for_one)
+    project_id, headers, run_id = await _bootstrap_run(client)
+    engine, _bus = _make_engine()
+    await engine.run(run_id)
+
+    detail = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()
+    compile_obs = next(s for s in detail["steps"] if s["action"] == "wiki.compile")["observation"]
+    assert compile_obs["succeeded"] == 1 and len(compile_obs["failed"]) == 1
+    async with get_sessionmaker()() as session:
+        voyage = await session.get(VoyageRun, run_id)
+        failed_ids = voyage.checkpoint["compile_failed"]
+        assert failed_ids == [compile_obs["failed"][0]["id"]]
+        rows = await project_paper_rows(session, project_id=project_id)
+        statuses = {str(p.id): m.status for p, m in rows}
+        assert statuses[failed_ids[0]] == "fetched"  # 还能在论文页补「生成解读」
+        library_id = rows[0][1].library_id
+        assert await research_service._summarise_failed(session, library_id, voyage) == 1
+        # 事后补上了解读：不再算没写成
+        for _p, m in rows:
+            m.status = "compiled"
+        await session.commit()
+        assert await research_service._summarise_failed(session, library_id, voyage) == 0
