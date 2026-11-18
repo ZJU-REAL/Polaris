@@ -21,7 +21,6 @@ from app.core.db import get_sessionmaker
 from app.core.hosts import host_without_port
 from app.models.download_client import DownloadApiKey
 from app.models.llm_config import LLMProviderConfig
-from app.models.mcp_server import McpServer
 from app.models.system_setting import SystemSetting
 
 # ---- Host 白名单 ----
@@ -173,7 +172,6 @@ def test_unknown_ciphertext_still_fails_closed(per_install_key):
 async def test_rotation_reencrypts_all_legacy_values_and_is_idempotent(app, per_install_key):
     legacy = _legacy_fernet()
     old_key = legacy.encrypt(b"sk-provider").decode()
-    old_env = legacy.encrypt(b'{"TOKEN": "t"}').decode()
     bare = legacy.encrypt(b"s2-key").decode()
     in_entry = legacy.encrypt(b"s2-key-2").decode()
     mineru = legacy.encrypt(b"mineru-key").decode()
@@ -182,8 +180,7 @@ async def test_rotation_reencrypts_all_legacy_values_and_is_idempotent(app, per_
     async with get_sessionmaker()() as session:
         provider = LLMProviderConfig(name="p", kind="openai_compat", api_key_encrypted=old_key)
         broken = LLMProviderConfig(name="b", kind="openai_compat", api_key_encrypted=stranger)
-        server = McpServer(slug="srv", title="srv", transport="stdio", env_encrypted=old_env)
-        session.add_all([provider, broken, server])
+        session.add_all([provider, broken])
         session.add(
             SystemSetting(
                 key="literature_search",
@@ -198,11 +195,11 @@ async def test_rotation_reencrypts_all_legacy_values_and_is_idempotent(app, per_
             SystemSetting(key="document_processing", value={"mineru_credentials": [mineru]})
         )
         await session.commit()
-        provider_id, broken_id, server_id = provider.id, broken.id, server.id
+        provider_id, broken_id = provider.id, broken.id
 
     async with get_sessionmaker()() as session:
         changed = await security.rotate_encrypted_secrets(session)
-    assert changed == 4  # provider + mcp env + 两份设置文档（各算一次）
+    assert changed == 3  # provider + 两份设置文档（各算一次）
 
     primary = Fernet(per_install_key.encode())
     async with get_sessionmaker()() as session:
@@ -210,8 +207,6 @@ async def test_rotation_reencrypts_all_legacy_values_and_is_idempotent(app, per_
         assert primary.decrypt(p.api_key_encrypted.encode()) == b"sk-provider"
         # 谁都解不开的不动（也不删）
         assert (await session.get(LLMProviderConfig, broken_id)).api_key_encrypted == stranger
-        s = await session.get(McpServer, server_id)
-        assert primary.decrypt(s.env_encrypted.encode()) == b'{"TOKEN": "t"}'
 
         lit = (await session.get(SystemSetting, "literature_search")).value
         items = lit["provider_keys"]["semantic_scholar"]

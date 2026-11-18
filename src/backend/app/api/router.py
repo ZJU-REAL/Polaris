@@ -31,7 +31,6 @@ from app.api import (
     llm_status,
     manuscripts,
     mcp_meta,
-    mcp_servers,
     notes,
     onboarding,
     paper_assets,
@@ -95,7 +94,6 @@ api_router.include_router(evidence.router)
 api_router.include_router(experiments.router)
 api_router.include_router(manuscripts.router)
 api_router.include_router(export.router)
-api_router.include_router(mcp_servers.router)
 api_router.include_router(experiment_backends.router)
 api_router.include_router(disciplines.router)
 api_router.include_router(literature_sources.router)

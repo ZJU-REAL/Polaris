@@ -15,12 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
+from app.core.security import decrypt_env, encrypt_env
 from app.models.acp_agent import AcpAgent
 from app.models.user import User
 from app.services.acp import registry as acp_registry
 from app.services.acp.client import PERMISSION_POLICIES
 from app.services.acp.templates import CUSTOM, TEMPLATES, detect, get_template
-from app.services.mcp_hub.registry import decrypt_env, encrypt_env
 
 router = APIRouter(prefix="/acp-agents", tags=["acp-agents"])
 

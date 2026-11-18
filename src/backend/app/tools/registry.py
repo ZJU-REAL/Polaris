@@ -125,7 +125,7 @@ def tool(
 
 
 def register_spec(spec: ToolSpec, *, replace: bool = False) -> None:
-    """登记一个已经构造好的 ToolSpec（外部来源的工具用，见 services/mcp_hub）。
+    """登记一个已经构造好的 ToolSpec（运行期发现的外部工具用）。
 
     ``@tool`` 装饰器服务的是**编译期就写死**的内置工具，重名直接报错——那种重名
     是代码写错了。外部 MCP 服务器的工具是**运行期发现**的：服务器升级、重连、

@@ -11,12 +11,12 @@ import logging
 import tempfile
 from typing import Any
 
+from app.core.security import decrypt_env
 from app.models.acp_agent import AcpAgent
 from app.models.base import utcnow
 from app.services.acp.client import PERMISSION_POLICIES, AcpClient, AgentSpec
 from app.services.acp.connection import AcpError
 from app.services.acp.templates import get_template, which
-from app.services.mcp_hub.registry import decrypt_env
 
 logger = logging.getLogger("polaris.acp")
 

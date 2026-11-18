@@ -38,8 +38,7 @@ from app.services.concepts import library_concept_ids
 from app.services.libraries import get_source_library_ids
 from app.tools import ToolSpec, list_tools
 
-# 外部 MCP 服务器的工具注册名前缀（mcp:<server>:<tool>，见 services/mcp_hub/bridge.py；
-# 不从那里 import：它会连带拉起可选的 MCP SDK）
+# 运行期登记的外部工具的注册名前缀（mcp:<server>:<tool>，见 tools/registry.register_spec）
 EXTERNAL_NAMESPACE = "mcp"
 
 # 单个工具的超时：卡死算失败，不拖垮整轮自检（联网工具也共用这个上限）

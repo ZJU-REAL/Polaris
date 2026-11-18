@@ -5,7 +5,6 @@
 
 import contextlib
 import os
-import sys
 import tempfile
 
 import pytest
@@ -84,12 +83,6 @@ async def _stop_background_tasks() -> None:
     paper_enrich._TASKS.clear()
     queue_mod._queue = None
 
-    # 外部 MCP 会话是进程级单例，背后是真的子进程：启用过服务器的用例不在这里断开，
-    # 会话就挂在一个已经关掉的事件循环上留给后面的用例。没人连过就不 import（mcp 是可选依赖）
-    hub_mod = sys.modules.get("app.services.mcp_hub.client")
-    if hub_mod is not None and hub_mod._hub is not None:
-        await hub_mod.reset_mcp_hub()
-
 
 @pytest_asyncio.fixture(autouse=True)
 def _fresh_redis():
@@ -139,8 +132,7 @@ def _isolated_tool_registry():
     """工具注册表是模块级全局：每条用例结束都还原成它开始时的样子。
 
     泄漏的来源不止 ``@tool``：启用一台外部 MCP 服务器会把 ``mcp:<服务器>:<工具>``
-    登记进来，只有「停用」「删除」那两条路会摘掉。test_mcp_servers_api 里验证启用的
-    用例就把四个 ``mcp:cae:*`` 留在了表里——随机顺序把它排到前面时，
+    登记进来，不摘就一直留着。以前有用例把四个 ``mcp:cae:*`` 留在了表里——随机顺序把它排到前面时，
     test_tools_registry（写工具名单、描述格式）和 MCP 自检跟着一起红。
 
     快照是逐用例拍的，但不会误删内置工具：``app.tools`` 的 ``__init__`` 在 import 期

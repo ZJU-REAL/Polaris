@@ -19,6 +19,7 @@
 import base64
 import copy
 import hashlib
+import json
 import logging
 import uuid
 from collections.abc import Callable
@@ -82,6 +83,25 @@ def decrypt_secret(token: str) -> str:
     return get_fernet().decrypt(token.encode("utf-8")).decode("utf-8")
 
 
+def encrypt_env(env: dict[str, str] | None) -> str | None:
+    """环境变量表整体加密；空表存 NULL 而不是加密的 '{}'。"""
+    if not env:
+        return None
+    return encrypt_secret(json.dumps(env, ensure_ascii=False))
+
+
+def decrypt_env(token: str | None) -> dict[str, str]:
+    """解不开就当空表：密钥轮换过的存量行不该让调用方崩掉。"""
+    if not token:
+        return {}
+    try:
+        data = json.loads(decrypt_secret(token))
+    except Exception:  # noqa: BLE001
+        logging.getLogger("polaris.security").warning("env 解密失败，按空 env 处理", exc_info=True)
+        return {}
+    return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
+
 def needs_rotation(token: str) -> bool:
     """这个密文是不是还没用主密钥加密（主密钥解不开）。"""
     try:
@@ -109,7 +129,6 @@ def _encrypted_columns() -> list[tuple[Any, str]]:
     from app.models.acp_agent import AcpAgent
     from app.models.chat_bot import ChatBotConfig
     from app.models.llm_config import LLMProviderConfig
-    from app.models.mcp_server import McpServer
     from app.models.ssh_credential import ConnectionCredential
 
     return [
@@ -117,7 +136,6 @@ def _encrypted_columns() -> list[tuple[Any, str]]:
         (ConnectionCredential, "passphrase_encrypted"),
         (ConnectionCredential, "payload_encrypted"),
         (LLMProviderConfig, "api_key_encrypted"),
-        (McpServer, "env_encrypted"),
         (AcpAgent, "env_encrypted"),
         (ChatBotConfig, "robot_id_encrypted"),
         (ChatBotConfig, "secret_encrypted"),

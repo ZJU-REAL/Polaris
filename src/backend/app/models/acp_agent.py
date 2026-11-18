@@ -29,7 +29,7 @@ class AcpAgent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     command: Mapped[str] = mapped_column(String(512), nullable=False)
     args: Mapped[list[Any] | None] = mapped_column(JSONVariant)
-    #: Fernet(json.dumps({k: v}))；见 services/mcp_hub/registry.encrypt_env
+    #: Fernet(json.dumps({k: v}))；见 core/security.encrypt_env
     env_encrypted: Mapped[str | None] = mapped_column(Text)
 
     #: deny / read_only / auto（见 services/acp/client 的模块头）

@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d4a8f20c6b19"  # 研究：一个方向一行，记着走到哪个阶段
-RESEARCH_RUNS_REVISION = HEAD_REVISION
+HEAD_REVISION = "5e1b7c9a4d32"  # 删掉外部 MCP 服务器登记表（功能已移除）
+RESEARCH_RUNS_REVISION = "d4a8f20c6b19"  # 研究：一个方向一行，记着走到哪个阶段
 IDEA_ORIGIN_REVISION = "c7e1a4b93d26"  # 想法记下是哪次任务写的、来路是什么
 SELF_APPROVAL_REVISION = "c7a1e4d9b3f2"  # 待处理的想法晋级/投稿审批自动通过（不再自己审批自己）
 WIKI_EVIDENCE_REVISION = "b2f6d1c93e47"  # 解读的证据定位信息单独一列，不再嵌在正文里 (#873)
@@ -215,8 +215,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
-    # 外部 MCP 服务器登记（#754）：env 整体加密，命令可审计
-    assert {"slug", "transport", "env_encrypted", "enabled"} <= columns["mcp_servers"]
+    # 外部 MCP 服务器登记表（#754）随功能移除，head 上不再有
+    assert "mcp_servers" not in columns["_tables"]
     # 外部 agent 登记（#836）：与 MCP 服务器同一套 env 加密约定，外加权限策略；
     # 「共享给其他账号」列随单用户化删掉（#842）
     assert {"slug", "command", "env_encrypted", "permission_policy"} <= columns["acp_agents"]
@@ -702,7 +702,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {("project_id",), ("client_key",)} <= research_uniques
     assert "ix_research_runs_status" in _index_names(db_path, "research_runs")
 
-    # 先退掉研究表。
+    # 先把外部 MCP 服务器登记表建回来（空表）。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == RESEARCH_RUNS_REVISION
+    assert {"slug", "transport", "env_encrypted", "enabled"} <= columns["mcp_servers"]
+
+    # 再退掉研究表。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == IDEA_ORIGIN_REVISION
