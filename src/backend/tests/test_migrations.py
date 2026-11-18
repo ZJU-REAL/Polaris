@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "5e1b7c9a4d32"  # 删掉外部 MCP 服务器登记表（功能已移除）
+HEAD_REVISION = "7a2c4e8b1f60"  # llm_usage 分开记读缓存 / 写缓存的 token
+MCP_DROP_REVISION = "5e1b7c9a4d32"  # 删掉外部 MCP 服务器登记表（功能已移除）
 RESEARCH_RUNS_REVISION = "d4a8f20c6b19"  # 研究：一个方向一行，记着走到哪个阶段
 IDEA_ORIGIN_REVISION = "c7e1a4b93d26"  # 想法记下是哪次任务写的、来路是什么
 SELF_APPROVAL_REVISION = "c7a1e4d9b3f2"  # 待处理的想法晋级/投稿审批自动通过（不再自己审批自己）
@@ -702,7 +703,17 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {("project_id",), ("client_key",)} <= research_uniques
     assert "ix_research_runs_status" in _index_names(db_path, "research_runs")
 
-    # 先把外部 MCP 服务器登记表建回来（空表）。
+    # 记账的缓存两列在 head 上，默认 0（老行按「没有缓存」算）
+    assert {"cache_read_tokens", "cache_write_tokens"} <= columns["llm_usage"]
+
+    # 先退掉缓存两列。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == MCP_DROP_REVISION
+    assert not {"cache_read_tokens", "cache_write_tokens"} & columns["llm_usage"]
+    assert "ix_llm_usage_created_at" in _index_names(db_path, "llm_usage")
+
+    # 再把外部 MCP 服务器登记表建回来（空表）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == RESEARCH_RUNS_REVISION

@@ -241,7 +241,8 @@ class FakeProvider(LLMProvider):
         self, messages: Sequence[Message]
     ) -> list[tuple[str, dict[str, Any]]] | str | None:
         """本轮该干什么：一组工具调用 / 一段直接作答 / None（按默认行为走）。"""
-        if self._script:
+        # 测试里的子类常常不调 super().__init__()（只重写 complete）：没排过剧本就是没有
+        if getattr(self, "_script", None):
             if self._turn >= len(self._script):
                 return None
             step = self._script[self._turn]
