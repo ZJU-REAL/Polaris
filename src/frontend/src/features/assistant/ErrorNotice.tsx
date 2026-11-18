@@ -3,6 +3,7 @@ import type { AssistantBlock } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
 import { MODEL_SETTINGS_HREF, isLlmNotConfigured, llmNotConfiguredText } from '../../lib/llmNotConfigured';
 import { errorText as genericErrorText } from '../../lib/errors';
+import { LOCAL_AGENTS_HREF } from './backendChoice';
 
 /* ============================================================
    对话里的出错提示。
@@ -13,6 +14,37 @@ import { errorText as genericErrorText } from '../../lib/errors';
    ============================================================ */
 
 type NoticeBlock = Extract<AssistantBlock, { kind: 'notice' }>;
+
+/** 本机智能体出错：错误码 → 一句话，说清是哪一种、该做什么。认不出的返回 null。 */
+export function agentErrorText(code: string | undefined, detail = ''): string | null {
+  // 传输层报错带着前缀（"Error: ACP_AGENT_NOT_AVAILABLE"），按包含判断
+  if (code === 'ACP_AGENT_NOT_AVAILABLE' || detail.includes('ACP_AGENT_NOT_AVAILABLE')) {
+    return tr(
+      '这段对话选的智能体已被移除或停用。换一个回答方后再发一次。',
+      'The agent picked for this conversation was removed or turned off. Pick another one and send again.',
+    );
+  }
+  switch (code) {
+    case 'ACP_AGENT_NOT_INSTALLED':
+      return tr(
+        '本机找不到这个智能体。安装后在「本机智能体」里检查连接，再发一次。',
+        'This agent isn’t installed on this computer. Install it, check the connection in Local agents, then send again.',
+      );
+    case 'ACP_AGENT_NEEDS_LOGIN':
+      return tr(
+        '这个智能体还没有可用的凭据。在终端里运行它的登录命令，然后再发一次。',
+        'This agent isn’t signed in. Run its sign-in command in a terminal, then send again.',
+      );
+    case 'ACP_AGENT_TIMEOUT':
+      return tr('智能体太久没有回应，请再发一次。', 'The agent took too long to respond. Send again.');
+    case 'ACP_AGENT_CRASHED':
+      return tr('智能体意外退出了，再发一次会重新启动它。', 'The agent quit unexpectedly. Send again to restart it.');
+    case 'ACP_AGENT_FAILED':
+      return tr('智能体没能完成这次回答。', 'The agent couldn’t finish this reply.');
+    default:
+      return null;
+  }
+}
 
 /** 后端错误码 → 用户看得懂的一句话。认不出的走 lib/errors 的通用处理（原码留在括号里，别把线索吃掉）。 */
 export function errorText(detail: string): string {
@@ -34,8 +66,19 @@ export function errorText(detail: string): string {
   return genericErrorText(detail);
 }
 
-/** 出错 → 提示块。withDetail：把原始细节一并留下，只写「网络错误」等于无从查起。 */
-export function errorBlock(detail: string, withDetail = false): NoticeBlock {
+/** 出错 → 提示块。withDetail：把原始细节一并留下，只写「网络错误」等于无从查起。
+    code：后端错误帧带的码；智能体出错时据此说清是哪一种。 */
+export function errorBlock(detail: string, withDetail = false, code?: string): NoticeBlock {
+  const agentText = agentErrorText(code, detail);
+  if (agentText) {
+    const fixable = code === 'ACP_AGENT_NOT_INSTALLED' || code === 'ACP_AGENT_NEEDS_LOGIN' || !code;
+    return {
+      kind: 'notice',
+      text: agentText,
+      detail: detail && !detail.includes('ACP_AGENT_NOT_AVAILABLE') ? detail : undefined,
+      action: fixable ? 'agent-settings' : undefined,
+    };
+  }
   const text = errorText(detail);
   return {
     kind: 'notice',
@@ -61,6 +104,14 @@ export function NoticeView({ block }: { block: NoticeBlock }) {
       }}
     >
       <span>{block.text}</span>
+      {block.action === 'agent-settings' && (
+        <>
+          {' '}
+          <Link to={LOCAL_AGENTS_HREF} style={{ color: 'var(--accent-text)', fontWeight: 500 }}>
+            {tr('打开本机智能体', 'Open Local agents')}
+          </Link>
+        </>
+      )}
       {block.action === 'model-settings' && (
         <>
           {' '}

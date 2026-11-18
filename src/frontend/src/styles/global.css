@@ -1877,6 +1877,11 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   font-size: 12px;
   color: var(--text-3);
 }
+.buddy-scope-heading {
+  padding: 4px 8px 6px;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
 
 /* —— Buddy 空屏上的开场卡片 ——
    四张方块，两行两列。图标在上、摘要在下：先被看见的是图标，它给这张卡定调子，

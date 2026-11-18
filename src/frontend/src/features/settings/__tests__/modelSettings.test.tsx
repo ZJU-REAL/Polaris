@@ -147,11 +147,16 @@ describe('model settings block', () => {
 
 describe('deep links', () => {
   it('lands the removed tabs on the model block', () => {
-    for (const old of ['llm', 'agents', 'mymodels']) {
+    for (const old of ['llm', 'mymodels']) {
       expect(initialTabOf(old)).toBe('model');
       expect(LEGACY_TABS[old]).toBe('model');
     }
     expect(initialTabOf('model')).toBe('model');
+  });
+
+  it('opens the local agents tab from ?tab=agents again', () => {
+    expect(initialTabOf('agents')).toBe('agents');
+    expect(LEGACY_TABS).not.toHaveProperty('agents');
   });
 
   it('no removed tab is still a real tab', () => {

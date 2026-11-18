@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { SpeechPlayer } from '../../components/ui/SpeechPlayer';
@@ -24,17 +24,21 @@ import { pageContextFrom } from './buddyContext';
 import { useProject } from '../../app/project';
 import { TurnStatus } from './TurnStatus';
 import { agentToolIcon, agentToolKind, agentToolLabel, toolDisplayName } from './agentTools';
+import { PermissionCard, type PermissionStateChange } from './PermissionCard';
+import { LOCAL_AGENTS_HREF, POLARIS_BACKEND, backendLabel, readBackendChoice, resolveBackend, writeBackendChoice } from './backendChoice';
 import {
   keepLocalTurns,
   patchConvTurn,
   pruneConvTurns,
   renameConv,
+  setPermissionAcross,
   turnsOf,
   updateConvTurns,
   type Turn,
   type TurnsByConv,
 } from './convTurns';
 import { NoticeView, errorBlock } from './ErrorNotice';
+import { listboxKey } from './listboxKeys';
 
 /* ============================================================
    PolarisBuddy：全局抽屉。⌘J 开关，或点右下角的悬浮球。
@@ -472,15 +476,22 @@ function VerifyCard({ notes }: { notes: string[] }) {
 function BlockView({
   block,
   live,
+  turnLive,
   sources,
+  conversationId,
   onApprovePlan,
   onRevisePlan,
+  onPermissionState,
 }: {
   block: AssistantBlock;
   live: boolean;
+  /** 这一轮还在跑（live 只说「这是最后一块」） */
+  turnLive: boolean;
   sources: PaperSource[];
+  conversationId: string | null;
   onApprovePlan?: () => void;
   onRevisePlan?: () => void;
+  onPermissionState: PermissionStateChange;
 }) {
   if (block.kind === 'text') {
     // 模型会在正文里直接写 ![图注](paper_id/图号) 和 [1] 这类引用。Markdown 组件本来
@@ -530,6 +541,15 @@ function BlockView({
   if (block.kind === 'thinking') return <ThinkingView text={block.text} live={live} />;
   if (block.kind === 'tool') return <ToolCard block={block} />;
   if (block.kind === 'notice') return <NoticeView block={block} />;
+  if (block.kind === 'permission')
+    return (
+      <PermissionCard
+        block={block}
+        conversationId={conversationId}
+        turnLive={turnLive}
+        onStateChange={onPermissionState}
+      />
+    );
   return null; // 未知块：画不出来就不画，绝不抛
 }
 
@@ -603,7 +623,7 @@ export function AssistantPanel({
   //: 发完一轮之后标题才生成，列表要跟着刷新一次
   const [railRefresh, setRailRefresh] = useState(0);
   const [conversations, setConversations] = useState<
-    { id: string; title: string; project_id: string | null }[]
+    { id: string; title: string; project_id: string | null; backend?: string | null }[]
   >([]);
   // 问候语改成前端按本地时间算（见 greeting.ts），这里只要名字。
   // queryKey 与 AppShell 一致，命中同一份缓存，不多发一次请求。
@@ -614,6 +634,61 @@ export function AssistantPanel({
   >(null);
   const [model, setModel] = useState<string>('');
   const [title, setTitle] = useState<string>('');
+  // 谁来答（#836）：Polaris 自己，或用户登记的外部 agent。只有 Polaris 时整个选择器不出现。
+  const { data: backends } = useQuery({
+    queryKey: ['chat-backends'],
+    queryFn: () => api.listChatBackends(),
+    enabled: open,
+    retry: false,
+    staleTime: 60_000,
+  });
+  //: 服务端存着的这场的回答方（会话列表里带回来）；新会话为空
+  const [serverBackend, setServerBackend] = useState<string | null>(null);
+  const [backendChoice, setBackendChoice] = useState(() => readBackendChoice(convId, serverBackend));
+  const [backendOpen, setBackendOpen] = useState(false);
+  const backendBtnRef = useRef<HTMLButtonElement>(null);
+  const backendMenuRef = useRef<HTMLDivElement>(null);
+  const closeBackendMenu = useCallback(() => {
+    setBackendOpen(false);
+    backendBtnRef.current?.focus();
+  }, []);
+  // 打开时把焦点放到当前选中那项上，键盘可以直接上下挑
+  useEffect(() => {
+    if (!backendOpen) return;
+    const menu = backendMenuRef.current;
+    const picked = menu?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]');
+    (picked ?? menu?.querySelector<HTMLElement>('[role="option"]'))?.focus();
+  }, [backendOpen]);
+  const onBackendMenuKey = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const options = Array.from(
+        backendMenuRef.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [],
+      );
+      const current = options.findIndex((el) => el === document.activeElement);
+      const next = listboxKey(e.key, current, options.length);
+      if (!next) return;
+      e.preventDefault();
+      if (next === 'close') closeBackendMenu();
+      else options[next.focus]?.focus();
+    },
+    [closeBackendMenu],
+  );
+  useEffect(() => {
+    setBackendChoice(readBackendChoice(convId, serverBackend));
+  }, [convId, serverBackend]);
+  // 显示用：列表还没回来时不替用户做决定
+  const backend = backends ? resolveBackend(backendChoice.choice, backends) : undefined;
+  // 发送用：只有用户亲手选过才带；没选过就不带，后端沿用会话上存着的
+  const sendBackend = backendChoice.explicit ? backend : undefined;
+  const backendItem = backends?.find((b) => b.id === backend);
+  const showBackendPicker = !!backends && backends.length > 1;
+  const pickBackend = useCallback(
+    (id: string) => {
+      setBackendChoice({ choice: id, explicit: true });
+      writeBackendChoice(convId, id);
+    },
+    [convId],
+  );
   // 页面上下文照常发给模型，但不在输入框上占一行——它是背景信息，不是待办事项。
   const contextOn = true;
   //: 会话 id → 掐掉它那条 SSE 的函数。停止只停这一条，不动别人。
@@ -725,6 +800,11 @@ export function AssistantPanel({
     });
   }, []);
 
+  /** 授权卡的状态改在它所在的那一轮上（卡片自己调接口，这里只管落状态）。 */
+  const updatePermission = useCallback<PermissionStateChange>((requestId, state, opts) => {
+    setTurnsByConv((m) => setPermissionAcross(m, requestId, state, opts));
+  }, []);
+
   const openHistory = useCallback(async () => {
     setHistoryOpen((o) => !o);
     try {
@@ -736,16 +816,17 @@ export function AssistantPanel({
 
   const loadConversation = useCallback(
     async (id: string) => {
-      // 还在跑的会话用内存里那份：这一轮还没落库，从服务端重建会丢掉正在流的内容
+      // 还在跑的会话用内存里那份：服务端不存授权请求，从服务端重建会丢掉还没回答的授权卡
       const local = keepLocalTurns(turnsByConvRef.current, id, runningRef.current);
       try {
         const [messages, rows] = await Promise.all([
           local ? Promise.resolve(null) : api.getAssistantMessages(id),
-          // 会话列表带着课题；取不到不挡切换
+          // 会话列表带着课题与回答方；取不到不挡切换
           api.listAssistantConversations().catch(() => null),
         ]);
         const row = rows?.find((c) => c.id === id) ?? conversations.find((c) => c.id === id);
         setConvId(id);
+        setServerBackend(row?.backend ?? null);
         setHistoryOpen(false);
         // 会话上存着的课题才是这场对话真正的作用域，跟着切过去。
         // 会话自己的作用域也算「定下来了」：它是这场对话当初问的范围，
@@ -787,6 +868,7 @@ export function AssistantPanel({
     // 新的一场对话不该背着上一场的目标
     setGoal('');
     setConvId(null);
+    setServerBackend(null);
     const keep = new Set(runningRef.current);
     keep.delete(convId ?? NEW_CONV);
     keep.delete(NEW_CONV);
@@ -817,6 +899,8 @@ export function AssistantPanel({
     try {
       if (!id) {
         id = (await api.createAssistantConversation({})).id;
+        // 新会话：把这次选的后端记到它名下，切走再回来还是同一个
+        if (sendBackend) writeBackendChoice(id, sendBackend);
         const newId = id;
         setTurnsByConv((m) => renameConv(m, NEW_CONV, newId));
         // 建会话期间用户可能已经切走了：那就别把他拽回来
@@ -863,6 +947,7 @@ export function AssistantPanel({
         // 第一句话立为目标，之后每轮都带同一个——不然第二轮会把新问题当成新目标，
         // 「一直朝一个目标推进」就变成了「每轮换一个目标」。
         goal: mode === 'goal' ? activeGoal : undefined,
+        backend: sendBackend,
         onMeta: (meta) => {
           if (viewKeyRef.current === turnId) setModel(meta.model);
         },
@@ -878,16 +963,16 @@ export function AssistantPanel({
             })
             .catch(() => undefined);
         },
-        onError: (detail) => {
+        onError: (detail, code) => {
           // 把原始细节一并留下：只写「网络错误」等于让用户和我们都无从查起
-          patch((blocks) => [...blocks, errorBlock(detail, true)]);
+          patch((blocks) => [...blocks, errorBlock(detail, true, code)]);
           settle();
         },
       },
     );
     abortById.current.set(turnId, abort);
     },
-    [busy, convId, contextOn, pageContext, topicId, mode, goal, finish],
+    [busy, convId, contextOn, pageContext, topicId, mode, goal, sendBackend, finish],
   );
 
   const send = useCallback(() => {
@@ -1160,6 +1245,9 @@ export function AssistantPanel({
                       key={j}
                       block={b}
                       live={busy && isLast && j === turn.blocks.length - 1}
+                      turnLive={busy && isLast}
+                      conversationId={convId}
+                      onPermissionState={updatePermission}
                       sources={
                         (turn.blocks.find((x) => x.kind === 'sources') as
                           | { kind: 'sources'; papers: PaperSource[] }
@@ -1274,7 +1362,7 @@ export function AssistantPanel({
               lineHeight: '21px',
             }}
           />
-        {/* 输入卡片的底栏：课题、模式、模型和发送按钮排成一行（与输入框同一张卡，
+        {/* 输入卡片的底栏：课题、模式、模型、智能体和发送按钮排成一行（与输入框同一张卡，
             选择器是这次提问的前置条件，放在别处会和输入脱节）。菜单都向上弹。 */}
         <div
           className="row gap8"
@@ -1342,10 +1430,78 @@ export function AssistantPanel({
           )}
 
           <span style={{ flex: 1 }} />
-          {model && (
+          {/* 选择器在时它已经说了谁在答，模型名就不再重复一遍 */}
+          {model && !showBackendPicker && (
             <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }} title={model}>
               {model}
             </span>
+          )}
+
+          {/* 由谁回答：接了本机智能体才出现；只对这一场对话生效 */}
+          {showBackendPicker && (
+            <button
+              ref={backendBtnRef}
+              className="buddy-scope"
+              onClick={() => setBackendOpen((o) => !o)}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowDown' && !backendOpen) {
+                  e.preventDefault();
+                  setBackendOpen(true);
+                }
+              }}
+              aria-haspopup="listbox"
+              aria-expanded={backendOpen}
+              title={`${tr('由谁回答', 'Answered by')}: ${backendLabel(backendItem)}`}
+              aria-label={`${tr('由谁回答', 'Answered by')}: ${backendLabel(backendItem)}`}
+              data-picked={backend && backend !== POLARIS_BACKEND ? '1' : undefined}
+            >
+              <Icon name={backendItem?.kind === 'acp' ? 'cpu' : 'sparkle'} size={12} />
+              <span className="buddy-scope-label">{backendLabel(backendItem)}</span>
+              <Icon name="chevDown" size={11} />
+            </button>
+          )}
+
+          {backendOpen && showBackendPicker && (
+            <>
+              <div onClick={() => setBackendOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 49 }} />
+              <div
+                ref={backendMenuRef}
+                className="buddy-scope-menu"
+                role="listbox"
+                aria-label={tr('由谁回答', 'Answered by')}
+                onKeyDown={onBackendMenuKey}
+                style={{ left: 'auto', right: 6 }}
+              >
+                <div className="buddy-scope-heading">{tr('由谁回答这段对话', 'Who answers this conversation')}</div>
+                <div className="buddy-scope-list">
+                  {backends.map((b) => (
+                    <button
+                      key={b.id}
+                      className="buddy-scope-item"
+                      role="option"
+                      aria-selected={b.id === backend}
+                      title={b.name}
+                      tabIndex={b.id === backend ? 0 : -1}
+                      onClick={() => {
+                        pickBackend(b.id);
+                        closeBackendMenu();
+                      }}
+                    >
+                      <Icon name={b.kind === 'polaris' ? 'sparkle' : 'cpu'} size={13} />
+                      <span className="buddy-scope-item-label">
+                        {b.kind === 'polaris' ? tr('Polaris · Claude（默认）', 'Polaris · Claude (default)') : b.name}
+                      </span>
+                      {b.id === backend && <Icon name="check" size={12} />}
+                    </button>
+                  ))}
+                </div>
+                <div className="buddy-scope-empty" style={{ lineHeight: 1.5 }}>
+                  <Link to={LOCAL_AGENTS_HREF} onClick={() => setBackendOpen(false)} style={{ color: 'var(--text-3)' }}>
+                    {tr('管理本机智能体', 'Manage local agents')}
+                  </Link>
+                </div>
+              </div>
+            </>
           )}
 
           {topicOpen && (

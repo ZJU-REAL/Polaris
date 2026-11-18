@@ -94,3 +94,31 @@
   .st-row { flex-wrap: wrap; }
   .st-row-control { max-width: none; width: 100%; }
 }
+
+/* —— 本机智能体（LocalAgentsSettings）——
+   每个智能体一行：名称可点开，展开区是一组「小标题 | 内容」，不再套卡片。 */
+.lagent-row { gap: 6px; min-width: 0; }
+.lagent-row > * { min-width: 0; max-width: 100%; }
+.lagent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lagent-toggle {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  padding: 0; border: 0; background: transparent; color: var(--text-3); font: inherit; cursor: pointer;
+}
+.lagent-toggle:hover .lagent-name { color: var(--accent-text); }
+.lagent-detail {
+  display: flex; flex-direction: column; gap: 14px;
+  margin: 6px 0 2px 18px; padding-top: 12px; border-top: 0.5px dashed var(--border-2);
+}
+.lagent-field { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 12px; align-items: start; }
+.lagent-field-label { font-size: var(--fs-sm); color: var(--text-2); padding-top: 6px; }
+.lagent-field-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.lagent-field-body > .input { max-width: 360px; }
+.lagent-field-text .lagent-field-label { padding-top: 0; }
+.lagent-error {
+  font-size: var(--fs-sm); color: var(--text-2); background: var(--surface-2);
+  border-radius: var(--radius-sm); padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+@container mainarea (max-width: 640px) {
+  .lagent-field { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .lagent-field-label { padding-top: 0; }
+}

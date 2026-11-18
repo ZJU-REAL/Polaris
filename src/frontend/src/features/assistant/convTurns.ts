@@ -1,13 +1,15 @@
-import type { AssistantBlock } from '../../lib/assistantStream';
+import { setPermissionState, type AssistantBlock } from '../../lib/assistantStream';
+import type { PermissionStateChange } from './PermissionCard';
 
 /* ============================================================
    每场对话各自的轮次（#850）。
 
    以前面板只有一份 turns，流里来的帧一律写进「当前显示的那场」的最后一轮：
-   A 还在跑时切到 B，A 后面的帧就落进了 B。
+   A 在等授权时切到 B，A 的授权卡就落进了 B；回到 A 时又从服务端重建，而服务端
+   不存授权请求，于是 A 一直「等待批准」却没有卡，五分钟后按拒绝处理。
 
    现在按会话 id 分开存：流只写它自己那场；在跑的会话切回来时用内存里这份
-   （这一轮还没落库，服务端拉不到），不在跑的才从服务端重新拉。
+   （带着还能点的授权卡），不在跑的才从服务端重新拉。
    ============================================================ */
 
 export interface Turn {
@@ -61,7 +63,28 @@ export function pruneConvTurns(map: TurnsByConv, keep: ReadonlySet<string>): Tur
   return out;
 }
 
-/** 切到某场时要不要用内存里的：它还在跑、且内存里有，就用（这一轮还没落库）。 */
+/** 切到某场时要不要用内存里的：它还在跑、且内存里有，就用（服务端不存授权卡）。 */
 export function keepLocalTurns(map: TurnsByConv, id: string, running: ReadonlySet<string>): boolean {
   return running.has(id) && (map[id]?.length ?? 0) > 0;
+}
+
+/** 授权卡的状态：request_id 全局唯一，在哪场就改哪场。 */
+export function setPermissionAcross(
+  map: TurnsByConv,
+  ...[requestId, state, opts]: Parameters<PermissionStateChange>
+): TurnsByConv {
+  let changed = false;
+  const out: Record<string, Turn[]> = {};
+  for (const [k, turns] of Object.entries(map)) {
+    let turnsChanged = false;
+    const next = turns.map((turn) => {
+      const blocks = setPermissionState(turn.blocks, requestId, state, opts);
+      if (blocks === turn.blocks) return turn;
+      turnsChanged = true;
+      return { ...turn, blocks };
+    });
+    out[k] = turnsChanged ? next : turns;
+    if (turnsChanged) changed = true;
+  }
+  return changed ? out : map;
 }

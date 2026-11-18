@@ -73,12 +73,15 @@ describe('turns per conversation', () => {
     expect(frame(empty, 'A', 'delta', { text: 'x' })).toBe(empty);
   });
 
-  it('drops the external-agent approval frames that are no longer sent', () => {
-    // 旧引擎还可能发这两帧：认不出就原样返回，不画卡片也不抛
+  it('turns a local agent’s approval request into a card and settles it', () => {
     const blocks: AssistantBlock[] = [{ kind: 'text', text: 'working' }];
     const request = { request_id: 'r1', options: [{ id: 'o1', name: 'Allow', kind: 'allow_once' }] };
-    expect(applyAssistantEvent(blocks, 'permission_request', request)).toBe(blocks);
-    expect(applyAssistantEvent(blocks, 'permission_resolved', { request_id: 'r1', outcome: 'allowed' })).toBe(blocks);
+    const asked = applyAssistantEvent(blocks, 'permission_request', request);
+    expect(asked.at(-1)).toMatchObject({ kind: 'permission', requestId: 'r1', state: 'pending', timeoutS: 300 });
+    const settled = applyAssistantEvent(asked, 'permission_resolved', { request_id: 'r1', outcome: 'allowed' });
+    expect(settled.at(-1)).toMatchObject({ kind: 'permission', state: 'allowed' });
+    // 一个能点的选项都没有：不画一张点不动的卡
+    expect(applyAssistantEvent(blocks, 'permission_request', { request_id: 'r2', options: [] })).toBe(blocks);
   });
 });
 

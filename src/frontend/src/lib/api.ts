@@ -3363,6 +3363,90 @@ export interface DownloadClientIdentity {
   email: string;
 }
 
+// —— 本机智能体（经 ACP 接入的 Claude Code、Codex、pi……）——
+
+export type AcpPermissionPolicy = 'deny' | 'ask' | 'read_only' | 'auto';
+
+/** 上次检查失败属于哪一种（后端 services/acp/registry.failure_kind） */
+export type AcpErrorKind = 'not_installed' | 'needs_login' | 'timeout' | 'crashed' | 'failed';
+
+/** 内置模板 + 这台机器上装没装（只查 PATH）。 */
+export interface AcpAgentTemplate {
+  id: string;
+  name: string;
+  description: string;
+  command: string;
+  args: string[];
+  detect: string[];
+  install: string;
+  login: string;
+  homepage: string;
+  /** 动手前会不会征求同意；不会的（pi），权限设置对它不起作用 */
+  permission_prompts: boolean;
+  env_passthrough: string[];
+  installed: boolean;
+  found: Record<string, string | null>;
+}
+
+/** 上一次检查连接时智能体的自述。 */
+export interface AcpProbeInfo {
+  protocol_version: number | null;
+  name: string;
+  title: string;
+  version: string;
+  load_session: boolean;
+  mcp_http: boolean;
+  mcp_sse: boolean;
+  prompt_image: boolean;
+  auth_methods: unknown[];
+}
+
+export interface AcpAgentRead {
+  id: string;
+  slug: string;
+  name: string;
+  template: string;
+  command: string;
+  args: string[] | null;
+  permission_policy: AcpPermissionPolicy;
+  enabled: boolean;
+  last_probe: AcpProbeInfo | null;
+  last_error: string | null;
+  last_probed_at: string | null;
+  /** 只回变量名，值永远读不回来 */
+  env_keys: string[];
+  command_found: boolean;
+  error_kind: AcpErrorKind | null;
+  permission_prompts: boolean;
+}
+
+export interface AcpAgentCreate {
+  slug: string;
+  name?: string;
+  /** 'custom' 或一个模板 id */
+  template: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  permission_policy?: AcpPermissionPolicy;
+  enabled?: boolean;
+}
+
+export interface AcpAgentUpdate {
+  name?: string;
+  command?: string;
+  args?: string[];
+  /** 不传 = 不动；{} = 清空；只能整体替换 */
+  env?: Record<string, string>;
+  permission_policy?: AcpPermissionPolicy;
+  enabled?: boolean;
+}
+
+/** 助手的回答方：Polaris 自己（Claude），或一个本机智能体。 */
+export type ChatBackend =
+  | { id: 'polaris'; name: string; kind: 'polaris' }
+  | { id: string; name: string; kind: 'acp'; template?: string; permission_policy?: AcpPermissionPolicy };
+
 export const api = {
   /** 健康检查：{status, version}（反馈上下文里带版本号用）。 */
   health(): Promise<HealthInfo> {
@@ -5431,7 +5515,7 @@ export const api = {
     return request(`/chat/buddy/greeting${page ? `?page=${encodeURIComponent(page)}` : ''}`);
   },
   listAssistantConversations(): Promise<
-    { id: string; title: string; last_message_at: string | null; project_id: string | null }[]
+    { id: string; title: string; last_message_at: string | null; project_id: string | null; backend?: string | null }[]
   > {
     return request('/chat/conversations');
   },
@@ -5460,5 +5544,36 @@ export const api = {
     return requestJson<{ items: ResolvedPaperBatchItem[] }>('/papers/resolve-batch', 'POST', {
       arxiv_ids: arxivIds,
     });
+  },
+  // —— 本机智能体 ——
+  listAcpTemplates(): Promise<AcpAgentTemplate[]> {
+    return request<AcpAgentTemplate[]>('/acp-agents/templates');
+  },
+  listAcpAgents(): Promise<AcpAgentRead[]> {
+    return request<AcpAgentRead[]>('/acp-agents');
+  },
+  createAcpAgent(input: AcpAgentCreate): Promise<AcpAgentRead> {
+    return requestJson<AcpAgentRead>('/acp-agents', 'POST', input);
+  },
+  updateAcpAgent(id: string, input: AcpAgentUpdate): Promise<AcpAgentRead> {
+    return requestJson<AcpAgentRead>(`/acp-agents/${id}`, 'PATCH', input);
+  },
+  /** 真拉起一次、握手、开一个空会话（不发提示）；失败写在返回行的 last_error 里，不抛。 */
+  probeAcpAgent(id: string): Promise<AcpAgentRead> {
+    return request<AcpAgentRead>(`/acp-agents/${id}/probe`, { method: 'POST' });
+  },
+  deleteAcpAgent(id: string): Promise<void> {
+    return request<void>(`/acp-agents/${id}`, { method: 'DELETE' });
+  },
+  /** 回答智能体的一次授权请求。404 = 已过期/已答过；400 = 选项不认识。 */
+  answerAgentPermission(conversationId: string, requestId: string, optionId: string): Promise<void> {
+    return requestJson<void>(
+      `/chat/conversations/${conversationId}/permissions/${encodeURIComponent(requestId)}`,
+      'POST',
+      { option_id: optionId },
+    );
+  },
+  listChatBackends(): Promise<ChatBackend[]> {
+    return request<ChatBackend[]>('/chat/backends');
   },
 };

@@ -25,6 +25,7 @@ import {
 } from '../../lib/api';
 import { BuddySettings } from './BuddySettings';
 import { SettingsLayout, SettingsTabs } from './SettingsTabs';
+import { LocalAgentsSettings } from './LocalAgentsSettings';
 import { SettingsActions, SettingsGroup, SettingsStack, SettingsRow, SettingsSection, StatusDot } from './settingsUi';
 import { DailySubscriptionsSection } from './DailySubscriptionsSection';
 import { ExtensionApiKeySettings } from './ExtensionApiKeySettings';
@@ -1037,8 +1038,9 @@ type Tab =
   | 'extension' | 'mcp' | 'export' | 'plugins' | 'about'
   // 原 /admin 的六项（#755）：平台只剩一个使用者，另开一个「管理」入口只是
   // 实验室时代的残留——同一个人要在两个页面之间找同一类配置
-  // 'model' 是只读的模型状态；旧的 ?tab=llm / ?tab=agents / ?tab=mymodels 都落到这里
-  | 'model' | 'literature' | 'processing' | 'experiment' | 'daily' | 'usage';
+  // 'model' 是只读的模型状态；旧的 ?tab=llm / ?tab=mymodels 都落到这里。
+  // 'agents' 是本机智能体（Claude Code、Codex、pi……，经 ACP 接入）
+  | 'model' | 'agents' | 'literature' | 'processing' | 'experiment' | 'daily' | 'usage';
 
 /** 给最近 7 天缺向量的每日论文补建向量（新论文同步时已自动建，这里只补历史）。 */
 function DailyEmbedSection() {
@@ -1290,16 +1292,15 @@ export function DailyCategoriesTab() {
  */
 export const ALL_TABS: Tab[] = [
   'personal', 'prefs', 'buddy', 'speech', 'bots', 'ssh', 'myusage', 'extension', 'mcp', 'export', 'plugins',
-  'model', 'literature', 'processing', 'experiment', 'daily', 'usage', 'about',
+  'model', 'agents', 'literature', 'processing', 'experiment', 'daily', 'usage', 'about',
 ];
 
 /**
- * 已经撤掉的标签页 → 现在的落点。模型固定为一个之后，「模型与智能体」（llm）、
- * 更早的「智能体后端」（agents）和「我的模型」（mymodels）都只剩「模型」这一块可看。
+ * 已经撤掉的标签页 → 现在的落点。模型固定为一个之后，「模型与智能体」（llm）和
+ * 「我的模型」（mymodels）都只剩「模型」这一块可看；智能体回到了自己那一页（agents）。
  */
 export const LEGACY_TABS: Readonly<Record<string, Tab>> = {
   llm: 'model',
-  agents: 'model',
   mymodels: 'model',
 };
 
@@ -1371,6 +1372,7 @@ export function SettingsPage() {
     { v: 'prefs', label: tr('界面', 'Interface') },
     { v: 'buddy', label: tr('助手', 'Assistant') },
     { v: 'model', label: tr('模型', 'Model') },
+    { v: 'agents', label: tr('本机智能体', 'Local agents') },
     { v: 'speech', label: tr('语音', 'Speech') },
     { v: 'myusage', label: tr('用量', 'Usage') },
     { v: 'export', label: tr('数据导出', 'Export') },
@@ -1423,6 +1425,7 @@ export function SettingsPage() {
       {effectiveTab === 'plugins' && <PluginsSettings />}
       {effectiveTab === 'about' && <AboutSettings />}
       {effectiveTab === 'model' && <ModelSettings />}
+      {effectiveTab === 'agents' && <LocalAgentsSettings />}
       {effectiveTab === 'literature' && <LiteratureSearchSettingsPanel />}
       {effectiveTab === 'processing' && (
         <SettingsStack>
