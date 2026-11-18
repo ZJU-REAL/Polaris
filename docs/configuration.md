@@ -184,8 +184,73 @@ keyword search and results are not re-ranked. Features degrade; nothing crashes.
 
 **Settings → Model** (`/settings?tab=model`) is read-only. It shows "Claude · claude-opus-5", the
 host requests go to, a **Check connection** button (it makes one tiny live call), and the state of
-the search-index and rerank models. The old links `/settings?tab=llm` and `/settings?tab=agents`
-redirect there. Usage and the call log are under **Settings → Usage**.
+the search-index and rerank models. The old link `/settings?tab=llm` redirects there;
+`/settings?tab=agents` opens [Local agents](#local-agents). Usage and the call log are under **Settings → Usage**.
+
+### Local agents
+
+You can connect coding agents you already run on this computer — Claude Code, Codex, pi, Gemini
+CLI and others — and pick one to answer a conversation in the assistant. They talk to Polaris over
+the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). Polaris's own model calls are
+not affected: every research stage still runs on Claude, and an agent only answers a conversation
+you explicitly hand to it.
+
+Open **Settings → Local agents** (`/settings?tab=agents`), add one from the list, and click
+**Check connection**. The check starts the agent, does the ACP handshake and opens an empty
+session; it never sends a prompt, so it costs nothing. The status next to each agent says what the
+last check found: *Connected*, *Not installed* (with the install command), *Needs sign-in* (with
+the sign-in command), or *Couldn't connect* (expand the row for the agent's own message).
+
+| Agent | Command Polaris starts | Install | Sign in |
+| --- | --- | --- | --- |
+| Claude Code | `claude-agent-acp` | `npm install -g @agentclientprotocol/claude-agent-acp` | `claude auth login` |
+| Codex | `codex-acp` | `npm install -g @agentclientprotocol/codex-acp` | `codex login`, or `OPENAI_API_KEY` |
+| pi | `pi-acp` | `npm install -g @earendil-works/pi-coding-agent pi-acp` | `pi-acp --terminal-login` (runs `pi`, then `/login`) |
+| Gemini CLI | `gemini --acp` | `npm install -g @google/gemini-cli` | `gemini` |
+| Qwen Code | `qwen --acp` | `npm install -g @qwen-code/qwen-code` | `qwen` |
+| OpenCode | `opencode acp` | `npm install -g opencode-ai` | `opencode auth login` |
+| Kimi CLI | `kimi acp` | `uv tool install kimi-cli` | `kimi` |
+
+Claude Code and Codex speak ACP through their official adapters, which bundle the CLI they drive.
+pi has no built-in ACP mode; the community adapter [`pi-acp`](https://github.com/svkozak/pi-acp)
+(the one listed in Zed's ACP registry) runs your local `pi` in RPC mode. Any other command that
+speaks ACP over stdio can be added under **Custom command**.
+
+**Sign-in and environment.** Each agent uses its own sign-in on this computer (for example
+`~/.claude`, `~/.codex`, `~/.pi`). Polaris never reads those credentials. When it starts an agent it
+passes a short allowlist of variables — `PATH`, `HOME`, locale, proxy settings — plus the
+credential variables that agent is known to read (for example `OPENAI_API_KEY` for Codex,
+`GEMINI_API_KEY` for Gemini CLI). It never passes Polaris's own `ANTHROPIC_*`, `LITELLM_*` or
+`POLARIS_*` values, so Claude Code keeps using your Claude login. Anything else an agent needs goes
+in its **Environment variables**; values are stored encrypted and never shown again.
+
+The desktop app reads `PATH` (merged, your shell's entries appended) and those credential variables
+once from your login shell, so agents installed with Homebrew, npm, nvm or Volta are found even
+when Polaris is opened from the Dock.
+
+**Permissions.** Each conversation gets its own working folder, and file reads and writes the agent
+delegates to Polaris are confined to it. When an agent wants to edit files or run a command it asks
+first, and what happens depends on the agent's permission setting:
+
+| Setting | What happens |
+| --- | --- |
+| Ask each time (default) | A card in the conversation shows what the agent wants to do and the agent's own options. No answer within 5 minutes counts as no. |
+| Read only | Reading and searching are allowed; everything else is refused. |
+| Refuse all | Anything that needs permission is refused. |
+| Allow all | Edits and commands go ahead without asking. Use only for agents you trust. |
+
+pi does not ask before acting and does its own file access, so these settings have no effect on it;
+the app says so next to pi.
+
+**Polaris's tools.** Agents that accept an HTTP MCP server get Polaris's own read-only tools for the
+session (search your libraries, read papers), through a token that expires after a day and is
+revoked when the session closes.
+
+**In the assistant.** Once at least one agent is connected, the composer shows an **Answered by**
+picker: *Polaris · Claude* (the default) or one of your agents. The choice applies to that
+conversation only; new conversations start on Polaris. Agent turns show their text, thinking, plan
+and tool calls like any other turn. If the agent is missing, signed out or quits, the conversation
+says so and links to Local agents.
 
 ### What differs per research stage
 

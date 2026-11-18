@@ -266,9 +266,13 @@ shell (`$SHELL -ilc env`, 4-second timeout) and copies over only the Claude-rela
 `POLARIS_EMBEDDING_MODEL`, `POLARIS_RERANK_MODEL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`,
 `LITELLM_API_KEY`, `LITELLM_API_BASE` — plus the network settings the first-launch setup and the
 engine need: `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` (and their lowercase forms),
-`UV_DEFAULT_INDEX`, `UV_INDEX_URL`, `UV_PYTHON_INSTALL_MIRROR` and `POLARIS_OUTBOUND_PROXY`. A
-variable the app's own environment already has wins over
-the shell's. Values are never logged, and a slow or failing shell just means nothing is picked up.
+`UV_DEFAULT_INDEX`, `UV_INDEX_URL`, `UV_PYTHON_INSTALL_MIRROR` and `POLARIS_OUTBOUND_PROXY` — and
+the credential variables [local agents](configuration.md#local-agents) read (`AGENT_SHELL_ENV`:
+`OPENAI_API_KEY`, `GEMINI_API_KEY`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR` and similar; never
+`ANTHROPIC_*`). A variable the app's own environment already has wins over
+the shell's. `PATH` is the exception: it is always set, so the shell's entries are appended to the
+app's (the app's own entries keep their order), which is how agents installed with Homebrew, npm,
+nvm or Volta are found. Values are never logged, and a slow or failing shell just means nothing is picked up.
 On Windows this step does nothing: GUI apps already see user environment variables. Because it runs
 once at startup, a changed variable needs a restart of Polaris.
 

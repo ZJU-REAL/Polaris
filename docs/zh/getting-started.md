@@ -50,6 +50,7 @@ Polaris 只用 Claude 的 API，模型是固定的（`claude-opus-5`）。Claude
 3. **建课题并关联文献库**——新建一个课题（`/projects/new`），再把一个或多个方向文献库关联上去。课题本身不存论文，它的语料就是所关联文献库的并集。之后按流水线一阶段一阶段往下走——见 [Core concepts](../../docs/concepts.md)（英文）。
 4. **可选：配置每日新论文**——**设置 → 每日论文** 里设置订阅的分类和每天抓取的时间。引擎每隔几分钟检查一次是否到点，所以只有应用开着的时候才会更新。
 5. **助手**——应用内助手 PolarisBuddy 在设置好 Claude 的 API key 后即可使用。它的多轮工具循环每一轮都会重发历史和工具定义，用量比一次性对话大；如需关闭，带上环境变量 `POLARIS_CHAT_AGENT_ENABLED=0` 启动应用。
+6. **可选：接入本机智能体**——如果你已经在用 Claude Code、Codex 或 pi，在 **设置 → 本机智能体**（`/settings?tab=agents`）里添加它，点 **检查连接**（只握手、开一个空会话，不发提问，不花额度）。之后在助手输入框下方的 **由谁回答** 里为某一段对话选它；它在本机用你自己的登录运行，Polaris 读不到它的凭据，Polaris 自己的模型调用也不经过它。pi 没有内置 ACP，经社区适配器 `pi-acp` 接入：`npm install -g @earendil-works/pi-coding-agent pi-acp`，登录用 `pi-acp --terminal-login`。详见 [Configuration](../../docs/configuration.md#local-agents)（英文）。
 
 > [!WARNING]
 > 实验模块会通过 SSH 连接真实的 GPU 服务器并在上面运行生成的代码。每条远程命令都来自固定的模板白名单并写入审计日志，创建实验时也可以要求显式的算力预算审批——但你仍然应该只把 Polaris 指向你自己控制的机器，并定期查看审计日志。

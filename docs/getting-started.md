@@ -85,6 +85,10 @@ Work through these in order; each unlocks the next.
 5. **Assistant** — PolarisBuddy, the in-app assistant, works as soon as the Claude API key is
    set. Its multi-turn tool loop re-sends history and tool definitions every round, so it uses
    more than one-shot chat; to turn it off, start the app with `POLARIS_CHAT_AGENT_ENABLED=0`.
+6. **Optional: connect a local agent** — if you already use Claude Code, Codex or pi, add it under
+   **Settings → Local agents** (`/settings?tab=agents`) and click **Check connection**. In the
+   assistant, pick it under **Answered by** for a conversation; it runs with its own sign-in on
+   this computer. See [Local agents](configuration.md#local-agents).
 
 > [!WARNING]
 > The Experiment Lab connects to real GPU servers over SSH and runs generated code there. Every

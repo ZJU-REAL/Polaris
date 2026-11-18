@@ -176,5 +176,7 @@ Enable it in **Settings → PolarisBuddy → Memory**. Once on:
 - **The "Papers looked at" list is retrieval, not citation.** If a claim matters, click through and
   check — the verification note will warn you about the most obvious mismatches, but it is a
   heuristic, not a guarantee.
-- Buddy always runs Polaris's own tool loop on Claude. There is no backend to choose, and it needs
-  the Claude API key to be set (see [Configuration](configuration.md#model)).
+- By default Buddy runs Polaris's own tool loop on Claude, which needs the Claude API key (see
+  [Configuration](configuration.md#model)). If you connect a local agent (Claude Code, Codex, pi…),
+  you can hand a single conversation to it with the **Answered by** picker; see
+  [Local agents](configuration.md#local-agents).
