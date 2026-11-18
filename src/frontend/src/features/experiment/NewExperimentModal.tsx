@@ -1,22 +1,28 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Icon } from '../../components/ui/Icon';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
 import { SelectMenu } from '../../components/ui/SelectMenu';
+import { Switch } from '../../components/ui/Switch';
 import { api, type ExperimentIntakeQuestion, type RunnerBackendSummary } from '../../lib/api';
+import { errorText } from '../../lib/errors';
 import { tr } from '../../lib/i18n';
 import { selectableIdeaOptions } from '../../lib/ideaOptions';
 import { topicPath } from '../../app/project';
 import { ConfigRow } from '../voyages/shared/ConfigRow';
+import { usableBackends } from './experimentView';
+import '../voyages/task.css';
+import './experiment.css';
 
 /* ============================================================
-   新建实验 Modal：选一个想法（没淘汰的都行，已选中的排前面）+ SSH 凭据 + 预算 →
-   AI 按 idea 生成 ≤5 个开题问题（代替静态 GPU 提示/高级选项表单），
-   用户作答（可跳过）→ POST /projects/{pid}/experiments。
-   其余不确定点实验过程中经提问机制动态交互——用户决定权更大、更灵活。
+   新建实验：只问两件必须的事——为哪个想法做、在哪台机器上做。
+   选定想法后 AI 会提几个开始前想确认的问题（可以不答，过程中它还会再问）。
+   轮数和时间上限、运行方式、流程模板收在「高级」里，都有默认值。
+
+   运行方式只列真的能跑的（通过 SSH 在远程机器上运行）；清单里不要 SSH 的那几种
+   选了一定会在运行时报错，所以不出现。
    ============================================================ */
 
 export interface NewExperimentModalProps {
@@ -60,6 +66,8 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
   const [questions, setQuestions] = useState<ExperimentIntakeQuestion[]>([]);
   const [answers, setAnswers] = useState<string[]>([]);
   const [intakeState, setIntakeState] = useState<'idle' | 'loading' | 'ready' | 'skipped'>('idle');
+  const [advanced, setAdvanced] = useState(false);
+  const [confirmFirst, setConfirmFirst] = useState(false);
 
   const ideasQuery = useQuery({
     // 不按状态筛：后端允许从任意想法开始实验（创建时顺手把它选中）
@@ -89,10 +97,9 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
   });
   const ideaOptions = selectableIdeaOptions(ideasQuery.data ?? []);
   const creds = credsQuery.data ?? [];
-  const backends = backendsQuery.data ?? [];
+  // 只列真的能跑的运行方式（见 usableBackends）；只剩一种时不必让人选
+  const backends = usableBackends(backendsQuery.data ?? []);
   const packs = packsQuery.data ?? [];
-  const chosenBackend =
-    backends.find((b) => b.backend === backend) ?? backends.find((b) => b.is_default);
   const needsSsh = backendNeedsSsh(backends, backend);
 
   // 打开时重置表单 + 应用深链预选
@@ -106,6 +113,8 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
     setQuestions([]);
     setAnswers([]);
     setIntakeState('idle');
+    setAdvanced(false);
+    setConfirmFirst(false);
   }, [open, initialIdeaId]);
 
   // 凭据加载后默认选第一个
@@ -158,6 +167,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
           // 不选就不带键：缺省后端 / 原计划路径，与这个选择器出现之前完全一致
           ...(backend ? { backend } : {}),
           ...(processPack ? { process_pack: processPack } : {}),
+          ...(confirmFirst ? { confirm_budget: true } : {}),
           budget: {
             // 留空 = 无限时（后端 0 = 不设时限）
             max_hours: Number.isFinite(hours) && hours > 0 ? hours : 0,
@@ -168,54 +178,68 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
       });
     },
     onSuccess: (exp) => {
-      toast(tr('实验已创建', 'Experiment created'), 'ok');
+      toast(tr('实验已开始', 'Experiment started'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['experiments', pid] });
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
       onClose();
       navigate(`/experiment/${exp.id}`);
     },
-    onError: (e) => toast(`${tr('创建失败：', 'Create failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(errorText(e), 'error'),
   });
 
   const noIdeas = !ideasQuery.isLoading && !ideasQuery.isError && ideaOptions.length === 0;
-  const noCreds = !credsQuery.isLoading && creds.length === 0;
+  const noCreds = !credsQuery.isLoading && !credsQuery.isError && creds.length === 0;
   const canSubmit = !!ideaId && (!needsSsh || !!credentialId) && !mutation.isPending;
+  const showBackendPicker = backends.length > 1;
+  const showPackPicker = packs.length > 0;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      width={560}
-      title={
-        <>
-          <Icon name="flask" size={16} style={{ color: 'var(--accent)' }} />
-          {tr('新建实验', 'New experiment')}
-        </>
-      }
+      width={540}
+      title={tr('新建实验', 'New experiment')}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
+          <button className="btn btn-ghost" onClick={onClose}>
+            {tr('取消', 'Cancel')}
+          </button>
           <button className="btn btn-primary" disabled={!canSubmit} onClick={() => mutation.mutate()}>
-            {mutation.isPending ? (
-              <>
-                <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                {tr('创建中…', 'Creating…')}
-              </>
-            ) : (
-              <>
-                <Icon name="play" size={14} />
-                {tr('创建实验', 'Create experiment')}
-              </>
-            )}
+            {mutation.isPending ? tr('正在开始…', 'Starting…') : tr('开始实验', 'Start experiment')}
           </button>
         </>
       }
     >
-      <FormField
-        label={tr('想法', 'Idea')}
-        hint={noIdeas ? undefined : tr('已选定的想法排在前面，实验开始后这个想法会标为已选定', 'Picked ideas come first. Starting an experiment marks the idea as picked.')}
-        error={noIdeas ? tr('这个课题还没有想法，请先生成想法', 'This topic has no ideas yet. Generate some first.') : null}
-      >
+      {noIdeas && (
+        <div className="exp-new-missing" data-missing="idea">
+          <span>{tr('这个课题还没有想法。实验是为一个想法做的，先去生成想法。', 'This topic has no ideas yet. An experiment tests an idea, so generate some first.')}</span>
+          <button
+            className="btn btn-ghost sm"
+            onClick={() => {
+              onClose();
+              navigate(topicPath(pid, 'forge'));
+            }}
+          >
+            {tr('去想法页', 'Go to Ideas')}
+          </button>
+        </div>
+      )}
+      {noCreds && (
+        <div className="exp-new-missing" data-missing="machine">
+          <span>{tr('还没有远程机器。实验在一台能用 SSH 连接的服务器上运行，目前不能在本机上运行。', 'No remote machine yet. Experiments run on a server you can reach over SSH; they can’t run on this computer yet.')}</span>
+          <button
+            className="btn btn-ghost sm"
+            onClick={() => {
+              onClose();
+              navigate('/settings?tab=ssh');
+            }}
+          >
+            {tr('添加远程机器', 'Add a machine')}
+          </button>
+        </div>
+      )}
+
+      <FormField label={tr('想法', 'Idea')}>
         <SelectMenu
           value={ideaId}
           disabled={noIdeas}
@@ -224,105 +248,15 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
           onChange={setIdeaId}
         />
       </FormField>
-      {noIdeas && (
-        <div style={{ marginTop: -6, marginBottom: 14 }}>
-          <button className="btn btn-soft sm" onClick={() => { onClose(); navigate(topicPath(pid, 'forge')); }}>
-            <Icon name="bulb" size={13} />
-            {tr('前往想法生成', 'Go to Ideas')}
-          </button>
-        </div>
-      )}
 
       <FormField
-        label={tr('运行环境', 'Runner')}
-        hint={
-          chosenBackend
-            ? [
-                chosenBackend.side_effects === 'physical'
-                  ? tr('会操作真实设备。', 'Drives real hardware.')
-                  : '',
-                chosenBackend.licenses.length > 0
-                  ? tr(
-                      `需要许可证：${chosenBackend.licenses.join('、')}。`,
-                      `Needs a license: ${chosenBackend.licenses.join(', ')}.`,
-                    )
-                  : '',
-                needsSsh
-                  ? tr('在下方选择的机器上运行。', 'Runs on the machine selected below.')
-                  : tr('在容器中运行，不需要 SSH。', 'Runs in a container. No SSH needed.'),
-              ]
-                .filter(Boolean)
-                .join(' ')
-            : undefined
-        }
-        error={
-          backendsQuery.isError
-            ? tr('无法加载运行环境，将使用默认环境', 'Couldn’t load runners. The default will be used.')
-            : null
-        }
-      >
-        <SelectMenu
-          value={backend}
-          disabled={backendsQuery.isLoading || backendsQuery.isError}
-          placeholder={
-            backendsQuery.isLoading
-              ? tr('加载中…', 'Loading…')
-              : tr('默认', 'Default')
-          }
-          options={backends.map((b) => ({
-            value: b.backend,
-            label: b.is_default ? tr(`${b.backend}（默认）`, `${b.backend} (default)`) : b.backend,
-          }))}
-          onChange={setBackend}
-        />
-      </FormField>
-
-      {(packs.length > 0 || packsQuery.isError) && (
-        <FormField
-          label={tr('流程模板', 'Workflow template')}
-          error={
-            packsQuery.isError
-              ? tr('无法加载流程模板，将按常规方式规划', 'Couldn’t load templates. The usual planning will be used.')
-              : null
-          }
-          hint={
-            processPack
-              ? tr(
-                  `步骤：${(packs.find((p) => p.name === processPack)?.phases ?? []).join(' → ')}`,
-                  `Steps: ${(packs.find((p) => p.name === processPack)?.phases ?? []).join(' → ')}`,
-                )
-              : undefined
-          }
-        >
-          <SelectMenu
-            value={processPack}
-            placeholder={tr('不使用', 'None')}
-            options={packs.map((p) => ({ value: p.name, label: p.name }))}
-            onChange={setProcessPack}
-          />
-        </FormField>
-      )}
-
-      <FormField
-        label={tr('SSH 凭据', 'SSH credential')}
-        hint={
-          !needsSsh
-            ? tr('所选运行环境不需要', 'Not needed for this runner')
-            : noCreds
-              ? undefined
-              : tr('实验文件放在这台机器的 ~/polaris_runs/ 下', 'Experiment files go under ~/polaris_runs/ on this machine')
-        }
-        error={
-          // 后端不吃凭据时「还没有凭据」不是错误，只是无关
-          needsSsh && noCreds
-            ? tr('还没有 SSH 凭据，请先在设置中添加', 'No SSH credentials yet. Add one in Settings.')
-            : null
-        }
+        label={tr('远程机器', 'Remote machine')}
+        hint={noCreds ? undefined : tr('实验文件放在这台机器的 ~/polaris_runs/ 下', 'Experiment files go under ~/polaris_runs/ on this machine')}
       >
         <SelectMenu
           value={credentialId}
           disabled={noCreds || !needsSsh}
-          placeholder={credsQuery.isLoading ? tr('加载中…', 'Loading…') : credsQuery.isError ? tr('无法加载凭据', 'Couldn’t load credentials') : tr('选择凭据', 'Choose a credential')}
+          placeholder={credsQuery.isLoading ? tr('加载中…', 'Loading…') : credsQuery.isError ? tr('无法加载远程机器', 'Couldn’t load machines') : noCreds ? tr('还没有远程机器', 'No machines yet') : tr('选择机器', 'Choose a machine')}
           options={creds.map((c) => ({
             value: c.id,
             label: tr(`${c.name}（${c.username}@${c.host}:${c.port}）`, `${c.name} (${c.username}@${c.host}:${c.port})`),
@@ -330,84 +264,29 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
           onChange={setCredentialId}
         />
       </FormField>
-      {noCreds && (
-        <div style={{ marginTop: -6, marginBottom: 14 }}>
-          <button className="btn btn-soft sm" onClick={() => { onClose(); navigate('/settings?tab=ssh'); }}>
-            <Icon name="settings" size={13} />
-            {tr('添加 SSH 凭据', 'Add SSH credential')}
-          </button>
-        </div>
-      )}
 
-      <div className="settings-list" style={{ marginBottom: 14 }}>
-        <ConfigRow label={tr('时间上限（小时）', 'Time limit (hours)')} hint={tr('到时会暂停并询问你', 'Pauses and asks you when time is up')}>
-          <input
-            className="input mono"
-            aria-label={tr('时间上限（小时）', 'Time limit (hours)')}
-            style={{ width: 110 }}
-            inputMode="decimal"
-            value={maxHours}
-            onChange={(e) => setMaxHours(e.target.value)}
-            placeholder={tr('不限', 'No limit')}
-          />
-        </ConfigRow>
-        <ConfigRow label={tr('最多轮数', 'Max rounds')}>
-          <input
-            className="input mono"
-            aria-label={tr('最多轮数', 'Max rounds')}
-            style={{ width: 110 }}
-            inputMode="numeric"
-            value={maxRuns}
-            onChange={(e) => setMaxRuns(e.target.value)}
-            placeholder="10"
-          />
-        </ConfigRow>
-        <ConfigRow label={tr('无提升时停止', 'Stop if no improvement')} hint={tr('主指标连续 2 轮没有提升时结束', 'Ends after 2 rounds without improvement')}>
-          <span className="mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>{tr('2 轮', '2 rounds')}</span>
-        </ConfigRow>
-      </div>
-
-      {/* 开题问答：选定 idea 后 AI 生成 ≤5 个整体性问题（可不答；实验中还能随时对话） */}
-      {ideaId && intakeState === 'loading' && (
-        <div className="row gap8" style={{ padding: '14px 4px', fontSize: 13, color: 'var(--text-3)' }}>
-          <Icon name="sparkle" size={14} style={{ color: 'var(--accent)', animation: 'ai-dot-pulse 1.2s ease-in-out infinite' }} />
-          {tr('正在准备几个问题…', 'Preparing a few questions…')}
-        </div>
-      )}
+      {/* 开始前的几个问题：选定想法后 AI 提出（可不答；实验中还会再问） */}
+      {ideaId && intakeState === 'loading' && <div className="exp-new-foot">{tr('正在看这个想法，准备几个开始前想确认的问题…', 'Reading the idea and preparing a few questions…')}</div>}
       {ideaId && intakeState === 'ready' && (
-        <div style={{ marginBottom: 6 }}>
-          <div className="row gap6" style={{ marginBottom: 10 }}>
-            <Icon name="sparkle" size={14} style={{ color: 'var(--accent)' }} />
-            <span style={{ fontSize: 13, fontWeight: 600 }}>
-              {tr('开始前确认几件事', 'A few questions before starting')}
-            </span>
-            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-              {tr('可跳过', 'Optional')}
-            </span>
+        <div className="exp-q" data-testid="exp-intake">
+          <div className="exp-q-head">
+            {tr('开始前确认几件事', 'A few questions before starting')}
+            <span>{tr('可以不答，AI 会自己决定', 'Optional. The AI decides anything you leave empty.')}</span>
           </div>
           {questions.map((q, i) => (
             <FormField key={i} label={`${i + 1}. ${q.question}`} hint={q.hint ?? undefined}>
               {(q.options ?? []).length > 0 && (
-                <div className="row gap6 wrap" style={{ marginBottom: 8 }}>
+                <div className="exp-q-opts">
                   {(q.options ?? []).map((opt) => {
-                    const active = (answers[i] ?? '') === opt;
+                    const on = (answers[i] ?? '') === opt;
                     return (
                       <button
                         key={opt}
                         type="button"
-                        className="pill sm"
-                        style={{
-                          cursor: 'pointer',
-                          border: active ? '1.5px solid var(--accent)' : '0.5px solid var(--border)',
-                          background: active ? 'var(--accent-soft)' : 'var(--surface-2)',
-                          color: active ? 'var(--accent-text)' : 'var(--text-2)',
-                          fontWeight: active ? 600 : 500,
-                          maxWidth: '100%',
-                        }}
-                        onClick={() =>
-                          setAnswers((prev) => prev.map((a, j) => (j === i ? (active ? '' : opt) : a)))
-                        }
-                        title={opt}
+                        className={'btn sm ' + (on ? 'btn-soft' : 'btn-ghost')}
+                        aria-pressed={on}
+                        style={{ maxWidth: '100%', height: 'auto', minHeight: 28, whiteSpace: 'normal', textAlign: 'left', padding: '4px 10px' }}
+                        onClick={() => setAnswers((prev) => prev.map((a, j) => (j === i ? (on ? '' : opt) : a)))}
                       >
                         {opt}
                       </button>
@@ -417,25 +296,81 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
               )}
               <textarea
                 className="textarea"
-                rows={2}
+                rows={1}
                 value={answers[i] ?? ''}
-                onChange={(e) =>
-                  setAnswers((prev) => prev.map((a, j) => (j === i ? e.target.value : a)))
-                }
-                placeholder={
-                  (q.options ?? []).length > 0
-                    ? tr('或自己填写', 'Or type your own')
-                    : tr('留空则由 AI 决定', 'Leave empty to let the AI decide')
-                }
-                style={{ minHeight: 44, width: '100%' }}
+                onChange={(e) => setAnswers((prev) => prev.map((a, j) => (j === i ? e.target.value : a)))}
+                placeholder={(q.options ?? []).length > 0 ? tr('或者自己写', 'Or write your own') : tr('留空则由 AI 决定', 'Leave empty to let the AI decide')}
+                style={{ minHeight: 36, width: '100%' }}
               />
             </FormField>
           ))}
         </div>
       )}
 
-      <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.6 }}>
-        {tr('使用算力前会请你批准预算。', 'You’ll approve the budget before any compute is used.')}
+      <button type="button" className="step-toggle" aria-expanded={advanced} onClick={() => setAdvanced((v) => !v)} style={{ marginTop: 10 }}>
+        {tr('高级', 'Advanced')}
+        <span aria-hidden="true">{advanced ? ' −' : ' +'}</span>
+      </button>
+      {advanced && (
+        <div className="settings-list" style={{ marginTop: 4 }} data-testid="exp-advanced">
+          <ConfigRow label={tr('运行前先让我确认', 'Let me confirm before it runs')} hint={tr('计划写好后停下来，等你看过计划和预算再上机器', 'Pauses once the plan is written, until you have checked the plan and budget')}>
+            <Switch checked={confirmFirst} onChange={setConfirmFirst} aria-label={tr('运行前先让我确认', 'Let me confirm before it runs')} />
+          </ConfigRow>
+          <ConfigRow label={tr('最多轮数', 'Max rounds')} hint={tr('主指标连续 2 轮没有提升也会提前结束', 'Also ends early after 2 rounds without improvement')}>
+            <input
+              className="input"
+              aria-label={tr('最多轮数', 'Max rounds')}
+              style={{ width: 96, textAlign: 'right' }}
+              inputMode="numeric"
+              value={maxRuns}
+              onChange={(e) => setMaxRuns(e.target.value)}
+              placeholder="10"
+            />
+          </ConfigRow>
+          <ConfigRow label={tr('时间上限（小时）', 'Time limit (hours)')} hint={tr('到时会停下来问你要不要继续', 'When time is up it stops and asks whether to continue')}>
+            <input
+              className="input"
+              aria-label={tr('时间上限（小时）', 'Time limit (hours)')}
+              style={{ width: 96, textAlign: 'right' }}
+              inputMode="decimal"
+              value={maxHours}
+              onChange={(e) => setMaxHours(e.target.value)}
+              placeholder={tr('不限', 'No limit')}
+            />
+          </ConfigRow>
+          {showBackendPicker && (
+            <ConfigRow label={tr('运行方式', 'Runner')} hint={tr('都在上面选的机器上运行', 'All of them run on the machine chosen above')}>
+              <div style={{ width: 200 }}>
+                <SelectMenu
+                  value={backend}
+                  placeholder={tr('默认', 'Default')}
+                  options={backends.map((b) => ({ value: b.backend, label: b.is_default ? tr(`${b.backend}（默认）`, `${b.backend} (default)`) : b.backend }))}
+                  onChange={setBackend}
+                />
+              </div>
+            </ConfigRow>
+          )}
+          {showPackPicker && (
+            <ConfigRow
+              label={tr('流程模板', 'Workflow template')}
+              hint={
+                processPack
+                  ? tr(`步骤：${(packs.find((p) => p.name === processPack)?.phases ?? []).join(' → ')}`, `Steps: ${(packs.find((p) => p.name === processPack)?.phases ?? []).join(' → ')}`)
+                  : tr('不选就按常规方式安排步骤', 'Leave unset for the usual steps')
+              }
+            >
+              <div style={{ width: 200 }}>
+                <SelectMenu value={processPack} placeholder={tr('不使用', 'None')} options={[{ value: '', label: tr('不使用', 'None') }, ...packs.map((p) => ({ value: p.name, label: p.name }))]} onChange={setProcessPack} />
+              </div>
+            </ConfigRow>
+          )}
+        </div>
+      )}
+
+      <div className="exp-new-foot">
+        {confirmFirst
+          ? tr('开始后 AI 先写实验计划，然后停下来等你确认，再在这台机器上搭环境、运行。', 'The AI writes a plan, waits for you to confirm it, then sets up and runs on this machine.')
+          : tr('开始后 AI 先写实验计划，接着就在这台机器上搭环境、运行。拿不准的地方它会停下来问你。', 'The AI writes a plan, then sets up and runs on this machine. It stops to ask when it is unsure.')}
       </div>
     </Modal>
   );

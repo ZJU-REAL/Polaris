@@ -30,7 +30,9 @@ export function enCount(n: number, one: string, many = `${one}s`): string {
 
 export function stepMarker(step: VoyageStepRead): { bg: string; color: string } {
   if (step.status === 'obsolete') return { bg: 'var(--surface-3)', color: 'var(--text-4)' };
-  if (step.verdict && !step.verdict.passed) return { bg: 'var(--danger-bg)', color: 'var(--danger-tx)' };
+  // 正在重试的步骤带着上一次没通过的结论：它现在是「进行中」，不是「失败」
+  const retrying = step.status === 'running' || step.status === 'verifying';
+  if (!retrying && step.verdict && !step.verdict.passed) return { bg: 'var(--danger-bg)', color: 'var(--danger-tx)' };
   switch (step.status) {
     case 'passed':
       return { bg: 'var(--ok-bg)', color: 'var(--ok-tx)' };

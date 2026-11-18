@@ -1,6 +1,7 @@
 import type { ExperimentBudget, ExperimentStatus, HypothesisStatus } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { StatusDot, type DotTone } from '../voyages/shared/StatusDot';
+import { hypothesisVerdict } from './experimentView';
 
 /* ============================================================
    Experiment Lab 共享小件：假设 chip、状态进度、预算文案。
@@ -10,11 +11,11 @@ import { StatusDot, type DotTone } from '../voyages/shared/StatusDot';
     title 传判定依据 evidence，鼠标悬停可见。 */
 export function HypChip({ status, title }: { status: HypothesisStatus | string; title?: string }) {
   const map: Record<string, [DotTone, string]> = {
-    verified: ['ok', tr('已验证', 'Verified')],
-    falsified: ['err', tr('已证伪', 'Refuted')],
-    testing: ['idle', tr('验证中', 'Testing')],
+    verified: ['ok', tr('成立', 'Held')],
+    falsified: ['err', tr('不成立', 'Didn’t hold')],
+    testing: ['idle', tr('没有结论', 'Undecided')],
   };
-  const [tone, label] = map[status] ?? map.testing!;
+  const [tone, label] = map[hypothesisVerdict(status)]!;
   return <StatusDot tone={tone} label={label} title={title} />;
 }
 

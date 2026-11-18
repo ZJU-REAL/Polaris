@@ -2658,6 +2658,8 @@ export interface CreateExperimentInput {
     /** 流程包（#678 一期）：显式选包（如 "base/experiment"）→ 按包 phases 生成计划；
      * 缺省 = 原计划路径（行为不变）。本期无编辑/选择 UI——接入创建表单时在此消费。 */
     process_pack?: string;
+    /** 写完计划后停下来，等用户确认计划和预算再上机器（默认不停） */
+    confirm_budget?: boolean;
   };
 }
 

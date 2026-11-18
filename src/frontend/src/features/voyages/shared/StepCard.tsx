@@ -767,6 +767,13 @@ export function StepCard({
   const attempts = step.attempts ?? [];
   const tokens = stepTokenCount(step.tokens) ?? 0;
   const label = stepLabel(step);
+  // 重试中的步骤还带着上一次尝试留下的报错
+  const retrying = step.status === 'running' || step.status === 'verifying';
+  const previousError = failure
+    ? String(failure.message ?? failure.exception_type ?? '')
+    : step.verdict?.reason && !step.verdict.passed
+      ? step.verdict.reason
+      : '';
   // 还没开始的步骤没有什么可看的详情（只有一条验收标准），不放这个开关
   const hasDetails =
     step.status !== 'pending' &&
@@ -786,8 +793,8 @@ export function StepCard({
           </span>
         )}
         {step.requires_gate && (
-          <span className="step-note is-warn" title={tr('到这一步会暂停，等你批准后继续', 'Pauses here until you approve')}>
-            {tr(`需要审批：${gateKind ? gateKind.zh : step.requires_gate}`, `Needs approval: ${gateKind ? gateKind.en : step.requires_gate}`)}
+          <span className="step-note is-warn" title={tr('到这一步会暂停，等你确认后继续', 'Pauses here until you confirm')}>
+            {tr(`开始前要你确认：${gateKind ? gateKind.zh : step.requires_gate}`, `Needs your go-ahead: ${gateKind ? gateKind.en : step.requires_gate}`)}
           </span>
         )}
         {step.attempt > 1 && (
@@ -811,12 +818,19 @@ export function StepCard({
 
       {/* —— 出错的原因：不收起 ——
           reason 是引擎原样给出的报错，可能整段是一条没有断点的长 URL，显式允许任意位置断行。 */}
-      {step.verdict?.reason && !step.verdict.passed && !failure && (
+      {retrying && previousError && (
+        // 正在重试：上一次的报错只作为一句说明，不再是一整块红色（这一步现在并没有失败）
+        <div className="step-result is-warn" data-step-retrying>
+          {tr('上一次尝试没成功，正在重试：', 'The previous attempt failed; retrying: ')}
+          <LongError text={previousError} />
+        </div>
+      )}
+      {!retrying && step.verdict?.reason && !step.verdict.passed && !failure && (
         <div className="step-result is-error">
           <LongError text={step.verdict.reason} />
         </div>
       )}
-      {failure && <FailureEvidenceCard failure={failure} />}
+      {!retrying && failure && <FailureEvidenceCard failure={failure} />}
 
       {hasDetails && (
         <button type="button" className="step-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>

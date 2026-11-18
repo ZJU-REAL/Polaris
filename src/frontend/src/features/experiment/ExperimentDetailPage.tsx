@@ -1,53 +1,73 @@
-import { useEffect, useRef, useState } from 'react';
-import { TaskStatus } from '../voyages/shared/StatusDot';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Icon } from '../../components/ui/Icon';
-import { EmptyState } from '../../components/ui/EmptyState';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { DotsMenu, type DotsMenuItem } from '../../components/ui/DotsMenu';
+import { ErrorState, LoadingState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
 import { useShell } from '../../app/AppShell';
-import { topicPath, useProject } from '../../app/project';
-import { fmtDuration, fmtTime } from '../../lib/format';
+import { topicPath, useProject, useSyncTopic } from '../../app/project';
+import { errorText } from '../../lib/errors';
 import {
   api,
   ApiError,
   EXPERIMENT_TERMINAL,
+  VOYAGE_TERMINAL,
   type EvalProtocol,
   type ExperimentCondition,
   type ExperimentContainer,
   type ExperimentDataset,
   type ExperimentDetail,
   type ExperimentPlan,
+  type GateDecision,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { useNow } from '../deepresearch/hooks';
+import { InlineQuestion } from '../deepresearch/InlineQuestion';
+import { elapsedText } from '../deepresearch/phase';
+import { ParkedRunNotice } from '../voyages/shared/ParkedRunNotice';
+import { byListOrder } from '../voyages/shared/stepUtils';
+import { taskStatusLine, taskTone } from '../voyages/shared/taskText';
+import { useVoyageChannel } from '../voyages/shared/useVoyageChannel';
+import { openAskOf, useVoyageMessages } from '../voyages/shared/useVoyageMessages';
 import { budgetText, HypChip } from './shared';
-import { ConsoleTab } from './ConsoleTab';
+import { experimentSentence, experimentTone, fmtMetric, summarize, summaryLine } from './experimentView';
 import { MemoryTab } from './MemoryTab';
+import { ProgressTab } from './ProgressTab';
 import { RunTab } from './RunTab';
 import { CodeTab } from './CodeTab';
 import { ExperimentFigures } from './ExperimentFigures';
+import '../../app/DirectionNav.css';
+import '../deepresearch/deepresearch.css';
+import '../voyages/task.css';
+import './experiment.css';
 
 /* ============================================================
-   /experiment/:id — 实验详情：运行台 / 计划 / 指标与轮次 / 代码 / 报告。
-   数据源 GET /experiments/{id}（活动状态 5s 轮询 + WS invalidate）；
-   运行台（ConsoleTab）是主视图：任务地图 + 终端对话 + 用户干预入口，
-   原环境 Tab 的服务器状态并入运行台概览、搭建步骤并入任务地图。
+   /experiment/:id —— 一个实验的页面。和任务页同一种读法，不是控制台：
+
+   · 顶上一句话：现在在做什么 / 在等你什么 / 结果如何，用了多久、跑到第几轮；
+   · 需要你的时候（AI 提问、确认预算、出错停下），要做的事就在这句话下面；
+   · 做完了先看结果：结论的几个数、假设成立没有、图表、报告、各轮记录；
+   · 还在做就看进展：步骤一行一个，日志和机器状态默认收起；
+   · 计划、代码、实验笔记各一个页签。
+
+   以前默认页是「运行台」：模式徽章、节点地图、一直开着的深色终端，
+   AI 的提问夹在日志里。
    ============================================================ */
 
-type TabKey = 'console' | 'plan' | 'run' | 'memory' | 'code' | 'report';
+type TabKey = 'progress' | 'results' | 'plan' | 'code' | 'notes';
 
 /* 文案在渲染处 tr()，避免模块级求值不随语言切换 */
 const TABS: { k: TabKey; zh: string; en: string }[] = [
-  { k: 'console', zh: '运行台', en: 'Console' },
+  { k: 'progress', zh: '进展', en: 'Progress' },
+  { k: 'results', zh: '结果', en: 'Results' },
   { k: 'plan', zh: '计划', en: 'Plan' },
-  { k: 'run', zh: '指标与轮次', en: 'Metrics' },
-  { k: 'memory', zh: '记忆', en: 'Memory' },
   { k: 'code', zh: '代码', en: 'Code' },
-  { k: 'report', zh: '报告', en: 'Report' },
+  { k: 'notes', zh: '实验笔记', en: 'Notes' },
 ];
 
-/* ---------------- Plan ---------------- */
+/* ---------------- 计划 ---------------- */
 
 function planStepText(s: NonNullable<ExperimentPlan['steps']>[number]): string {
   if (typeof s === 'string') return s;
@@ -63,232 +83,33 @@ const EXP_KIND_INFO: Record<string, { zh: string; en: string }> = {
   other: { zh: '其他', en: 'Other' },
 };
 
-const CONDITION_ROLE: Record<string, { zh: string; en: string }> = {
-  baseline: { zh: '对照组', en: 'Baseline' },
-  treatment: { zh: '实验组', en: 'Treatment' },
-};
-
-/** 归一化 container：有镜像名 → 容器运行，返回镜像/GPU/共享内存；无 → null（本机运行）。 */
-function containerInfo(
-  container: ExperimentContainer | null | undefined,
-): { image: string; gpus: string; shm: string } | null {
-  if (!container || typeof container !== 'object') return null;
-  const image = typeof container.image === 'string' ? container.image.trim() : '';
-  if (!image) return null;
-  const rawGpus = container.gpus;
-  const gpus =
-    typeof rawGpus === 'string'
-      ? rawGpus.trim()
-      : typeof rawGpus === 'number' && Number.isFinite(rawGpus)
-        ? String(rawGpus)
-        : '';
-  const shm = typeof container.shm_size === 'string' ? container.shm_size.trim() : '';
-  return { image, gpus, shm };
+/** 在哪里运行：有镜像名 = 在容器里；没有 = 直接在机器上。 */
+function environmentText(container: ExperimentContainer | null | undefined): string {
+  const image = container && typeof container === 'object' && typeof container.image === 'string' ? container.image.trim() : '';
+  if (!image) return tr('直接在机器上运行，不用容器', 'Directly on the machine, no container');
+  const rawGpus = container?.gpus;
+  const gpus = typeof rawGpus === 'string' ? rawGpus.trim() : typeof rawGpus === 'number' && Number.isFinite(rawGpus) ? String(rawGpus) : '';
+  const shm = typeof container?.shm_size === 'string' ? container.shm_size.trim() : '';
+  return [tr(`容器 ${image}`, `Container ${image}`), gpus ? `GPU ${gpus}` : '', shm ? tr(`共享内存 ${shm}`, `shared memory ${shm}`) : ''].filter(Boolean).join(' · ');
 }
 
-/** 实验类型徽标（plan 缺省时显示「未分类」）。 */
-function KindBadge({ kind }: { kind: string | undefined }) {
-  const m = kind ? EXP_KIND_INFO[kind] : undefined;
-  return (
-    <span
-      className="pill sm"
-      style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
-      title={tr('实验类型', 'Experiment type')}
-    >
-      <Icon name="flask" size={11} />
-      {m ? tr(m.zh, m.en) : kind || tr('未分类', 'Uncategorized')}
-    </span>
-  );
+function evalRows(protocol: EvalProtocol): string[] {
+  const out: string[] = [];
+  if (typeof protocol.dataset === 'string' && protocol.dataset.trim()) out.push(tr(`数据集 ${protocol.dataset.trim()}`, `Dataset ${protocol.dataset.trim()}`));
+  if (typeof protocol.split === 'string' && protocol.split.trim()) out.push(tr(`划分 ${protocol.split.trim()}`, `Split ${protocol.split.trim()}`));
+  if (typeof protocol.metric === 'string' && protocol.metric.trim()) out.push(tr(`指标 ${protocol.metric.trim()}`, `Metric ${protocol.metric.trim()}`));
+  if (typeof protocol.n_examples === 'number' && Number.isFinite(protocol.n_examples)) out.push(tr(`${protocol.n_examples} 个样本`, `${protocol.n_examples} examples`));
+  if (typeof protocol.n_samples === 'number' && Number.isFinite(protocol.n_samples)) out.push(tr(`采样 ${protocol.n_samples} 次`, `${protocol.n_samples} samples each`));
+  return out;
 }
 
-/** 运行环境（页头元信息行用，纯文本）：容器 / 主机环境。 */
-function EnvText({ container }: { container: ExperimentContainer | null | undefined }) {
-  const info = containerInfo(container);
-  return (
-    <span
-      title={
-        info
-          ? tr(`在容器镜像 ${info.image} 中运行`, `Runs in the container image ${info.image}`)
-          : tr('直接在实验机器上运行，不使用容器', 'Runs directly on the machine, without a container')
-      }
-    >
-      {info ? tr('容器', 'Container') : tr('主机环境', 'Host environment')}
-    </span>
-  );
-}
-
-/** 运行环境明细（Plan 页用）：容器镜像 + GPU + 共享内存，或本机环境。 */
-function RunEnvironmentRow({ container }: { container: ExperimentContainer | null | undefined }) {
-  const info = containerInfo(container);
-  return (
-    <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
-      <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>{tr('运行环境', 'Environment')}</span>
-      {info ? (
-        <>
-          <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)', flexShrink: 0 }}>
-            <Icon name="cpu" size={11} />
-            {tr('容器', 'Container')}
-          </span>
-          <span className="tag mono" style={{ fontSize: 11, minWidth: 0, wordBreak: 'break-all' }}>{info.image}</span>
-          {info.gpus && (
-            <span className="pill sm mono" style={{ background: 'var(--surface-2)', color: 'var(--text-2)', flexShrink: 0 }}>
-              GPU {info.gpus}
-            </span>
-          )}
-          {info.shm && (
-            <span className="mono muted" style={{ fontSize: 11, flexShrink: 0 }}>shm {info.shm}</span>
-          )}
-        </>
-      ) : (
-        <span className="pill sm" style={{ background: 'var(--surface-2)', color: 'var(--text-2)', flexShrink: 0 }}>
-          <Icon name="server" size={11} />
-          {tr('主机环境，不使用容器', 'Host environment, no container')}
-        </span>
-      )}
-    </div>
-  );
-}
-
-/** 主指标方向 → 大白话。 */
-function metricDirectionText(direction: string | undefined): string {
-  if (direction === 'minimize') return tr('越低越好', 'lower is better');
-  if (direction === 'maximize') return tr('越高越好', 'higher is better');
-  return '';
-}
-
-/** 计划概览：实验类型 + 主指标 + 运行环境（缺字段防御式跳过）。 */
-function PlanOverview({ exp }: { exp: ExperimentDetail }) {
-  const plan = exp.plan!;
-  const pm = plan.primary_metric;
-  return (
-    <div className="card card-pad" style={{ marginBottom: 22 }}>
-      <div className="col gap10">
-        <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>{tr('实验类型', 'Type')}</span>
-          <KindBadge kind={plan.kind} />
-          {pm?.name && (
-            <>
-              <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0, marginLeft: 6 }}>{tr('主指标', 'Primary metric')}</span>
-              <span className="pill sm mono" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-                <Icon name="chart" size={11} />
-                {pm.name}
-                {metricDirectionText(pm.direction) && (
-                  <span style={{ opacity: 0.8 }}> · {metricDirectionText(pm.direction)}</span>
-                )}
-              </span>
-            </>
-          )}
-        </div>
-        <RunEnvironmentRow container={plan.container} />
-      </div>
-    </div>
-  );
-}
-
-/** 对照设置：baseline 对照组 vs 各 treatment 处理组。 */
-function ConditionsBlock({ conditions }: { conditions: ExperimentCondition[] }) {
-  return (
-    <div className="col gap8" style={{ marginBottom: 22 }}>
-      {conditions.map((c, i) => {
-        const roleKey = c.role === 'baseline' ? 'baseline' : 'treatment';
-        const roleInfo = CONDITION_ROLE[roleKey]!;
-        const isBaseline = roleKey === 'baseline';
-        return (
-          <div key={`${c.name}-${i}`} className="card" style={{ padding: '12px 16px' }}>
-            <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
-              <span
-                className="pill sm"
-                style={
-                  isBaseline
-                    ? { background: 'var(--surface-3)', color: 'var(--text-2)', flexShrink: 0 }
-                    : { background: 'var(--accent-soft)', color: 'var(--accent-text)', flexShrink: 0 }
-                }
-              >
-                {tr(roleInfo.zh, roleInfo.en)}
-              </span>
-              <span style={{ fontSize: 13, fontWeight: 600, minWidth: 0 }}>{c.name}</span>
-            </div>
-            {c.description && c.description.trim() !== '' && (
-              <div style={{ marginTop: 7, fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                {c.description}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** 评测协议：数据集 / 划分 / 指标 / 样本数（只渲染存在的字段）。 */
-function EvalProtocolBlock({ protocol }: { protocol: EvalProtocol }) {
-  const rows: { label: string; value: string }[] = [];
-  if (typeof protocol.dataset === 'string' && protocol.dataset.trim())
-    rows.push({ label: tr('数据集', 'Dataset'), value: protocol.dataset.trim() });
-  if (typeof protocol.split === 'string' && protocol.split.trim())
-    rows.push({ label: tr('数据划分', 'Split'), value: protocol.split.trim() });
-  if (typeof protocol.metric === 'string' && protocol.metric.trim())
-    rows.push({ label: tr('评测指标', 'Metric'), value: protocol.metric.trim() });
-  if (typeof protocol.n_examples === 'number' && Number.isFinite(protocol.n_examples))
-    rows.push({ label: tr('样本数', 'Examples'), value: String(protocol.n_examples) });
-  if (typeof protocol.n_samples === 'number' && Number.isFinite(protocol.n_samples))
-    rows.push({ label: tr('采样次数', 'Samples'), value: String(protocol.n_samples) });
-  if (rows.length === 0) return null;
-  return (
-    <div
-      className="card card-pad"
-      style={{ marginBottom: 22, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 16 }}
-    >
-      {rows.map((r) => (
-        <div key={r.label} style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>{r.label}</div>
-          <div className="mono" style={{ fontSize: 13, color: 'var(--text)', fontWeight: 600, wordBreak: 'break-word' }}>{r.value}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** 数据集清单。 */
-function DatasetsBlock({ datasets }: { datasets: ExperimentDataset[] }) {
-  return (
-    <div className="card" style={{ overflow: 'hidden', marginBottom: 22 }}>
-      {datasets.map((d, i) => (
-        <div
-          key={`${d.name}-${i}`}
-          className="row gap12"
-          style={{
-            padding: '11px 18px',
-            borderBottom: i < datasets.length - 1 ? '0.5px solid var(--border)' : 'none',
-            alignItems: 'flex-start',
-          }}
-        >
-          <Icon name="grid" size={14} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 2 }} />
-          <div style={{ minWidth: 0 }}>
-            <span className="mono" style={{ fontSize: 13, fontWeight: 600 }}>{d.name}</span>
-            {d.size_hint && d.size_hint.trim() !== '' && (
-              <span className="mono muted" style={{ fontSize: 11, marginLeft: 8 }}>{d.size_hint}</span>
-            )}
-            {d.purpose && d.purpose.trim() !== '' && (
-              <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, marginTop: 3 }}>{d.purpose}</div>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** 假设判定依据：plan 回写的 evidence 优先，缺失时从各轮 reflection 的
-    hypothesis_updates 兜底取最近一轮的 evidence。 */
+/** 假设判定依据：plan 回写的 evidence 优先，缺失时从各轮反思里取最近一轮的。 */
 function hypothesisEvidence(exp: ExperimentDetail): Map<number, string> {
   const map = new Map<number, string>();
   const runs = [...(exp.runs ?? [])].sort((a, b) => a.seq - b.seq);
   for (const run of runs) {
     for (const u of run.reflection?.hypothesis_updates ?? []) {
-      if (typeof u.index === 'number' && u.evidence && u.evidence.trim() !== '') {
-        map.set(u.index, u.evidence);
-      }
+      if (typeof u.index === 'number' && u.evidence && u.evidence.trim() !== '') map.set(u.index, u.evidence);
     }
   }
   (exp.plan?.hypotheses ?? []).forEach((h, i) => {
@@ -297,239 +118,216 @@ function hypothesisEvidence(exp: ExperimentDetail): Map<number, string> {
   return map;
 }
 
-/** 单条假设：文案 + 实时状态 chip（testing 灰 / verified 绿 / falsified 红），
-    有判定依据时可折叠展开（chip 上也有 tooltip）。 */
-function HypRow({
-  hyp,
-  index,
-  evidence,
-}: {
-  hyp: NonNullable<ExperimentPlan['hypotheses']>[number];
-  index: number;
-  evidence: string | undefined;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="card" style={{ padding: '12px 16px' }}>
-      <div className="row gap12">
-        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>H{index + 1}</span>
-        <span style={{ fontSize: 13, flex: 1, lineHeight: 1.5 }}>{hyp.text}</span>
-        {evidence && (
-          <button
-            className="btn btn-ghost sm"
-            title={evidence}
-            style={{ flexShrink: 0 }}
-            onClick={() => setOpen((o) => !o)}
-          >
-            {tr('依据', 'Evidence')}
-            <Icon
-              name="chevDown"
-              size={11}
-              style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
-            />
-          </button>
-        )}
-        <HypChip status={hyp.status} title={evidence} />
-      </div>
-      {open && evidence && (
-        <div
-          style={{
-            marginTop: 9,
-            padding: '9px 12px',
-            borderRadius: 8,
-            background: 'var(--surface-2)',
-            fontSize: 12,
-            lineHeight: 1.6,
-            color: 'var(--text-2)',
-            whiteSpace: 'pre-wrap',
-          }}
-        >
-          {tr('依据：', 'Evidence: ')}{evidence}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () => void }) {
+function PlanTab({ exp }: { exp: ExperimentDetail }) {
   const plan = exp.plan;
-  const evidence = hypothesisEvidence(exp);
-
+  if (!plan) {
+    return (
+      <div className="task-empty" data-exp-tab="plan">
+        {exp.status === 'planning' ? tr('AI 正在写实验计划…', 'The AI is writing the plan…') : tr('这个实验没有计划。', 'This experiment has no plan.')}
+      </div>
+    );
+  }
+  const pm = plan.primary_metric;
+  const kind = plan.kind ? EXP_KIND_INFO[plan.kind] : undefined;
+  const hyps = plan.hypotheses ?? [];
+  const conditions: ExperimentCondition[] = plan.conditions ?? [];
+  const datasets: ExperimentDataset[] = plan.datasets ?? [];
+  const steps = plan.steps ?? [];
+  const evalBits = plan.eval_protocol ? evalRows(plan.eval_protocol) : [];
+  const estimate = plan.budget_estimate
+    ? typeof plan.budget_estimate === 'string'
+      ? plan.budget_estimate
+      : Object.entries(plan.budget_estimate as Record<string, unknown>)
+          .map(([k, v]) => `${k} ${String(v)}`)
+          .join(' · ')
+    : '';
   return (
-    <div className="fadeup" style={{ maxWidth: 860 }}>
-      {exp.status === 'awaiting_gate' && (
-        <div
-          className="row gap8"
-          style={{
-            marginBottom: 18,
-            padding: '11px 16px',
-            background: 'var(--warn-bg)',
-            color: 'var(--warn-tx)',
-            borderRadius: 10,
-            fontSize: 13,
-            fontWeight: 600,
-          }}
-        >
-          <Icon name="gate" size={15} />
-          {tr('预算批准后开始运行。', 'Runs once you approve the budget.')}
-          <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={onOpenGates}>
-            {tr('查看审批', 'Review')}
-          </button>
-        </div>
-      )}
-
-      {!plan ? (
-        <div className="card">
-          <EmptyState
-            compact
-            icon="sparkle"
-            title={exp.status === 'planning' ? tr('正在生成计划…', 'Generating the plan…') : tr('还没有计划', 'No plan yet')}
-          />
-        </div>
-      ) : (
+    <dl className="exp-plan" data-exp-tab="plan">
+      {(kind || plan.kind) && (
         <>
-          {/* 概览：实验类型 + 主指标 + 运行环境 */}
-          <PlanOverview exp={exp} />
-
-          {/* 假设清单 */}
-          <span className="section-h" style={{ marginBottom: 12 }}>
-            {tr('假设', 'Hypotheses')}
-          </span>
-          {(plan.hypotheses ?? []).length === 0 ? (
-            <div className="card empty" style={{ padding: 24, marginBottom: 22 }}>{tr('计划中没有假设', 'The plan has no hypotheses')}</div>
-          ) : (
-            <div className="col gap8" style={{ marginBottom: 22 }}>
-              {(plan.hypotheses ?? []).map((h, i) => (
-                <HypRow key={i} hyp={h} index={i} evidence={evidence.get(i)} />
-              ))}
-            </div>
-          )}
-
-          {/* 对照设置：baseline vs treatment（单一配置实验无此块） */}
-          {(plan.conditions ?? []).length > 0 && (
-            <>
-              <span className="section-h" style={{ marginBottom: 12 }}>
-                {tr('对照设置', 'Conditions')}
-              </span>
-              <ConditionsBlock conditions={plan.conditions ?? []} />
-            </>
-          )}
-
-          {/* 评测协议：数据集 / 划分 / 指标 / 样本数 */}
-          {plan.eval_protocol && (
-            <>
-              <span className="section-h" style={{ marginBottom: 12 }}>
-                {tr('评测设置', 'Evaluation')}
-              </span>
-              <EvalProtocolBlock protocol={plan.eval_protocol} />
-            </>
-          )}
-
-          {/* 数据集 */}
-          {(plan.datasets ?? []).length > 0 && (
-            <>
-              <span className="section-h" style={{ marginBottom: 12 }}>
-                {tr('数据集', 'Datasets')}
-              </span>
-              <DatasetsBlock datasets={plan.datasets ?? []} />
-            </>
-          )}
-
-          {/* 复现策略 */}
-          <span className="section-h" style={{ marginBottom: 12 }}>
-            {tr('复现策略', 'Reproduction plan')}
-          </span>
-          <div className="card card-pad" style={{ marginBottom: 22, background: 'var(--surface-2)' }}>
-            <p style={{ fontSize: 13, lineHeight: 1.65, margin: 0, color: 'var(--text-2)', whiteSpace: 'pre-wrap' }}>
-              {plan.repro_strategy || tr('计划中没有复现策略', 'The plan has no reproduction plan')}
-            </p>
-          </div>
-
-          {/* 实验步骤 */}
-          <span className="section-h" style={{ marginBottom: 12 }}>
-            {tr('实验步骤', 'Steps')}
-          </span>
-          {(plan.steps ?? []).length === 0 ? (
-            <div className="card empty" style={{ padding: 24, marginBottom: 22 }}>{tr('计划中没有步骤', 'The plan has no steps')}</div>
-          ) : (
-            <div className="card" style={{ overflow: 'hidden', marginBottom: 22 }}>
-              {(plan.steps ?? []).map((s, i, arr) => (
-                <div
-                  key={i}
-                  className="row gap12"
-                  style={{ padding: '11px 18px', borderBottom: i < arr.length - 1 ? '0.5px solid var(--border)' : 'none', alignItems: 'flex-start' }}
-                >
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', flexShrink: 0, marginTop: 2 }}>
-                    {i + 1}
-                  </span>
-                  <span style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.5 }}>{planStepText(s)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* 预算 */}
-          <span className="section-h" style={{ marginBottom: 12 }}>
-            {tr('预算', 'Budget')}
-          </span>
-          <div className="row gap12" style={{ alignItems: 'stretch' }}>
-            <div className="card card-pad" style={{ flex: 1 }}>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>{tr('上限，超出后自动停止', 'Limit; stops automatically when reached')}</div>
-              <div className="mono" style={{ fontSize: 18, fontWeight: 600 }}>{budgetText(exp.budget)}</div>
-            </div>
-            <div className="card card-pad" style={{ flex: 1.6, background: 'var(--surface-2)' }}>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>{tr('预估', 'Estimate')}</div>
-              <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
-                {plan.budget_estimate
-                  ? typeof plan.budget_estimate === 'string'
-                    ? plan.budget_estimate
-                    : JSON.stringify(plan.budget_estimate, null, 2)
-                  : '—'}
-              </div>
-            </div>
-          </div>
+          <dt>{tr('实验类型', 'Type')}</dt>
+          <dd>{kind ? tr(kind.zh, kind.en) : plan.kind}</dd>
         </>
       )}
-    </div>
+      {pm?.name && (
+        <>
+          <dt>{tr('主指标', 'Primary metric')}</dt>
+          <dd>
+            {pm.name}
+            {pm.direction === 'minimize' ? tr('，越低越好', ', lower is better') : pm.direction === 'maximize' ? tr('，越高越好', ', higher is better') : ''}
+          </dd>
+        </>
+      )}
+      {hyps.length > 0 && (
+        <>
+          <dt>{tr('要检验的假设', 'Hypotheses')}</dt>
+          <dd>
+            <ol>
+              {hyps.map((h, i) => (
+                <li key={i}>{h.text}</li>
+              ))}
+            </ol>
+          </dd>
+        </>
+      )}
+      {conditions.length > 0 && (
+        <>
+          <dt>{tr('对照设置', 'Conditions')}</dt>
+          <dd>
+            <ul>
+              {conditions.map((c, i) => (
+                <li key={`${c.name}-${i}`}>
+                  {c.role === 'baseline' ? tr('对照组', 'Baseline') : tr('实验组', 'Treatment')}：{c.name}
+                  {c.description && c.description.trim() !== '' && <div className="exp-plan-sub">{c.description}</div>}
+                </li>
+              ))}
+            </ul>
+          </dd>
+        </>
+      )}
+      {evalBits.length > 0 && (
+        <>
+          <dt>{tr('评测设置', 'Evaluation')}</dt>
+          <dd>{evalBits.join(' · ')}</dd>
+        </>
+      )}
+      {datasets.length > 0 && (
+        <>
+          <dt>{tr('数据集', 'Datasets')}</dt>
+          <dd>
+            <ul>
+              {datasets.map((d, i) => (
+                <li key={`${d.name}-${i}`}>
+                  {d.name}
+                  {d.size_hint && d.size_hint.trim() !== '' ? tr(`（${d.size_hint}）`, ` (${d.size_hint})`) : ''}
+                  {d.purpose && d.purpose.trim() !== '' && <div className="exp-plan-sub">{d.purpose}</div>}
+                </li>
+              ))}
+            </ul>
+          </dd>
+        </>
+      )}
+      {plan.repro_strategy && (
+        <>
+          <dt>{tr('做法', 'Approach')}</dt>
+          <dd>{plan.repro_strategy}</dd>
+        </>
+      )}
+      {steps.length > 0 && (
+        <>
+          <dt>{tr('步骤', 'Steps')}</dt>
+          <dd>
+            <ol>
+              {steps.map((s, i) => (
+                <li key={i}>{planStepText(s)}</li>
+              ))}
+            </ol>
+          </dd>
+        </>
+      )}
+      <dt>{tr('运行环境', 'Environment')}</dt>
+      <dd>{environmentText(plan.container)}</dd>
+      <dt>{tr('预算', 'Budget')}</dt>
+      <dd>
+        {tr(`上限 ${budgetText(exp.budget)}，到了自动停止`, `Limit ${budgetText(exp.budget)}; it stops when reached`)}
+        {estimate && <div className="exp-plan-sub">{tr(`AI 的预估：${estimate}`, `AI’s estimate: ${estimate}`)}</div>}
+      </dd>
+    </dl>
   );
 }
 
-/* ---------------- Report ---------------- */
+/* ---------------- 结果 ---------------- */
 
-function ReportTab({ exp }: { exp: ExperimentDetail }) {
+function ResultsTab({ exp }: { exp: ExperimentDetail }) {
   const figures = exp.figures ?? [];
+  const s = summarize(exp);
+  const hyps = exp.plan?.hypotheses ?? [];
+  const evidence = hypothesisEvidence(exp);
+  const finished = EXPERIMENT_TERMINAL.has(exp.status);
+  const nothing = !exp.report && figures.length === 0 && s.rounds.total === 0;
+
+  if (nothing) {
+    return (
+      <div className="task-empty" data-exp-tab="results">
+        {finished
+          ? tr('这个实验没有留下结果。', 'This experiment left no results.')
+          : tr('还没有结果。试运行通过后，每一轮的指标会出现在这里；结束时会有图表和报告。', 'No results yet. Once the trial run passes, each round’s metrics appear here; figures and a report come at the end.')}
+      </div>
+    );
+  }
+
   return (
-    <div className="fadeup" style={{ maxWidth: 860 }}>
-      {/* 实验图表：figures 步骤由 AI 从各轮指标数据绘制 */}
+    <div data-exp-tab="results">
+      <dl className="exp-facts">
+        {s.best && (
+          <>
+            <dt>{tr('主指标', 'Primary metric')}</dt>
+            <dd>
+              <b>{fmtMetric(s.best.value)}</b>
+              <span>
+                {s.metric ?? ''}
+                {tr(`，第 ${s.best.round} 轮最好`, `, best in round ${s.best.round}`)}
+                {s.direction === 'minimize' ? tr('（越低越好）', ' (lower is better)') : tr('（越高越好）', ' (higher is better)')}
+              </span>
+            </dd>
+          </>
+        )}
+        <dt>{tr('轮次', 'Rounds')}</dt>
+        <dd>
+          <b>{s.rounds.total}</b>
+          <span>
+            {[
+              s.rounds.failed > 0 ? tr(`其中 ${s.rounds.failed} 轮失败`, `${s.rounds.failed} failed`) : '',
+              exp.budget?.max_runs ? tr(`上限 ${exp.budget.max_runs} 轮`, `limit ${exp.budget.max_runs}`) : '',
+            ]
+              .filter(Boolean)
+              .join(tr('，', ', '))}
+          </span>
+        </dd>
+      </dl>
+
+      {hyps.length > 0 && (
+        <>
+          <div className="task-sec-head">
+            <h2 className="task-sec-title">{tr('假设', 'Hypotheses')}</h2>
+          </div>
+          <ul className="exp-hyps">
+            {hyps.map((h, i) => (
+              <li key={i}>
+                <div className="exp-hyp-row">
+                  <span className="exp-hyp-text">{h.text}</span>
+                  <HypChip status={h.status} />
+                </div>
+                {evidence.get(i) && <div className="exp-hyp-why">{evidence.get(i)}</div>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
       {figures.length > 0 && (
         <>
-          <span className="section-h" style={{ marginBottom: 12 }}>
-            {tr('实验图表', 'Figures')} <span className="en-label" style={{ fontSize: 11 }}>{figures.length}</span>
-          </span>
-          <div className="card card-pad" style={{ marginBottom: 22 }}>
-            <ExperimentFigures expId={exp.id} figures={figures} />
+          <div className="task-sec-head">
+            <h2 className="task-sec-title">{tr('图表', 'Figures')}</h2>
           </div>
+          <ExperimentFigures expId={exp.id} figures={figures} />
         </>
       )}
 
-      {!exp.report ? (
-        <div className="card">
-          <EmptyState
-            compact
-            icon="pen"
-            title={tr('还没有报告', 'No report yet')}
-            desc={
-              EXPERIMENT_TERMINAL.has(exp.status)
-                ? tr('这个实验没有生成报告。', 'This experiment produced no report.')
-                : tr('实验结束后自动生成。', 'Generated when the experiment finishes.')
-            }
-          />
-        </div>
-      ) : (
-        <div className="card card-pad">
+      <div className="task-sec-head">
+        <h2 className="task-sec-title">{tr('报告', 'Report')}</h2>
+      </div>
+      {exp.report ? (
+        <div className="exp-report">
           <Markdown source={exp.report} />
         </div>
+      ) : (
+        <div className="task-empty">
+          {finished ? tr('这个实验没有生成报告。', 'This experiment produced no report.') : tr('实验结束后会写一份报告。', 'A report is written when the experiment finishes.')}
+        </div>
       )}
+
+      {s.rounds.total > 0 && <RunTab exp={exp} />}
     </div>
   );
 }
@@ -540,153 +338,291 @@ export function ExperimentDetailPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { openGates } = useShell();
-  const { currentProjectId } = useProject();
-  const [tab, setTab] = useState<TabKey>('console');
-  const defaultedRef = useRef(false);
+  const { currentProjectId, projects } = useProject();
+  const [chosenTab, setChosenTab] = useState<TabKey | null>(null);
+  const [showObsolete, setShowObsolete] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmTrash, setConfirmTrash] = useState(false);
 
   const { data: exp, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['experiment', id],
     queryFn: () => api.getExperiment(id),
     enabled: !!id,
     retry: false,
-    refetchInterval: (q) =>
-      q.state.data && !EXPERIMENT_TERMINAL.has(q.state.data.status) ? 5_000 : false,
+    refetchInterval: (q) => (q.state.data && !EXPERIMENT_TERMINAL.has(q.state.data.status) ? 5_000 : false),
   });
+  useSyncTopic(exp?.project_id);
 
-  // 首次加载后按状态定位默认 Tab：活动态一律进运行台（干预入口在那里），
-  // 完成且有报告的进报告页
-  useEffect(() => {
-    if (!exp || defaultedRef.current) return;
-    defaultedRef.current = true;
-    if (exp.status === 'done' && exp.report) setTab('report');
-    else setTab('console');
-  }, [exp]);
+  const vid = exp?.voyage_id ?? null;
+  const { data: voyage } = useQuery({
+    queryKey: ['voyage', vid, showObsolete],
+    queryFn: () => api.getVoyage(vid!, { includeObsolete: showObsolete }),
+    enabled: !!vid,
+    retry: false,
+  });
+  const voyageActive = !!voyage && !VOYAGE_TERMINAL.has(voyage.status);
+  const { messages, handleExtraEvent } = useVoyageMessages(vid);
+  const { terminal, live, clearTerminal, historyLoading, historyError } = useVoyageChannel(vid ?? '', voyageActive, { onExtraEvent: handleExtraEvent });
+  const openAsk = openAskOf(voyage, messages);
 
-  const cancelMutation = useMutation({
+  // 取消是先停任务、再改实验的状态：任务已经结束时就不再当它「还在做」
+  const active = !!exp && !EXPERIMENT_TERMINAL.has(exp.status) && !(voyage && VOYAGE_TERMINAL.has(voyage.status));
+  const now = useNow(30_000, active);
+
+  // 等确认预算时：就地给出那张确认卡
+  const waitingBudget = !!exp && active && (exp.status === 'awaiting_gate' || voyage?.status === 'paused_gate');
+  const gates = useQuery({
+    queryKey: ['gates', 'pending', exp?.project_id],
+    queryFn: () => api.listGates('pending', exp!.project_id),
+    enabled: waitingBudget,
+    retry: false,
+    refetchInterval: 10_000,
+  });
+  const gate = (gates.data ?? []).find((g) => g.payload?.voyage_id === vid);
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['experiment', id] });
+    void queryClient.invalidateQueries({ queryKey: ['experiments'] });
+    void queryClient.invalidateQueries({ queryKey: ['voyage', vid] });
+    void queryClient.invalidateQueries({ queryKey: ['voyage-messages', vid] });
+    void queryClient.invalidateQueries({ queryKey: ['voyages'] });
+    void queryClient.invalidateQueries({ queryKey: ['gates'] });
+  };
+  const decide = useMutation({
+    mutationFn: (v: { id: string; decision: GateDecision; comment?: string }) => api.decideGate(v.id, v.decision, v.comment),
+    onSuccess: () => {
+      toast(tr('已提交', 'Saved'), 'ok');
+      refresh();
+    },
+    onError: (e) => toast(errorText(e), 'error'),
+  });
+  const resume = useMutation({
+    mutationFn: () => api.resumeVoyage(vid!),
+    onSuccess: () => {
+      toast(tr('已从出错的步骤继续', 'Resumed from the failed step'), 'ok');
+      refresh();
+    },
+    onError: (e) => toast(`${tr('无法重试：', 'Couldn’t retry: ')}${errorText(e)}`, 'error'),
+  });
+  const cancel = useMutation({
     mutationFn: () => api.cancelExperiment(id),
     onSuccess: () => {
       toast(tr('实验已取消', 'Experiment cancelled'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['experiment', id] });
-      void queryClient.invalidateQueries({ queryKey: ['experiments'] });
-      void queryClient.invalidateQueries({ queryKey: ['voyages'] });
+      refresh();
     },
-    onError: (e) => toast(`${tr('取消失败：', 'Cancel failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(errorText(e), 'error'),
+    onSettled: () => setConfirmCancel(false),
   });
+  const trash = useMutation({
+    mutationFn: () => api.trashExperiment(id),
+    onSuccess: () => {
+      toast(tr('已移入回收站', 'Moved to trash'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['experiments'] });
+      navigate(topicPath(exp?.project_id ?? currentProjectId, 'experiment'));
+    },
+    onError: (e) => toast(errorText(e), 'error'),
+    onSettled: () => setConfirmTrash(false),
+  });
+
+  const liveSteps = useMemo(() => [...(voyage?.steps ?? [])].sort(byListOrder).filter((s) => s.status !== 'obsolete'), [voyage?.steps]);
+  const summary = useMemo(() => (exp ? summarize(exp) : null), [exp]);
+
+  // 默认页签：做完且有结果先看结果，否则看进展；地址里的 ?tab= 优先
+  const hasResults = !!exp && (!!exp.report || (exp.runs ?? []).length > 0 || (exp.figures ?? []).length > 0);
+  const urlTab = TABS.find((t) => t.k === searchParams.get('tab'))?.k ?? null;
+  const defaultTab: TabKey = exp && !active && hasResults ? 'results' : 'progress';
+  const tab: TabKey = chosenTab ?? urlTab ?? defaultTab;
+  // 实验刚做完：还停在「进展」上的话，换到「结果」
+  const wasActive = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!exp) return;
+    if (wasActive.current === true && !active && hasResults && chosenTab === 'progress') setChosenTab(null);
+    wasActive.current = active;
+  }, [exp, active, hasResults, chosenTab]);
+  const pickTab = (k: TabKey) => {
+    setChosenTab(k);
+    if (searchParams.has('tab')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('tab');
+      setSearchParams(next, { replace: true });
+    }
+  };
 
   if (isLoading) {
     return (
-      <div className="page fadeup">
-        <div className="empty" style={{ padding: 80 }}>{tr('加载中…', 'Loading…')}</div>
+      <div className="page fadeup task-page">
+        <LoadingState rows={5} />
       </div>
     );
   }
   if (isError || !exp) {
     const notFound = error instanceof ApiError && error.status === 404;
     return (
-      <div className="page fadeup">
-        <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>
-            {notFound ? tr('实验不存在', 'Experiment not found') : tr('无法加载实验', 'Couldn’t load this experiment')}
-          </div>
-          <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 18 }}>
-            {notFound
-              ? tr('它可能已被删除。', 'It may have been deleted.')
-              : tr('请确认本机引擎在运行，然后重试。', 'Make sure the local engine is running, then retry.')}
-          </div>
-          <div className="row gap8" style={{ justifyContent: 'center' }}>
-            <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-            <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'experiment'))}>{tr('返回实验列表', 'Back to experiments')}</button>
-          </div>
-        </div>
+      <div className="page fadeup task-page">
+        <ErrorState
+          title={
+            notFound
+              ? tr('找不到这个实验，可能已被删除', 'This experiment no longer exists.')
+              : tr('无法加载实验，请确认本机引擎正在运行', 'Couldn’t load this experiment. Check that the local engine is running.')
+          }
+          onRetry={notFound ? undefined : () => void refetch()}
+          action={
+            <Link className="btn btn-ghost sm" to={topicPath(currentProjectId, 'experiment')}>
+              {tr('返回实验', 'Back to experiments')}
+            </Link>
+          }
+        />
       </div>
     );
   }
 
-  const active = !EXPERIMENT_TERMINAL.has(exp.status);
+  const topicName = projects.find((p) => p.id === exp.project_id)?.name ?? '';
+  // 状态句：有任务就用任务的那句（它知道正在做哪一步）；等确认预算和已结束的用实验自己的
+  const ownLine = exp.status === 'awaiting_gate' || !voyage || EXPERIMENT_TERMINAL.has(exp.status) || waitingBudget;
+  const statusLine = waitingBudget ? experimentSentence('awaiting_gate') : ownLine ? experimentSentence(exp.status) : taskStatusLine(voyage, liveSteps);
+  const tone = waitingBudget ? 'warn' : ownLine ? experimentTone(exp.status) : taskTone(voyage.status);
+  const rounds = (exp.runs ?? []).length;
+  const meta = [
+    elapsedText(exp.created_at, active ? null : exp.updated_at, now),
+    exp.server_host ? tr(`在 ${exp.server_host} 上`, `on ${exp.server_host}`) : '',
+    active && rounds > 0 ? (exp.budget?.max_runs ? tr(`第 ${rounds}/${exp.budget.max_runs} 轮`, `round ${rounds} of ${exp.budget.max_runs}`) : tr(`第 ${rounds} 轮`, `round ${rounds}`)) : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const result = !active && summary ? summaryLine(summary) : null;
+  const stuck = voyage?.status === 'paused_error';
+
+  const menu: DotsMenuItem[] = [
+    ...(exp.idea_id ? [{ key: 'idea', label: tr('查看想法', 'View the idea'), icon: 'bulb', onSelect: () => navigate(`/ideas/${exp.idea_id}`) } as DotsMenuItem] : []),
+    ...(vid ? [{ key: 'task', label: tr('在任务页查看', 'Open as a task'), icon: 'clock', onSelect: () => navigate(`/voyages/${vid}`) } as DotsMenuItem] : []),
+    ...(!active ? [{ key: 'trash', label: tr('移入回收站', 'Move to trash'), icon: 'trash', danger: true, separated: true, onSelect: () => setConfirmTrash(true) } as DotsMenuItem] : []),
+  ];
 
   return (
-    <div className="page fadeup" style={{ maxWidth: 1080 }}>
-      {/* 页头 */}
-      <div className="row" style={{ alignItems: 'flex-start', marginBottom: 4 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 className="h-title" style={{ fontSize: 20 }}>{exp.idea_title}</h1>
-          <div className="row gap8" style={{ marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <TaskStatus status={exp.status} />
-            {exp.plan && <KindBadge kind={exp.plan.kind} />}
-            <span className="muted" style={{ fontSize: 12, minWidth: 0, overflowWrap: 'anywhere' }}>
-              <span title={exp.workdir ?? undefined}>{exp.server_host ?? tr('未分配机器', 'No machine yet')}</span>
-              {exp.plan && (
-                <>
-                  {' · '}
-                  <EnvText container={exp.plan.container} />
-                </>
-              )}
-              {' · '}
-              <span>{budgetText(exp.budget)}</span>
-              {' · '}
-              {tr('创建于', 'Created')} {fmtTime(exp.created_at)}
-              {' · '}
-              {tr('耗时', 'Took')} {fmtDuration(exp.created_at, active ? null : exp.updated_at)}
-            </span>
-          </div>
-        </div>
-        <div className="row gap8" style={{ flexShrink: 0 }}>
-          <button
-            className="btn btn-ghost sm"
-            style={{ visibility: exp.idea_id ? 'visible' : 'hidden' }}
-            onClick={() => navigate(`/ideas/${exp.idea_id}`)}
-          >
-            <Icon name="bulb" size={13} />
-            {tr('查看想法', 'View idea')}
-          </button>
+    <div className={'page fadeup task-page' + (tab === 'code' ? ' exp-wide' : '')}>
+      <Link className="task-back" to={topicPath(exp.project_id, 'experiment')}>
+        ← {topicName ? tr(`${topicName} · 实验`, `${topicName} · Experiments`) : tr('实验', 'Experiments')}
+      </Link>
+      <div className="task-head">
+        <h1 className="task-title" title={exp.idea_title}>
+          {exp.idea_title}
+        </h1>
+        <div className="task-actions">
           {active && (
-            <button
-              className="btn btn-ghost"
-              disabled={cancelMutation.isPending}
-              onClick={() => {
-                if (window.confirm(tr('取消这个实验？它的任务和远程进程都会停止。', 'Cancel this experiment? Its task and remote processes will stop.'))) {
-                  cancelMutation.mutate();
-                }
-              }}
-            >
-              <Icon name="x" size={13} />
-              {cancelMutation.isPending ? tr('取消中…', 'Cancelling…') : tr('取消实验', 'Cancel experiment')}
+            <button type="button" className="btn btn-ghost sm" disabled={cancel.isPending} onClick={() => setConfirmCancel(true)}>
+              {tr('取消实验', 'Cancel experiment')}
             </button>
           )}
+          <DotsMenu items={menu} />
         </div>
       </div>
 
-      {/* Tab bar */}
-      <div className="row" style={{ gap: 2, borderBottom: '0.5px solid var(--border)', marginBottom: 22 }}>
+      <div className="task-status" data-exp-status={exp.status}>
+        <span className={`task-dot is-${tone}`} aria-hidden="true" />
+        <span className="task-status-text">{statusLine}</span>
+        {meta && <span className="task-status-meta">{meta}</span>}
+      </div>
+      {result && (
+        <div className="task-result" data-testid="exp-result">
+          {result}
+        </div>
+      )}
+
+      {/* —— 需要你的时候：要做的事就在这里 —— */}
+      {openAsk && voyageActive && vid && <InlineQuestion voyageId={vid} ask={openAsk} onAnswered={refresh} />}
+      {waitingBudget &&
+        (gate ? (
+          <div className="dr-attn" data-testid="exp-gate">
+            <div className="dr-attn-text">{tr('计划写好了，等你确认后再上机器运行', 'The plan is ready. Confirm it before anything runs on the machine.')}</div>
+            <div className="dr-attn-sub">
+              {[
+                (exp.plan?.hypotheses ?? []).length > 0 ? tr(`${(exp.plan?.hypotheses ?? []).length} 条假设`, `${(exp.plan?.hypotheses ?? []).length} hypotheses`) : '',
+                (exp.plan?.steps ?? []).length > 0 ? tr(`${(exp.plan?.steps ?? []).length} 个步骤`, `${(exp.plan?.steps ?? []).length} steps`) : '',
+                tr(`上限 ${budgetText(exp.budget)}`, `limit ${budgetText(exp.budget)}`),
+                exp.server_host ? tr(`在 ${exp.server_host} 上运行`, `runs on ${exp.server_host}`) : '',
+              ]
+                .filter(Boolean)
+                .join(tr('，', ', '))}
+              {tr('。', '.')}
+            </div>
+            <div className="dr-attn-actions">
+              <button type="button" className="btn btn-primary sm" disabled={decide.isPending} onClick={() => decide.mutate({ id: gate.id, decision: 'approve' })}>
+                {decide.isPending ? tr('正在提交…', 'Saving…') : tr('确认，开始运行', 'Confirm and run')}
+              </button>
+              <button type="button" className="btn btn-ghost sm" onClick={() => pickTab('plan')}>
+                {tr('先看计划', 'Read the plan first')}
+              </button>
+              <button type="button" className="btn btn-plain sm" disabled={decide.isPending} onClick={() => decide.mutate({ id: gate.id, decision: 'reject' })}>
+                {tr('不运行', 'Don’t run')}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="dr-attn" data-testid="exp-gate">
+            <div className="dr-attn-text">{tr('开始在机器上运行之前，需要你确认预算', 'Confirm the budget before anything runs on the machine')}</div>
+            <div className="dr-attn-sub">{tr(`上限：${budgetText(exp.budget)}。确认后从这里继续。`, `Limit: ${budgetText(exp.budget)}. It continues from here once you confirm.`)}</div>
+            <div className="dr-attn-actions">
+              <button type="button" className="btn btn-primary sm" onClick={() => openGates(null)}>
+                {tr('查看并确认', 'Review and confirm')}
+              </button>
+            </div>
+          </div>
+        ))}
+      {stuck && voyage && (
+        <div className="task-parked">
+          <ParkedRunNotice error={voyage.last_error} retryAt={voyage.retry_at} retryAttempt={voyage.retry_attempt} onRetry={() => resume.mutate()} retrying={resume.isPending} />
+        </div>
+      )}
+
+      <nav className="exp-tabs" aria-label={tr('实验的页面', 'Pages of this experiment')}>
         {TABS.map((t) => (
-          <button
-            key={t.k}
-            onClick={() => setTab(t.k)}
-            style={{
-              border: 'none',
-              background: 'none',
-              cursor: 'pointer',
-              padding: '10px 16px',
-              fontSize: 13,
-              fontWeight: 600,
-              fontFamily: 'var(--sans)',
-              color: tab === t.k ? 'var(--text)' : 'var(--text-3)',
-              borderBottom: tab === t.k ? '2px solid var(--accent)' : '2px solid transparent',
-              marginBottom: -1,
-            }}
-          >
+          <button key={t.k} type="button" className={'dn-tab' + (tab === t.k ? ' is-active' : '')} aria-current={tab === t.k ? 'page' : undefined} data-tab={t.k} onClick={() => pickTab(t.k)}>
             {tr(t.zh, t.en)}
           </button>
         ))}
-      </div>
+      </nav>
 
-      {tab === 'console' && <ConsoleTab exp={exp} />}
-      {tab === 'plan' && <PlanTab exp={exp} onOpenGates={() => openGates(null)} />}
-      {tab === 'run' && <RunTab exp={exp} />}
-      {tab === 'memory' && <MemoryTab exp={exp} />}
+      {tab === 'progress' && (
+        <ProgressTab
+          exp={exp}
+          voyage={voyage}
+          messages={messages}
+          terminal={terminal}
+          live={live}
+          clearTerminal={clearTerminal}
+          historyLoading={historyLoading}
+          historyError={historyError}
+          showObsolete={showObsolete}
+          onShowObsolete={setShowObsolete}
+        />
+      )}
+      {tab === 'results' && <ResultsTab exp={exp} />}
+      {tab === 'plan' && <PlanTab exp={exp} />}
       {tab === 'code' && <CodeTab exp={exp} active={active} />}
-      {tab === 'report' && <ReportTab exp={exp} />}
+      {tab === 'notes' && <MemoryTab exp={exp} />}
+
+      <ConfirmModal
+        open={confirmCancel}
+        onClose={() => setConfirmCancel(false)}
+        title={tr('取消这个实验？', 'Cancel this experiment?')}
+        message={tr('它的任务和机器上的进程都会停止，已有的代码和结果保留。', 'Its task and the processes on the machine stop. Code and results so far are kept.')}
+        confirmText={tr('取消实验', 'Cancel experiment')}
+        danger
+        busy={cancel.isPending}
+        onConfirm={() => cancel.mutate()}
+      />
+      <ConfirmModal
+        open={confirmTrash}
+        onClose={() => setConfirmTrash(false)}
+        title={tr('把这个实验移入回收站？', 'Move this experiment to the trash?')}
+        message={tr('之后可以在实验页的回收站里恢复。', 'You can restore it from the trash on the Experiments page.')}
+        confirmText={tr('移入回收站', 'Move to trash')}
+        danger
+        busy={trash.isPending}
+        onConfirm={() => trash.mutate()}
+      />
     </div>
   );
 }

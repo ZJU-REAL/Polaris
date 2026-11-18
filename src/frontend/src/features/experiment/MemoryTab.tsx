@@ -46,8 +46,8 @@ export function MemoryTab({ exp }: { exp: ExperimentDetail }) {
         <EmptyState
           compact
           icon="book"
-          title={tr('还没有实验记忆', 'No memory yet')}
-          desc={tr('计划确定后，关键决策和每轮结论会记在这里。', 'Key decisions and round results are recorded here once the plan is set.')}
+          title={tr('还没有实验笔记', 'No notes yet')}
+          desc={tr('AI 把关键决定和每一轮的结论记在这里，后面的轮次会参考。', 'The AI records key decisions and each round’s conclusion here and refers back to them in later rounds.')}
         />
       </div>
     );
@@ -57,8 +57,7 @@ export function MemoryTab({ exp }: { exp: ExperimentDetail }) {
     <div className="fadeup" style={{ maxWidth: 860 }}>
       <div className="row gap8" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
         <span className="section-h">
-          {tr('实验记忆', 'Experiment memory')}
-          <span className="en-label mono" style={{ fontSize: 11 }}>MEMORY.md</span>
+          {tr('实验笔记', 'Experiment notes')}
         </span>
         <div className="row gap8" style={{ marginLeft: 'auto' }}>
           {data?.source && (
