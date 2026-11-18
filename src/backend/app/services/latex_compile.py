@@ -54,18 +54,40 @@ def normalize_engine(engine: str | None) -> str:
     return engine if engine in ENGINES else "tectonic"
 
 
+def available_engines() -> list[str]:
+    """本机现在真能用的编译器，按回退优先级排（tectonic 在前）。
+
+    tectonic 是单个二进制；pdflatex/xelatex/lualatex 由 latexmk 驱动，所以要 latexmk
+    和引擎本身都在 PATH 才算——只有其一时 latexmk 一跑就失败。「能不能编译」的两处
+    提问（编译入口挑引擎、能力接口报 latex）都问这里，答案才不会对不上。
+    """
+    out: list[str] = []
+    if shutil.which(TECTONIC_BIN):
+        out.append("tectonic")
+    if shutil.which(LATEXMK_BIN):
+        out.extend(e for e in _LATEXMK_ENGINE_FLAG if shutil.which(e))
+    return out
+
+
+def latex_available() -> bool:
+    """本机能不能把稿件编译成 PDF：任何一个支持的编译器可用就算。"""
+    return bool(available_engines())
+
+
 def _resolve_engine(requested: str) -> tuple[str, str] | None:
-    """挑一个真正可用的编译器：请求 latexmk 系（pdf/xe/lua）但 latexmk 缺失时回退 tectonic。
-    返回 (实际引擎, 二进制路径)；都不可用返回 None。"""
+    """挑一个真正可用的编译器：请求的那个不可用时回退到可用的第一个
+    （优先 tectonic）。返回 (实际引擎, 二进制路径)；都不可用返回 None。
+
+    以前只会回退到 tectonic：装了 TeX Live 却没装 tectonic 的机器上，默认引擎
+    （tectonic）的稿件直接报「编译器未安装」，尽管 xelatex 就在那里。
+    """
     requested = normalize_engine(requested)
-    if requested != "tectonic":
-        latexmk = shutil.which(LATEXMK_BIN)
-        if latexmk:
-            return requested, latexmk
-    tectonic = shutil.which(TECTONIC_BIN)
-    if tectonic:
-        return "tectonic", tectonic
-    return None
+    available = available_engines()
+    if not available:
+        return None
+    engine = requested if requested in available else available[0]
+    binary = shutil.which(TECTONIC_BIN if engine == "tectonic" else LATEXMK_BIN)
+    return (engine, binary) if binary else None
 
 
 _CITATION_RE = re.compile(

@@ -24,7 +24,6 @@ import asyncio
 import copy
 import logging
 import re
-import shutil
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -51,13 +50,11 @@ from app.models.library_direction import DirectionLibrary, LibraryPaper, TopicSo
 from app.models.paper import Paper
 from app.models.project import Project
 from app.models.research_run import ResearchRun
-from app.models.ssh_credential import ConnectionCredential
 from app.models.voyage import IN_FLIGHT_STATUSES, TERMINAL_STATUSES, VoyageRun, VoyageStep
 from app.schemas.ingest import IngestKnobs
 from app.schemas.project import ProjectCreate
 from app.schemas.research import (
     BriefDraft,
-    Capabilities,
     EvidenceCounts,
     HypothesesRead,
     LastErrorRead,
@@ -76,6 +73,7 @@ from app.schemas.research import (
     UsageRead,
 )
 from app.schemas.voyage import VoyageCreate, VoyageMessageRead
+from app.services import capabilities as capabilities_service
 from app.services import ingest as ingest_service
 from app.services import libraries as libraries_service
 from app.services import projects as projects_service
@@ -1615,11 +1613,6 @@ async def to_detail(
             transient=bool(raw.get("transient")),
             source="planner",
         )
-    has_machine = (
-        await session.execute(
-            select(ConnectionCredential.id).where(ConnectionCredential.user_id == user_id).limit(1)
-        )
-    ).first() is not None
     return ResearchRunDetail(
         **base.model_dump(),
         brief=brief,
@@ -1644,7 +1637,5 @@ async def to_detail(
         retry_attempt=retry_attempt,
         last_error=last_error,
         usage=_usage(*await _all_phase_voyages(session, run)),
-        capabilities=Capabilities(
-            remote_machine=has_machine, latex=shutil.which("tectonic") is not None
-        ),
+        capabilities=await capabilities_service.local_capabilities(session, user_id),
     )

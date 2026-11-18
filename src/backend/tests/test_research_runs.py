@@ -587,9 +587,11 @@ async def test_one_direction_runs_from_post_to_ideas(client, live_queue, literat
     assert idea["evidence_counts"]["support"] >= 1
     assert idea["evidence_counts"]["unsupported"] == len(idea["origin"]["unsupported_subclaims"])
     assert detail["counts"] == {"papers": 6, "ideas": len(detail["ideas"]), "picked": 0}
-    # latex 看本机有没有 tectonic（测试镜像里有），这里只钉形状
+    # latex 看本机装了什么编译器，这里只钉形状；和独立的能力接口是同一个计算
     assert detail["capabilities"]["remote_machine"] is False
     assert set(detail["capabilities"]) == {"remote_machine", "latex"}
+    caps = (await client.get("/api/capabilities", headers=headers)).json()
+    assert caps == detail["capabilities"]
     assert detail["open_ask"] is None and detail["next_retry_at"] is None
     assert detail["retry_attempt"] == 0 and detail["last_error"] is None
     assert survey["started_at"] and survey["finished_at"]
