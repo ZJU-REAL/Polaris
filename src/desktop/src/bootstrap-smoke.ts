@@ -129,8 +129,9 @@ function assertSourcePlanning(): void {
   console.log('source planning: order / env OK');
 }
 
-/** 环境里还有没有命令行带着这个目录的 uv 进程（POSIX；Windows 上跳过）。 */
-async function uvProcessesUnder(dir: string): Promise<string[]> {
+/** 还有没有这份 uv 二进制起的进程在跑（POSIX；Windows 上跳过）。按可执行文件路径认，
+    不按参数认：`uv python install` 的命令行里并不带数据目录。 */
+async function uvProcesses(uvBin: string): Promise<string[]> {
   if (process.platform === 'win32') return [];
   return new Promise((resolvePs) => {
     const child = spawn('ps', ['-axo', 'pid=,command='], { stdio: ['ignore', 'pipe', 'ignore'] });
@@ -138,9 +139,7 @@ async function uvProcessesUnder(dir: string): Promise<string[]> {
     child.stdout!.on('data', (chunk: Buffer) => {
       out += chunk.toString();
     });
-    child.on('close', () =>
-      resolvePs(out.split('\n').filter((line) => line.includes(dir) && /\buv(\.exe)?\b/.test(line))),
-    );
+    child.on('close', () => resolvePs(out.split('\n').filter((line) => line.includes(`${uvBin} `))));
     child.on('error', () => resolvePs([]));
   });
 }
@@ -422,7 +421,7 @@ async function runFaultScenarios(args: Args, dataDir: string, config: EngineComm
       assert(outcome === 'cancelled', `取消应报 cancelled，实际 ${outcome}`);
       assert(took < 10_000, `取消应在几秒内生效，实际 ${took}ms`);
       await delay(500);
-      const leftovers = await uvProcessesUnder(dataDir);
+      const leftovers = await uvProcesses(join(args.resources, 'uv', 'uv'));
       assert(leftovers.length === 0, `取消后不该留下 uv 进程：\n${leftovers.join('\n')}`);
       assert(existsSync(python), '取消不该动旧 venv');
       console.log(`cancel: stopped in ${took}ms, no uv process left, previous environment intact OK`);
@@ -465,6 +464,7 @@ async function main(): Promise<void> {
     console.log('bootstrap-smoke: default sources blocked (pointing at 127.0.0.1:9)');
   }
 
+  const wasInstalled = existsSync(join(dataDir, 'engine', 'bootstrap.json'));
   let failed = false;
   try {
     assertSourcePlanning();
@@ -499,8 +499,9 @@ async function main(): Promise<void> {
     for (const step of config.steps) {
       console.log(`  ${step.phase.padEnd(8)} source=${step.source} attempts=${step.attempts} ${(step.ms / 1000).toFixed(1)}s`);
     }
-    assert(config.degraded === undefined, `全新安装不该处于降级状态：${config.degraded?.reason}`);
-    assert(config.steps.length === 3, `全新安装应记录三步，实际 ${config.steps.length}`);
+    assert(config.degraded === undefined, `不该处于降级状态：${config.degraded?.reason}`);
+    // --data 指到一个已经装好的目录时（本地反复跑 --faults）引导整段跳过，没有步骤可记
+    assert(config.steps.length === (wasInstalled ? 0 : 3), `步骤记录数不对：${config.steps.length}`);
     if (args.blockDefault) {
       const install = config.steps.find((s) => s.phase === 'install');
       const python = config.steps.find((s) => s.phase === 'python');
@@ -524,7 +525,7 @@ async function main(): Promise<void> {
     // 首轮：空库首启，守卫应跳过快照（没有可保护的数据）
     console.log('\n== engine run 1 (fresh database)');
     const reportedVersion = await runEngineOnce(config);
-    if (existsSync(snapRoot) && readdirSync(snapRoot).length > 0) {
+    if (!wasInstalled && existsSync(snapRoot) && readdirSync(snapRoot).length > 0) {
       throw new Error('首启空库不该产生迁移前快照');
     }
     // 引擎自报的版本必须是打包时盖上去的那个，而不是写死在源码里的 0.1.0
